@@ -90,6 +90,9 @@ export const identityTools: ErpNextTool[] = [
     description:
       "Identify the ERPNext user this session is acting as: their User ID (email), full name, " +
       "roles, and linked Employee record (ID, designation, department, company, manager). " +
+      "`roles` and `employee` may be null because the deployment withheld them rather than " +
+      "because they are empty — read `roles_note`, `employee_lookup` and `employee_note` before " +
+      "telling anyone they have no roles or no HR record. " +
       "CALL THIS FIRST whenever the request says 'my', 'me', 'I', 'mine', or names no subject at " +
       "all ('what is on my plate', 'my leave balance', 'tasks assigned to me') — every other tool " +
       "needs a concrete user or employee ID and this is the only tool that produces one. " +
@@ -104,12 +107,28 @@ export const identityTools: ErpNextTool[] = [
       return {
         user: profile.user,
         roles: profile.roles,
+        ...(profile.roles === null
+          ? {
+            roles_note:
+              "This deployment does not let this user read their own role list (User.roles is a " +
+              "permlevel-1 field, readable only by System Manager, and it comes back emptied " +
+              "rather than omitted — `user_type` being null alongside it is the same withholding, " +
+              "not a user without a type). Their roles are unknown — do not say they have none, " +
+              "and do not infer what they may or may not do from this. What they can actually " +
+              "reach is enforced by ERPNext on every call regardless.",
+          }
+          : {}),
         employee: profile.employee,
+        employee_lookup: profile.employee_lookup,
         identity_mode: profile.identity_mode,
         ...(profile.employee ? {} : {
-          employee_note:
-            "This user has no Employee record, so employee-scoped data (leave, attendance, " +
-            "expense claims, salary, timesheets) cannot be queried for them.",
+          employee_note: profile.employee_lookup === "forbidden"
+            ? "This user may not read the Employee doctype, so whether they have an HR record is " +
+              "unknown — do not tell them they have none. Employee-scoped data (leave, " +
+              "attendance, expense claims, salary, timesheets) cannot be queried for them until " +
+              "an administrator grants read access to Employee."
+            : "This user has no Employee record, so employee-scoped data (leave, attendance, " +
+              "expense claims, salary, timesheets) cannot be queried for them.",
         }),
         ...(note ? { warning: note } : {}),
       };
@@ -169,6 +188,7 @@ export const identityTools: ErpNextTool[] = [
       const result: Record<string, unknown> = {
         user: profile.user,
         employee: profile.employee,
+        employee_lookup: profile.employee_lookup,
         identity_mode: profile.identity_mode,
       };
       const note = identityNote(profile);
@@ -180,8 +200,10 @@ export const identityTools: ErpNextTool[] = [
       if (skipped.length > 0) {
         result.skipped_sections = {
           sections: skipped,
-          reason:
-            `"${userId}" has no Employee record, so these sections have no key to filter on.`,
+          reason: profile.employee_lookup === "forbidden"
+            ? `"${userId}" may not read the Employee doctype, so these sections have no key to ` +
+              "filter on. This is a missing permission, not a missing HR record."
+            : `"${userId}" has no Employee record, so these sections have no key to filter on.`,
         };
       }
 

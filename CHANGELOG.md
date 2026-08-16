@@ -8,6 +8,53 @@ This package is a fork of
 deliberately still point at the upstream repository, where those commits, pull
 requests and tags actually live.
 
+## [3.1.2] - 2026-08-16
+
+### Fixed
+
+- **`erpnext_whoami` no longer reports withheld roles as no roles.**
+  `User.roles` is a permlevel-1 field on stock ERPNext, readable only by
+  `System Manager`, so every ordinary employee asking about themselves was told
+  `roles: []` — a fabricated answer about the majority of real callers.
+  - Frappe does not omit a withheld permlevel-1 field, it **empties** it:
+    measured on production against a caller holding three roles, `roles` came
+    back as `[]` with the key present. So the list alone cannot distinguish "you
+    hold none" from "I will not say", and an earlier attempt to read an absent
+    key was inert.
+  - The discriminator is `user_type`, which sits at the same permlevel and is
+    never legitimately empty (it defaults to `System User`; no `User` row on
+    this deployment has it unset). A null `user_type` beside an empty `roles`
+    means permlevel 1 was withheld wholesale, and `roles` is reported as `null`
+    with a `roles_note` explaining it. `[]` now means the user genuinely holds
+    none.
+  - Their real ceiling is unaffected either way — ERPNext enforces it per call,
+    not from this list.
+
+## [3.1.1] - 2026-08-16
+
+### Fixed
+
+- **`erpnext_whoami` no longer fails for a caller who may not read `Employee`.**
+  The profile lookup treated the HR record as part of the identity, so a `403`
+  on that side query took the whole call down — and the server instructions tell
+  every client to call `erpnext_whoami` _first_, which is precisely where there
+  is nothing to fall back on. A permission refusal is now recorded instead of
+  raised. Measured on production against a System User holding read on exactly
+  one doctype.
+  - New `employee_lookup` field on the profile and on both identity tools:
+    `found` | `none` | `forbidden`. `none` and `forbidden` both leave `employee`
+    null, and collapsing them would have the server state a fact it never
+    established — telling someone "you have no HR record" when the truth is "I
+    was not allowed to look" sends them after the wrong problem.
+  - `erpnext_my_work` reports the same distinction in `skipped_sections.reason`,
+    and `resolveSelfEmployee` (the `me` → employee hop) raises two different
+    messages, because "ask HR to create a record" and "ask an administrator for
+    the permission" are opposite next moves.
+  - Only `403` is absorbed. A `5xx`, a timeout or a network error still
+    propagates: those mean the reply would be unreliable rather than incomplete,
+    and answering "no HR record" for one of them would be a guess dressed as a
+    finding.
+
 ## [3.1.0] - 2026-08-16
 
 ### Added
