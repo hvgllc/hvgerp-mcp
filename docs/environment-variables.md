@@ -17,12 +17,36 @@ falling back.
 
 Always required, regardless of transport (stdio or HTTP).
 
-| Variable                   | Type                 | Default             | Required | Notes                                                                                                                  |
-| -------------------------- | -------------------- | ------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `ERPNEXT_URL`              | string (URL)         | —                   | **Yes**  | Base URL of the ERPNext instance, e.g. `http://localhost:8000`. No trailing slash.                                     |
-| `ERPNEXT_API_KEY`          | string               | —                   | **Yes**  | API key from ERPNext User Settings → API Access.                                                                       |
-| `ERPNEXT_API_SECRET`       | string               | —                   | **Yes**  | API secret paired with the key above.                                                                                  |
-| `ERPNEXT_MAX_UPLOAD_BYTES` | non-negative integer | `10485760` (10 MiB) | No       | Upper bound in bytes for file uploads. Must be a positive integer; invalid or missing values fall back to the default. |
+| Variable                   | Type                 | Default             | Required | Notes                                                                                                                                                              |
+| -------------------------- | -------------------- | ------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ERPNEXT_URL`              | string (URL)         | —                   | **Yes**  | Base URL of the ERPNext instance, e.g. `http://localhost:8000`. No trailing slash.                                                                                 |
+| `ERPNEXT_API_KEY`          | string               | —                   | stdio    | API key from ERPNext User Settings → API Access. Required on stdio. Over HTTP it is the _fallback_ identity: leave it unset to make per-caller identity mandatory. |
+| `ERPNEXT_API_SECRET`       | string               | —                   | stdio    | API secret paired with the key above.                                                                                                                              |
+| `ERPNEXT_MAX_UPLOAD_BYTES` | non-negative integer | `10485760` (10 MiB) | No       | Upper bound in bytes for file uploads. Must be a positive integer; invalid or missing values fall back to the default.                                             |
+
+---
+
+## Caller identity (HTTP only)
+
+Decides whether a tool call acts as the _calling user_ or as the process's own
+ERPNext credentials.
+
+| Variable              | Type                              | Default     | Required | Notes                                                                                                                                                                         |
+| --------------------- | --------------------------------- | ----------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MCP_CALLER_IDENTITY` | `required` \| `optional` \| `off` | conditional | No       | Default is `required` when `ERPNEXT_API_KEY`/`ERPNEXT_API_SECRET` are unset, `off` when they are set. An unrecognised value is fatal at startup rather than silently ignored. |
+
+Under `required`, a call whose verified token carries no `email` claim is
+refused. The token itself is forwarded to Frappe as
+`Authorization: HVGKeycloak <token>`, so Frappe verifies it independently — this
+server never mints ERPNext credentials on a user's behalf.
+
+Two consequences of `required` worth knowing before enabling it:
+
+- the read cache is **per caller**, since the same query returns different rows
+  to different people;
+- the startup cache warm is skipped, because it runs outside any request and
+  warming it as one particular user would let that user's permissions decide
+  what everyone else sees.
 
 ---
 

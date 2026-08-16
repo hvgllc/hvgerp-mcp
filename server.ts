@@ -44,6 +44,11 @@ import {
   statSync,
 } from "./src/runtime.ts";
 import { buildAuthProvider, loadAuthConfig } from "./src/auth/config.ts";
+import {
+  type CallerIdentityMode,
+  createCallerIdentityMiddleware,
+  resolveCallerIdentityMode,
+} from "./src/auth/caller-middleware.ts";
 import { warmCache } from "./src/cache/warm.ts";
 import { resourceMetadataRoute } from "./src/auth/resource-metadata-route.ts";
 import { loadMrtrConfig } from "./src/mrtr/config.ts";
@@ -90,6 +95,11 @@ async function main() {
   const authMetadataRoute = authProvider
     ? resourceMetadataRoute(authProvider)
     : undefined;
+  // Only meaningful over HTTP: on stdio the operator who launched the process IS the identity, so
+  // there is no end user to forward.
+  const callerIdentity: CallerIdentityMode = httpFlag
+    ? resolveCallerIdentityMode()
+    : "off";
   const mrtrConfig = loadMrtrConfig();
 
   // Initialize tools client
@@ -106,8 +116,10 @@ async function main() {
     version: "3.0.0",
     transport: "stateless",
     cache: {
+      // `private` once results are caller-scoped: with per-user identity the same tool call returns
+      // different rows to different people, so a shared cache would hand one caller another's data.
+      scope: callerIdentity === "off" ? "public" : "private",
       ttlMs: 3_600_000,
-      scope: "public",
     },
     mrtr: mrtrConfig,
     maxConcurrent: 10,
@@ -121,6 +133,18 @@ async function main() {
       return String(error);
     },
   });
+
+  // Bind each tool call to the end user who made it. Registered after the constructor so it lands
+  // in the custom-middleware slot, which runs AFTER the framework's auth middleware — the identity
+  // it reads is a verified token's claims, never an unchecked header.
+  if (callerIdentity !== "off") {
+    server.use(createCallerIdentityMiddleware({
+      required: callerIdentity === "required",
+    }));
+    console.error(
+      `[hvgerp-mcp] Caller identity: ${callerIdentity} \u2014 tools act as the calling user`,
+    );
+  }
 
   // Register all tools with their handlers
   const mcpTools = toolsClient.toMCPFormat();
@@ -171,9 +195,18 @@ async function main() {
   );
 
   // Fire-and-forget — must never block or fail startup (see warmCache() docs).
-  warmCache().catch((err) => {
-    console.error("[hvgerp-mcp] Cache warm failed (non-fatal):", err);
-  });
+  // Skipped under required identity: warming happens at boot, outside any request, so there is no
+  // caller to act as. It would fail every time, and warming with someone's credentials would be
+  // worse than not warming at all — the first caller's permissions would decide what everyone sees.
+  if (callerIdentity === "required") {
+    console.error(
+      "[hvgerp-mcp] Cache warm skipped: every read is scoped to the calling user",
+    );
+  } else {
+    warmCache().catch((err) => {
+      console.error("[hvgerp-mcp] Cache warm failed (non-fatal):", err);
+    });
+  }
 
   // Start server
   if (httpFlag) {
@@ -182,8 +215,12 @@ async function main() {
     if (!isLoopback) {
       console.error(
         `[hvgerp-mcp] WARNING: binding to ${hostname} exposes the HTTP server ` +
-          `to the network. Every tool acts with the server's ERPNext API key, ` +
-          `so restrict access (firewall, private network) or configure auth ` +
+          `to the network. ${
+            callerIdentity === "required"
+              ? "Tools act as the calling user, so reach is bounded by that user's ERPNext " +
+                "permissions, but the endpoint is still reachable"
+              : "Every tool acts with the server's ERPNext API key"
+          }, so restrict access (firewall, private network) or configure auth ` +
           `via MCP_AUTH_TOKEN(S)/MCP_OAUTH_JWKS_URL.`,
       );
     }

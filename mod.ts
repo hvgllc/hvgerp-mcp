@@ -50,6 +50,19 @@ export {
 
 export type { FrappeClientConfig } from "./src/api/frappe-client.ts";
 
+// Re-export per-caller identity (the HTTP endpoint acts as the calling user, not as a service account)
+export { currentCaller, runWithCaller } from "./src/api/caller-context.ts";
+export type { CallerIdentity } from "./src/api/caller-context.ts";
+export {
+  callerPrincipal,
+  createCallerIdentityMiddleware,
+  resolveCallerIdentityMode,
+} from "./src/auth/caller-middleware.ts";
+export type {
+  CallerIdentityMiddlewareOptions,
+  CallerIdentityMode,
+} from "./src/auth/caller-middleware.ts";
+
 // Re-export cache (for direct use or DI in tests)
 export { getCache, setCache } from "./src/cache/cache.ts";
 export { MemoryCache } from "./src/cache/memory.ts";
