@@ -47,6 +47,7 @@ import { buildAuthProvider, loadAuthConfig } from "./src/auth/config.ts";
 import { warmCache } from "./src/cache/warm.ts";
 import { resourceMetadataRoute } from "./src/auth/resource-metadata-route.ts";
 import { loadMrtrConfig } from "./src/mrtr/config.ts";
+import { installClaudeCodeStdioCompat } from "./src/claude-code-stdio-compat.ts";
 
 const DEFAULT_HTTP_PORT = 3012;
 
@@ -225,6 +226,7 @@ async function main() {
       },
     });
   } else {
+    installClaudeCodeStdioCompat();
     await server.start();
     console.error("[hvgerp-mcp] stdio mode ready");
   }

@@ -8,6 +8,20 @@ This package is a fork of
 deliberately still point at the upstream repository, where those commits, pull
 requests and tags actually live.
 
+## [3.0.2] - 2026-08-16
+
+### Fixed
+
+- stdio transport: stamp `resultType: "complete"` onto `tools/list`,
+  `resources/list`, and `prompts/list` responses that lack it. Claude Code's
+  MCP client currently requires this field even at the 2025-11-25 protocol
+  revision stdio negotiates, where the spec defines a missing `resultType` as
+  `"complete"` — a bridge Claude Code's own error message names but does not
+  honor. `@casys/mcp-server` correctly omits the field there per spec; this
+  patches the wire format after serialization so Claude Code connects,
+  without changing the SDK's spec-correct behavior. See
+  `src/claude-code-stdio-compat.ts`.
+
 ## [3.0.1] - 2026-08-08
 
 ### Changed
