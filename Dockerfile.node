@@ -1,0 +1,28 @@
+# Bản đóng gói Node cho chế độ HTTP (remote MCP server sau reverse proxy).
+#
+# Vì sao có tệp này bên cạnh `Dockerfile` (nền Deno): `Dockerfile` chạy `deno cache` nên phụ thuộc
+# jsr.io lúc build, và `@casys/mcp-server` chỉ giải được qua JSR - bản trên npm ship TS thô, Deno từ
+# chối strip type cho tệp nằm dưới `node_modules` (`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`),
+# nên đổi specifier sang `npm:` KHÔNG phải phương án lùi. Ngày 2026-08-16 jsr.io trả 403 cho mọi
+# client không phải trình duyệt và build đứng luôn.
+#
+# Bản này không đụng tới jsr: nó cài đúng gói đã publish `@hvgllc/hvgerp-mcp`, tức bundle esbuild do
+# `scripts/build-node.sh` sinh ra, vốn đã lấy `@casys/mcp-server` từ npm. Đổi lại là image chỉ chạy
+# được ĐÚNG phiên bản đã publish: muốn triển khai code chưa release thì `npm publish` trước, hoặc
+# dùng `Dockerfile` nền Deno khi jsr.io còn sống.
+FROM node:22-slim
+
+# Ghim phiên bản để image tái lập được. Nâng cấp = đổi giá trị này, không phải build lại cùng tag.
+ARG HVGERP_MCP_VERSION=3.0.3
+
+ENV NODE_ENV=production
+
+RUN npm install -g "@hvgllc/hvgerp-mcp@${HVGERP_MCP_VERSION}" \
+  && npm cache clean --force
+
+# Image `node` có sẵn user `node` (uid 1000). Server không ghi gì xuống đĩa nên không cần root.
+USER node
+
+EXPOSE 7654
+
+CMD ["hvgerp-mcp", "--http", "--port=7654", "--hostname=0.0.0.0"]
