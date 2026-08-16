@@ -17,12 +17,15 @@ import {
 } from "./submit-helpers.ts";
 import {
   applyAssignment,
+  assignedToFilter,
   ASSIGNMENT_INPUT_PROPERTIES,
   fetchDocAfterAssignment,
   prepareAssignment,
   removeAssignment,
+  resolveAssignees,
   validateAssignees,
 } from "./assignment.ts";
+import { resolveUser } from "../api/resolve.ts";
 import {
   getMethodAllowlist,
   isMethodAllowed,
@@ -162,6 +165,11 @@ export const operationsTools: ErpNextTool[] = [
 
   {
     name: "erpnext_doc_create",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
     description:
       "Create any ERPNext document. Works on any DocType including master data " +
       "(Company, Item Group, UOM, Territory, Customer Group, Supplier Group, Warehouse Type, etc.). " +
@@ -210,6 +218,11 @@ export const operationsTools: ErpNextTool[] = [
 
   {
     name: "erpnext_doc_update",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+    },
     description:
       "Update any ERPNext document (partial update). Works on any DocType. " +
       "Pass doctype (e.g. 'Customer', 'Sales Order'), the document name, and the fields to change. " +
@@ -484,6 +497,18 @@ export const operationsTools: ErpNextTool[] = [
             items: { type: "string" },
           },
         },
+        assigned_to: {
+          type: "string",
+          description:
+            'Only documents assigned to this person via Frappe assignment. Accepts "me" ' +
+            "for the calling user, a User id (email) or a full name.",
+        },
+        owner: {
+          type: "string",
+          description:
+            'Only documents created by this person. Accepts "me" for the calling user, ' +
+            "a User id (email) or a full name.",
+        },
         limit: { type: "number", description: "Max results (default 20)" },
         order_by: {
           type: "string",
@@ -499,8 +524,25 @@ export const operationsTools: ErpNextTool[] = [
 
       const limit = (input.limit as number) ?? 20;
       const fields = (input.fields as string[]) ?? ["name", "modified"];
-      const filters = (input.filters as FrappeFilter[]) ?? [];
+      const filters = [...((input.filters as FrappeFilter[]) ?? [])];
       const order_by = (input.order_by as string) ?? "modified desc";
+
+      // Appended after the caller's own filters so an explicit `_assign`/`owner` tuple in
+      // `filters` still applies; both narrow the result set, so the order is immaterial.
+      if (input.assigned_to) {
+        filters.push(
+          assignedToFilter(
+            await resolveUser(ctx.client, input.assigned_to as string),
+          ),
+        );
+      }
+      if (input.owner) {
+        filters.push([
+          "owner",
+          "=",
+          await resolveUser(ctx.client, input.owner as string),
+        ]);
+      }
 
       const docs = await ctx.client.list(input.doctype as string, {
         fields,
@@ -522,6 +564,11 @@ export const operationsTools: ErpNextTool[] = [
 
   {
     name: "erpnext_doc_assign",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
     description:
       "Assign any ERPNext document to one or more users through Frappe's native " +
       "assignment workflow (per-assignee ToDo, _assign sync, permission sharing, " +
@@ -551,10 +598,11 @@ export const operationsTools: ErpNextTool[] = [
       if (!input.name) {
         throw new Error("[erpnext_doc_assign] 'name' is required");
       }
-      const assignment = prepareAssignment(input, "erpnext_doc_assign");
-      if (!assignment) {
+      const prepared = prepareAssignment(input, "erpnext_doc_assign");
+      if (!prepared) {
         throw new Error("[erpnext_doc_assign] 'assign_to' is required");
       }
+      const assignment = await resolveAssignees(prepared, ctx);
 
       const doctype = input.doctype as string;
       const name = input.name as string;
@@ -589,6 +637,11 @@ export const operationsTools: ErpNextTool[] = [
 
   {
     name: "erpnext_doc_unassign",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+    },
     description:
       "Remove one user's assignment from any ERPNext document through Frappe's " +
       "native workflow (closes the user's ToDo and resyncs _assign). " +
@@ -609,7 +662,9 @@ export const operationsTools: ErpNextTool[] = [
         },
         assign_to: {
           type: "string",
-          description: "User email whose assignment should be removed",
+          description:
+            'User whose assignment should be removed. Accepts "me" for the calling ' +
+            "user, a User id (email) or a full name.",
           minLength: 1,
         },
       },
@@ -630,7 +685,10 @@ export const operationsTools: ErpNextTool[] = [
 
       const doctype = input.doctype as string;
       const name = input.name as string;
-      const assignee = input.assign_to.trim();
+      const assignee = await resolveUser(ctx.client, input.assign_to.trim(), {
+        allowPartialMatch: false,
+        inputPath: "assign_to",
+      });
       const unassignment = await removeAssignment(
         doctype,
         name,

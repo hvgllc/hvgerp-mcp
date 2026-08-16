@@ -131,6 +131,11 @@ export const assetsTools: ErpNextTool[] = [
 
   {
     name: "erpnext_asset_create",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
     description:
       "Create a new Asset record. Requires asset_name, asset_category, company, purchase_date, " +
       "gross_purchase_amount. Optionally set location, custodian, item_code.",

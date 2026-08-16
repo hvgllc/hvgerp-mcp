@@ -101,6 +101,11 @@ export const purchasingTools: ErpNextTool[] = [
 
   {
     name: "erpnext_supplier_create",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
     description:
       "Create a new ERPNext Supplier. Requires supplier_name and supplier_group. " +
       "Returns the created supplier document.",
@@ -263,6 +268,11 @@ export const purchasingTools: ErpNextTool[] = [
 
   {
     name: "erpnext_purchase_order_create",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
     description:
       "Create a new Purchase Order. Requires supplier and at least one item with item_code, qty, rate. " +
       "Optionally set schedule_date (YYYY-MM-DD).",

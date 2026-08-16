@@ -95,6 +95,11 @@ export const crmTools: ErpNextTool[] = [
 
   {
     name: "erpnext_lead_create",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
     description:
       "Create a new CRM Lead. Requires lead_name. Optionally set company_name, email_id, mobile_no, source.",
     category: "crm",

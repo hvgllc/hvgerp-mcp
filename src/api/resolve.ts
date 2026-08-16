@@ -11,6 +11,11 @@
 
 import { FrappeAPIError, type FrappeClient } from "./frappe-client.ts";
 import { getCache } from "../cache/cache.ts";
+import {
+  isSelfReference,
+  resolveSelfEmployee,
+  resolveSelfUser,
+} from "./identity.ts";
 
 /** How long a confirmed "identifier is not a valid ID" result is remembered. */
 const NEGATIVE_CACHE_TTL_MS = 15_000;
@@ -167,12 +172,36 @@ export async function resolveLink(
   throw new Error(`[resolveLink] No ${doctype} found matching "${identifier}"`);
 }
 
+/**
+ * Resolve an employee-typed input, accepting `me` for the caller themselves.
+ *
+ * The self-reference is handled here rather than at each call site because every employee-typed
+ * tool input already funnels through this one function. Adding it per tool would leave whichever
+ * tool was missed resolving `me` as a literal name — and `resolveLink`'s partial rung would then
+ * happily match any employee whose name contains "me".
+ */
 export function resolveEmployee(
   client: FrappeClient,
   identifier: string,
   options: ResolveLinkOptions = {},
 ): Promise<string> {
+  if (isSelfReference(identifier)) return resolveSelfEmployee(client);
   return resolveLink(client, "Employee", identifier, "employee_name", options);
+}
+
+/**
+ * Resolve a `User`-typed input (assignee, owner, approver), accepting `me`.
+ *
+ * Users are matched on `full_name` because that is what a person typing a name has; the ID is an
+ * email address, which `resolveLink`'s fast path already handles.
+ */
+export function resolveUser(
+  client: FrappeClient,
+  identifier: string,
+  options: ResolveLinkOptions = {},
+): Promise<string> {
+  if (isSelfReference(identifier)) return resolveSelfUser(client);
+  return resolveLink(client, "User", identifier, "full_name", options);
 }
 
 export function resolveCustomer(

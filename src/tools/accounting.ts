@@ -283,6 +283,11 @@ export const accountingTools: ErpNextTool[] = [
 
   {
     name: "erpnext_journal_entry_create",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
     description:
       "Create a new Journal Entry. Requires voucher_type and accounts with debit/credit amounts. " +
       "Total debits must equal total credits.",

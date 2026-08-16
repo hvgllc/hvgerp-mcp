@@ -293,6 +293,11 @@ export const hrTools: ErpNextTool[] = [
 
   {
     name: "erpnext_leave_application_create",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
     description:
       "Create a new Leave Application. Requires employee, leave_type, from_date, to_date. " +
       "Dates in YYYY-MM-DD format.",
@@ -621,6 +626,11 @@ export const hrTools: ErpNextTool[] = [
 
   {
     name: "erpnext_expense_claim_create",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
     description:
       "Create a new Expense Claim. Requires employee and expenses array. " +
       "Each expense item maps to the Expense Claim Detail child table.",

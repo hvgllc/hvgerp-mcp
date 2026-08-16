@@ -57,6 +57,35 @@ import { SERVER_VERSION } from "./src/version.ts";
 
 const DEFAULT_HTTP_PORT = 3012;
 
+/**
+ * Sent to the client on `initialize`, before it has seen a single tool.
+ *
+ * Kept to the handful of rules a model cannot infer from the tool list itself: that first-person
+ * questions need an identity lookup first, that `me` is accepted where a name is expected, and that
+ * a permission refusal is an answer rather than a bug to route around.
+ */
+const SERVER_INSTRUCTIONS =
+  `This server exposes a live ERPNext/Frappe instance (HVG Group).
+
+WHO IS ASKING
+- Whenever the request is first-person - "my tasks", "what am I working on", "my leave balance",
+  "cong viec cua toi" - call \`erpnext_whoami\` BEFORE any other tool. It returns the caller's User
+  id, roles and linked Employee record; no other tool can produce them.
+- \`erpnext_my_work\` answers "what is on my plate" in one call and needs no arguments.
+- Anywhere a tool takes an employee or user, the literal string \`me\` resolves to the caller.
+- \`erpnext_whoami\` reports \`identity_mode\`. When it is \`shared-service-account\`, the profile
+  belongs to a service account and NOT to the person you are talking to - say so instead of
+  presenting it as theirs.
+
+PERMISSIONS
+- Every call runs under the caller's own ERPNext permissions. A refusal or an empty list is a real
+  answer about what this person may see; report it, and do not retry the same read through a
+  different tool hoping for a wider view.
+
+WRITES
+- Tools whose name ends in _create, _update, _submit, _cancel, _delete or _move change live business
+  data. Confirm the details with the user before calling one.`;
+
 async function main() {
   const args = getArgs();
 
@@ -116,6 +145,10 @@ async function main() {
     name: "hvgerp-mcp",
     version: SERVER_VERSION,
     transport: "stateless",
+    // Read by the client before the first tool call. It exists for one reason: nothing in a tool
+    // list tells a model that "my tasks" needs a lookup step first, so without this the model
+    // either invents an employee id or asks the user to type their own email address.
+    instructions: SERVER_INSTRUCTIONS,
     cache: {
       // `private` once results are caller-scoped: with per-user identity the same tool call returns
       // different rows to different people, so a shared cache would hand one caller another's data.

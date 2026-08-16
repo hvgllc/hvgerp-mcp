@@ -148,6 +148,11 @@ export const kanbanTools: ErpNextTool[] = [
   },
   {
     name: "erpnext_kanban_move_card",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+    },
     category: "kanban",
     description: "Move a kanban card for a supported ERPNext DocType. " +
       "Returns structured success or business error details for MCP App reconciliation.",

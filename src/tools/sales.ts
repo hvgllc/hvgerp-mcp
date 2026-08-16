@@ -153,6 +153,11 @@ export const salesTools: ErpNextTool[] = [
 
   {
     name: "erpnext_customer_create",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
     description: "Create a new Customer. Requires customer_name. " +
       "Optionally set customer_group, territory, email_id.",
     category: "sales",
@@ -207,6 +212,11 @@ export const salesTools: ErpNextTool[] = [
 
   {
     name: "erpnext_customer_update",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+    },
     description:
       "Update an existing Customer. Pass only the fields you want to change.",
     category: "sales",
@@ -354,6 +364,11 @@ export const salesTools: ErpNextTool[] = [
 
   {
     name: "erpnext_sales_order_create",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
     _meta: INVOICE_META,
     description:
       "Create a new Sales Order. Requires customer and at least one item with item_code, qty, rate. " +
@@ -446,6 +461,11 @@ export const salesTools: ErpNextTool[] = [
 
   {
     name: "erpnext_sales_order_update",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+    },
     description: "Update an existing Sales Order (only in Draft status). " +
       "Pass only the fields you want to change (e.g. delivery_date, items).",
     category: "sales",
@@ -691,6 +711,11 @@ export const salesTools: ErpNextTool[] = [
 
   {
     name: "erpnext_sales_invoice_create",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
     description:
       "Create a new Sales Invoice. Requires customer and at least one item. " +
       "On a fresh ERPNext instance, you may also need to set company, selling_price_list, and currency. " +
@@ -946,6 +971,11 @@ export const salesTools: ErpNextTool[] = [
 
   {
     name: "erpnext_quotation_create",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
     _meta: INVOICE_META,
     description: "Create a new Quotation for a customer or lead. " +
       "Requires quotation_to (Customer or Lead), party_name, and at least one item.",

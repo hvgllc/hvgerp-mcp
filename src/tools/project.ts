@@ -11,12 +11,14 @@ import type { ErpNextTool } from "./types.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
 import {
   applyAssignment,
+  assignedToFilter,
   ASSIGNMENT_INPUT_PROPERTIES,
   fetchDocAfterAssignment,
   prepareAssignment,
+  resolveAssignees,
   validateAssignees,
 } from "./assignment.ts";
-import { resolveEmployee } from "../api/resolve.ts";
+import { resolveEmployee, resolveUser } from "../api/resolve.ts";
 
 export const projectTools: ErpNextTool[] = [
   // ── Projects ──────────────────────────────────────────────────────────────
@@ -132,6 +134,12 @@ export const projectTools: ErpNextTool[] = [
           description: "Filter by priority (Low, Medium, High, Urgent)",
           enum: ["Low", "Medium", "High", "Urgent"],
         },
+        assigned_to: {
+          type: "string",
+          description:
+            'Only tasks assigned to this person. Accepts "me" for the calling user, ' +
+            "a User id (email) or a full name.",
+        },
         date_from: {
           type: "string",
           description: "Start date filter YYYY-MM-DD",
@@ -142,6 +150,13 @@ export const projectTools: ErpNextTool[] = [
     handler: async (input, ctx) => {
       const limit = (input.limit as number) ?? 20;
       const filters: FrappeFilter[] = [];
+      if (input.assigned_to) {
+        filters.push(
+          assignedToFilter(
+            await resolveUser(ctx.client, input.assigned_to as string),
+          ),
+        );
+      }
       if (input.project) {
         filters.push(["project", "=", input.project as string]);
       }
@@ -185,6 +200,11 @@ export const projectTools: ErpNextTool[] = [
 
   {
     name: "erpnext_task_create",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
     description:
       "Create a new Task in a project. Requires project and subject. " +
       "Dates in YYYY-MM-DD format. Use assign_to for Frappe's native assignment workflow; native notifications are sent to assigned users.",
@@ -231,8 +251,9 @@ export const projectTools: ErpNextTool[] = [
         throw new Error("[erpnext_task_create] 'subject' is required");
       }
 
-      const assignment = prepareAssignment(input, "erpnext_task_create");
+      let assignment = prepareAssignment(input, "erpnext_task_create");
       if (assignment) {
+        assignment = await resolveAssignees(assignment, ctx);
         await validateAssignees(
           assignment.assignees,
           "erpnext_task_create",
@@ -304,6 +325,11 @@ export const projectTools: ErpNextTool[] = [
 
   {
     name: "erpnext_task_update",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+    },
     description:
       "Update an existing Task. Pass only the fields you want to change. " +
       "Commonly used to change status, progress, or dates. Use assign_to for Frappe's native assignment workflow; native notifications are sent to assigned users.",
@@ -347,8 +373,9 @@ export const projectTools: ErpNextTool[] = [
         throw new Error("[erpnext_task_update] 'name' is required");
       }
 
-      const assignment = prepareAssignment(input, "erpnext_task_update");
+      let assignment = prepareAssignment(input, "erpnext_task_update");
       if (assignment) {
+        assignment = await resolveAssignees(assignment, ctx);
         await validateAssignees(
           assignment.assignees,
           "erpnext_task_update",
@@ -514,6 +541,11 @@ export const projectTools: ErpNextTool[] = [
 
   {
     name: "erpnext_project_create",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
     description:
       "Create a new Project. Requires project_name. Optionally set expected_start_date and expected_end_date.",
     category: "project",

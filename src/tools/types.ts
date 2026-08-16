@@ -18,6 +18,7 @@ export type { ToolAnnotations };
 
 /** Available tool categories */
 export type ErpNextToolCategory =
+  | "identity"
   | "sales"
   | "inventory"
   | "accounting"

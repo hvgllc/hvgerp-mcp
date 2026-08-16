@@ -102,6 +102,11 @@ export const inventoryTools: ErpNextTool[] = [
 
   {
     name: "erpnext_item_create",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
     description:
       "Create a new Item (product or service). Requires item_code and item_name. " +
       "Set is_stock_item=false for service/non-stocked items.",
@@ -161,6 +166,11 @@ export const inventoryTools: ErpNextTool[] = [
 
   {
     name: "erpnext_item_update",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+    },
     description:
       "Update an existing Item. Pass only the fields you want to change.",
     category: "inventory",
@@ -410,6 +420,11 @@ export const inventoryTools: ErpNextTool[] = [
 
   {
     name: "erpnext_stock_entry_create",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
     description:
       "Create a new Stock Entry (material issue, receipt, or transfer). " +
       "Requires stock_entry_type and items with item_code and qty. " +
