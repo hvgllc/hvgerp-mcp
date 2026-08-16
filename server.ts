@@ -226,7 +226,10 @@ async function main() {
       },
     });
   } else {
-    installClaudeCodeStdioCompat();
+    // Mirrors the `cache` option above — kept in sync so the stdio compat
+    // shim stamps the same ttlMs/cacheScope the SDK itself would emit under
+    // a transport that negotiates 2026-07-28.
+    installClaudeCodeStdioCompat({ ttlMs: 3_600_000, cacheScope: "public" });
     await server.start();
     console.error("[hvgerp-mcp] stdio mode ready");
   }
