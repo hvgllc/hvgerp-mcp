@@ -60,8 +60,10 @@ function makeCtx(
 
 Deno.test("erpnext_whoami reports the caller, their roles and their Employee", async () => {
   clearCallerProfileCache();
-  const result = await tool("erpnext_whoami").handler({}, makeCtx()) as
-    Record<string, unknown>;
+  const result = await tool("erpnext_whoami").handler({}, makeCtx()) as Record<
+    string,
+    unknown
+  >;
 
   assertEquals(
     (result.user as Record<string, unknown>).name,
@@ -76,8 +78,10 @@ Deno.test("erpnext_whoami reports the caller, their roles and their Employee", a
 
 Deno.test("erpnext_whoami warns when the profile is a shared service account", async () => {
   clearCallerProfileCache();
-  const result = await tool("erpnext_whoami").handler({}, makeCtx()) as
-    Record<string, unknown>;
+  const result = await tool("erpnext_whoami").handler({}, makeCtx()) as Record<
+    string,
+    unknown
+  >;
 
   assertEquals(result.identity_mode, "shared-service-account");
   assertStringIncludes(
@@ -91,8 +95,10 @@ Deno.test("erpnext_whoami says so when the caller has no Employee record", async
   const ctx = makeCtx({
     list: async (doctype: string) => doctype === "Employee" ? [] : [],
   });
-  const result = await tool("erpnext_whoami").handler({}, ctx) as
-    Record<string, unknown>;
+  const result = await tool("erpnext_whoami").handler({}, ctx) as Record<
+    string,
+    unknown
+  >;
 
   assertEquals(result.employee, null);
   assertStringIncludes(
@@ -146,8 +152,10 @@ Deno.test("erpnext_my_work skips employee-keyed sections without an Employee", a
     },
   }, calls);
 
-  const result = await tool("erpnext_my_work").handler({}, ctx) as
-    Record<string, unknown>;
+  const result = await tool("erpnext_my_work").handler({}, ctx) as Record<
+    string,
+    unknown
+  >;
 
   const skipped = result.skipped_sections as Record<string, unknown>;
   assertEquals(skipped.sections, [
@@ -175,8 +183,10 @@ Deno.test("erpnext_my_work reports a refused section instead of failing the call
     },
   });
 
-  const result = await tool("erpnext_my_work").handler({}, ctx) as
-    Record<string, unknown>;
+  const result = await tool("erpnext_my_work").handler({}, ctx) as Record<
+    string,
+    unknown
+  >;
 
   assertEquals(
     (result.timesheets as Record<string, unknown>).error,

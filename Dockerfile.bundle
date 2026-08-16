@@ -1,0 +1,31 @@
+# Bản đóng gói Node cho chế độ HTTP, dựng từ bundle TẠI CHỖ thay vì từ npm registry.
+#
+# Khác `Dockerfile.node` đúng một điểm: `Dockerfile.node` chạy `npm install -g @hvgllc/hvgerp-mcp`
+# nên chỉ triển khai được phiên bản ĐÃ publish. Image này COPY thẳng kết quả của
+# `scripts/build-node.sh` - một bundle esbuild tự chứa (`hvgerp-mcp.mjs` + `ui-dist`, mọi dependency
+# runtime đã nằm trong đó) - nên triển khai được code chưa release. Nó cũng không đụng jsr.io, cùng
+# lý do đã ghi ở `Dockerfile.node`.
+#
+# Đổi lại hai ràng buộc: phải chạy build TRƯỚC khi `docker build`, và `dist-node/` nằm trong
+# `.gitignore` nên một lần clone sạch KHÔNG có sẵn thứ để COPY (`.dockerignore` đã mở ngoại lệ cho
+# riêng `dist-node/bin/`).
+#
+# Cách dùng (context là gốc repo):
+#   ./scripts/build-node.sh
+#   docker build -f Dockerfile.bundle -t ghcr.io/hvgllc/hvgerp-mcp:3.1.0-bundle .
+FROM node:22-slim
+
+ENV NODE_ENV=production
+WORKDIR /app
+
+# `--chmod` là bắt buộc, không phải cho gọn: COPY giữ nguyên mode của tệp trên máy build, mà
+# `scripts/build-node.sh` chạy `chmod +x` dưới umask của người build nên bundle thường ra mode 711.
+# User `node` không phải chủ sở hữu sẽ chỉ có quyền `--x`, và Node chết `EACCES: permission denied`
+# ngay khi đọc module - lỗi trông như hỏng image chứ không như lỗi quyền tệp.
+COPY --chmod=0644 dist-node/bin/hvgerp-mcp.mjs /app/hvgerp-mcp.mjs
+COPY --chmod=0644 dist-node/bin/ui-dist /app/ui-dist
+
+USER node
+EXPOSE 7654
+
+CMD ["node", "/app/hvgerp-mcp.mjs", "--http", "--port=7654", "--hostname=0.0.0.0"]
