@@ -8,7 +8,7 @@ This package is a fork of
 deliberately still point at the upstream repository, where those commits, pull
 requests and tags actually live.
 
-## [Unreleased]
+## [3.3.0] - 2026-08-17
 
 ### Added
 
@@ -40,13 +40,19 @@ requests and tags actually live.
   A virtual DocType gets the same flag and the header carries `is_virtual`:
   there is no table behind it either, its rows come from a Python controller,
   and only that controller decides what it will filter on. The owners of a child
-  table are enumerated from `DocField` rather than taken from `getdoctype`,
-  whose `with_parent` helper is built on `frappe.db.get_value` and therefore
-  names exactly one arbitrary owner - `Sales Taxes and Charges` has six on a
-  live instance and the endpoint names only `Quotation`, which would have
-  refused a caller who can read `Sales Invoice`. An account that cannot read
-  `DocField` still falls back to that single name, and the refusal then says the
-  owner list may be partial instead of presenting it as complete.
+  table are enumerated from `DocField` and `Custom Field` rather than taken from
+  `getdoctype`, whose `with_parent` helper is built on `frappe.db.get_value` and
+  therefore names exactly one arbitrary owner - `Sales Taxes and Charges` has
+  six on a live instance and the endpoint names only `Quotation`, which would
+  have refused a caller who can read `Sales Invoice`. `Custom Field` is the
+  second source because a Table field added through Customize Form or an app
+  installer is declared there and nowhere else: measured on a live instance,
+  `Department Approver` and `Designation Skill` resolve to zero owners from
+  `DocField` alone and were refused to every account including Administrator.
+  Whenever a source refuses and no owner it did enumerate is readable, that
+  single arbitrary name is asked for after the real list has been exhausted,
+  and the refusal then names the source that was denied and says the owner list
+  may be partial instead of presenting it as complete.
 - **`erpnext_calendar_events`.** Lists Events over a date range through the same
   call the ERPNext calendar uses, so a repeating event is expanded into one row
   per occurrence, each tagged `is_recurring` (read from the stored
@@ -138,9 +144,11 @@ requests and tags actually live.
   `frappe.db.get_value` and therefore names exactly one arbitrary parent:
   `Sales Taxes and Charges` has six owners on a live instance and the endpoint
   named only `Quotation`, so a caller who can read `Sales Invoice` was refused
-  its schema. Owners are now enumerated from `DocField` and each one is probed,
-  and an account that cannot read `DocField` falls back to the single name with
-  the refusal saying the list may be partial rather than presenting it as
+  its schema. Owners are now enumerated from `DocField` and `Custom Field` and
+  each one is probed. When a source refuses and none of the owners it did
+  enumerate is readable, that single arbitrary name is asked for afterwards -
+  after the real list, never before it - and the refusal names the source that
+  was denied and says the list may be partial rather than presenting it as
   complete.
 - **Both viewers name a truncated page as a page.** When the server total
   exceeded the rows in hand and no client-side filter was active, the header
@@ -187,7 +195,12 @@ requests and tags actually live.
   this tool exists to prevent. Each description says how to filter the column: a
   substring match that keeps the quotes around a User id for the JSON-array ones
   (an unquoted pattern also matches every longer id ending in the same
-  characters) and one that keeps the commas for `_user_tags`. `_comments` is
+  characters) and a plain substring match for `_user_tags`, which `DocTags`
+  writes as `",".join(tags)` with no leading or trailing comma - a comma-padded
+  pattern therefore never matches the first tag, the last tag, or any
+  single-tag document, and the empty result reads as "nothing carries this
+  tag". Measured on the live instance: 23 distinct values, 13 of them a bare
+  single tag, and 0 of 115 rows carrying a comma at either end. `_comments` is
   named as the sidebar cache it is, pointing at the `Comment` DocType as the
   record of truth.
 - **A truncated owner list no longer blames the caller's permissions.** The
@@ -248,6 +261,18 @@ requests and tags actually live.
   module gates it against a parent - so `erpnext_doc_list` refuses it for every
   account except Administrator. It now says to read a parent document with
   `erpnext_doc_get`, which returns the child rows inline.
+- **A calendar row without a name or a start is refused, not turned into a
+  meeting.** The response being an array said nothing about its elements, and
+  `name` and `starts_on` are both mandatory stored columns of `Event`, so a row
+  missing either had broken the same contract a non-array answer breaks. It
+  survived the mapping instead and reached the model as a real calendar entry
+  with no subject, no time and an `_id` of `undefined::#0` - a phantom meeting,
+  which a model presents as fact rather than as the upstream fault it is.
+- **An owner row that omits the field it was asked for is a broken response.**
+  The owner column is the only field the enumeration requests and it is
+  mandatory on every row of that table, so a row without it means the endpoint
+  broke its contract. Dropping the row silently shrank the owner list and turned
+  the fault into a permission refusal - the swap this module exists to avoid.
 
 ## [3.2.0] - 2026-08-17
 
