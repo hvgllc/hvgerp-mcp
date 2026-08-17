@@ -264,3 +264,48 @@ Deno.test("resolveSelfEmployee names the permission, not a missing record, when 
   // Sending this caller to HR to have a record created would be the wrong door.
   assertEquals(error.message.includes("has no Employee record"), false);
 });
+
+Deno.test("loadCallerProfile does not serve one client's profile to another", async () => {
+  clearCallerProfileCache();
+  let firstCalls = 0;
+  const first = makeClient({
+    callMethod: async () => {
+      firstCalls++;
+      return "khoa.do@havigroup.com";
+    },
+  });
+  const second = makeClient({
+    callMethod: async () => "huong.ngo@havigroup.com",
+    get: async () => ({
+      ...USER_DOC,
+      name: "huong.ngo@havigroup.com",
+      email: "huong.ngo@havigroup.com",
+      full_name: "Ngo Huong",
+    }),
+    list: async () => [{
+      ...EMPLOYEE_ROW,
+      name: "HR-EMP-00007",
+      employee_name: "Ngo Huong",
+    }],
+  });
+
+  assertEquals(
+    (await loadCallerProfile(first)).user.name,
+    "khoa.do@havigroup.com",
+  );
+
+  // Neither client carries a caller identity, so the principal half of the key is the very
+  // same string for both of them. `mod.ts` exports `setFrappeClient`, so an embedder can
+  // point a second client at a second ERPNext site: keyed on the principal alone, that
+  // second site was answered with the first site's User and Employee ID for a full TTL.
+  const other = await loadCallerProfile(second);
+  assertEquals(other.user.name, "huong.ngo@havigroup.com");
+  assertEquals(other.employee?.name, "HR-EMP-00007");
+
+  // Control: partitioning must not turn the cache off. The first client answers from memory.
+  assertEquals(
+    (await loadCallerProfile(first)).user.name,
+    "khoa.do@havigroup.com",
+  );
+  assertEquals(firstCalls, 1);
+});
