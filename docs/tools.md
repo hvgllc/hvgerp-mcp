@@ -318,14 +318,29 @@ the child (the ones carrying a Table or Table MultiSelect field pointing at it)
 and passes as soon as the caller can read any of them; when none is readable,
 the error names them.
 
-That list comes from enumerating `DocField`, not from `getdoctype`. Frappe's
-`with_parent` helper is built on `frappe.db.get_value`, so it returns exactly
-one owner and which one is arbitrary: `Sales Taxes and Charges` is owned by six
-DocTypes on the reference instance and the endpoint names only `Quotation`, so a
-caller who can read `Sales Invoice` would have been refused. Enumeration is not
-a permission hole - `frappe.client.get_list` applies DocType permissions like
-any other list - but it does mean an account that cannot read `DocField` gets
-only the single owner. That case is flagged in the refusal, which says the list
+That list comes from enumerating the DocTypes that declare the Table field, not
+from `getdoctype`. Frappe's `with_parent` helper is built on
+`frappe.db.get_value`, so it returns exactly one owner and which one is
+arbitrary: `Sales Taxes and Charges` is owned by six DocTypes on the reference
+instance and the endpoint names only `Quotation`, so a caller who can read
+`Sales Invoice` would have been refused.
+
+A Table field can be declared in two places, and both are read. `DocField` holds
+the ones shipped in a DocType's own definition; `Custom Field` holds the ones
+added through Customize Form or by an app's installer, keyed by `dt` rather than
+`parent`. `DocField` alone is not enough: on the reference instance it carries
+559 Table rows against 4 in `Custom Field`, but those 4 are the only owner their
+child has, so `Department Approver` and `Designation Skill` resolved to no owner
+at all and were refused for every account including Administrator.
+
+Enumeration is not a permission hole - `frappe.client.get_list` applies DocType
+permissions like any other list - but an account may be able to read one source
+and not the other. A source that refuses is skipped, and the refusal names that
+source specifically, so the caller is not sent to ask for a permission they
+already hold. Only when neither source is readable does the tool fall back to
+the single arbitrary owner from `getdoctype`; reaching for it while one source
+answered would add a name the caller is then gated against, on top of a list
+that is already real. Either gap is flagged in the refusal, which says the list
 may be partial rather than presenting one name as the complete set of owners.
 
 `permlevel` above 0 marks a field governed by a separate role permission, which

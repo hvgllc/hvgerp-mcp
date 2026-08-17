@@ -1143,3 +1143,78 @@ Deno.test("erpnext_calendar_events - forwards an explicit user to ERPNext", asyn
 
   assertEquals(seenArgs.user, "boss@example.com");
 });
+
+Deno.test("erpnext_calendar_events - row identity survives an event appearing earlier in the window", async () => {
+  // `DoclistViewer` keeps `expandedId` across a refresh, so a positional id
+  // silently reattaches the open panel to a different occurrence the moment the
+  // set shifts. One event created earlier in the window is enough: with
+  // `${name}::${index}` every later occurrence moved by one.
+  const OCCURRENCES = [
+    {
+      name: "EV00045",
+      subject: "Hop giao ban tuan",
+      starts_on: "2026-08-17 08:30:00",
+      repeat_this_event: 1,
+      repeat_on: "Weekly",
+    },
+    {
+      name: "EV00045",
+      subject: "Hop giao ban tuan",
+      starts_on: "2026-08-24 08:30:00",
+      repeat_this_event: 1,
+      repeat_on: "Weekly",
+    },
+  ];
+  const EARLIER = {
+    name: "EV00099",
+    subject: "Hop dot xuat",
+    starts_on: "2026-08-16 09:00:00",
+  };
+
+  const ask = async (events: unknown[]) =>
+    await getTool("erpnext_calendar_events").handler(
+      { start: "2026-08-16", end: "2026-08-30" },
+      makeCtx(makeMockClient({ callMethod: async () => events })),
+      // deno-lint-ignore no-explicit-any
+    ) as any;
+
+  const before = await ask(OCCURRENCES);
+  const after = await ask([EARLIER, ...OCCURRENCES]);
+
+  const idOf = (
+    // deno-lint-ignore no-explicit-any
+    result: any,
+    startsOn: string,
+    // deno-lint-ignore no-explicit-any
+  ) => result.data.find((row: any) => row.starts_on === startsOn)._id;
+
+  assertEquals(after.data.length, 3);
+  for (const occurrence of OCCURRENCES) {
+    assertEquals(
+      idOf(after, occurrence.starts_on),
+      idOf(before, occurrence.starts_on),
+    );
+  }
+});
+
+Deno.test("erpnext_calendar_events - two rows with the same master and start still differ", async () => {
+  // The guarantee the positional id used to provide, kept: an identity built
+  // from attributes has to stay unique even when ERPNext hands back a row
+  // twice, or the viewer is back to opening one panel under both.
+  const duplicate = {
+    name: "EV00045",
+    subject: "Hop giao ban tuan",
+    starts_on: "2026-08-17 08:30:00",
+  };
+  const result = await getTool("erpnext_calendar_events").handler(
+    { start: "2026-08-17", end: "2026-08-30" },
+    makeCtx(makeMockClient({ callMethod: async () => [duplicate, duplicate] })),
+    // deno-lint-ignore no-explicit-any
+  ) as any;
+
+  assertEquals(result.data.length, 2);
+  assertEquals(
+    new Set(result.data.map((row: { _id: string }) => row._id)).size,
+    2,
+  );
+});

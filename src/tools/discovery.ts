@@ -205,11 +205,26 @@ const OPTIONAL_FIELDS: readonly StandardField[] = [
   },
   {
     fieldname: "_user_tags",
+    // The comma-padded pattern this used to advertise (`%,urgent,%`) was built
+    // on a storage format that v16 does not use. `DocTags.update` writes
+    // `",".join(tags)` - no leading comma, no trailing one - so the padded
+    // pattern misses the first tag, the last tag, and every single-tag document
+    // outright. Measured on the live instance: 23 distinct `_user_tags` values,
+    // 13 of them a bare tag with no comma at all, and 0 of the 115 rows with a
+    // leading or trailing comma. Guidance that matches nothing is worse than no
+    // guidance, because a model following it reads the empty result as "no
+    // document carries this tag".
+    //
+    // A substring match is the honest answer: Frappe has no exact-match
+    // operator for a packed column, and `Tag Link` - which does store one row
+    // per tag - is readable by role `All` with no query condition, so steering
+    // callers there would hand them document names their own DocType
+    // permissions would have refused.
     label: "Tags",
     fieldtype: "Text",
     options: null,
     description:
-      'Comma-separated tags applied to the document, stored as text with a leading comma (",urgent,vip"). Filter it with a substring match that keeps the commas, e.g. ["_user_tags", "like", "%,urgent,%"]; a bare pattern also matches every longer tag containing the same characters.',
+      'Comma-separated tags applied to the document, stored as one text column with no leading or trailing comma ("Research,LIST,REVIEW", and a single tag is stored bare as "Research"). There is no exact-match filter for it, so use a substring match: ["_user_tags", "like", "%Research%"]. That pattern also matches any tag merely containing those characters ("Research Notes"), so confirm the tag on the rows you keep; do not pad the pattern with commas ("%,Research,%"), which matches neither the first nor the last tag nor any single-tag document.',
   },
   {
     fieldname: "_comments",

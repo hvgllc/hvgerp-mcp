@@ -917,18 +917,45 @@ export const operationsTools: ErpNextTool[] = [
         if (byStart !== 0) return byStart;
         return String(a.name ?? "").localeCompare(String(b.name ?? ""));
       });
+      // Identity for the viewer's expanded panel, one entry per row.
+      //
+      // Every occurrence of a repeating event comes back carrying the stored
+      // master's `name`, so `name` alone is not a row identity: without `_id`,
+      // clicking a Monday occurrence opened the same panel under every other
+      // occurrence of that master and clicking a second one collapsed them all.
+      //
+      // The identity must be a property of the occurrence, not of its position.
+      // `${name}::${index}` was unique but positional, and `DoclistViewer`
+      // keeps `expandedId` across a refresh: one event created or deleted
+      // earlier in the window shifts every later index by one, so the panel the
+      // user left open silently reattaches to a different occurrence. A total
+      // sort makes the order deterministic, which is not the same as making an
+      // index stable - the set it indexes changes. `starts_on` is what actually
+      // distinguishes two occurrences of one master, so it carries the identity.
+      //
+      // `_id` never reaches the tool - the row action still passes `name`, which
+      // is the document ERPNext can actually fetch - and the viewer hides every
+      // underscore-prefixed key from its columns.
+      const usedIds = new Set<string>();
+      const occurrenceId = (
+        event: { name?: unknown; starts_on?: unknown },
+        index: number,
+      ): string => {
+        // The index survives only as the last resort for a row with no
+        // `starts_on` at all, and as the tie-breaker for two rows ERPNext
+        // returned with the same master and the same start. Both are degenerate
+        // enough that a positional id is better than a colliding one.
+        const base = `${event.name}::${event.starts_on ?? `#${index}`}`;
+        let id = base;
+        for (let duplicate = 2; usedIds.has(id); duplicate++) {
+          id = `${base}#${duplicate}`;
+        }
+        usedIds.add(id);
+        return id;
+      };
+
       const data = rows.slice(0, limit).map((event, index) => ({
-        // Every occurrence of a repeating event comes back carrying the stored
-        // master's `name`, so `name` is not a row identity here. The doclist
-        // viewer keys its expanded panel on `_id` when present, and without one
-        // clicking a Monday occurrence opened the same panel under every other
-        // occurrence of that master and clicking a second one collapsed them
-        // all. The index is what makes it unique, and it is stable across a
-        // refresh because the sort above is total: `starts_on` first, `name` to
-        // break ties. It never reaches the tool - the row action still passes
-        // `name`, which is the document ERPNext can actually fetch - and the
-        // viewer hides every underscore-prefixed key from its columns.
-        _id: `${event.name}::${index}`,
+        _id: occurrenceId(event, index),
         name: event.name,
         subject: event.subject,
         starts_on: event.starts_on,

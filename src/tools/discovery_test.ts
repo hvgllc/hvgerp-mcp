@@ -937,3 +937,25 @@ Deno.test("erpnext_doctype_fields - both sources denied names both and falls bac
   // from `getdoctype` worth having.
   assertEquals(asked, ["Sales Invoice"]);
 });
+
+Deno.test("erpnext_doctype_fields - the _user_tags filter advice matches how v16 stores tags", async () => {
+  // `DocTags.update` writes `",".join(tags)`: no leading comma, no trailing
+  // one. Measured on the live instance - 23 distinct `_user_tags` values, 13 of
+  // them a bare single tag, 0 of the 115 rows carrying a comma at either end.
+  // The comma-padded pattern this once advertised therefore matched the first
+  // tag, the last tag and every single-tag document never, and a model
+  // following it reads the empty result as "no document carries this tag".
+  const result = await getTool("erpnext_doctype_fields").handler(
+    { doctype: "Account" },
+    makeCtx(makeMockClient()),
+  ) as any;
+
+  const tags = result.fields.find((f: any) => f.fieldname === "_user_tags");
+  assertStringIncludes(tags.description, "no leading or trailing comma");
+  assertStringIncludes(
+    tags.description,
+    '["_user_tags", "like", "%Research%"]',
+  );
+  // The advice must not hand back the pattern it exists to warn about.
+  assertEquals(tags.description.includes('"like", "%,'), false);
+});
