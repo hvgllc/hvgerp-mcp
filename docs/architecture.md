@@ -1,6 +1,6 @@
 # Repository layout
 
-Where things live. Tool counts are per file and sum to 125.
+Where things live. Tool counts are per file and sum to 127.
 
 ```
 server.ts           # MCP server (stdio + HTTP + inspector)
@@ -15,6 +15,7 @@ src/
     definitions.ts    # Board registry
     types.ts          # Shared kanban contracts
   tools/
+    identity.ts       # 2 identity tools (whoami, my work)
     sales.ts          # 17 sales tools
     inventory.ts      # 9 inventory tools
     purchasing.ts     # 11 purchasing tools

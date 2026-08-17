@@ -282,17 +282,22 @@ export async function resolveDynamicLink(
  *
  * Tự tham chiếu phải xét TRƯỚC lối tắt địa chỉ thư: `@me` và `@self` đều chứa dấu at-sign nên lối
  * tắt sẽ tưởng chúng là ID có sẵn và không dịch.
+ *
+ * `allowPartialMatch` mặc định `false` cho đường GHI, nơi một khớp mờ gắn nhầm người vào tài liệu
+ * thật. Đường ĐỌC (ô lọc `assigned_to` / `owner`) truyền `true` để giữ nguyên hành vi vốn có: ở đó
+ * khớp mờ chỉ làm hẹp một danh sách, và chính `resolveLink` đã ném lỗi liệt kê ứng viên khi nhập
+ * nhằng.
  */
 export function resolveAssigneeUser(
   client: FrappeClient,
   identifier: string,
-  inputPath?: string,
+  options: ResolveLinkOptions = {},
 ): Promise<string> {
   const needsLookup = isSelfReference(identifier) || !identifier.includes("@");
   if (!needsLookup) return Promise.resolve(identifier);
   return resolveUser(client, identifier, {
-    allowPartialMatch: false,
-    inputPath,
+    allowPartialMatch: options.allowPartialMatch ?? false,
+    inputPath: options.inputPath,
   });
 }
 

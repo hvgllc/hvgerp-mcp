@@ -10,12 +10,15 @@
 # `.gitignore` nên một lần clone sạch KHÔNG có sẵn thứ để COPY (`.dockerignore` đã mở ngoại lệ cho
 # riêng `dist-node/bin/`).
 #
-# Cách dùng (context là gốc repo). Bước dựng UI là bắt buộc chứ không phải tuỳ chọn:
-# `src/ui/dist/` nằm trong `.gitignore` và `scripts/build-node.sh` copy thư mục đó vô điều kiện
-# dưới `set -e`, nên một lần clone sạch chạy thẳng script sẽ chết trước khi sinh ra `dist-node/`.
+# Cách dùng (context là gốc repo). Cả hai bước UI đều bắt buộc chứ không phải tuỳ chọn:
+# `src/ui/node_modules/` lẫn `src/ui/dist/` đều nằm trong `.gitignore`, nên một lần clone sạch
+# không có sẵn thứ nào. Thiếu `node_modules` thì `ui:build` không chạy được; thiếu `dist` thì
+# `scripts/build-node.sh` copy thư mục đó vô điều kiện dưới `set -e` và chết trước khi sinh ra
+# `dist-node/`.
+#   deno task ui:install
 #   deno task ui:build
 #   ./scripts/build-node.sh
-#   docker build -f Dockerfile.bundle -t ghcr.io/hvgllc/hvgerp-mcp:3.1.0-bundle .
+#   docker build -f Dockerfile.bundle -t ghcr.io/hvgllc/hvgerp-mcp:3.2.0-bundle .
 FROM node:22-slim
 
 ENV NODE_ENV=production

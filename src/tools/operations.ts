@@ -25,7 +25,7 @@ import {
   resolveAssignees,
   validateAssignees,
 } from "./assignment.ts";
-import { resolveAssigneeUser, resolveUser } from "../api/resolve.ts";
+import { resolveAssigneeUser } from "../api/resolve.ts";
 import {
   getMethodAllowlist,
   isMethodAllowed,
@@ -529,10 +529,16 @@ export const operationsTools: ErpNextTool[] = [
 
       // Appended after the caller's own filters so an explicit `_assign`/`owner` tuple in
       // `filters` still applies; both narrow the result set, so the order is immaterial.
+      // `resolveAssigneeUser` chứ không phải `resolveUser`: một ID người dùng của Frappe CHÍNH
+      // LÀ địa chỉ thư, nên tra cứu thêm không đổi lấy gì mà đổi được một bộ lọc hợp lệ thành 403
+      // cho người không có quyền đọc hồ sơ người khác. `allowPartialMatch` giữ `true` vì đây là
+      // đường đọc, khớp mờ chỉ làm hẹp danh sách.
       if (input.assigned_to) {
         filters.push(
           assignedToFilter(
-            await resolveUser(ctx.client, input.assigned_to as string),
+            await resolveAssigneeUser(ctx.client, input.assigned_to as string, {
+              allowPartialMatch: true,
+            }),
           ),
         );
       }
@@ -540,7 +546,9 @@ export const operationsTools: ErpNextTool[] = [
         filters.push([
           "owner",
           "=",
-          await resolveUser(ctx.client, input.owner as string),
+          await resolveAssigneeUser(ctx.client, input.owner as string, {
+            allowPartialMatch: true,
+          }),
         ]);
       }
 
@@ -691,7 +699,7 @@ export const operationsTools: ErpNextTool[] = [
       const assignee = await resolveAssigneeUser(
         ctx.client,
         input.assign_to.trim(),
-        "assign_to",
+        { inputPath: "assign_to" },
       );
       const unassignment = await removeAssignment(
         doctype,

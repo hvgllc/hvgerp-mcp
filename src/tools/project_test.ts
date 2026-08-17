@@ -1,5 +1,5 @@
-import { assertEquals, assertRejects } from "@std/assert";
-import type { FrappeClient } from "../api/frappe-client.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import { FrappeAPIError, type FrappeClient } from "../api/frappe-client.ts";
 import { projectTools } from "./project.ts";
 import type { ErpNextToolContext } from "./types.ts";
 
@@ -369,4 +369,28 @@ Deno.test("erpnext_task_update propagates native assignment errors", async () =>
     Error,
     "Assignment permission denied",
   );
+});
+
+Deno.test("erpnext_task_list - an email in assigned_to costs no User read", async () => {
+  const reads: string[] = [];
+  let taskFilters: unknown = null;
+  const client = makeMockClient({
+    get: async (doctype: string, name: string) => {
+      reads.push(`${doctype}:${name}`);
+      throw new FrappeAPIError("Not permitted", 403, {});
+    },
+    list: async (doctype: string, options: Record<string, unknown>) => {
+      if (doctype === "Task") taskFilters = options.filters;
+      return [];
+    },
+  });
+
+  await getTool("erpnext_task_list").handler(
+    { assigned_to: "khoa.do@havigroup.com" },
+    makeCtx(client),
+  );
+
+  // Cùng lý do với `erpnext_doc_list`: email đã là id của `User`.
+  assertEquals(reads, []);
+  assertStringIncludes(JSON.stringify(taskFilters), "khoa.do@havigroup.com");
 });

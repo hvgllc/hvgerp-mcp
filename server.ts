@@ -120,7 +120,13 @@ async function main() {
     // Read by the client before the first tool call. It exists for one reason: nothing in a tool
     // list tells a model that "my tasks" needs a lookup step first, so without this the model
     // either invents an employee id or asks the user to type their own email address.
-    instructions: buildServerInstructions(callerIdentity),
+    // Danh sách tool THẬT của tiến trình này, không phải danh mục đầy đủ: `--categories` có
+    // thể đã loại vài tool, và chỉ dẫn giới thiệu một tool vắng mặt là đẩy mô hình đi gọi thứ
+    // không tồn tại.
+    instructions: buildServerInstructions(
+      callerIdentity,
+      toolsClient.listTools().map((tool) => tool.name),
+    ),
     cache: {
       // `private` once results are caller-scoped: with per-user identity the same tool call returns
       // different rows to different people, so a shared cache would hand one caller another's data.

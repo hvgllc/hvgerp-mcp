@@ -1,6 +1,17 @@
 # ERPNext MCP Library - Coverage
 
-## Covered (125 tools, 14 categories)
+## Covered (127 tools, 15 categories)
+
+### Identity (2 tools)
+
+| Tool              | DocType       | Operations                                        | UI Viewer      |
+| ----------------- | ------------- | ------------------------------------------------- | -------------- |
+| `erpnext_whoami`  | User/Employee | Who the caller is (id, roles, employee, mode)     | -              |
+| `erpnext_my_work` | six doctypes  | Open ToDos, tasks, projects, leave, claims, hours | doclist-viewer |
+
+`erpnext_whoami` is the only tool that turns "my" into a concrete id, so it is
+loaded even when `--categories` does not ask for `identity`. `erpnext_my_work`
+is not: it reads four doctypes outside whatever surface was requested.
 
 ### Sales (17 tools)
 

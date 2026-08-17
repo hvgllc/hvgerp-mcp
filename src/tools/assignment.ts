@@ -189,7 +189,11 @@ export async function resolveAssignees(
 ): Promise<PreparedAssignment> {
   const resolved: string[] = [];
   for (const assignee of assignment.assignees) {
-    resolved.push(await resolveAssigneeUser(ctx.client, assignee, "assign_to"));
+    resolved.push(
+      await resolveAssigneeUser(ctx.client, assignee, {
+        inputPath: "assign_to",
+      }),
+    );
   }
   const assignees = [...new Set(resolved)];
   return { assignees, args: { ...assignment.args, assign_to: assignees } };

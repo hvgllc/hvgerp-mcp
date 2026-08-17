@@ -5,8 +5,8 @@
 [![MCP](https://img.shields.io/badge/MCP-server-1f6feb?logo=modelcontextprotocol&logoColor=white)](https://modelcontextprotocol.io)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-MCP server for [ERPNext](https://erpnext.com) / Frappe ERP — **125 tools**
-across **14 categories**, with **7 interactive UI viewers**.
+MCP server for [ERPNext](https://erpnext.com) / Frappe ERP — **127 tools**
+across **15 categories**, with **7 interactive UI viewers**.
 
 Connect any MCP-compatible AI agent (Claude Desktop, Claude Code, VS Code
 Copilot, custom) to your ERPNext instance via the
@@ -223,12 +223,18 @@ npm install
 node build-all.mjs
 ```
 
-## Tools (125)
+## Tools (127)
 
-125 tools across 14 categories. Each `_list` tool returns interactive results
+127 tools across 15 categories. Each `_list` tool returns interactive results
 via the doclist-viewer with row click, inline detail, and cross-viewer
 navigation.
 
+- **Identity** (2) — `erpnext_whoami` (who the server believes the caller is:
+  User id, roles, linked Employee, and whether the connection is per-caller or a
+  shared service account) and `erpnext_my_work` (everything currently open for
+  that person). Call `erpnext_whoami` before answering any first-person request:
+  every other tool needs a concrete user or employee id, and this is the only
+  one that produces it.
 - **Sales** (17) — Customers, Sales Orders, Invoices, and Quotations with full
   CRUD, Submit, and Cancel.
 - **Purchasing** (11) — Suppliers, Purchase Orders, Purchase Invoices, Receipts,

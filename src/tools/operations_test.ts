@@ -8,7 +8,7 @@
 
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { operationsTools } from "./operations.ts";
-import type { FrappeClient } from "../api/frappe-client.ts";
+import { FrappeAPIError, type FrappeClient } from "../api/frappe-client.ts";
 import type { ErpNextToolContext } from "./types.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -715,4 +715,78 @@ Deno.test("erpnext_doc_assign is annotated idempotent, matching its own descript
   // reads annotations to decide whether a retry is safe files a safe call under "ask first".
   assertStringIncludes(assign.description, "Idempotent");
   assertEquals(assign.annotations?.idempotentHint, true);
+});
+
+// ── Ô lọc người dùng không được đổi một truy vấn hợp lệ lấy một 403 ───────────
+
+Deno.test("erpnext_doc_list - an email in assigned_to costs no User read", async () => {
+  const reads: string[] = [];
+  let taskFilters: unknown = null;
+  const client = makeMockClient({
+    get: async (doctype: string, name: string) => {
+      reads.push(`${doctype}:${name}`);
+      // Đúng thứ Frappe trả cho một nhân viên thường đọc hồ sơ người khác.
+      throw new FrappeAPIError("Not permitted", 403, {});
+    },
+    list: async (doctype: string, options: Record<string, unknown>) => {
+      if (doctype === "Task") taskFilters = options.filters;
+      return [];
+    },
+  });
+
+  await getTool("erpnext_doc_list").handler(
+    { doctype: "Task", assigned_to: "khoa.do@havigroup.com" },
+    makeCtx(client),
+  );
+
+  // Một `User` id của Frappe CHÍNH LÀ địa chỉ thư, nên lượt đọc kia không thể đổi được kết quả -
+  // nó chỉ đổi được một bộ lọc chạy được thành một lỗi quyền.
+  assertEquals(reads, []);
+  assertStringIncludes(JSON.stringify(taskFilters), "khoa.do@havigroup.com");
+});
+
+Deno.test("erpnext_doc_list - an email in owner costs no User read", async () => {
+  const reads: string[] = [];
+  let taskFilters: unknown = null;
+  const client = makeMockClient({
+    get: async (doctype: string, name: string) => {
+      reads.push(`${doctype}:${name}`);
+      throw new FrappeAPIError("Not permitted", 403, {});
+    },
+    list: async (doctype: string, options: Record<string, unknown>) => {
+      if (doctype === "Task") taskFilters = options.filters;
+      return [];
+    },
+  });
+
+  await getTool("erpnext_doc_list").handler(
+    { doctype: "Task", owner: "khoa.do@havigroup.com" },
+    makeCtx(client),
+  );
+
+  assertEquals(reads, []);
+  assertStringIncludes(JSON.stringify(taskFilters), "khoa.do@havigroup.com");
+});
+
+Deno.test("erpnext_doc_list - a full name in assigned_to is still looked up", async () => {
+  // Vế đối chứng: lối tắt chỉ được áp cho thứ đã là một id. Một cái tên người vẫn phải qua
+  // `User`, nếu không ô lọc lặng lẽ tìm một User tên "Do Khoa" và trả về rỗng.
+  let searchFilters: unknown = null;
+  const client = makeMockClient({
+    get: async () => {
+      throw new FrappeAPIError("Not found", 404, {});
+    },
+    list: async (doctype: string, options: Record<string, unknown>) => {
+      if (doctype !== "User") return [];
+      searchFilters = options.filters;
+      return [{ name: "khoa.do@havigroup.com", full_name: "Do Khoa" }];
+    },
+  });
+
+  await getTool("erpnext_doc_list").handler(
+    { doctype: "Task", assigned_to: "Do Khoa" },
+    makeCtx(client),
+  );
+
+  assertStringIncludes(JSON.stringify(searchFilters), "Do Khoa");
 });

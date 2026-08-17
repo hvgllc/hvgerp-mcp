@@ -18,7 +18,7 @@ import {
   resolveAssignees,
   validateAssignees,
 } from "./assignment.ts";
-import { resolveEmployee, resolveUser } from "../api/resolve.ts";
+import { resolveAssigneeUser, resolveEmployee } from "../api/resolve.ts";
 
 export const projectTools: ErpNextTool[] = [
   // ── Projects ──────────────────────────────────────────────────────────────
@@ -150,10 +150,14 @@ export const projectTools: ErpNextTool[] = [
     handler: async (input, ctx) => {
       const limit = (input.limit as number) ?? 20;
       const filters: FrappeFilter[] = [];
+      // Cùng lý do với `erpnext_doc_list`: email đã là ID của `User`, nên lượt đọc thêm chỉ
+      // mua được một 403 cho nhân viên không có quyền đọc hồ sơ người khác.
       if (input.assigned_to) {
         filters.push(
           assignedToFilter(
-            await resolveUser(ctx.client, input.assigned_to as string),
+            await resolveAssigneeUser(ctx.client, input.assigned_to as string, {
+              allowPartialMatch: true,
+            }),
           ),
         );
       }
