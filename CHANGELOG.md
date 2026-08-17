@@ -295,6 +295,19 @@ requests and tags actually live.
   itself was unusable. It now says the page may not be the whole result set,
   which is the honest form of the same warning; `count` stays `null` and
   `has_more` stays `true`.
+- **A data field with no field name is refused.** A layout row legitimately
+  carries no fieldname, so layout is now recognised by type and dropped first;
+  everything still standing is a data field, and one without a fieldname was
+  dropped just as silently. That returned a successful schema short by a field,
+  and a model reading it concluded the field does not exist - a contract failure
+  masquerading as an answer.
+- **The permission gate gets ERPNext's spelling of the DocType, not the
+  caller's.** Both owner lookups behind the child-table gate compare names in
+  JavaScript: the enumeration skips a self-referencing table by name, and the
+  `getdoctype` fallback recognises an owner by `field.options`. ERPNext answers
+  both with the canonical name, so a caller who wrote `sales invoice item` - a
+  spelling the collation resolves and the metadata check accepts - resolved no
+  parent and was refused a child table readable through a parent they hold.
 
 ## [3.2.0] - 2026-08-17
 

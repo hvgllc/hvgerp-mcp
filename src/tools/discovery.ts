@@ -762,10 +762,18 @@ export const discoveryTools: ErpNextTool[] = [
         );
       }
 
+      // The gates get ERPNext's spelling, not the caller's. They compare names
+      // in JavaScript - the owner enumeration skips a self-referencing table
+      // with `name !== doctype`, and the `getdoctype` fallback recognises an
+      // owner by `field.options === doctype` - while ERPNext answers every one
+      // of those with the canonical name. Feeding the caller's `sales invoice
+      // item` into that comparison matches nothing and denies a child table the
+      // caller can read, which is precisely the case the identity check above
+      // took care to keep working.
       if (meta.istable) {
-        await assertChildReadable(ctx, doctype);
+        await assertChildReadable(ctx, metaName);
       } else {
-        await assertReadable(ctx, doctype);
+        await assertReadable(ctx, metaName);
       }
 
       const needle = (input.search as string | undefined)?.toLowerCase().trim();
@@ -850,13 +858,30 @@ export const discoveryTools: ErpNextTool[] = [
         fieldtype: string;
       })[] = [];
       for (const field of meta.fields) {
-        if (!field.fieldname) continue;
+        // Layout rows are the one kind that legitimately carries no fieldname -
+        // a Section Break declares no value - so they are recognised by TYPE
+        // and dropped first. Everything still standing is a data field, and a
+        // data field with no fieldname is a broken response rather than a field
+        // of some unnamed kind: dropped silently it would return a schema short
+        // by one field, and a model reading that schema would conclude the
+        // field does not exist and stop asking for it.
         if (LAYOUT_FIELDTYPES.has(field.fieldtype ?? "")) continue;
+        const rowLabel =
+          typeof field.fieldname === "string" && field.fieldname.trim()
+            ? `'${field.fieldname}'`
+            : `an unnamed row (label ${JSON.stringify(field.label ?? null)})`;
         if (typeof field.fieldtype !== "string" || !field.fieldtype.trim()) {
           throw new Error(
             `[erpnext_doctype_fields] ERPNext returned a field of '${doctype}' ` +
-              `('${field.fieldname}') with no field type. This is a broken response, ` +
+              `(${rowLabel}) with no field type. This is a broken response, ` +
               "not a schema; retry, and report it if it persists.",
+          );
+        }
+        if (typeof field.fieldname !== "string" || !field.fieldname.trim()) {
+          throw new Error(
+            `[erpnext_doctype_fields] ERPNext returned a '${field.fieldtype}' field of ` +
+              `'${doctype}' with no field name. This is a broken response, not a schema; ` +
+              "retry, and report it if it persists.",
           );
         }
         declaredRows.push(

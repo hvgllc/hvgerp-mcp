@@ -337,11 +337,17 @@ Enumeration is not a permission hole - `frappe.client.get_list` applies DocType
 permissions like any other list - but an account may be able to read one source
 and not the other. A source that refuses is skipped, and the refusal names that
 source specifically, so the caller is not sent to ask for a permission they
-already hold. Only when neither source is readable does the tool fall back to
-the single arbitrary owner from `getdoctype`; reaching for it while one source
-answered would add a name the caller is then gated against, on top of a list
-that is already real. Either gap is flagged in the refusal, which says the list
-may be partial rather than presenting one name as the complete set of owners.
+already hold. The fallback to the single arbitrary owner from `getdoctype` is
+reached whenever a source refused **and** no enumerated owner turned out
+readable - not only when both sources refused. Requiring both denied the
+ordinary case: a standard child table declares its owner in `DocField` alone, so
+an account that may read `Custom Field` but not `DocField` enumerated an empty
+list, never met the stricter condition, and was refused while `getdoctype` would
+have named the parent it could read all along. The fallback still runs last,
+after every enumerated owner has been probed, so one arbitrary name can never
+decide a verdict the full list disagrees with. Either gap is flagged in the
+refusal, which says the list may be partial rather than presenting one name as
+the complete set of owners.
 
 `permlevel` above 0 marks a field governed by a separate role permission, which
 can be absent from documents even when the DocType itself is readable.

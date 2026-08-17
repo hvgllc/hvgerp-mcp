@@ -750,6 +750,95 @@ Deno.test("erpnext_doctype_fields - refuses a declared field that carries no fie
   }
 });
 
+Deno.test("erpnext_doctype_fields - refuses a data field that carries no field name", async () => {
+  // A layout row legitimately has no fieldname, so the type is what separates
+  // the two. Everything that is not layout is a data field, and one with no
+  // fieldname is a broken response: dropped silently it returns a schema short
+  // by a field, and the model reading it concludes the field does not exist.
+  for (
+    const broken of [
+      { fieldtype: "Data" },
+      { fieldtype: "Data", fieldname: "" },
+      { fieldtype: "Data", fieldname: "   " },
+      { fieldtype: "Data", fieldname: 7 },
+      { fieldtype: "Currency", fieldname: null, hidden: 1 },
+    ]
+  ) {
+    const client = makeMockClient({
+      callMethodRaw: async () => ({
+        docs: [{ ...META, fields: [...META.fields, broken] }],
+      }),
+    });
+
+    await assertRejects(
+      () =>
+        getTool("erpnext_doctype_fields").handler(
+          { doctype: "Account", search: "account_name" },
+          makeCtx(client),
+        ),
+      Error,
+      "no field name",
+    );
+  }
+
+  // The nameless LAYOUT row stays a silent drop - that is the case the check
+  // has to leave alone, or every ordinary DocType would be refused.
+  const result = await getTool("erpnext_doctype_fields").handler(
+    { doctype: "Account" },
+    makeCtx(makeMockClient({
+      callMethodRaw: async () => ({
+        docs: [{
+          ...META,
+          fields: [...META.fields, { fieldtype: "Section Break" }, {
+            fieldtype: "Column Break",
+          }],
+        }],
+      }),
+    })),
+  ) as any;
+  assertEquals(
+    result.fields.some((f: any) => f.fieldtype === "Section Break"),
+    false,
+  );
+});
+
+Deno.test("erpnext_doctype_fields - the child gate uses ERPNext's spelling, not the caller's", async () => {
+  // The collation resolves `sales invoice item`, so the metadata comes back
+  // canonical while the caller's string stays lower case. Both owner lookups
+  // then compare names in JavaScript - the self-reference skip and the
+  // `field.options` match in the getdoctype fallback - so a gate handed the
+  // caller's spelling matches nothing and refuses a child table this account
+  // can in fact read through its parent.
+  const asked: string[] = [];
+  const client = makeChildClient({
+    // ERPNext echoes the canonical name whatever case was asked for.
+    callMethodRaw: async (_method: string, args: Record<string, unknown>) =>
+      args.with_parent
+        ? { docs: [PARENT_META, CHILD_META] }
+        : { docs: [CHILD_META] },
+    callMethod: async (method: string, args: Record<string, unknown>) => {
+      if (method === "frappe.client.get_list") {
+        // This child's only owner is declared in `DocField`, which this account
+        // may not read - the ordinary case that reaches the fallback.
+        if (args.doctype === "Custom Field") return [];
+        throw new FrappeAPIError(`Not permitted for ${args.doctype}`, 403, {});
+      }
+      asked.push(args.doctype as string);
+      return { has_permission: args.doctype === "Sales Invoice" };
+    },
+  });
+
+  const result = await getTool("erpnext_doctype_fields").handler(
+    { doctype: "sales invoice item" },
+    makeCtx(client),
+  ) as any;
+
+  assertEquals(result.doctype, "Sales Invoice Item");
+  // The parent was probed, and the child itself never was: a self-reference
+  // skip that compares the wrong spelling would have asked about it too.
+  assertEquals(asked, ["Sales Invoice"]);
+});
+
 Deno.test("erpnext_doctype_fields - reports a misspelled doctype instead of returning nothing", async () => {
   const client = makeMockClient({ callMethodRaw: async () => ({ docs: [] }) });
 
