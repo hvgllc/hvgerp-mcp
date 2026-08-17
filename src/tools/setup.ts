@@ -36,7 +36,11 @@ export const setupTools: ErpNextTool[] = [
           type: "boolean",
           description: "Include disabled users (default false)",
         },
-        limit: { type: "number", description: "Max results (default 50)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 50)",
+        },
       },
     },
     handler: async (input, ctx) => {
@@ -83,7 +87,11 @@ export const setupTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
       },
     },
     handler: async (input, ctx) => {

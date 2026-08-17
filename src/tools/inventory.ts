@@ -26,7 +26,11 @@ export const inventoryTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         item_group: { type: "string", description: "Filter by item group" },
         is_stock_item: {
           type: "boolean",
@@ -230,7 +234,11 @@ export const inventoryTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 50)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 50)",
+        },
         item_code: {
           type: "string",
           description:
@@ -291,7 +299,11 @@ export const inventoryTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         company: { type: "string", description: "Filter by company" },
         warehouse_type: {
           type: "string",
@@ -336,7 +348,11 @@ export const inventoryTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         stock_entry_type: {
           type: "string",
           description:

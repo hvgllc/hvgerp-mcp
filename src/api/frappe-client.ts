@@ -35,6 +35,19 @@ import { createCache, getCache, getCacheTtlMs } from "../cache/cache.ts";
 import { currentCaller } from "./caller-context.ts";
 
 /**
+ * Whether a number can serve as a page length at all.
+ *
+ * The bound is 1, not 0. ERPNext reads a page length of 0 as "no `LIMIT`
+ * clause": measured against the live instance, `limit_page_length=0` returned
+ * all 2235 `Account` rows while `limit_page_length=5` returned 5. So every
+ * value below 1 - `0`, `0.5`, `-3` - either fetches the whole doctype or slices
+ * from the wrong end, and none of them is a page length that can be honoured.
+ */
+export function isUsableLimit(limit: number): boolean {
+  return Number.isFinite(limit) && limit >= 1;
+}
+
+/**
  * Coerce a page limit to the integer Frappe will actually apply.
  *
  * Every tool declares `limit` as a JSON `number`, so a caller may hand over
@@ -44,12 +57,20 @@ import { currentCaller } from "./caller-context.ts";
  * exhausted" when it is not. Truncating here, at the single point the request
  * is built, keeps the requested limit and the applied limit the same number.
  *
- * Values that are not finite positive numbers are returned untouched: they are
- * not this function's to reinterpret, and ERPNext rejecting them plainly is a
- * better answer than a silently invented one.
+ * A value below 1 throws instead of being quietly repaired. Flooring it would
+ * hand ERPNext a 0 that means "every row", so `limit: 0.5` - a request for at
+ * most one document - would come back with the entire doctype; and clamping it
+ * up to 1 would answer a nonsensical request with an invented one. The error
+ * says which number arrived and why it cannot be a page length.
  */
 export function normalizeLimit(limit: number): number {
-  if (!Number.isFinite(limit) || limit <= 0) return limit;
+  if (!isUsableLimit(limit)) {
+    throw new Error(
+      `[FrappeClient] limit must be a finite number of at least 1, got ${limit}. ` +
+        "ERPNext treats a page length below 1 as no limit at all, so this " +
+        "request would return the entire doctype rather than the page asked for.",
+    );
+  }
   return Math.floor(limit);
 }
 

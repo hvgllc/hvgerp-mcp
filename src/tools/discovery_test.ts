@@ -223,16 +223,39 @@ Deno.test("erpnext_doctype_fields - adds the parent columns for a child table", 
   assertEquals(result.is_child_table, true);
 });
 
-Deno.test("erpnext_doctype_fields - checks a child table against the parent that owns it", async () => {
-  const asked: string[] = [];
-  const client = makeChildClient({
-    callMethod: async (_method: string, args: Record<string, unknown>) => {
+/**
+ * Route the two whitelisted calls the child-table gate makes.
+ *
+ * `owners` is what enumerating `DocField` returns, or `null` for the account
+ * that may not read `DocField` at all. `readable` is the set of DocTypes the
+ * caller can read.
+ */
+function makeChildPermissionClient(
+  owners: string[] | null,
+  readable: string[],
+  asked: string[] = [],
+): FrappeClient {
+  return makeChildClient({
+    callMethod: async (method: string, args: Record<string, unknown>) => {
+      if (method === "frappe.client.get_list") {
+        if (owners === null) throw new Error("PermissionError: DocField");
+        return owners.map((parent) => ({ parent }));
+      }
       asked.push(args.doctype as string);
       // The child itself is unreadable for everyone but Administrator, which is
       // exactly why the parent has to be the thing that is asked about.
-      return { has_permission: args.doctype === "Sales Invoice" };
+      return { has_permission: readable.includes(args.doctype as string) };
     },
   });
+}
+
+Deno.test("erpnext_doctype_fields - checks a child table against the parent that owns it", async () => {
+  const asked: string[] = [];
+  const client = makeChildPermissionClient(
+    ["Sales Invoice"],
+    ["Sales Invoice"],
+    asked,
+  );
 
   const result = await getTool("erpnext_doctype_fields").handler(
     { doctype: "Sales Invoice Item" },
@@ -243,10 +266,29 @@ Deno.test("erpnext_doctype_fields - checks a child table against the parent that
   assertEquals(result.doctype, "Sales Invoice Item");
 });
 
-Deno.test("erpnext_doctype_fields - refuses a child table when no parent is readable", async () => {
-  const client = makeChildClient({
-    callMethod: async () => ({ has_permission: false }),
-  });
+Deno.test("erpnext_doctype_fields - probes every owner, not just the one getdoctype names", async () => {
+  // `getdoctype(with_parent=1)` names exactly one owner and which one is
+  // arbitrary: measured live, `Sales Taxes and Charges` has six and the
+  // endpoint returns `Quotation`. A caller who can read `Sales Invoice` but not
+  // `Quotation` must still get the schema.
+  const asked: string[] = [];
+  const client = makeChildPermissionClient(
+    ["Quotation", "Sales Order", "Sales Invoice"],
+    ["Sales Invoice"],
+    asked,
+  );
+
+  const result = await getTool("erpnext_doctype_fields").handler(
+    { doctype: "Sales Invoice Item" },
+    makeCtx(client),
+  ) as any;
+
+  assertEquals(asked, ["Quotation", "Sales Order", "Sales Invoice"]);
+  assertEquals(result.doctype, "Sales Invoice Item");
+});
+
+Deno.test("erpnext_doctype_fields - refuses a child table when no owner is readable", async () => {
+  const client = makeChildPermissionClient(["Sales Invoice", "Quotation"], []);
 
   await assertRejects(
     () =>
@@ -255,7 +297,23 @@ Deno.test("erpnext_doctype_fields - refuses a child table when no parent is read
         makeCtx(client),
       ),
     Error,
-    "Sales Invoice",
+    "Sales Invoice, Quotation",
+  );
+});
+
+Deno.test("erpnext_doctype_fields - says so when the owner list could not be enumerated", async () => {
+  // No `DocField` access means only `getdoctype`'s single owner is known, so
+  // the refusal must not present that name as the complete list of owners.
+  const client = makeChildPermissionClient(null, []);
+
+  await assertRejects(
+    () =>
+      getTool("erpnext_doctype_fields").handler(
+        { doctype: "Sales Invoice Item" },
+        makeCtx(client),
+      ),
+    Error,
+    "That list may be partial",
   );
 });
 
@@ -319,6 +377,25 @@ Deno.test("erpnext_doctype_fields - marks a Single's fields as not queryable", a
   );
 });
 
+Deno.test("erpnext_doctype_fields - marks a virtual doctype's fields as not queryable", async () => {
+  const client = makeMockClient({
+    callMethodRaw: async () => ({
+      docs: [{ ...META, name: "RQ Job", is_virtual: 1 }],
+    }),
+  });
+
+  const result = await getTool("erpnext_doctype_fields").handler(
+    { doctype: "RQ Job" },
+    makeCtx(client),
+  ) as any;
+
+  // A virtual DocType has no table either; its rows come from a Python
+  // controller, so nothing here can promise that a filter or an order_by will
+  // be honoured. 20 of them exist on the live instance.
+  assertEquals(result.is_virtual, true);
+  assertEquals(result.fields.some((f: any) => f.queryable), false);
+});
+
 Deno.test("erpnext_doctype_fields - an ordinary doctype keeps its fields queryable", async () => {
   const result = await getTool("erpnext_doctype_fields").handler(
     { doctype: "Account" },
@@ -326,6 +403,7 @@ Deno.test("erpnext_doctype_fields - an ordinary doctype keeps its fields queryab
   ) as any;
 
   assertEquals(result.fields.every((f: any) => f.queryable), true);
+  assertEquals(result.is_virtual, false);
 });
 
 Deno.test("erpnext_doctype_fields - reports a misspelled doctype instead of returning nothing", async () => {

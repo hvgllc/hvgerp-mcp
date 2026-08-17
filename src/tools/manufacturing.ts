@@ -27,7 +27,11 @@ export const manufacturingTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         item: {
           type: "string",
           description:
@@ -124,7 +128,11 @@ export const manufacturingTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         production_item: {
           type: "string",
           description:
@@ -294,7 +302,11 @@ export const manufacturingTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         work_order: { type: "string", description: "Filter by Work Order" },
         status: {
           type: "string",

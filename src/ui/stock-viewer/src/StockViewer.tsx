@@ -468,7 +468,9 @@ function StockContent(
                 narrows only the rows this page holds, while `data.count` is the
                 server total for the whole query. And a null total stays visible
                 as unknown rather than borrowing the page length, which would
-                claim completeness exactly when the page is truncated. */
+                claim completeness exactly when the page is truncated. A total
+                larger than the page is named as such, because the entries
+                behind it were never fetched and nothing here can reach them. */
             }
             {sorted.length < data.data.length
               ? (
@@ -477,6 +479,15 @@ function StockContent(
                   {typeof data.count === "number"
                     ? `${data.count} in stock overall`
                     : "total unknown"}
+                </>
+              )
+              : typeof data.count === "number" && data.count > data.data.length
+              ? (
+                <>
+                  first {data.data.length} of {data.count} entries ·{" "}
+                  {data.count - data.data.length}{" "}
+                  not fetched (ask again with a higher limit or a narrower
+                  filter)
                 </>
               )
               : (

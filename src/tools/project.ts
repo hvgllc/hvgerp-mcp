@@ -35,7 +35,11 @@ export const projectTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         status: {
           type: "string",
           description: "Filter by status (Open, Completed, Cancelled)",
@@ -121,7 +125,11 @@ export const projectTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         project: { type: "string", description: "Filter by project name" },
         status: {
           type: "string",
@@ -452,7 +460,11 @@ export const projectTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         employee: {
           type: "string",
           description:

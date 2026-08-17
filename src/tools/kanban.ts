@@ -11,7 +11,7 @@ import type {
 import type { ErpNextTool } from "./types.ts";
 import { KANBAN_META } from "./viewer-meta.ts";
 import { resolveUserFilter } from "../api/resolve.ts";
-import type { FrappeClient } from "../api/frappe-client.ts";
+import { type FrappeClient, normalizeLimit } from "../api/frappe-client.ts";
 
 const ADAPTERS: Record<string, KanbanAdapter> = {
   task: taskKanbanAdapter,
@@ -90,7 +90,11 @@ export const kanbanTools: ErpNextTool[] = [
           description: "Kanban-enabled ERPNext DocType",
           enum: ["Task", "Opportunity", "Issue"],
         },
-        limit: { type: "number", description: "Page size (default 50)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Page size (default 50)",
+        },
         offset: {
           type: "number",
           description: "Pagination offset (default 0)",
@@ -131,7 +135,7 @@ export const kanbanTools: ErpNextTool[] = [
     handler: async (input, ctx) => {
       const doctype = String(input.doctype ?? "");
       const { definition, adapter } = getAdapter(doctype);
-      const limit = Math.max(1, Number(input.limit ?? 50));
+      const limit = normalizeLimit(Number(input.limit ?? 50));
       const offset = Math.max(0, Number(input.offset ?? 0));
 
       const rows = await ctx.client.list(doctype, {

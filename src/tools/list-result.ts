@@ -23,7 +23,7 @@
  */
 
 import type { FrappeDoc, FrappeFilter } from "../api/types.ts";
-import { normalizeLimit } from "../api/frappe-client.ts";
+import { isUsableLimit, normalizeLimit } from "../api/frappe-client.ts";
 import type { ErpNextToolContext } from "./types.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
 
@@ -73,14 +73,12 @@ export async function resolveTotal(
 ): Promise<TotalResolution> {
   // Compare against the limit ERPNext actually applied, not the one the caller
   // typed: `limit: 2.5` fetches 2 rows, and a raw `2 < 2.5` would read that
-  // short page as proof the result set is exhausted and skip the count. A limit
-  // that is not a finite positive number never proves completeness either, so
-  // it falls through to the real count.
-  const appliedLimit = normalizeLimit(limit);
-  if (
-    Number.isInteger(appliedLimit) && appliedLimit > 0 &&
-    pageLength < appliedLimit
-  ) {
+  // short page as proof the result set is exhausted and skip the count. The
+  // guard is `isUsableLimit`, not `normalizeLimit`, on purpose: this function
+  // resolves a total for documents the caller is already holding, so an
+  // unusable limit must fall through to the real count rather than throw and
+  // destroy a list that was fetched successfully.
+  if (isUsableLimit(limit) && pageLength < normalizeLimit(limit)) {
     return { count: pageLength };
   }
   try {
@@ -89,7 +87,16 @@ export async function resolveTotal(
       { doctype, filters: filters ?? [] },
       { httpMethod: "GET" },
     );
-    const total = Number(raw);
+    // `Number()` alone is too generous to be a validator: it turns `null`,
+    // `""`, `[]` and `false` into 0. On an empty page that 0 survives every
+    // check below and is reported as "no matching documents" - a confident
+    // answer built from a response that in fact carried no count at all. Only
+    // a number, or a string that is entirely a number, is accepted.
+    const total = typeof raw === "number"
+      ? raw
+      : (typeof raw === "string" && raw.trim() !== "")
+      ? Number(raw)
+      : Number.NaN;
     // A total below the page we are holding is a contradiction, not a count.
     if (!Number.isFinite(total) || total < pageLength) {
       return {

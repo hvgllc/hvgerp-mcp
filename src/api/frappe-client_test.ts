@@ -12,6 +12,7 @@ import {
   FrappeAPIError,
   FrappeClient,
   getFrappeClient,
+  isUsableLimit,
   normalizeLimit,
   setFrappeClient,
 } from "./frappe-client.ts";
@@ -198,12 +199,33 @@ Deno.test("FrappeClient.list() - sends the integer limit Frappe would apply", as
   globalThis.fetch = original;
 });
 
-Deno.test("normalizeLimit - truncates fractions and leaves nonsense alone", () => {
+Deno.test("normalizeLimit - truncates fractions to the page Frappe applies", () => {
   assertEquals(normalizeLimit(2.5), 2);
   assertEquals(normalizeLimit(20), 20);
-  assertEquals(normalizeLimit(0), 0);
-  assertEquals(normalizeLimit(-3.5), -3.5);
-  assertEquals(Number.isNaN(normalizeLimit(Number.NaN)), true);
+  assertEquals(normalizeLimit(1), 1);
+});
+
+Deno.test("normalizeLimit - refuses every page length below 1", () => {
+  // Flooring these would hand ERPNext a 0, which it reads as "no LIMIT": on the
+  // live instance `limit_page_length=0` returned all 2235 Account rows. A
+  // request for at most one document must never come back with the doctype.
+  for (const limit of [0, 0.5, -3.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assertThrows(
+      () => normalizeLimit(limit),
+      Error,
+      "limit must be a finite number of at least 1",
+    );
+  }
+});
+
+Deno.test("isUsableLimit - accepts only a finite page length of at least 1", () => {
+  assertEquals(isUsableLimit(1), true);
+  assertEquals(isUsableLimit(2.5), true);
+  assertEquals(isUsableLimit(0.5), false);
+  assertEquals(isUsableLimit(0), false);
+  assertEquals(isUsableLimit(-1), false);
+  assertEquals(isUsableLimit(Number.NaN), false);
+  assertEquals(isUsableLimit(Number.POSITIVE_INFINITY), false);
 });
 
 // ── get() ─────────────────────────────────────────────────────────────────────

@@ -440,7 +440,11 @@ function DoclistContent({ data, error, refreshing, onRefresh, onError }: {
                 while a match sits in the 47 rows that were never fetched.
                 A null total is not papered over with `rows.length` either: the
                 page length is not a total, and substituting it would read as
-                complete exactly when the list is most likely truncated. */
+                complete exactly when the list is most likely truncated.
+                And a total larger than the page says so out loud: the pager
+                below walks the rows actually in hand, so "50 of 97 records"
+                on its own would invite a reader to page toward 47 rows that
+                were never fetched and are not reachable from here. */
             }
             {sorted.length < rows.length
               ? (
@@ -449,6 +453,15 @@ function DoclistContent({ data, error, refreshing, onRefresh, onError }: {
                   {typeof data.count === "number"
                     ? `${data.count} match the query`
                     : "total unknown"}
+                </>
+              )
+              : typeof data.count === "number" && data.count > rows.length
+              ? (
+                <>
+                  first {rows.length} of {data.count} records ·{" "}
+                  {data.count - rows.length}{" "}
+                  not fetched (ask again with a higher limit or a narrower
+                  filter)
                 </>
               )
               : (

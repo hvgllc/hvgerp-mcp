@@ -3,6 +3,14 @@
 Full reference for all ERPNext MCP tools. See [README](../README.md) for
 overview.
 
+Every `limit` is a page length of at least 1, and anything below that is
+rejected rather than repaired. ERPNext reads a page length of 0 as "no `LIMIT`
+clause": on the reference instance `limit_page_length=0` returns all 2235
+`Account` rows while `limit_page_length=5` returns 5. So `limit: 0.5` - a
+request for at most one document - would otherwise come back with the whole
+DocType. Fractions above 1 are truncated the way Frappe truncates them, so the
+limit asked for and the limit applied stay the same number.
+
 ## Identity (2) → doclist-viewer
 
 | Tool              | DocType       | Operations                                                                                |
@@ -265,13 +273,20 @@ a `_list`, `_get`, or `erpnext_doc_update` call has to guess. It takes
 `read_only`, `in_list_view`, `permlevel`, `description`, `is_standard`, and
 `queryable`; layout-only fieldtypes (Section Break, Column Break, Tab Break,
 Fold, Heading, HTML, Button) are dropped. The document header reports `module`,
-`is_single`, `is_child_table`, `is_submittable`, `is_tree`, and `title_field`.
+`is_single`, `is_virtual`, `is_child_table`, `is_submittable`, `is_tree`, and
+`title_field`.
 
 `queryable` is `false` for every field of a Single DocType. A Single has no
 table of its own - `System Settings` stores its values as rows in `tabSingles` -
 so its fields are readable but can never appear in a `filters` or `order_by`
 clause. Reading it as "the field does not exist" is the opposite of the truth,
 which is why it is a flag on the field rather than an omission.
+
+A virtual DocType gets the same `false`, for the same missing table: its rows
+are produced by a Python controller, so whether a filter or an `order_by` is
+honoured is that controller's decision and nothing in the metadata can promise
+it. Twenty of them exist on the reference instance (`RQ Job`, `Recorder`,
+`System Health Report`, ...).
 
 The answer opens with the seven columns Frappe stores on every DocType - `name`,
 `owner`, `creation`, `modified`, `modified_by`, `docstatus`, `idx` - marked
@@ -302,6 +317,16 @@ refused the schema to every real user. The tool resolves the DocTypes that own
 the child (the ones carrying a Table or Table MultiSelect field pointing at it)
 and passes as soon as the caller can read any of them; when none is readable,
 the error names them.
+
+That list comes from enumerating `DocField`, not from `getdoctype`. Frappe's
+`with_parent` helper is built on `frappe.db.get_value`, so it returns exactly
+one owner and which one is arbitrary: `Sales Taxes and Charges` is owned by six
+DocTypes on the reference instance and the endpoint names only `Quotation`, so a
+caller who can read `Sales Invoice` would have been refused. Enumeration is not
+a permission hole - `frappe.client.get_list` applies DocType permissions like
+any other list - but it does mean an account that cannot read `DocField` gets
+only the single owner. That case is flagged in the refusal, which says the list
+may be partial rather than presenting one name as the complete set of owners.
 
 `permlevel` above 0 marks a field governed by a separate role permission, which
 can be absent from documents even when the DocType itself is readable.

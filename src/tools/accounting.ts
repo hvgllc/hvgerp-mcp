@@ -29,7 +29,11 @@ export const accountingTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 50)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 50)",
+        },
         root_type: {
           type: "string",
           description:
@@ -99,7 +103,11 @@ export const accountingTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         voucher_type: {
           type: "string",
           description:
@@ -185,7 +193,11 @@ export const accountingTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         payment_type: {
           type: "string",
           description:

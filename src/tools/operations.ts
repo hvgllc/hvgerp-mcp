@@ -9,6 +9,7 @@
  */
 
 import type { FrappeFilter } from "../api/types.ts";
+import { normalizeLimit } from "../api/frappe-client.ts";
 import type { ErpNextTool } from "./types.ts";
 import { listResult } from "./list-result.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
@@ -590,7 +591,11 @@ export const operationsTools: ErpNextTool[] = [
             'Only documents created by this person. Accepts "me" for the calling user, ' +
             "a User id (email) or a full name.",
         },
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         order_by: {
           type: "string",
           description: "Order by clause (e.g. 'modified desc', 'name asc')",
@@ -603,7 +608,7 @@ export const operationsTools: ErpNextTool[] = [
         throw new Error("[erpnext_doc_list] 'doctype' is required");
       }
 
-      const limit = (input.limit as number) ?? 20;
+      const limit = normalizeLimit((input.limit as number) ?? 20);
       const fields = (input.fields as string[]) ?? ["name", "modified"];
       const filters = [...((input.filters as FrappeFilter[]) ?? [])];
       const order_by = (input.order_by as string) ?? "modified desc";
@@ -840,7 +845,11 @@ export const operationsTools: ErpNextTool[] = [
             "unless the caller holds read permission on the Event DocType - that is " +
             "a role-level check, not a grant from the person whose calendar it is.",
         },
-        limit: { type: "number", description: "Max results (default 50)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 50)",
+        },
       },
       required: ["start"],
     },
@@ -872,7 +881,7 @@ export const operationsTools: ErpNextTool[] = [
             "Ask for a narrower window.",
         );
       }
-      const limit = (input.limit as number) ?? 50;
+      const limit = normalizeLimit((input.limit as number) ?? 50);
 
       const events = await ctx.client.callMethod<CalendarEvent[]>(
         "frappe.desk.doctype.event.event.get_events",

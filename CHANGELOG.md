@@ -37,6 +37,16 @@ requests and tags actually live.
   field also carries `queryable`, which is `false` throughout a Single: a Single
   stores its values as rows in `tabSingles` and has no table of its own, so its
   fields are readable but can never appear in a `filters` or `order_by` clause.
+  A virtual DocType gets the same flag and the header carries `is_virtual`:
+  there is no table behind it either, its rows come from a Python controller,
+  and only that controller decides what it will filter on. The owners of a child
+  table are enumerated from `DocField` rather than taken from `getdoctype`,
+  whose `with_parent` helper is built on `frappe.db.get_value` and therefore
+  names exactly one arbitrary owner - `Sales Taxes and Charges` has six on a
+  live instance and the endpoint names only `Quotation`, which would have
+  refused a caller who can read `Sales Invoice`. An account that cannot read
+  `DocField` still falls back to that single name, and the refusal then says the
+  owner list may be partial instead of presenting it as complete.
 - **`erpnext_calendar_events`.** Lists Events over a date range through the same
   call the ERPNext calendar uses, so a repeating event is expanded into one row
   per occurrence, each tagged `is_recurring` (read from the stored
@@ -100,6 +110,44 @@ requests and tags actually live.
   records" while a match sat in a page never fetched. The counter now reads "N
   of M loaded records · K match the query" whenever a client-side filter is
   active.
+- **A page length below 1 is refused instead of quietly fetching everything.**
+  `normalizeLimit` floored whatever it was given, so `limit: 0.5` reached
+  ERPNext as `0` - and ERPNext reads a page length of `0` as "no `LIMIT`
+  clause": measured on a live instance, `limit_page_length=0` returned all 2235
+  `Account` rows where `limit_page_length=5` returned 5. A caller asking for a
+  fraction of a page therefore pulled the entire doctype. Every value below 1 is
+  now rejected with a message that says why, rather than being floored into that
+  meaning or clamped up into a page nobody asked for, and the 52 `limit` schemas
+  across the tool set declare `minimum: 1` so the model is told the rule before
+  it makes the call.
+- **In-memory page cuts go through the same rule.** Thirteen `.slice(0, limit)`
+  sites in the analytics, operations and kanban tools built their limit straight
+  from `input.limit`, so a non-numeric value became `slice(0, NaN)` - an empty
+  list presented as the answer - and a negative one sliced from the wrong end.
+  The limit is now validated once where it is derived, which makes every slice
+  downstream safe by construction.
+- **A `frappe.client.get_count` response that is not a number is unknown, not
+  zero.** The total was coerced with `Number()`, which turns `null`, `""`, `[]`
+  and `false` into `0`. On an empty page that `0` cleared every later check and
+  was reported as "no matching documents" - a confident answer assembled from a
+  response that carried no count at all. Only a number, or a string that is
+  entirely a number, is accepted now; anything else yields an unknown total with
+  the reason attached.
+- **A child table is checked against every DocType that owns it.** The owner
+  came from `getdoctype`'s `with_parent` helper, which is built on
+  `frappe.db.get_value` and therefore names exactly one arbitrary parent:
+  `Sales Taxes and Charges` has six owners on a live instance and the endpoint
+  named only `Quotation`, so a caller who can read `Sales Invoice` was refused
+  its schema. Owners are now enumerated from `DocField` and each one is probed,
+  and an account that cannot read `DocField` falls back to the single name with
+  the refusal saying the list may be partial rather than presenting it as
+  complete.
+- **Both viewers name a truncated page as a page.** When the server total
+  exceeded the rows in hand and no client-side filter was active, the header
+  printed "50 of 97 records" while the pager walked only the 50 rows fetched, so
+  the reader was invited toward 47 rows that were never loaded. It now reads
+  "first 50 of 97 records · 47 not fetched" with the concrete next action - ask
+  again with a higher limit or a narrower filter.
 
 ## [3.2.0] - 2026-08-17
 

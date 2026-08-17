@@ -28,7 +28,11 @@ export const assetsTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         status: {
           type: "string",
           description:
@@ -240,7 +244,11 @@ export const assetsTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         purpose: {
           type: "string",
           description: "Filter by purpose (Issue, Transfer, Receipt)",
@@ -317,7 +325,11 @@ export const assetsTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         asset_name: { type: "string", description: "Filter by asset name" },
         maintenance_status: {
           type: "string",
@@ -397,7 +409,11 @@ export const assetsTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
       },
     },
     handler: async (input, ctx) => {

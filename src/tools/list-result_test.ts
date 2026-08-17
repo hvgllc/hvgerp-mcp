@@ -100,6 +100,36 @@ Deno.test("resolveTotal - an unparseable total is unknown, not the page length",
   assertEquals(typeof total.error, "string");
 });
 
+Deno.test("resolveTotal - a non-numeric count on an empty page is unknown, not zero", async () => {
+  // `Number()` turns all of these into 0, and against an empty page that 0
+  // clears the "below the page in hand" check and is reported as "no matching
+  // documents" - a confident answer assembled from a response that carried no
+  // count at all. The limit is unusable so the short-page shortcut cannot fire
+  // and the count call is really made.
+  for (const raw of [null, undefined, "", [], {}, false, true]) {
+    const client = makeMockClient({ callMethod: async () => raw });
+
+    const total = await resolveTotal(
+      makeCtx(client),
+      "Account",
+      [],
+      0,
+      Number.NaN,
+    );
+
+    assertEquals(total.count, null);
+    assertEquals(typeof total.error, "string");
+  }
+});
+
+Deno.test("resolveTotal - a numeric string total is still accepted", async () => {
+  const client = makeMockClient({ callMethod: async () => "97" });
+
+  const total = await resolveTotal(makeCtx(client), "Account", [], 50, 50);
+
+  assertEquals(total.count, 97);
+});
+
 Deno.test("resolveTotal - a failing count call yields an unknown total, not a throw", async () => {
   const client = makeMockClient({
     callMethod: async () => {
@@ -190,7 +220,7 @@ Deno.test("resolveTotal - a fractional limit never passes off a full page as the
   assertEquals(total.count, 97);
 });
 
-Deno.test("resolveTotal - a limit that is not a positive number proves nothing", async () => {
+Deno.test("resolveTotal - an unusable limit falls back to the count instead of throwing", async () => {
   let calls = 0;
   const client = makeMockClient({
     callMethod: async () => {
@@ -209,5 +239,8 @@ Deno.test("resolveTotal - a limit that is not a positive number proves nothing",
     );
     assertEquals(total.count, 12);
   }
+  // `normalizeLimit` throws on these, so the guard here has to be the
+  // non-throwing predicate: this function resolves a total for documents the
+  // caller is already holding, and throwing would destroy a successful list.
   assertEquals(calls, 3);
 });

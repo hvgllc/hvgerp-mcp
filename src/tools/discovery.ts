@@ -161,6 +161,7 @@ interface RawDocTypeMeta {
   module?: string;
   istable?: number;
   issingle?: number;
+  is_virtual?: number;
   is_submittable?: number;
   is_tree?: number;
   title_field?: string | null;
@@ -194,28 +195,83 @@ async function assertReadable(
   }
 }
 
-/** How many parent candidates are worth a permission round-trip. */
-const MAX_PARENT_PROBES = 10;
+/**
+ * Ceiling on the `DocField` rows read while enumerating owners of a child table.
+ *
+ * This is a runaway guard, not a policy: the busiest child table on the live
+ * instance is `Has Role` with 10 owning DocTypes, so a real answer never comes
+ * close. Reaching the ceiling therefore means the enumeration is unusable
+ * rather than long, and it is reported as incomplete instead of being passed
+ * off as the full list.
+ */
+const MAX_PARENT_ROWS = 100;
+
+/** Who owns a child table, and whether that list is the whole truth. */
+interface ParentResolution {
+  parents: string[];
+  /**
+   * False when the caller could not enumerate `DocField` and only the single
+   * parent `getdoctype` names is known. A refusal built on an incomplete list
+   * has to say so: the caller may well be able to read an owner that is not on
+   * it.
+   */
+  complete: boolean;
+}
 
 /**
- * Gate a child DocType through a parent document the caller may read.
+ * List every DocType that declares this child in a Table field.
  *
- * A child DocType carries no role permissions of its own, so asking
- * `frappe.has_permission('Sales Invoice Item', 'read')` returns false for every
- * account except Administrator - measured on the live instance as
- * `khoa.do@havigroup.com`. Gating on that answer would make this tool reject
- * every child table for every real user, while still advertising child-table
- * support. ERPNext itself derives child access from the parent that owns the
- * row, and that is what is reproduced here: resolve the DocTypes that declare
- * this child in a Table field, and require read permission on at least one.
+ * `getdoctype(child, with_parent=1)` cannot answer this. Its helper
+ * `frappe.model.meta.get_parent_dt` is built on `frappe.db.get_value`, so it
+ * returns exactly ONE parent and which one is arbitrary - measured on the live
+ * instance, `Sales Taxes and Charges` is owned by six DocTypes (Delivery Note,
+ * POS Invoice, Quotation, Sales Invoice, Sales Order, Sales Taxes and Charges
+ * Template) and the endpoint names only `Quotation`. Gating on that single name
+ * denies a caller who can read `Sales Invoice` but not `Quotation`.
+ *
+ * Enumerating `DocField` gives the real list, and it is not a permission hole:
+ * `frappe.client.get_list` applies DocType permissions like any other list, so
+ * an account that cannot read `DocField` gets a `PermissionError` here -
+ * measured for `khoa.do@havigroup.com`, whose `has_permission('DocField',
+ * 'read')` is false. That case falls back to the single name, flagged
+ * incomplete.
  */
-async function assertChildReadable(
+async function resolveChildParents(
   ctx: Parameters<ErpNextTool["handler"]>[1],
   doctype: string,
-): Promise<void> {
-  // `with_parent: 1` makes `getdoctype` return the owning DocTypes alongside
-  // the child, which is the only place the parent link is exposed - a child
-  // DocType does not record its own parents.
+): Promise<ParentResolution> {
+  try {
+    const rows = await ctx.client.callMethod<{ parent?: string }[]>(
+      "frappe.client.get_list",
+      {
+        doctype: "DocField",
+        parent: "DocType",
+        filters: [
+          ["fieldtype", "in", ["Table", "Table MultiSelect"]],
+          ["options", "=", doctype],
+        ],
+        fields: ["parent"],
+        limit_page_length: MAX_PARENT_ROWS,
+      },
+      { httpMethod: "GET" },
+    );
+    if (Array.isArray(rows)) {
+      const names = [
+        ...new Set(
+          rows
+            .map((row) => row?.parent)
+            .filter((name): name is string => !!name && name !== doctype),
+        ),
+      ];
+      return { parents: names, complete: rows.length < MAX_PARENT_ROWS };
+    }
+  } catch {
+    // Enumeration denied or unavailable - fall through to the single name.
+  }
+
+  // `with_parent: 1` makes `getdoctype` attach the owning DocType alongside the
+  // child. One name only, but it is the one answer a caller with no `DocField`
+  // access can still get.
   const envelope = await ctx.client.callMethodRaw<
     { docs?: RawDocTypeMeta[] }
   >(
@@ -235,8 +291,31 @@ async function assertChildReadable(
     );
     if (ownsIt) parents.push(name);
   }
+  return { parents, complete: false };
+}
 
-  for (const parent of parents.slice(0, MAX_PARENT_PROBES)) {
+/**
+ * Gate a child DocType through a parent document the caller may read.
+ *
+ * A child DocType carries no role permissions of its own, so asking
+ * `frappe.has_permission('Sales Invoice Item', 'read')` returns false for every
+ * account except Administrator - measured on the live instance as
+ * `khoa.do@havigroup.com`. Gating on that answer would make this tool reject
+ * every child table for every real user, while still advertising child-table
+ * support. ERPNext itself derives child access from the parent that owns the
+ * row, and that is what is reproduced here: resolve the DocTypes that declare
+ * this child in a Table field, and require read permission on at least one.
+ */
+async function assertChildReadable(
+  ctx: Parameters<ErpNextTool["handler"]>[1],
+  doctype: string,
+): Promise<void> {
+  const { parents, complete } = await resolveChildParents(ctx, doctype);
+
+  // Every resolved parent is probed. There is no cap: the list is already
+  // bounded by how many DocTypes really declare this child, and cutting it
+  // short would deny a caller over an owner that was never checked.
+  for (const parent of parents) {
     if (await canRead(ctx, parent)) return;
   }
 
@@ -244,11 +323,16 @@ async function assertChildReadable(
     `[erpnext_doctype_fields] '${doctype}' is a child table, so it has no ` +
       "permissions of its own; access comes from the document that owns it. " +
       (parents.length > 0
-        ? `You cannot read any of its parent DocTypes (${
-          parents.join(", ")
-        }), so its schema stays out of scope.`
+        ? `You cannot read ${
+          complete ? "any of its parent DocTypes" : "the parent DocType"
+        } (${parents.join(", ")}), so its schema stays out of scope.`
         : "No parent DocType could be resolved for it, so there is nothing to " +
           "check the permission against.") +
+      (complete
+        ? ""
+        : " That list may be partial: enumerating the owners requires read " +
+          "access to DocField, which this account does not have, so another " +
+          "DocType you can read may own this table.") +
       " Ask an ERPNext administrator for the role that grants the parent.",
   );
 }
@@ -265,8 +349,9 @@ export const discoveryTools: ErpNextTool[] = [
       "happen to be filled in. The answer also lists the standard columns every DocType stores " +
       "(name, owner, creation, modified, modified_by, docstatus, idx) marked is_standard, because " +
       "they appear in no form. Every field carries queryable: false means the value can be read " +
-      "but not used in a filter or order_by, which is the case for every field of a Single " +
-      "DocType because a Single has no table of its own. Fails with a permission error if the " +
+      "but cannot be relied on in a filter or order_by, which is the case for every field of a " +
+      "Single DocType (no table of its own) and of a virtual DocType (rows come from a Python " +
+      "controller, so only that controller decides what it will filter on). Fails with a permission error if the " +
       "caller cannot read the DocType; for a child table the check runs against a parent DocType " +
       "that owns it, because child tables carry no permissions of their own.",
     category: "discovery",
@@ -339,7 +424,14 @@ export const discoveryTools: ErpNextTool[] = [
       // of all - is a value you can read but not a column you can filter or
       // sort on, and a model that carried one into `order_by` would get a
       // database error. That distinction is what `queryable` carries.
-      const queryable = !meta.issingle;
+      //
+      // A virtual DocType is the same problem from the other direction: there
+      // is no `tab<DocType>` behind it either, and its rows come from a Python
+      // controller. Whether a filter or an order_by is honoured is up to that
+      // controller, so nothing here can promise it - 20 of them exist on the
+      // live instance (RQ Job, Recorder, System Health Report, ...). Marking
+      // them not queryable states what this tool can actually vouch for.
+      const queryable = !meta.issingle && !meta.is_virtual;
 
       // Standard columns come first, and they are never subject to
       // `include_hidden`: they are not hidden form fields, they are columns that
@@ -394,6 +486,7 @@ export const discoveryTools: ErpNextTool[] = [
         doctype: meta.name ?? doctype,
         module: meta.module ?? null,
         is_single: Boolean(meta.issingle),
+        is_virtual: Boolean(meta.is_virtual),
         is_child_table: Boolean(meta.istable),
         is_submittable: Boolean(meta.is_submittable),
         is_tree: Boolean(meta.is_tree),
