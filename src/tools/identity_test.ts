@@ -265,3 +265,22 @@ Deno.test("identity tools are annotated read-only", () => {
     assertEquals(candidate.annotations?.readOnlyHint, true, candidate.name);
   }
 });
+
+Deno.test("erpnext_my_work asks for draft timesheets, not merely uncancelled ones", async () => {
+  clearCallerProfileCache();
+  const calls: ListCall[] = [];
+  await tool("erpnext_my_work").handler(
+    { sections: ["timesheets"] },
+    makeCtx({}, calls),
+  );
+
+  // `Timesheet` is submittable and its `status` carries seven values on ERPNext v16
+  // (Draft, Submitted, Partially Billed, Billed, Payslip, Completed, Cancelled), six of
+  // which only appear after submission. Excluding `Cancelled` alone therefore returned
+  // every SUBMITTED timesheet as work still waiting on this person.
+  const timesheet = calls.find((call) => call.doctype === "Timesheet");
+  assertEquals(timesheet?.options.filters, [
+    ["employee", "=", "HR-EMP-00044"],
+    ["docstatus", "=", 0],
+  ]);
+});

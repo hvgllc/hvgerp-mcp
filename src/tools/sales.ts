@@ -526,7 +526,7 @@ export const salesTools: ErpNextTool[] = [
 
   {
     name: "erpnext_sales_order_submit",
-    annotations: { destructiveHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true },
     _meta: INVOICE_META,
     description:
       "Submit a Draft Sales Order (changes status to 'To Deliver and Bill'). " +
@@ -570,7 +570,7 @@ export const salesTools: ErpNextTool[] = [
 
   {
     name: "erpnext_sales_order_cancel",
-    annotations: { destructiveHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true },
     description:
       "Cancel a submitted Sales Order. Reverses stock reservation. " +
       "Only works on submitted (non-completed) Sales Orders.",
@@ -812,7 +812,7 @@ export const salesTools: ErpNextTool[] = [
 
   {
     name: "erpnext_sales_invoice_submit",
-    annotations: { destructiveHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true },
     description:
       "Submit a Draft Sales Invoice (posts it to the ledger, changes status to 'Unpaid'). " +
       "Once submitted, the invoice is visible to the customer and affects GL.",

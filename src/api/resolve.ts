@@ -113,6 +113,24 @@ async function resolveUnique(
 }
 
 /**
+ * Doctype nào hiểu được "chính người đang hỏi", và cách phân giải ra ID của họ.
+ *
+ * Bảng này nằm ở `resolveLink` chứ không ở từng wrapper vì wrapper KHÔNG phải cửa duy nhất:
+ * `erpnext_employee_get` và hai handler tạo Leave Application / Expense Claim gọi thẳng
+ * `resolveLink(..., "Employee", ...)`, còn `resolveDynamicLink` thì gọi lại chính hàm này.
+ * Ở những đường đó `me` từng bị tìm như một cái tên thật rồi hỏng với "No Employee found
+ * matching \"me\"" - trong khi server instructions hứa với model rằng `me` dùng được ở mọi
+ * ô nhận người. Đặt ở đây thì lời hứa đó thành đúng theo cấu trúc, không phải theo trí nhớ.
+ */
+const SELF_RESOLVERS: Record<
+  string,
+  (client: FrappeClient) => Promise<string>
+> = {
+  Employee: resolveSelfEmployee,
+  User: resolveSelfUser,
+};
+
+/**
  * Resolve `identifier` to a document name (ID) within `doctype`: fast-path
  * get(), then exact match on `searchField`, then partial match (unless
  * `allowPartialMatch` is false). Both the exact and partial rungs only
@@ -128,6 +146,10 @@ export async function resolveLink(
   options: ResolveLinkOptions = {},
 ): Promise<string> {
   const { allowPartialMatch = true, inputPath } = options;
+
+  const selfResolver = SELF_RESOLVERS[doctype];
+  if (selfResolver && isSelfReference(identifier)) return selfResolver(client);
+
   const cache = getCache();
   const missKey = `resolve:miss:${doctype}:${identifier}`;
 
@@ -175,17 +197,14 @@ export async function resolveLink(
 /**
  * Resolve an employee-typed input, accepting `me` for the caller themselves.
  *
- * The self-reference is handled here rather than at each call site because every employee-typed
- * tool input already funnels through this one function. Adding it per tool would leave whichever
- * tool was missed resolving `me` as a literal name — and `resolveLink`'s partial rung would then
- * happily match any employee whose name contains "me".
+ * `me` is handled by `resolveLink` through {@link SELF_RESOLVERS}, not here: a guard on this
+ * wrapper only covers the call sites that remember to use the wrapper, and three of them did not.
  */
 export function resolveEmployee(
   client: FrappeClient,
   identifier: string,
   options: ResolveLinkOptions = {},
 ): Promise<string> {
-  if (isSelfReference(identifier)) return resolveSelfEmployee(client);
   return resolveLink(client, "Employee", identifier, "employee_name", options);
 }
 
@@ -200,7 +219,6 @@ export function resolveUser(
   identifier: string,
   options: ResolveLinkOptions = {},
 ): Promise<string> {
-  if (isSelfReference(identifier)) return resolveSelfUser(client);
   return resolveLink(client, "User", identifier, "full_name", options);
 }
 

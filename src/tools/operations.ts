@@ -58,7 +58,7 @@ export const operationsTools: ErpNextTool[] = [
 
   {
     name: "erpnext_file_upload",
-    annotations: { destructiveHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true },
     description:
       "Upload base64-encoded file content and attach it to any ERPNext document. " +
       "Files are private by default.",
@@ -279,7 +279,7 @@ export const operationsTools: ErpNextTool[] = [
 
   {
     name: "erpnext_doc_delete",
-    annotations: { destructiveHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true },
     description:
       "Delete any ERPNext document. Only Draft documents can usually be deleted. " +
       "For submitted documents, use cancel first. Works on any DocType.",
@@ -321,7 +321,7 @@ export const operationsTools: ErpNextTool[] = [
 
   {
     name: "erpnext_doc_submit",
-    annotations: { destructiveHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true },
     description:
       "Submit any ERPNext document (changes status from Draft to Submitted). " +
       "Applies to submittable DocTypes like Sales Order, Purchase Order, Sales Invoice, etc. " +
@@ -380,7 +380,7 @@ export const operationsTools: ErpNextTool[] = [
 
   {
     name: "erpnext_doc_cancel",
-    annotations: { destructiveHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true },
     description:
       "Cancel any ERPNext submitted document (changes status to Cancelled). " +
       "Applies to submittable DocTypes like Sales Order, Purchase Order, Sales Invoice, etc. " +
@@ -567,7 +567,10 @@ export const operationsTools: ErpNextTool[] = [
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
-      idempotentHint: false,
+      // Chính mô tả ngay dưới đây nói lại lần nữa là không tạo thêm gì và không báo lại,
+      // nên `false` là tín hiệu NGƯỢC với hợp đồng của tool: client dùng annotation để
+      // quyết định có được thử lại hay không sẽ xếp một thao tác an toàn vào nhóm phải hỏi.
+      idempotentHint: true,
     },
     description:
       "Assign any ERPNext document to one or more users through Frappe's native " +
@@ -715,7 +718,7 @@ export const operationsTools: ErpNextTool[] = [
 
   {
     name: "erpnext_method_call",
-    annotations: { destructiveHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true },
     description:
       "Call a whitelisted Frappe/ERPNext method by its dotted path. This is the escape hatch " +
       "for business endpoints no typed tool wraps, including custom-app methods that are the " +

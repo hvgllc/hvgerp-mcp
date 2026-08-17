@@ -387,11 +387,14 @@ export const identityTools: ErpNextTool[] = [
                 ],
                 includeClosed
                   ? [["employee", "=", employeeId!]]
-                  : [["employee", "=", employeeId!], [
-                    "status",
-                    "!=",
-                    "Cancelled",
-                  ]],
+                  // `docstatus = 0` chứ không phải một danh sách trạng thái: `Timesheet.status`
+                  // có bảy giá trị trên ERPNext v16 (đo trên chính site: Draft, Submitted,
+                  // Partially Billed, Billed, Payslip, Completed, Cancelled), nên loại mỗi
+                  // `Cancelled` là trả về cả bảng chấm công đã NỘP - việc đã chốt, không còn
+                  // chờ người này làm gì. Sáu trong bảy giá trị đó chỉ xuất hiện sau khi nộp,
+                  // nên `docstatus` là ranh giới đúng và không phải sửa lại khi ERPNext thêm
+                  // trạng thái thanh toán mới.
+                  : [["employee", "=", employeeId!], ["docstatus", "=", 0]],
                 limit,
                 "start_date desc",
               ),

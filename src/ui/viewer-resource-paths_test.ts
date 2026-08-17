@@ -96,3 +96,17 @@ Deno.test("the doclist viewer pins erpnext_my_work's section column", async () =
     'PRIORITY_COLUMNS must list "section" so the flattened my-work table keeps it',
   );
 });
+
+Deno.test("Dockerfile.bundle's usage recipe builds the UI before the bundle", async () => {
+  const source = await Deno.readTextFile(
+    new URL("../../Dockerfile.bundle", import.meta.url),
+  );
+
+  // `scripts/build-node.sh` copies `src/ui/dist/` unconditionally under `set -e`, and that
+  // directory is gitignored. A clean clone following the recipe as written died before it
+  // ever produced `dist-node/` - the one directory this Dockerfile copies in.
+  assert(
+    /deno task ui:build\n#\s+\.\/scripts\/build-node\.sh/.test(source),
+    "the recipe must run `deno task ui:build` before `./scripts/build-node.sh`",
+  );
+});

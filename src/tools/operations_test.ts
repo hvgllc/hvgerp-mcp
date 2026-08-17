@@ -6,7 +6,7 @@
  * @module lib/erpnext/tests/tools/operations_test
  */
 
-import { assertEquals, assertRejects } from "@std/assert";
+import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { operationsTools } from "./operations.ts";
 import type { FrappeClient } from "../api/frappe-client.ts";
 import type { ErpNextToolContext } from "./types.ts";
@@ -684,4 +684,14 @@ Deno.test("erpnext_method_call - rejects an unsupported http_method", async () =
     Error,
     "'http_method' must be 'GET' or 'POST'",
   );
+});
+
+Deno.test("erpnext_doc_assign is annotated idempotent, matching its own description", () => {
+  const assign = getTool("erpnext_doc_assign");
+
+  // The description promises re-assigning an already-assigned user returns the existing
+  // ToDo without re-notifying. `idempotentHint: false` said the opposite, so a client that
+  // reads annotations to decide whether a retry is safe files a safe call under "ask first".
+  assertStringIncludes(assign.description, "Idempotent");
+  assertEquals(assign.annotations?.idempotentHint, true);
 });

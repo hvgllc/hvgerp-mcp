@@ -50,8 +50,12 @@ const PERMISSIONS: Record<CallerIdentityMode, string> = {
 };
 
 const WRITES = `WRITES
-- Tools whose name ends in _create, _update, _submit, _cancel, _delete or _move change live business
-  data. Confirm the details with the user before calling one.`;
+- Some tools change live business data, and the NAME does not say which: \`erpnext_doc_assign\`,
+  \`erpnext_doc_unassign\`, \`erpnext_kanban_move_card\`, \`erpnext_file_upload\` and
+  \`erpnext_method_call\` all write without a _create/_update/_submit/_cancel/_delete suffix, and
+  the last of those reaches any allowlisted business method. Every writing tool carries
+  \`readOnlyHint: false\` in its \`tools/list\` annotations - read that rather than the name, and
+  confirm the details with the user before calling one.`;
 
 /** Build the `initialize` instructions for a deployment running in `mode`. */
 export function buildServerInstructions(mode: CallerIdentityMode): string {

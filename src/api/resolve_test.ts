@@ -12,6 +12,7 @@ import {
   resolveLink,
 } from "./resolve.ts";
 import { FrappeAPIError, type FrappeClient } from "./frappe-client.ts";
+import { clearCallerProfileCache } from "./identity.ts";
 import { setCache } from "../cache/cache.ts";
 import { MemoryCache } from "../cache/memory.ts";
 
@@ -277,4 +278,70 @@ Deno.test("resolveDynamicLink - supports Customer, Employee, and Lead targets", 
     const result = await resolveDynamicLink(client, doctype, "some name");
     assertEquals(result, `${doctype}-ID`);
   }
+});
+
+Deno.test("resolveLink - answers `me` on the paths that never call resolveEmployee", async () => {
+  setCache(new MemoryCache());
+  clearCallerProfileCache();
+  let lookups = 0;
+  const client = makeMockClient({
+    callMethod: async () => "khoa.do@havigroup.com",
+    get: async (_doctype: string, name: string) => ({
+      name,
+      enabled: 1,
+      user_type: "System User",
+      roles: [],
+    }),
+    list: async (doctype: string) => {
+      if (doctype === "Employee") {
+        lookups++;
+        return [{ name: "HR-EMP-00044", employee_name: "Do Khoa" }];
+      }
+      return [];
+    },
+  });
+
+  // `erpnext_employee_get` and the Leave Application / Expense Claim create handlers call
+  // `resolveLink(..., "Employee", ...)` straight, and `resolveDynamicLink` re-enters this
+  // very function. None of them pass through `resolveEmployee`, so a guard living on that
+  // wrapper left `me` to be searched as a literal employee name on every one of them.
+  assertEquals(
+    await resolveLink(client, "Employee", "me", "employee_name"),
+    "HR-EMP-00044",
+  );
+  assertEquals(
+    await resolveDynamicLink(client, "Employee", "myself"),
+    "HR-EMP-00044",
+  );
+  // The self lookup is the caller-profile query, never a name search: one query for two
+  // calls, and the second is served from the profile cache.
+  assertEquals(lookups, 1);
+});
+
+Deno.test("resolveLink - answers `me` for user-typed inputs too", async () => {
+  setCache(new MemoryCache());
+  clearCallerProfileCache();
+  const client = makeMockClient({
+    callMethod: async () => "khoa.do@havigroup.com",
+  });
+
+  assertEquals(
+    await resolveLink(client, "User", "@me", "full_name"),
+    "khoa.do@havigroup.com",
+  );
+});
+
+Deno.test("resolveLink - leaves `me` alone for doctypes that are not people", async () => {
+  setCache(new MemoryCache());
+  const client = makeMockClient({
+    get: async (_doctype: string, name: string) => ({ name }),
+  });
+
+  // Control: the self-reference table is keyed by doctype, so a Customer literally named
+  // "me" still resolves as a name. Without this, the fix would silently hijack every
+  // doctype that ever receives the string.
+  assertEquals(
+    await resolveLink(client, "Customer", "me", "customer_name"),
+    "me",
+  );
 });
