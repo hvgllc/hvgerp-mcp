@@ -34,6 +34,25 @@ import { MemoryCache } from "../cache/memory.ts";
 import { createCache, getCache, getCacheTtlMs } from "../cache/cache.ts";
 import { currentCaller } from "./caller-context.ts";
 
+/**
+ * Coerce a page limit to the integer Frappe will actually apply.
+ *
+ * Every tool declares `limit` as a JSON `number`, so a caller may hand over
+ * `2.5`. Frappe truncates that to 2 rows, which leaves the caller's own view of
+ * the request out of step with the answer: any code comparing the page it got
+ * back against the limit it asked for then reads 2 < 2.5 as "the result set is
+ * exhausted" when it is not. Truncating here, at the single point the request
+ * is built, keeps the requested limit and the applied limit the same number.
+ *
+ * Values that are not finite positive numbers are returned untouched: they are
+ * not this function's to reinterpret, and ERPNext rejecting them plainly is a
+ * better answer than a silently invented one.
+ */
+export function normalizeLimit(limit: number): number {
+  if (!Number.isFinite(limit) || limit <= 0) return limit;
+  return Math.floor(limit);
+}
+
 /** Deterministic JSON.stringify — sorts object keys so equivalent options produce the same cache key. */
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) {
@@ -474,9 +493,17 @@ export class FrappeClient {
    */
   async list<T extends FrappeDoc = FrappeDoc>(
     doctype: string,
-    options: FrappeListOptions = {},
+    rawOptions: FrappeListOptions = {},
     opts: { skipCache?: boolean } = {},
   ): Promise<T[]> {
+    // Normalise before the cache key so a fractional limit and the integer
+    // Frappe would coerce it to are the same query, not two.
+    const options: FrappeListOptions = {
+      ...rawOptions,
+      ...(rawOptions.limit === undefined
+        ? {}
+        : { limit: normalizeLimit(rawOptions.limit) }),
+    };
     const cacheKey = `list:${doctype}:${stableStringify(options)}`;
     if (!opts.skipCache) {
       const cached = this.cache.get<T[]>(cacheKey);

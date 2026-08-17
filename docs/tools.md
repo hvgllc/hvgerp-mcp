@@ -262,10 +262,16 @@ a `_list`, `_get`, or `erpnext_doc_update` call has to guess. It takes
 `doctype`, optional `search` (substring on fieldname and label), and optional
 `include_hidden`. Each field comes back with `fieldname`, `label`, `fieldtype`,
 `options` (the target DocType for a Link, the choices for a Select), `reqd`,
-`read_only`, `in_list_view`, `permlevel`, `description`, and `is_standard`;
-layout-only fieldtypes (Section Break, Column Break, Tab Break, Fold, Heading,
-HTML, Button) are dropped. The document header reports `module`, `is_single`,
-`is_child_table`, `is_submittable`, `is_tree`, and `title_field`.
+`read_only`, `in_list_view`, `permlevel`, `description`, `is_standard`, and
+`queryable`; layout-only fieldtypes (Section Break, Column Break, Tab Break,
+Fold, Heading, HTML, Button) are dropped. The document header reports `module`,
+`is_single`, `is_child_table`, `is_submittable`, `is_tree`, and `title_field`.
+
+`queryable` is `false` for every field of a Single DocType. A Single has no
+table of its own - `System Settings` stores its values as rows in `tabSingles` -
+so its fields are readable but can never appear in a `filters` or `order_by`
+clause. Reading it as "the field does not exist" is the opposite of the truth,
+which is why it is a flag on the field rather than an omission.
 
 The answer opens with the seven columns Frappe stores on every DocType - `name`,
 `owner`, `creation`, `modified`, `modified_by`, `docstatus`, `idx` - marked
@@ -285,9 +291,20 @@ happen to be filled in, without labels, types, or link targets.
 
 The underlying Frappe metadata endpoint performs no permission check of its own,
 so the tool asks ERPNext first (`frappe.client.has_permission`) and fails with a
-permission error when the caller cannot read the DocType. `permlevel` above 0
-marks a field governed by a separate role permission, which can be absent from
-documents even when the DocType itself is readable.
+permission error when the caller cannot read the DocType.
+
+For a child table the question is asked about a parent instead. A child DocType
+carries no role permissions of its own, so
+`has_permission('Sales Invoice
+Item', 'read')` answers false for every account
+except Administrator - measured on a live instance - and gating on it would have
+refused the schema to every real user. The tool resolves the DocTypes that own
+the child (the ones carrying a Table or Table MultiSelect field pointing at it)
+and passes as soon as the caller can read any of them; when none is readable,
+the error names them.
+
+`permlevel` above 0 marks a field governed by a separate role permission, which
+can be absent from documents even when the DocType itself is readable.
 
 ## Kanban (2) → kanban-viewer
 

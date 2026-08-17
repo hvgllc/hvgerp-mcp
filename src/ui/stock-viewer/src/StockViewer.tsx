@@ -58,7 +58,15 @@ interface StockEntry {
 }
 
 interface StockData {
-  count: number;
+  /**
+   * Total Bin rows matching the query, or `null` when the server could not
+   * establish one. Never fall back to the page length here: a page is what got
+   * returned, and printing it as the total is a lie precisely when the list IS
+   * truncated.
+   */
+  count: number | null;
+  /** Why `count` is null, when it is. */
+  count_error?: string;
   data: StockEntry[];
   refreshRequest?: UiRefreshRequestData;
 }
@@ -455,8 +463,29 @@ function StockContent(
             Stock Balance
           </div>
           <div style={{ fontSize: 12, color: colors.text.muted }}>
-            {sorted.length}{" "}
-            entries{filter ? ` (filtered from ${data.count})` : ""}
+            {
+              /* Same two scopes the doclist viewer keeps apart: the search box
+                narrows only the rows this page holds, while `data.count` is the
+                server total for the whole query. And a null total stays visible
+                as unknown rather than borrowing the page length, which would
+                claim completeness exactly when the page is truncated. */
+            }
+            {sorted.length < data.data.length
+              ? (
+                <>
+                  {sorted.length} of {data.data.length} loaded entries ·{" "}
+                  {typeof data.count === "number"
+                    ? `${data.count} in stock overall`
+                    : "total unknown"}
+                </>
+              )
+              : (
+                <>
+                  {sorted.length} of {typeof data.count === "number"
+                    ? data.count
+                    : "an unknown number of"} entries
+                </>
+              )}
           </div>
           <div
             aria-live="polite"
@@ -466,7 +495,12 @@ function StockContent(
               marginTop: 4,
             }}
           >
-            {error ?? (refreshing ? "Refreshing…" : "Auto-refresh on focus")}
+            {error ??
+              (refreshing
+                ? "Refreshing…"
+                : data.count === null && data.count_error
+                ? `Total unavailable: ${data.count_error}`
+                : "Auto-refresh on focus")}
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>

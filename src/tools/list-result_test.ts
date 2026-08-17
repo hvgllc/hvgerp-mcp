@@ -165,3 +165,49 @@ Deno.test("listResult - an unresolvable total never claims the page is everythin
   assertEquals(result.count_error?.includes("get_count exploded"), true);
   assertEquals(result.data.length, 50);
 });
+
+Deno.test("resolveTotal - a fractional limit never passes off a full page as the total", async () => {
+  let calls = 0;
+  const client = makeMockClient({
+    callMethod: async () => {
+      calls++;
+      return 97;
+    },
+  });
+
+  // Frappe truncates `limit: 2.5` to 2 rows. Comparing the page it returned
+  // against the limit as typed reads 2 < 2.5 as "that is everything", which is
+  // how a truncated list ends up reported as the whole result set.
+  const total = await resolveTotal(
+    makeCtx(client),
+    "Account",
+    undefined,
+    2,
+    2.5,
+  );
+
+  assertEquals(calls, 1);
+  assertEquals(total.count, 97);
+});
+
+Deno.test("resolveTotal - a limit that is not a positive number proves nothing", async () => {
+  let calls = 0;
+  const client = makeMockClient({
+    callMethod: async () => {
+      calls++;
+      return 12;
+    },
+  });
+
+  for (const limit of [Number.NaN, 0, -5]) {
+    const total = await resolveTotal(
+      makeCtx(client),
+      "Account",
+      undefined,
+      3,
+      limit,
+    );
+    assertEquals(total.count, 12);
+  }
+  assertEquals(calls, 3);
+});

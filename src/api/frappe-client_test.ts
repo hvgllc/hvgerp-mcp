@@ -12,6 +12,7 @@ import {
   FrappeAPIError,
   FrappeClient,
   getFrappeClient,
+  normalizeLimit,
   setFrappeClient,
 } from "./frappe-client.ts";
 import { MemoryCache } from "../cache/memory.ts";
@@ -169,6 +170,40 @@ Deno.test("FrappeClient.list() - builds correct query string", async () => {
   assertEquals(url.searchParams.get("as_dict"), "1");
 
   globalThis.fetch = original;
+});
+
+Deno.test("FrappeClient.list() - sends the integer limit Frappe would apply", async () => {
+  const seen: string[] = [];
+  const original = globalThis.fetch;
+
+  globalThis.fetch = async (
+    url: string | URL | Request,
+    _init?: RequestInit,
+  ): Promise<Response> => {
+    seen.push(new URL(url.toString()).searchParams.get("limit") ?? "");
+    return new Response(JSON.stringify({ data: [] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const client = makeClient();
+  await client.list("Account", { limit: 2.5 });
+  // Same query once normalised, so it must come out of the cache rather than
+  // hitting the network a second time under a different key.
+  await client.list("Account", { limit: 2 });
+
+  assertEquals(seen, ["2"]);
+
+  globalThis.fetch = original;
+});
+
+Deno.test("normalizeLimit - truncates fractions and leaves nonsense alone", () => {
+  assertEquals(normalizeLimit(2.5), 2);
+  assertEquals(normalizeLimit(20), 20);
+  assertEquals(normalizeLimit(0), 0);
+  assertEquals(normalizeLimit(-3.5), -3.5);
+  assertEquals(Number.isNaN(normalizeLimit(Number.NaN)), true);
 });
 
 // ── get() ─────────────────────────────────────────────────────────────────────

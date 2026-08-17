@@ -23,6 +23,7 @@
  */
 
 import type { FrappeDoc, FrappeFilter } from "../api/types.ts";
+import { normalizeLimit } from "../api/frappe-client.ts";
 import type { ErpNextToolContext } from "./types.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
 
@@ -70,7 +71,18 @@ export async function resolveTotal(
   pageLength: number,
   limit: number,
 ): Promise<TotalResolution> {
-  if (pageLength < limit) return { count: pageLength };
+  // Compare against the limit ERPNext actually applied, not the one the caller
+  // typed: `limit: 2.5` fetches 2 rows, and a raw `2 < 2.5` would read that
+  // short page as proof the result set is exhausted and skip the count. A limit
+  // that is not a finite positive number never proves completeness either, so
+  // it falls through to the real count.
+  const appliedLimit = normalizeLimit(limit);
+  if (
+    Number.isInteger(appliedLimit) && appliedLimit > 0 &&
+    pageLength < appliedLimit
+  ) {
+    return { count: pageLength };
+  }
   try {
     const raw = await ctx.client.callMethod<unknown>(
       "frappe.client.get_count",

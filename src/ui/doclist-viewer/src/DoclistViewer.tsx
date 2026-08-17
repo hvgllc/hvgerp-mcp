@@ -433,15 +433,31 @@ function DoclistContent({ data, error, refreshing, onRefresh, onError }: {
           </div>
           <div style={{ fontSize: 12, color: colors.text.muted }}>
             {
-              /* `?? rows.length` would be wrong here: a null total means the
-                server could not count, and the page length is not a total. It
-                would read as complete exactly when the list is most likely
-                truncated. */
+              /* Two separate scopes, and conflating them lies twice.
+                `data.count` is the server's total for the UNFILTERED query,
+                while the search box and the chips narrow only the rows this
+                page happens to hold - so "0 of 97 records" could be printed
+                while a match sits in the 47 rows that were never fetched.
+                A null total is not papered over with `rows.length` either: the
+                page length is not a total, and substituting it would read as
+                complete exactly when the list is most likely truncated. */
             }
-            {sorted.length} of{" "}
-            {typeof data.count === "number"
-              ? data.count
-              : "an unknown number of"} records
+            {sorted.length < rows.length
+              ? (
+                <>
+                  {sorted.length} of {rows.length} loaded records ·{" "}
+                  {typeof data.count === "number"
+                    ? `${data.count} match the query`
+                    : "total unknown"}
+                </>
+              )
+              : (
+                <>
+                  {sorted.length} of {typeof data.count === "number"
+                    ? data.count
+                    : "an unknown number of"} records
+                </>
+              )}
           </div>
           <div
             aria-live="polite"

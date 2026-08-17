@@ -29,7 +29,14 @@ requests and tags actually live.
   they are real, filterable columns and they are the ones a caller reaches for
   first. `doctype` is deliberately not among them - it is in Frappe's
   `default_fields` tuple but is attached in memory rather than stored, so
-  filtering or sorting on it fails at the database.
+  filtering or sorting on it fails at the database. A child table is gated
+  against the DocTypes that own it rather than against itself: a child carries
+  no role permissions, so `has_permission('Sales Invoice Item', 'read')` answers
+  false for every account except Administrator - measured on a live instance -
+  and asking it directly would have refused the schema to every real user. Every
+  field also carries `queryable`, which is `false` throughout a Single: a Single
+  stores its values as rows in `tabSingles` and has no table of its own, so its
+  fields are readable but can never appear in a `filters` or `order_by` clause.
 - **`erpnext_calendar_events`.** Lists Events over a date range through the same
   call the ERPNext calendar uses, so a repeating event is expanded into one row
   per occurrence, each tagged `is_recurring` (read from the stored
@@ -71,6 +78,28 @@ requests and tags actually live.
   really be truncated. The doclist viewer prints "N of an unknown number of
   records" in that case and says why in its status line, rather than falling
   back to the page length.
+- **A fractional `limit` no longer passes a truncated page off as the total.**
+  The tool schemas declare `limit` as a number, so `limit: 2.5` is accepted;
+  ERPNext truncates it to 2 rows, and comparing that page against the
+  untruncated 2.5 read `2 < 2.5` as proof the result set was exhausted, so the
+  count was skipped and a truncated list reported itself complete. Both the page
+  fetch and the completeness test now go through `normalizeLimit`, which floors
+  the value before it reaches ERPNext and before it becomes a cache key - so a
+  fractional limit and the integer ERPNext would apply are one cached query, not
+  two. A limit that is not a finite positive number never proves completeness
+  either and now falls through to the real count.
+- **The stock viewer no longer prints "filtered from null".** It still declared
+  `count` as a plain number and interpolated it directly, so an unresolved total
+  rendered the word `null` into the footer. It now carries the same nullable
+  contract as the doclist viewer (`count: number | null` plus `count_error`),
+  says "total unknown" when there is no total, and surfaces the reason in its
+  `aria-live` status line.
+- **Both viewers distinguish the loaded page from the server total.** The search
+  box and the filter chips narrow only the rows that were fetched, while `count`
+  is the total for the unfiltered query, so filtering could print "0 of 97
+  records" while a match sat in a page never fetched. The counter now reads "N
+  of M loaded records · K match the query" whenever a client-side filter is
+  active.
 
 ## [3.2.0] - 2026-08-17
 

@@ -169,21 +169,88 @@ interface RawDocTypeMeta {
 }
 
 /** Ask ERPNext whether the caller may read this DocType at all. */
-async function assertReadable(
+async function canRead(
   ctx: Parameters<ErpNextTool["handler"]>[1],
   doctype: string,
-): Promise<void> {
+): Promise<boolean> {
   const res = await ctx.client.callMethod<{ has_permission?: boolean }>(
     "frappe.client.has_permission",
     { doctype, docname: "", perm_type: "read" },
     { httpMethod: "GET" },
   );
-  if (!res?.has_permission) {
+  return Boolean(res?.has_permission);
+}
+
+/** Ask ERPNext whether the caller may read this DocType at all. */
+async function assertReadable(
+  ctx: Parameters<ErpNextTool["handler"]>[1],
+  doctype: string,
+): Promise<void> {
+  if (!await canRead(ctx, doctype)) {
     throw new Error(
       `[erpnext_doctype_fields] You do not have read permission on '${doctype}'. ` +
         "Ask an ERPNext administrator for the role that grants it; do not guess the schema.",
     );
   }
+}
+
+/** How many parent candidates are worth a permission round-trip. */
+const MAX_PARENT_PROBES = 10;
+
+/**
+ * Gate a child DocType through a parent document the caller may read.
+ *
+ * A child DocType carries no role permissions of its own, so asking
+ * `frappe.has_permission('Sales Invoice Item', 'read')` returns false for every
+ * account except Administrator - measured on the live instance as
+ * `khoa.do@havigroup.com`. Gating on that answer would make this tool reject
+ * every child table for every real user, while still advertising child-table
+ * support. ERPNext itself derives child access from the parent that owns the
+ * row, and that is what is reproduced here: resolve the DocTypes that declare
+ * this child in a Table field, and require read permission on at least one.
+ */
+async function assertChildReadable(
+  ctx: Parameters<ErpNextTool["handler"]>[1],
+  doctype: string,
+): Promise<void> {
+  // `with_parent: 1` makes `getdoctype` return the owning DocTypes alongside
+  // the child, which is the only place the parent link is exposed - a child
+  // DocType does not record its own parents.
+  const envelope = await ctx.client.callMethodRaw<
+    { docs?: RawDocTypeMeta[] }
+  >(
+    "frappe.desk.form.load.getdoctype",
+    { doctype, with_parent: 1 },
+    { httpMethod: "GET" },
+  );
+  const parents: string[] = [];
+  for (const candidate of envelope?.docs ?? []) {
+    const name = candidate.name;
+    if (!name || name === doctype || parents.includes(name)) continue;
+    const ownsIt = (candidate.fields ?? []).some(
+      (field) =>
+        (field.fieldtype === "Table" ||
+          field.fieldtype === "Table MultiSelect") &&
+        field.options === doctype,
+    );
+    if (ownsIt) parents.push(name);
+  }
+
+  for (const parent of parents.slice(0, MAX_PARENT_PROBES)) {
+    if (await canRead(ctx, parent)) return;
+  }
+
+  throw new Error(
+    `[erpnext_doctype_fields] '${doctype}' is a child table, so it has no ` +
+      "permissions of its own; access comes from the document that owns it. " +
+      (parents.length > 0
+        ? `You cannot read any of its parent DocTypes (${
+          parents.join(", ")
+        }), so its schema stays out of scope.`
+        : "No parent DocType could be resolved for it, so there is nothing to " +
+          "check the permission against.") +
+      " Ask an ERPNext administrator for the role that grants the parent.",
+  );
 }
 
 export const discoveryTools: ErpNextTool[] = [
@@ -197,8 +264,11 @@ export const discoveryTools: ErpNextTool[] = [
       "are not certain it exists — reading a sample document only reveals the fields that " +
       "happen to be filled in. The answer also lists the standard columns every DocType stores " +
       "(name, owner, creation, modified, modified_by, docstatus, idx) marked is_standard, because " +
-      "they are filterable and sortable but appear in no form. Fails with a permission error if " +
-      "the caller cannot read the DocType, so the answer is always inside the caller's own scope.",
+      "they appear in no form. Every field carries queryable: false means the value can be read " +
+      "but not used in a filter or order_by, which is the case for every field of a Single " +
+      "DocType because a Single has no table of its own. Fails with a permission error if the " +
+      "caller cannot read the DocType; for a child table the check runs against a parent DocType " +
+      "that owns it, because child tables carry no permissions of their own.",
     category: "discovery",
     inputSchema: {
       type: "object",
@@ -228,8 +298,13 @@ export const discoveryTools: ErpNextTool[] = [
         throw new Error("[erpnext_doctype_fields] 'doctype' must not be empty");
       }
 
-      await assertReadable(ctx, doctype);
-
+      // The meta is fetched BEFORE the permission gate because the gate itself
+      // depends on it: a child DocType has to be checked against its parent,
+      // and nothing but the meta says whether this is one. That ordering leaks
+      // nothing - `getdoctype` performs no permission check of its own (which
+      // is exactly why this module imposes one), so reading it earlier grants
+      // the caller no access it did not already have, and no part of it is
+      // returned unless the gate below passes.
       const envelope = await ctx.client.callMethodRaw<
         { docs?: RawDocTypeMeta[] }
       >(
@@ -245,15 +320,31 @@ export const discoveryTools: ErpNextTool[] = [
         );
       }
 
+      if (meta.istable) {
+        await assertChildReadable(ctx, doctype);
+      } else {
+        await assertReadable(ctx, doctype);
+      }
+
       const needle = (input.search as string | undefined)?.toLowerCase().trim();
       const matches = (fieldname: string, label: string | null | undefined) =>
         !needle ||
         `${fieldname} ${label ?? ""}`.toLowerCase().includes(needle);
 
+      // A Single DocType is stored as name/value rows in `tabSingles`; there is
+      // no `tab<DocType>` table behind it. Measured on the live instance:
+      // `show tables like 'tabSystem Settings'` returns nothing, while
+      // `tabSingles` does hold owner/creation/modified/modified_by/docstatus/
+      // idx/name for it. So every field of a Single - the standard columns most
+      // of all - is a value you can read but not a column you can filter or
+      // sort on, and a model that carried one into `order_by` would get a
+      // database error. That distinction is what `queryable` carries.
+      const queryable = !meta.issingle;
+
       // Standard columns come first, and they are never subject to
       // `include_hidden`: they are not hidden form fields, they are columns that
       // no form ever declared. They are all read-only from a writer's point of
-      // view, and all filterable and sortable from a reader's.
+      // view.
       const standard = [
         ...STANDARD_FIELDS,
         ...(meta.istable ? CHILD_TABLE_FIELDS : []),
@@ -270,6 +361,7 @@ export const discoveryTools: ErpNextTool[] = [
           permlevel: 0,
           description: field.description,
           is_standard: true,
+          queryable,
         }));
 
       const declared = (meta.fields ?? [])
@@ -293,6 +385,7 @@ export const discoveryTools: ErpNextTool[] = [
           permlevel: field.permlevel ?? 0,
           description: field.description ?? null,
           is_standard: false,
+          queryable,
         }));
 
       const fields = [...standard, ...declared];

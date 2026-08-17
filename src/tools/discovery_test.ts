@@ -77,12 +77,11 @@ const META = {
 };
 
 Deno.test("erpnext_doctype_fields - refuses when the caller cannot read the doctype", async () => {
-  let metaCalls = 0;
+  let permChecks = 0;
   const client = makeMockClient({
-    callMethod: async () => ({ has_permission: false }),
-    callMethodRaw: async () => {
-      metaCalls++;
-      return { docs: [META] };
+    callMethod: async () => {
+      permChecks++;
+      return { has_permission: false };
     },
   });
 
@@ -95,8 +94,10 @@ Deno.test("erpnext_doctype_fields - refuses when the caller cannot read the doct
     Error,
     "read permission",
   );
-  // The gate must run before the metadata call, not alongside it.
-  assertEquals(metaCalls, 0);
+  // The metadata call runs first now - it is what tells the tool whether this
+  // is a child table - but the gate still has to be asked, and its answer still
+  // has to stop the schema from being returned.
+  assertEquals(permChecks, 1);
 });
 
 Deno.test("erpnext_doctype_fields - asks ERPNext about the requested doctype", async () => {
@@ -179,16 +180,40 @@ Deno.test("erpnext_doctype_fields - lists the standard columns no form declares"
   assertEquals(standard.some((f: any) => f.fieldname === "parent"), false);
 });
 
-Deno.test("erpnext_doctype_fields - adds the parent columns for a child table", async () => {
-  const client = makeMockClient({
-    callMethodRaw: async () => ({
-      docs: [{ ...META, name: "Sales Invoice Item", istable: 1 }],
-    }),
-  });
+/** The child DocType and the invoice that owns it, as `getdoctype` returns them. */
+const CHILD_META = { ...META, name: "Sales Invoice Item", istable: 1 };
+const PARENT_META = {
+  ...META,
+  name: "Sales Invoice",
+  istable: 0,
+  fields: [
+    {
+      fieldname: "items",
+      label: "Items",
+      fieldtype: "Table",
+      options: "Sales Invoice Item",
+    },
+  ],
+};
 
+/**
+ * Mock `getdoctype` the way ERPNext answers it: `with_parent: 0` returns the
+ * requested DocType alone, `with_parent: 1` puts the owning DocType first.
+ */
+function makeChildClient(overrides: Record<string, AnyFn> = {}): FrappeClient {
+  return makeMockClient({
+    callMethodRaw: async (_method: string, args: Record<string, unknown>) =>
+      args.with_parent
+        ? { docs: [PARENT_META, CHILD_META] }
+        : { docs: [CHILD_META] },
+    ...overrides,
+  });
+}
+
+Deno.test("erpnext_doctype_fields - adds the parent columns for a child table", async () => {
   const result = await getTool("erpnext_doctype_fields").handler(
     { doctype: "Sales Invoice Item" },
-    makeCtx(client),
+    makeCtx(makeChildClient()),
   ) as any;
 
   const standard = result.fields.filter((f: any) => f.is_standard).map((
@@ -196,6 +221,42 @@ Deno.test("erpnext_doctype_fields - adds the parent columns for a child table", 
   ) => f.fieldname);
   assertEquals(standard.slice(-3), ["parent", "parentfield", "parenttype"]);
   assertEquals(result.is_child_table, true);
+});
+
+Deno.test("erpnext_doctype_fields - checks a child table against the parent that owns it", async () => {
+  const asked: string[] = [];
+  const client = makeChildClient({
+    callMethod: async (_method: string, args: Record<string, unknown>) => {
+      asked.push(args.doctype as string);
+      // The child itself is unreadable for everyone but Administrator, which is
+      // exactly why the parent has to be the thing that is asked about.
+      return { has_permission: args.doctype === "Sales Invoice" };
+    },
+  });
+
+  const result = await getTool("erpnext_doctype_fields").handler(
+    { doctype: "Sales Invoice Item" },
+    makeCtx(client),
+  ) as any;
+
+  assertEquals(asked, ["Sales Invoice"]);
+  assertEquals(result.doctype, "Sales Invoice Item");
+});
+
+Deno.test("erpnext_doctype_fields - refuses a child table when no parent is readable", async () => {
+  const client = makeChildClient({
+    callMethod: async () => ({ has_permission: false }),
+  });
+
+  await assertRejects(
+    () =>
+      getTool("erpnext_doctype_fields").handler(
+        { doctype: "Sales Invoice Item" },
+        makeCtx(client),
+      ),
+    Error,
+    "Sales Invoice",
+  );
 });
 
 Deno.test("erpnext_doctype_fields - include_hidden brings back the hidden ones", async () => {
@@ -233,6 +294,38 @@ Deno.test("erpnext_doctype_fields - search filters the standard columns too", as
     "modified",
     "modified_by",
   ]);
+});
+
+Deno.test("erpnext_doctype_fields - marks a Single's fields as not queryable", async () => {
+  const client = makeMockClient({
+    callMethodRaw: async () => ({
+      docs: [{ ...META, name: "System Settings", issingle: 1 }],
+    }),
+  });
+
+  const result = await getTool("erpnext_doctype_fields").handler(
+    { doctype: "System Settings" },
+    makeCtx(client),
+  ) as any;
+
+  // A Single lives in `tabSingles`; there is no `tabSystem Settings` to filter
+  // or sort against, so neither the standard columns nor the declared fields
+  // may be presented as usable in a filter or an order_by.
+  assertEquals(result.is_single, true);
+  assertEquals(result.fields.some((f: any) => f.queryable), false);
+  assertEquals(
+    result.fields.some((f: any) => f.is_standard && f.fieldname === "modified"),
+    true,
+  );
+});
+
+Deno.test("erpnext_doctype_fields - an ordinary doctype keeps its fields queryable", async () => {
+  const result = await getTool("erpnext_doctype_fields").handler(
+    { doctype: "Account" },
+    makeCtx(makeMockClient()),
+  ) as any;
+
+  assertEquals(result.fields.every((f: any) => f.queryable), true);
 });
 
 Deno.test("erpnext_doctype_fields - reports a misspelled doctype instead of returning nothing", async () => {
