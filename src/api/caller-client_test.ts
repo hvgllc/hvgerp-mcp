@@ -11,6 +11,8 @@
 import { assert, assertEquals } from "@std/assert";
 import { getFrappeClient, setFrappeClient } from "./frappe-client.ts";
 import { runWithCaller } from "./caller-context.ts";
+import { resolveLink } from "./resolve.ts";
+import { createCache, getCache, setCache } from "../cache/cache.ts";
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
@@ -44,7 +46,12 @@ function recordFetch(body: (call: number) => unknown): {
     );
   };
 
-  return { calls, restore: () => { globalThis.fetch = original; } };
+  return {
+    calls,
+    restore: () => {
+      globalThis.fetch = original;
+    },
+  };
 }
 
 /** Run `fn` with `vars` applied to the process env, restoring the previous values afterwards. */
@@ -193,7 +200,11 @@ Deno.test("caller clients - a write by one caller invalidates the others' cached
 
       await runWithCaller(anh, () => getFrappeClient().list("Task")); // call 0
       await runWithCaller(khoa, () => getFrappeClient().list("Task")); // call 1
-      assertEquals(calls.length, 2, "each caller reads through their own cache");
+      assertEquals(
+        calls.length,
+        2,
+        "each caller reads through their own cache",
+      );
 
       await runWithCaller(
         anh,
@@ -245,6 +256,145 @@ Deno.test("caller clients - invalidation crosses caches without sharing values (
       );
     } finally {
       restore();
+    }
+  });
+});
+
+// ── The app-wide cache ────────────────────────────────────────────────────────
+
+/**
+ * Như `recordFetch`, nhưng câu trả lời được chọn theo chính request và mang mã HTTP riêng.
+ * `resolveLink()` chỉ ghi mục phủ định khi `get()` trả về đúng 404, nên test dưới đây cần một 404
+ * thật chứ không thể dùng bộ ghi 200-mọi-lượt ở trên.
+ */
+function recordFetchRouted(
+  answer: (url: string, method: string) => { status: number; body: unknown },
+): { calls: Recorded[]; restore: () => void } {
+  const calls: Recorded[] = [];
+  const original = globalThis.fetch;
+
+  globalThis.fetch = (
+    url: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    const headers = new Headers(init?.headers);
+    calls.push({
+      url: String(url),
+      authorization: headers.get("authorization"),
+    });
+    const { status, body } = answer(String(url), init?.method ?? "GET");
+    return Promise.resolve(
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+  };
+
+  return {
+    calls,
+    restore: () => {
+      globalThis.fetch = original;
+    },
+  };
+}
+
+Deno.test("caller clients - a write clears resolveLink's negative entries too", async () => {
+  await withEnv({ ...STATIC_ENV, MCP_CACHE_ENABLED: undefined }, async () => {
+    const previousCache = getCache();
+    setCache(createCache());
+    const { calls, restore } = recordFetchRouted((url, method) => {
+      if (method === "POST") {
+        return { status: 200, body: { data: { name: "TASK-502" } } };
+      }
+      // Một lượt đọc đơn tài liệu: định danh này không phải ID nên máy chủ trả 404.
+      if (url.includes("/api/resource/Task/")) {
+        return { status: 404, body: { exc_type: "DoesNotExistError" } };
+      }
+      return {
+        status: 200,
+        body: { data: [{ name: "TASK-501", subject: "Nightly backup" }] },
+      };
+    });
+    try {
+      const anh = { accessToken: "tok-anh", principal: "anh.le@havigroup.com" };
+
+      // Lượt dò đầu tiên: get() trả 404 nên resolveLink ghi
+      // `resolve:miss:Task:Nightly backup` vào cache CẤP ỨNG DỤNG, rồi mới tìm theo subject.
+      const first = await runWithCaller(
+        anh,
+        () =>
+          resolveLink(getFrappeClient(), "Task", "Nightly backup", "subject"),
+      );
+      assertEquals(first, "TASK-501");
+      assertEquals(
+        calls.length,
+        2,
+        "một lượt get 404 rồi một lượt tìm theo subject",
+      );
+
+      await runWithCaller(
+        anh,
+        () => getFrappeClient().create("Task", { subject: "Nightly backup" }),
+      );
+      assertEquals(calls.length, 3);
+
+      await runWithCaller(
+        anh,
+        () =>
+          resolveLink(getFrappeClient(), "Task", "Nightly backup", "subject"),
+      );
+
+      assert(
+        calls[3]?.url.includes("/api/resource/Task/"),
+        "sau khi ghi, resolveLink phải dò lại get() một lần nữa; mục phủ định nằm trong cache cấp " +
+          "ứng dụng mà ở chế độ caller-identity không client nào ghi danh, nên nếu không đưa " +
+          "getCache() vào managedCaches() thì một bản ghi vừa tạo vẫn bị báo không khớp gì cả " +
+          `suốt 15 giây (lượt gọi thật: ${calls[3]?.url})`,
+      );
+    } finally {
+      restore();
+      setCache(previousCache);
+    }
+  });
+});
+
+Deno.test("caller clients - the negative entry survives when nothing is written (control)", async () => {
+  await withEnv({ ...STATIC_ENV, MCP_CACHE_ENABLED: undefined }, async () => {
+    const previousCache = getCache();
+    setCache(createCache());
+    const { calls, restore } = recordFetchRouted((url) =>
+      url.includes("/api/resource/Task/")
+        ? { status: 404, body: { exc_type: "DoesNotExistError" } }
+        : {
+          status: 200,
+          body: { data: [{ name: "TASK-501", subject: "Nightly backup" }] },
+        }
+    );
+    try {
+      const anh = { accessToken: "tok-anh", principal: "anh.le@havigroup.com" };
+      const probe = () =>
+        runWithCaller(
+          anh,
+          () =>
+            resolveLink(getFrappeClient(), "Task", "Nightly backup", "subject"),
+        );
+
+      await probe();
+      assertEquals(calls.length, 2);
+
+      await probe();
+
+      assertEquals(
+        calls.length,
+        2,
+        "không có lệnh ghi nào thì mục phủ định vẫn còn hiệu lực và lượt dò thứ hai không chạm " +
+          "mạng lần nào. Đây là đối chứng: nó xanh ở cả hai phía của bản vá, cho biết test trên đo " +
+          "đúng việc vô hiệu hoá chứ không phải đo một cache chưa bao giờ được ghi",
+      );
+    } finally {
+      restore();
+      setCache(previousCache);
     }
   });
 });

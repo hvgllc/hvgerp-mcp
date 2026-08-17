@@ -756,9 +756,16 @@ const _callerClients = new Map<string, CallerClientEntry>();
  */
 const _managedCaches = new Set<Cache>();
 
-/** Caches to invalidate alongside the one doing the writing. Read fresh on every mutation. */
+/**
+ * Caches to invalidate alongside the one doing the writing. Read fresh on every mutation.
+ *
+ * `getCache()` luôn có mặt trong tập này, kể cả khi chưa client tĩnh nào được dựng. Lý do:
+ * `resolveLink()` ghi các mục phủ định `resolve:miss:{doctype}:{identifier}` vào đúng cache cấp
+ * ứng dụng đó, bất kể client nào đi dò. Ở chế độ caller-identity thì không còn chỗ nào khác ghi
+ * danh nó, nên nếu bỏ ra thì một bản ghi vừa được tạo vẫn bị báo "không khớp gì cả" suốt 15 giây.
+ */
 function managedCaches(): Iterable<Cache> {
-  return _managedCaches;
+  return new Set([..._managedCaches, getCache()]);
 }
 
 function requireBaseUrl(): string {
