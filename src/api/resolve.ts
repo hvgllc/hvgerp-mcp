@@ -270,3 +270,45 @@ export async function resolveDynamicLink(
   if (!searchField) return identifier;
   return resolveLink(client, targetDoctype, identifier, searchField, options);
 }
+
+/**
+ * Phân giải một người nhận việc, nhưng chỉ tra cứu `User` khi thật sự cần.
+ *
+ * Một ID người dùng của Frappe CHÍNH LÀ địa chỉ thư, nên đưa nó qua `resolveUser` là bỏ tiền mua
+ * một lượt `GET User/{email}` không đổi lấy gì. Tệ hơn: `User` là doctype có phân quyền riêng, nên
+ * người có quyền sửa tài liệu mà không có quyền đọc hồ sơ người khác sẽ nhận 403 ở đúng lượt đọc
+ * thừa đó - `resolveLink` chỉ nuốt 404, mọi mã khác đều ném tiếp. Kết quả là mất luôn thao tác gỡ
+ * giao việc mà lẽ ra họ được phép làm.
+ *
+ * Tự tham chiếu phải xét TRƯỚC lối tắt địa chỉ thư: `@me` và `@self` đều chứa dấu at-sign nên lối
+ * tắt sẽ tưởng chúng là ID có sẵn và không dịch.
+ */
+export function resolveAssigneeUser(
+  client: FrappeClient,
+  identifier: string,
+  inputPath?: string,
+): Promise<string> {
+  const needsLookup = isSelfReference(identifier) || !identifier.includes("@");
+  if (!needsLookup) return Promise.resolve(identifier);
+  return resolveUser(client, identifier, {
+    allowPartialMatch: false,
+    inputPath,
+  });
+}
+
+/**
+ * Dịch `me` thành ID người gọi trong một giá trị lọc, và chỉ có vậy.
+ *
+ * Dùng cho các ô lọc kiểu `lead_owner` / `opportunity_owner`: chỉ dạng tự tham chiếu mới được
+ * dịch, còn mọi giá trị khác đi thẳng xuống Frappe như cũ. Cố ý KHÔNG tra cứu theo họ tên: một ô
+ * lọc không khớp ai vốn trả danh sách rỗng, biến nó thành lỗi là đổi hành vi của một đường đọc
+ * chứ không phải sửa lỗi.
+ */
+export function resolveUserFilter(
+  client: FrappeClient,
+  value: string,
+): Promise<string> {
+  return isSelfReference(value)
+    ? resolveSelfUser(client)
+    : Promise.resolve(value);
+}

@@ -506,6 +506,27 @@ Deno.test("erpnext_doc_unassign - rejects a missing or empty assign_to", async (
   );
 });
 
+Deno.test("erpnext_doc_unassign - an email assignee costs no User read", async () => {
+  let userReads = 0;
+
+  await getTool("erpnext_doc_unassign").handler(
+    { doctype: "Task", name: "TASK-001", assign_to: "user@example.com" },
+    makeCtx(makeMockClient({
+      get: async (doctype: string, name: string) => {
+        if (doctype === "User") userReads++;
+        return { name };
+      },
+      callMethod: async () => [],
+    })),
+  );
+
+  // ID của một `User` trong Frappe CHÍNH LÀ email, nên tra cứu nó không đổi được kết quả mà chỉ mua
+  // thêm một lượt `GET User/{email}`. Nhân viên thường không có quyền đọc `User`, nên lượt đọc thừa
+  // đó biến thành 403 và chặn luôn một thao tác mà chính họ được phép làm. `resolveAssignees` của
+  // `erpnext_doc_assign` đã theo quy tắc này từ đầu.
+  assertEquals(userReads, 0);
+});
+
 // ── erpnext_method_call ─────────────────────────────────────────────────────
 
 // Temporarily override the allowlist env var for the duration of a test block.

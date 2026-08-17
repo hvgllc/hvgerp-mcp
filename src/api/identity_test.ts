@@ -42,6 +42,7 @@ const EMPLOYEE_ROW = {
 
 function makeClient(overrides: Record<string, AnyFn> = {}): FrappeClient {
   return {
+    actsAs: "caller",
     callMethod: async () => "khoa.do@havigroup.com",
     get: async () => USER_DOC,
     list: async () => [EMPLOYEE_ROW],
@@ -165,7 +166,26 @@ Deno.test("loadCallerProfile does not absorb a non-permission Employee failure",
 
 Deno.test("loadCallerProfile marks a request with no caller as service-account", async () => {
   clearCallerProfileCache();
-  const profile = await loadCallerProfile(makeClient());
+  const profile = await loadCallerProfile(
+    makeClient({ actsAs: "service" } as unknown as Record<string, AnyFn>),
+  );
+  assertEquals(profile.identity_mode, "shared-service-account");
+});
+
+Deno.test("loadCallerProfile reads identity_mode off the client, not off the caller context", async () => {
+  clearCallerProfileCache();
+
+  // Ứng dụng nhúng cài client tĩnh qua `setFrappeClient()` rồi vẫn chạy trong `runWithCaller()`:
+  // có caller context, nhưng lời gọi đi bằng tài khoản dịch vụ. Suy `identity_mode` từ caller
+  // context sẽ dán nhãn `per-caller` cho hồ sơ của tài khoản dịch vụ, và `erpnext_whoami` nuốt
+  // mất đúng cảnh báo mà nó tồn tại để phát ra.
+  const profile = await runWithCaller(
+    { accessToken: "token", principal: "khoa.do@havigroup.com" },
+    () =>
+      loadCallerProfile(
+        makeClient({ actsAs: "service" } as unknown as Record<string, AnyFn>),
+      ),
+  );
   assertEquals(profile.identity_mode, "shared-service-account");
 });
 

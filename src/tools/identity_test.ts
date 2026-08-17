@@ -1,5 +1,5 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
-import type { FrappeClient } from "../api/frappe-client.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import { FrappeAPIError, type FrappeClient } from "../api/frappe-client.ts";
 import { clearCallerProfileCache } from "../api/identity.ts";
 import { identityTools } from "./identity.ts";
 import type { ErpNextTool, ErpNextToolContext } from "./types.ts";
@@ -180,7 +180,7 @@ Deno.test("erpnext_my_work reports a refused section instead of failing the call
     list: async (doctype: string) => {
       if (doctype === "Employee") return [EMPLOYEE_ROW];
       if (doctype === "Timesheet") {
-        throw new Error("Not permitted for Timesheet");
+        throw new FrappeAPIError("Not permitted for Timesheet", 403, {});
       }
       return [];
     },
@@ -192,9 +192,50 @@ Deno.test("erpnext_my_work reports a refused section instead of failing the call
   >;
 
   const sections = result.sections as Record<string, Record<string, unknown>>;
-  assertEquals(sections.timesheets.error, "Not permitted for Timesheet");
+  assertStringIncludes(
+    sections.timesheets.error as string,
+    "Not permitted for Timesheet",
+  );
   // The other sections still answered.
   assertEquals(sections.todos.count, 0);
+});
+
+Deno.test("erpnext_my_work does not report a 5xx section as a permission refusal", async () => {
+  clearCallerProfileCache();
+  const ctx = makeCtx({
+    list: async (doctype: string) => {
+      if (doctype === "Employee") return [EMPLOYEE_ROW];
+      if (doctype === "Timesheet") {
+        throw new FrappeAPIError("Internal Server Error", 500, {});
+      }
+      return [];
+    },
+  });
+
+  // Một mục hỏng vì máy chủ, không vì quyền. Gói nó vào một kết quả thành công thì client không
+  // còn tín hiệu nào để thử lại, và mô hình đọc bản tổng hợp thiếu như thể nó đã đầy đủ.
+  await assertRejects(
+    () => tool("erpnext_my_work").handler({}, ctx),
+    FrappeAPIError,
+    "Internal Server Error",
+  );
+});
+
+Deno.test("erpnext_my_work does not report a network failure as a permission refusal", async () => {
+  clearCallerProfileCache();
+  const ctx = makeCtx({
+    list: async (doctype: string) => {
+      if (doctype === "Employee") return [EMPLOYEE_ROW];
+      if (doctype === "ToDo") throw new TypeError("connection reset");
+      return [];
+    },
+  });
+
+  await assertRejects(
+    () => tool("erpnext_my_work").handler({}, ctx),
+    TypeError,
+    "connection reset",
+  );
 });
 
 Deno.test("erpnext_my_work treats cancelled and rejected claims as closed", async () => {

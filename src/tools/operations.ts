@@ -25,7 +25,7 @@ import {
   resolveAssignees,
   validateAssignees,
 } from "./assignment.ts";
-import { resolveUser } from "../api/resolve.ts";
+import { resolveAssigneeUser, resolveUser } from "../api/resolve.ts";
 import {
   getMethodAllowlist,
   isMethodAllowed,
@@ -688,10 +688,11 @@ export const operationsTools: ErpNextTool[] = [
 
       const doctype = input.doctype as string;
       const name = input.name as string;
-      const assignee = await resolveUser(ctx.client, input.assign_to.trim(), {
-        allowPartialMatch: false,
-        inputPath: "assign_to",
-      });
+      const assignee = await resolveAssigneeUser(
+        ctx.client,
+        input.assign_to.trim(),
+        "assign_to",
+      );
       const unassignment = await removeAssignment(
         doctype,
         name,

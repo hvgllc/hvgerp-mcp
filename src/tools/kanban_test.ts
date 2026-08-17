@@ -575,3 +575,30 @@ Deno.test("erpnext_kanban_move_card - executes an allowed Issue move", async () 
     "resolved",
   );
 });
+Deno.test("erpnext_kanban_get_board - resolves `me` before the adapter builds filters", async () => {
+  let capturedFilters: unknown[] = [];
+  const client = makeMockClient({
+    callMethod: async (method: string) => {
+      assertEquals(method, "frappe.auth.get_logged_user");
+      return "khoa.do@havigroup.com";
+    },
+    list: async (_doctype: string, opts: { filters?: unknown[] }) => {
+      capturedFilters = opts.filters ?? [];
+      return [];
+    },
+  });
+
+  await getTool("erpnext_kanban_get_board").handler(
+    { doctype: "Opportunity", opportunity_owner: "me" },
+    makeCtx(client),
+  );
+
+  // `buildListFilters` của adapter là hàm đồng bộ nên tự nó không phân giải được `me`; việc dịch
+  // phải xảy ra ở một lượt chuẩn bị TRƯỚC khi gọi adapter, nếu không bảng kanban trả về rỗng và
+  // trông hệt như "bạn không có cơ hội nào".
+  assertEquals(capturedFilters, [[
+    "opportunity_owner",
+    "=",
+    "khoa.do@havigroup.com",
+  ]]);
+});

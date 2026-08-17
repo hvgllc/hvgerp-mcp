@@ -12,8 +12,7 @@
 
 import type { FrappeFilter } from "../api/types.ts";
 import type { ErpNextToolContext, JSONSchema } from "./types.ts";
-import { resolveUser } from "../api/resolve.ts";
-import { isSelfReference } from "../api/identity.ts";
+import { resolveAssigneeUser } from "../api/resolve.ts";
 
 const ASSIGNMENT_METHOD = "frappe.desk.form.assign_to.add";
 const UNASSIGNMENT_METHOD = "frappe.desk.form.assign_to.remove";
@@ -190,19 +189,7 @@ export async function resolveAssignees(
 ): Promise<PreparedAssignment> {
   const resolved: string[] = [];
   for (const assignee of assignment.assignees) {
-    // Tự tham chiếu phải xét TRƯỚC lối tắt địa chỉ thư: `@me` và `@self` đều chứa dấu
-    // at-sign nên lối tắt coi chúng là ID có sẵn và không phân giải, rồi
-    // `validateAssignees` trả về `User '@me' does not exist` - đọc như người đó không tồn
-    // tại chứ không như đầu vào cần dịch. `isSelfReference` vốn đã nhận cả hai dạng này.
-    const needsLookup = isSelfReference(assignee) || !assignee.includes("@");
-    resolved.push(
-      needsLookup
-        ? await resolveUser(ctx.client, assignee, {
-          allowPartialMatch: false,
-          inputPath: "assign_to",
-        })
-        : assignee,
-    );
+    resolved.push(await resolveAssigneeUser(ctx.client, assignee, "assign_to"));
   }
   const assignees = [...new Set(resolved)];
   return { assignees, args: { ...assignment.args, assign_to: assignees } };

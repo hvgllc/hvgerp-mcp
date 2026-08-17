@@ -295,3 +295,15 @@ Deno.test("ErpNextToolsClient does not load erpnext_whoami twice", () => {
 
   assertEquals(names.filter((name) => name === "erpnext_whoami").length, 1);
 });
+
+Deno.test("ErpNextToolsClient does not widen a category filter to the whole identity category", () => {
+  const names = new ErpNextToolsClient({ categories: ["project"] })
+    .listTools()
+    .map((candidate) => candidate.name);
+
+  // Nạp kèm ĐÚNG một tool, không phải cả category `identity`: `erpnext_my_work` đọc ToDo, Leave
+  // Application, Expense Claim và Timesheet - bốn doctype nằm ngoài bề mặt mà `--categories=project`
+  // vừa xin. Kéo cả category vào thì bộ lọc thôi không còn chặn được bề mặt nghiệp vụ nào nữa.
+  assert(names.includes("erpnext_whoami"));
+  assert(!names.includes("erpnext_my_work"));
+});

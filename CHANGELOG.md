@@ -8,6 +8,49 @@ This package is a fork of
 deliberately still point at the upstream repository, where those commits, pull
 requests and tags actually live.
 
+## [3.2.0] - 2026-08-17
+
+### Added
+
+- **Identity tools.** `erpnext_whoami` reports who the server believes the
+  caller is (User id, full name, roles, matching `Employee`, and
+  `identity_mode`), and `erpnext_my_work` rolls up that person's open ToDos,
+  tasks, leave applications, expense claims and timesheets. Without them a
+  first-person question had no subject: the model had no way to turn "my tasks"
+  into a User id, and answered for whoever the connection happened to
+  authenticate as.
+- **`me` is understood by user-typed inputs.** `me`, `@me`, `self` and `@self`
+  resolve to the caller's own `User` (or `Employee`, where the field is
+  employee-typed) across the task, timesheet, leave, expense, CRM and kanban
+  tools, instead of reaching Frappe as a literal string that matches nobody.
+- **`erpnext_whoami` is loaded under every category filter.** The server
+  instructions tell the model to call it before any first-person request, so
+  `--categories=project` used to leave that instruction pointing at a tool
+  absent from `tools/list`. Exactly that one tool is added - not the rest of the
+  `identity` category, whose `erpnext_my_work` reads four doctypes outside the
+  requested surface.
+
+### Fixed
+
+- **`identity_mode` is read off the client that serves the request**, not off
+  the presence of a caller context. An embedding application can install a
+  static client with `setFrappeClient()` and still run inside `runWithCaller()`;
+  the old check labelled that `per-caller` and `erpnext_whoami` swallowed the
+  one warning it exists to raise.
+- **`erpnext_my_work` only absorbs a permission refusal.** A section that fails
+  with `5xx`, a timeout or a network error now propagates instead of being
+  reported as an inaccessible doctype. Those mean the roll-up is untrustworthy
+  rather than incomplete, and burying them left the client no signal to retry
+  while the model read "no work" for "could not read".
+- **Unassigning by email no longer costs a `User` read.** A Frappe `User` id is
+  the email, so the lookup could not change the outcome - but ordinary employees
+  may not read `User`, so it turned into a `403` on an operation they were
+  allowed to perform. `erpnext_doc_assign` already worked this way;
+  `erpnext_doc_unassign` now matches it.
+- **The caller profile cache is partitioned per `FrappeClient`.** Two callers
+  sharing a cache entry meant whoever asked first decided what the next one was
+  told about themselves.
+
 ## [3.1.2] - 2026-08-16
 
 ### Fixed

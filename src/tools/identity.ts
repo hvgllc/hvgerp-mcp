@@ -19,6 +19,7 @@ import type { ErpNextTool, ErpNextToolContext } from "./types.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
 import { assignedToFilter } from "./assignment.ts";
 import { type CallerProfile, loadCallerProfile } from "../api/identity.ts";
+import { FrappeAPIError } from "../api/frappe-client.ts";
 
 /**
  * Told to the model whenever the reply describes the deployment's service account.
@@ -82,12 +83,16 @@ async function listSection(
     });
     return { count: data.length, data: data as Record<string, unknown>[] };
   } catch (error) {
-    // One inaccessible doctype must not blank the whole roll-up: a user without Payroll or Projects
-    // permissions still has ToDos, and reporting the refusal per section is more useful than
-    // failing the call.
-    return {
-      error: error instanceof Error ? error.message : String(error),
-    };
+    // Chỉ lời từ chối quyền mới được nuốt. Một doctype không đọc được không được phép làm trắng cả
+    // bản tổng hợp: người không có quyền Payroll hay Projects vẫn có ToDo, và báo lời từ chối ngay
+    // trong mục đó hữu ích hơn là làm hỏng cả lời gọi.
+    //
+    // Ngược lại, 5xx / timeout / lỗi mạng nói rằng câu trả lời KHÔNG đáng tin chứ không phải là
+    // không đầy đủ. Ghi chúng vào một kết quả thành công là đưa cho client một bản tổng hợp thiếu
+    // mà không kèm tín hiệu nào để thử lại, và mô hình sẽ đọc "không có việc nào" thay vì "chưa
+    // đọc được". Cùng ranh giới mà `loadCallerProfile` đã dùng cho lượt đọc Employee.
+    if (!(error instanceof FrappeAPIError) || error.status !== 403) throw error;
+    return { error: error.message };
   }
 }
 
