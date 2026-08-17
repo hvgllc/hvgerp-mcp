@@ -25,9 +25,15 @@ requests and tags actually live.
   doctype.
 - **`erpnext_calendar_events`.** Lists Events over a date range through the same
   call the ERPNext calendar uses, so a repeating event is expanded into one row
-  per occurrence, each tagged with `recurring_from`. `erpnext_doc_list` on
-  `Event` returns the single stored row instead, which turns a weekly stand-up
-  into zero or one meeting for the week. The tool description states the scope
+  per occurrence, each tagged `is_recurring` (read from the stored
+  `repeat_this_event` column, so it does not depend on what the expansion pass
+  chooses to attach) and, where ERPNext supplies it, `recurring_from`.
+  `erpnext_doc_list` on `Event` returns the single stored row instead, which
+  turns a weekly stand-up into zero or one meeting for the week. Both ends of
+  the range are inclusive, matching ERPNext's own `BETWEEN` comparison, so the
+  default window is `start` plus six days - seven days, not eight - and a range
+  wider than 366 days is refused before any request goes out, because recurrence
+  expansion walks day by day server-side. The tool description states the scope
   it actually covers - open events that are Public, owned by the caller, or
   shared with them - so an answer is not presented as a complete personal
   schedule.
@@ -44,7 +50,11 @@ requests and tags actually live.
   `returned` (rows in this page) and `has_more`. The total comes from
   `frappe.client.get_count`, which runs through the same permissions as the
   list, and is only requested when the page came back full - a short page
-  already proves the total.
+  already proves the total. When that call fails or answers with something that
+  cannot be a total, `count` is `null` and `count_error` explains why, and
+  `has_more` stays `true`; the page length is never substituted, because doing
+  so would restore the same lie in the one case where the list is most likely to
+  really be truncated.
 
 ## [3.2.0] - 2026-08-17
 

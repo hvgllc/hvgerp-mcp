@@ -44,8 +44,32 @@ interface CalendarEvent {
   event_type?: string;
   owner?: string;
   repeat_on?: string | null;
+  /** 1 on the stored master row of a repeating event, and on every occurrence
+   * copied out of it. This is the version-proof way to tell a repeating event
+   * apart, because it is a stored column rather than something the expansion
+   * pass has to remember to attach. */
+  repeat_this_event?: number;
   /** Set by ERPNext only on an occurrence expanded out of a repeating event. */
   original_starts_on?: string;
+}
+
+/**
+ * Widest calendar range this tool will forward to ERPNext, in days.
+ *
+ * The recurrence expansion runs server-side and walks day by day for Daily and
+ * Weekly events, so the cost of a query is set by the range, not by the `limit`
+ * the caller asked for: a ten-year window over one daily stand-up materialises
+ * ~3,650 rows in ERPNext and ships them all here before `limit` gets a chance
+ * to cut anything. A year covers every realistic calendar question, and asking
+ * for more is far more likely to be a typo in the year than a real need.
+ */
+const MAX_CALENDAR_SPAN_DAYS = 366;
+
+/** Whole days from one YYYY-MM-DD date to another, in UTC. */
+function daysBetweenISO(from: string, to: string): number {
+  const a = Date.parse(`${from}T00:00:00Z`);
+  const b = Date.parse(`${to}T00:00:00Z`);
+  return Math.round((b - a) / 86_400_000);
 }
 
 /**
@@ -778,13 +802,15 @@ export const operationsTools: ErpNextTool[] = [
         end: {
           type: "string",
           description:
-            "Last day of the range, YYYY-MM-DD, inclusive. Defaults to 7 days after start.",
+            "Last day of the range, YYYY-MM-DD, inclusive. Defaults to a seven-day " +
+            "window starting at 'start'. At most 366 days may be requested at once.",
         },
         user: {
           type: "string",
           description:
-            "Look at another user's calendar instead of your own. Requires read " +
-            "permission on Event; ERPNext refuses otherwise.",
+            "Look at another user's calendar instead of your own. ERPNext refuses " +
+            "unless the caller holds read permission on the Event DocType - that is " +
+            "a role-level check, not a grant from the person whose calendar it is.",
         },
         limit: { type: "number", description: "Max results (default 50)" },
       },
@@ -806,7 +832,26 @@ export const operationsTools: ErpNextTool[] = [
       // Default the range from `start` rather than from the server clock: the MCP
       // process and the ERPNext site need not share a timezone, and "today" read
       // on the wrong side of midnight silently shifts the whole week.
-      const end = rawEnd ?? addDaysISO(start, 7);
+      // `end` is inclusive on both sides of the wire: ERPNext compares with
+      // `date(starts_on) BETWEEN date(start) AND date(end)` and expands
+      // occurrences while `target_date <= end`, so a default of start + 6 is a
+      // seven-day week, not eight days.
+      const end = rawEnd ?? addDaysISO(start, 6);
+      const span = daysBetweenISO(start, end);
+      if (span < 0) {
+        throw new Error(
+          `[erpnext_calendar_events] 'end' (${end}) is before 'start' (${start})`,
+        );
+      }
+      if (span + 1 > MAX_CALENDAR_SPAN_DAYS) {
+        throw new Error(
+          `[erpnext_calendar_events] the range ${start}..${end} spans ${
+            span + 1
+          } days; at most ${MAX_CALENDAR_SPAN_DAYS} are allowed because ERPNext ` +
+            "expands every repeating event day by day across the whole range. " +
+            "Ask for a narrower window.",
+        );
+      }
       const limit = (input.limit as number) ?? 50;
 
       const events = await ctx.client.callMethod<CalendarEvent[]>(
@@ -828,8 +873,11 @@ export const operationsTools: ErpNextTool[] = [
         event_type: event.event_type ?? null,
         owner: event.owner ?? null,
         description: event.description ?? null,
-        // Present only on an occurrence expanded from a repeating event; it is the
-        // date of the stored master row, which is what "since when" questions need.
+        // Whether this row comes from a repeating event is answered by the stored
+        // column, so it holds on any ERPNext build. `recurring_from` is the extra
+        // detail - the master row's own start, which "since when" questions need -
+        // and it is only present when the expansion pass attached it.
+        is_recurring: Boolean(event.repeat_this_event),
         ...(event.original_starts_on
           ? { recurring_from: event.original_starts_on }
           : {}),

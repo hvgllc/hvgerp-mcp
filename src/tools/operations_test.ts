@@ -829,9 +829,64 @@ Deno.test("erpnext_calendar_events - defaults the range to a week after start", 
   );
 
   assertEquals(seenArgs.start, "2026-08-28");
+  // Seven days INCLUSIVE of start, because ERPNext compares both bounds with
+  // BETWEEN; start + 7 would quietly return an eight-day week.
   // Crossing a month boundary is where naive string arithmetic breaks.
-  assertEquals(seenArgs.end, "2026-09-04");
+  assertEquals(seenArgs.end, "2026-09-03");
   assertEquals("user" in seenArgs, false);
+});
+
+Deno.test("erpnext_calendar_events - refuses a range wider than a year", async () => {
+  let calls = 0;
+  const client = makeMockClient({
+    callMethod: async () => {
+      calls++;
+      return [];
+    },
+  });
+
+  await assertRejects(
+    () =>
+      getTool("erpnext_calendar_events").handler(
+        { start: "2026-01-01", end: "2030-01-01" },
+        makeCtx(client),
+      ),
+    Error,
+    "narrower window",
+  );
+  // ERPNext expands the whole range before `limit` applies, so the guard is
+  // worth nothing unless it fires before the call goes out.
+  assertEquals(calls, 0);
+});
+
+Deno.test("erpnext_calendar_events - refuses an end that precedes start", async () => {
+  await assertRejects(
+    () =>
+      getTool("erpnext_calendar_events").handler(
+        { start: "2026-08-17", end: "2026-08-10" },
+        makeCtx(makeMockClient()),
+      ),
+    Error,
+    "is before",
+  );
+});
+
+Deno.test("erpnext_calendar_events - accepts a range of exactly the maximum span", async () => {
+  let calls = 0;
+  const client = makeMockClient({
+    callMethod: async () => {
+      calls++;
+      return [];
+    },
+  });
+
+  // 2026 is not a leap year, so start + 365 days is a 366-day inclusive range.
+  await getTool("erpnext_calendar_events").handler(
+    { start: "2026-01-01", end: "2027-01-01" },
+    makeCtx(client),
+  );
+
+  assertEquals(calls, 1);
 });
 
 Deno.test("erpnext_calendar_events - keeps each expanded occurrence and marks its origin", async () => {
@@ -872,9 +927,36 @@ Deno.test("erpnext_calendar_events - keeps each expanded occurrence and marks it
   assertEquals(result.returned, 2);
   assertEquals(result.has_more, false);
   assertEquals(result.data[0].recurring_from, "2026-01-05 08:30:00");
+  assertEquals(result.data[0].is_recurring, true);
   // A one-off event must not claim to be an occurrence of anything.
   assertEquals("recurring_from" in result.data[1], false);
+  assertEquals(result.data[1].is_recurring, false);
   assertEquals(result.data[1].ends_on, "2026-08-19 15:00:00");
+});
+
+Deno.test("erpnext_calendar_events - flags a repeating event even without original_starts_on", async () => {
+  // Older expansion passes copy the row without attaching `original_starts_on`;
+  // the caller must still be able to tell the occurrence is a repeat.
+  const client = makeMockClient({
+    callMethod: async () => [
+      {
+        name: "EV00045",
+        subject: "Hop giao ban tuan",
+        starts_on: "2026-08-17 08:30:00",
+        repeat_this_event: 1,
+        repeat_on: "Weekly",
+      },
+    ],
+  });
+
+  const result = await getTool("erpnext_calendar_events").handler(
+    { start: "2026-08-17", end: "2026-08-23" },
+    makeCtx(client),
+    // deno-lint-ignore no-explicit-any
+  ) as any;
+
+  assertEquals(result.data[0].is_recurring, true);
+  assertEquals("recurring_from" in result.data[0], false);
 });
 
 Deno.test("erpnext_calendar_events - limit truncates the page but not the total", async () => {

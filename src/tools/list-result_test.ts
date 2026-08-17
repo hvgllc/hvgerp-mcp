@@ -49,7 +49,8 @@ Deno.test("resolveTotal - a short page needs no count call", async () => {
 
   const total = await resolveTotal(makeCtx(client), "Account", [], 12, 50);
 
-  assertEquals(total, 12);
+  assertEquals(total.count, 12);
+  assertEquals(total.error, undefined);
   assertEquals(called, 0);
 });
 
@@ -73,30 +74,44 @@ Deno.test("resolveTotal - a full page asks ERPNext for the real total", async ()
     50,
   );
 
-  assertEquals(total, 97);
+  assertEquals(total.count, 97);
   assertEquals(seenMethod, "frappe.client.get_count");
   assertEquals(seenArgs.doctype, "Account");
   // The count must carry the same filters as the list, or it counts a different set.
   assertEquals(seenArgs.filters, filters);
 });
 
-Deno.test("resolveTotal - a total below the page in hand is rejected", async () => {
+Deno.test("resolveTotal - a total below the page in hand is unknown, not the page length", async () => {
   const client = makeMockClient({ callMethod: async () => 3 });
-  assertEquals(await resolveTotal(makeCtx(client), "Account", [], 50, 50), 50);
+
+  const total = await resolveTotal(makeCtx(client), "Account", [], 50, 50);
+
+  // Reporting 50 here is exactly the lie this module exists to remove.
+  assertEquals(total.count, null);
+  assertEquals(typeof total.error, "string");
 });
 
-Deno.test("resolveTotal - an unparseable total falls back to the page length", async () => {
+Deno.test("resolveTotal - an unparseable total is unknown, not the page length", async () => {
   const client = makeMockClient({ callMethod: async () => "not a number" });
-  assertEquals(await resolveTotal(makeCtx(client), "Account", [], 50, 50), 50);
+
+  const total = await resolveTotal(makeCtx(client), "Account", [], 50, 50);
+
+  assertEquals(total.count, null);
+  assertEquals(typeof total.error, "string");
 });
 
-Deno.test("resolveTotal - a failing count call never breaks the list", async () => {
+Deno.test("resolveTotal - a failing count call yields an unknown total, not a throw", async () => {
   const client = makeMockClient({
     callMethod: async () => {
       throw new Error("boom");
     },
   });
-  assertEquals(await resolveTotal(makeCtx(client), "Account", [], 50, 50), 50);
+
+  const total = await resolveTotal(makeCtx(client), "Account", [], 50, 50);
+
+  assertEquals(total.count, null);
+  // The reason travels with the result, so the failure is reported rather than hidden.
+  assertEquals(total.error?.includes("boom"), true);
 });
 
 Deno.test("listResult - a truncated page reports the total and flags has_more", async () => {
@@ -128,4 +143,25 @@ Deno.test("listResult - a complete page is not flagged has_more", async () => {
   assertEquals(result.count, 4);
   assertEquals(result.returned, 4);
   assertEquals(result.has_more, false);
+  assertEquals("count_error" in result, false);
+});
+
+Deno.test("listResult - an unresolvable total never claims the page is everything", async () => {
+  const client = makeMockClient({
+    callMethod: async () => {
+      throw new Error("get_count exploded");
+    },
+  });
+
+  const result = await listResult(makeCtx(client), "Account", rows(50), {
+    filters: [],
+    limit: 50,
+  });
+
+  assertEquals(result.count, null);
+  assertEquals(result.returned, 50);
+  // A consumer that only reads has_more must not conclude the list is complete.
+  assertEquals(result.has_more, true);
+  assertEquals(result.count_error?.includes("get_count exploded"), true);
+  assertEquals(result.data.length, 50);
 });

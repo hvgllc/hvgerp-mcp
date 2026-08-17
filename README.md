@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 MCP server for [ERPNext](https://erpnext.com) / Frappe ERP — **129 tools**
-across **15 categories**, with **7 interactive UI viewers**.
+across **16 categories**, with **7 interactive UI viewers**.
 
 Connect any MCP-compatible AI agent (Claude Desktop, Claude Code, VS Code
 Copilot, custom) to your ERPNext instance via the

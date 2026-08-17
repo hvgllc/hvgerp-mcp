@@ -188,15 +188,32 @@ local path or URL, are capped at 10 MiB decoded by default (override with
 positive-integer-byte `ERPNEXT_MAX_UPLOAD_BYTES`), require write permission on
 the DocType, and return native `File` metadata.
 
-`erpnext_calendar_events` takes `start` (`YYYY-MM-DD`), optional `end` (defaults
-to seven days after `start`), optional `user`, and optional `limit`. It goes
-through the same call the ERPNext calendar uses, so a repeating event comes back
-once per occurrence in the range, each carrying `recurring_from` (the stored
-master's start). A plain `erpnext_doc_list` on `Event` cannot do this: it
-returns the single stored row. Scope is the caller's own calendar: open events
-that are Public, owned by them, or shared with them through DocShare.
-Participation alone does not make an event visible, so the result is the shared
-calendar rather than a complete personal schedule.
+`erpnext_calendar_events` takes `start` (`YYYY-MM-DD`), optional `end`, optional
+`user`, and optional `limit`. It goes through the same call the ERPNext calendar
+uses, so a repeating event comes back once per occurrence in the range. Every
+row carries `is_recurring` (read from the stored `repeat_this_event` column, so
+it holds on any ERPNext build) and, when ERPNext supplies it, `recurring_from`
+(the stored master's start). A plain `erpnext_doc_list` on `Event` cannot do
+this: it returns the single stored row.
+
+Both ends of the range are **inclusive** - ERPNext compares with
+`date(starts_on) BETWEEN date(start) AND date(end)` and expands occurrences
+while `target_date <= end` - so `end` defaults to `start` plus six days, which
+is a seven-day week rather than eight days. The range is capped at 366 days:
+recurrence expansion runs server-side and walks day by day for Daily and Weekly
+events, so a multi-year window materialises thousands of rows in ERPNext before
+`limit` can cut anything.
+
+Scope is the caller's own calendar: open events that are Public, owned by them,
+or shared with them through DocShare. Participation alone does not make an event
+visible - the visibility clause in Frappe's `get_events` is
+`event_type='Public' OR owner=<user> OR EXISTS(DocShare)`, and the
+`Event Participants` table is joined only when a caller-supplied `filters`
+argument mentions it, which this tool never sends. The result is therefore the
+shared calendar rather than a complete personal schedule. Passing `user` reads
+someone else's calendar; ERPNext allows it only for a caller holding read
+permission on the `Event` DocType, which is a role-level check rather than a
+grant from the person whose calendar it is.
 
 `erpnext_method_call` reaches business endpoints that no typed tool wraps,
 including custom-app methods that are the only supported way to change a field
