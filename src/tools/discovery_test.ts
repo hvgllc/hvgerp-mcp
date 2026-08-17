@@ -12,7 +12,7 @@
 
 import { assertEquals, assertRejects } from "@std/assert";
 import { discoveryTools } from "./discovery.ts";
-import type { FrappeClient } from "../api/frappe-client.ts";
+import { FrappeAPIError, type FrappeClient } from "../api/frappe-client.ts";
 import type { ErpNextToolContext } from "./types.ts";
 
 type AnyFn = (...args: any[]) => any;
@@ -231,17 +231,24 @@ Deno.test("erpnext_doctype_fields - adds the parent columns for a child table", 
  *
  * `owners` is what enumerating `DocField` returns, or `null` for the account
  * that may not read `DocField` at all. `readable` is the set of DocTypes the
- * caller can read.
+ * caller can read. `enumerationError` replaces the `null` denial with any other
+ * failure, which must NOT be answered with the degraded single-owner fallback.
  */
 function makeChildPermissionClient(
   owners: string[] | null,
   readable: string[],
   asked: string[] = [],
+  enumerationError?: Error,
 ): FrappeClient {
   return makeChildClient({
     callMethod: async (method: string, args: Record<string, unknown>) => {
       if (method === "frappe.client.get_list") {
-        if (owners === null) throw new Error("PermissionError: DocField");
+        if (enumerationError) throw enumerationError;
+        // A real denial arrives as HTTP 403, which is what separates it from a
+        // timeout or a 5xx.
+        if (owners === null) {
+          throw new FrappeAPIError("Not permitted for DocField", 403, {});
+        }
         return owners.map((parent) => ({ parent }));
       }
       asked.push(args.doctype as string);
@@ -553,4 +560,80 @@ Deno.test("erpnext_doctype_fields - reports a misspelled doctype instead of retu
     Error,
     "no metadata",
   );
+});
+
+Deno.test("erpnext_doctype_fields - an Image field is not queryable", async () => {
+  // `Image` is one of Frappe's ten `no_value_fields`: it renders a URL held by
+  // another field (its `options`) and stores nothing itself. Measured against
+  // the real schema, all 17 `Image` DocField rows on table-backed DocTypes have
+  // no column, and every fieldtype outside `no_value_fields` always has one.
+  const client = makeMockClient({
+    callMethodRaw: async () => ({
+      docs: [{
+        ...META,
+        fields: [
+          ...META.fields,
+          {
+            fieldname: "image_view",
+            label: "Image View",
+            fieldtype: "Image",
+            options: "image",
+          },
+        ],
+      }],
+    }),
+  });
+
+  const result = await getTool("erpnext_doctype_fields").handler(
+    { doctype: "Account" },
+    makeCtx(client),
+  ) as any;
+
+  const image = result.fields.find((f: any) => f.fieldname === "image_view");
+  assertEquals(image.queryable, false);
+  // A stored field of the same DocType stays queryable, so this is the field's
+  // own storage talking and not a DocType-wide verdict.
+  assertEquals(
+    result.fields.find((f: any) => f.fieldname === "account_name").queryable,
+    true,
+  );
+});
+
+Deno.test("erpnext_doctype_fields - a transient parent enumeration failure is not read as a denial", async () => {
+  // The degraded path names ONE arbitrary owner and gates the caller against
+  // that one name, so answering a 5xx with it refuses metadata to a caller who
+  // can read a different owner - a permission verdict invented from a timeout.
+  const client = makeChildPermissionClient(
+    ["Sales Invoice"],
+    ["Sales Invoice"],
+    [],
+    new FrappeAPIError("Internal Server Error", 500, {}),
+  );
+
+  await assertRejects(
+    () =>
+      getTool("erpnext_doctype_fields").handler(
+        { doctype: "Sales Invoice Item" },
+        makeCtx(client),
+      ),
+    FrappeAPIError,
+    "Internal Server Error",
+  );
+});
+
+Deno.test("erpnext_doctype_fields - a 403 on parent enumeration still falls back to the single owner", async () => {
+  // The counterpart of the test above: an account that genuinely may not read
+  // `DocField` keeps the degraded answer it has always had.
+  const asked: string[] = [];
+  const client = makeChildPermissionClient(null, ["Sales Invoice"], asked);
+
+  const result = await getTool("erpnext_doctype_fields").handler(
+    { doctype: "Sales Invoice Item" },
+    makeCtx(client),
+  ) as any;
+
+  assertEquals(result.is_child_table, true);
+  // The single name `getdoctype` attaches, not an enumerated list - and it is
+  // the only DocType the gate gets to ask about.
+  assertEquals(asked, ["Sales Invoice"]);
 });

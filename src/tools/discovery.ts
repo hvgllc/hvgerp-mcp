@@ -24,6 +24,7 @@
  */
 
 import type { ErpNextTool } from "./types.ts";
+import { FrappeAPIError } from "../api/frappe-client.ts";
 
 /** Fieldtypes that only shape the form layout and carry no data. */
 const LAYOUT_FIELDTYPES = new Set([
@@ -37,18 +38,34 @@ const LAYOUT_FIELDTYPES = new Set([
 ]);
 
 /**
- * Fieldtypes that carry real data but no column on the DocType's own table.
+ * Fieldtypes that appear in a form but have no column on the DocType's table.
  *
- * A `Table` / `Table MultiSelect` field is a pointer to rows in the child
- * DocType, joined back by `parent`; the parent table has no column of that
- * name. Measured on the live instance, `tabSales Invoice` has no column for any
- * of its 11 `Table` fields (`items`, `taxes`, `packed_items`, ...), and the
- * instance holds 521 `Table` plus 38 `Table MultiSelect` DocField rows in all.
- * So they are readable on a document and never usable in `filters` or
- * `order_by` - a model that trusted a DocType-wide `queryable: true` here was
- * being steered into a database error.
+ * Frappe keeps this rule in `frappe.model.no_value_fields`, which on the live
+ * instance holds exactly ten entries: the seven layout types above plus
+ * `Table`, `Table MultiSelect` and `Image`. Measured against the real schema -
+ * every non-virtual `DocField` of every table-backed DocType, checked against
+ * `DESCRIBE` of its parent table - the split is clean: those ten never have a
+ * column (`Table` 472 rows, `Table MultiSelect` 35, `Image` 17, `Button` 93,
+ * `Section Break` 1924, ...) and every other fieldtype always does.
+ *
+ * The two halves differ in what they store, not in what they can be queried on.
+ * A `Table` field points at rows in the child DocType, joined back by `parent`;
+ * an `Image` field stores nothing at all - its `options` names another field
+ * that holds the URL, and the form just renders that. Either way the parent
+ * table has no column of that name, so both are readable on a document and
+ * never usable in `filters` or `order_by`. A model that trusted a DocType-wide
+ * `queryable: true` here was being steered into an unknown-column error.
+ *
+ * Layout types are absent from this set only because they never reach the
+ * predicate - they are dropped from the answer entirely. Together the two sets
+ * cover `no_value_fields`, so a new no-value fieldtype upstream belongs in one
+ * of them.
  */
-const CHILD_LINK_FIELDTYPES = new Set(["Table", "Table MultiSelect"]);
+const COLUMNLESS_FIELDTYPES = new Set([
+  "Table",
+  "Table MultiSelect",
+  "Image",
+]);
 
 /** A field every DocType stores, described the way a `fields` row would be. */
 interface StandardField {
@@ -314,8 +331,15 @@ async function resolveChildParents(
       ];
       return { parents: names, complete: rows.length < MAX_PARENT_ROWS };
     }
-  } catch {
-    // Enumeration denied or unavailable - fall through to the single name.
+  } catch (error) {
+    // Only a permission denial earns the degraded answer. The fallback below
+    // names ONE arbitrary owner, and the caller is then gated against that one
+    // name - so a caller who can read a different owner is refused metadata
+    // they are entitled to. That is an acceptable price for an account that
+    // genuinely cannot read `DocField`, and a wrong answer for a timeout or a
+    // 5xx, which say nothing about who owns this child table. `identity.ts`
+    // draws the same line for the same reason.
+    if (!(error instanceof FrappeAPIError) || error.status !== 403) throw error;
   }
 
   // `with_parent: 1` makes `getdoctype` attach the owning DocType alongside the
@@ -405,7 +429,10 @@ export const discoveryTools: ErpNextTool[] = [
       "Single DocType (no table of its own) and of a virtual DocType (rows come from a Python " +
       "controller, so only that controller decides what it will filter on), and for individual " +
       "Table / Table MultiSelect fields (their values are rows in the child DocType, so the " +
-      "parent table has no such column - query the child DocType instead) and virtual fields " +
+      "parent table has no such column - read them with erpnext_doc_get on a parent document, " +
+      "which returns the child rows inline; do not try to list the child DocType directly, it " +
+      "carries no permissions of its own and the call is refused), Image fields (they display a " +
+      "URL held by another field and store nothing themselves) and virtual fields " +
       "(computed in Python, never stored). Fails with a permission error if the " +
       "caller cannot read the DocType; for a child table the check runs against a parent DocType " +
       "that owns it, because child tables carry no permissions of their own.",
@@ -520,12 +547,13 @@ export const discoveryTools: ErpNextTool[] = [
        * Whether one field is usable in `filters` or `order_by`.
        *
        * Storage decides this, not the form: a `Table` field points at rows in
-       * another table, and a virtual field is computed by a Python property, so
-       * neither exists as a column to compare or sort on.
+       * another table, an `Image` field renders a URL held by another field,
+       * and a virtual field is computed by a Python property, so none of them
+       * exists as a column to compare or sort on.
        */
       const isQueryable = (field: RawDocField) =>
         doctypeQueryable &&
-        !CHILD_LINK_FIELDTYPES.has(field.fieldtype ?? "") &&
+        !COLUMNLESS_FIELDTYPES.has(field.fieldtype ?? "") &&
         !field.is_virtual;
 
       // Standard columns come first, and they are never subject to

@@ -187,6 +187,28 @@ requests and tags actually live.
   schema containing only the synthetic standard columns, and a model reading it
   would conclude that every real field of the DocType does not exist. It now
   says the response is broken and asks for a retry.
+- **An `Image` field is no longer reported as queryable.** `Image` is one of
+  Frappe's ten `no_value_fields`: it renders a URL held by another field (its
+  `options`) and stores nothing itself, so the DocType's table has no column of
+  that name. Measured against the real schema - every non-virtual `DocField` of
+  every table-backed DocType checked against `DESCRIBE` of its parent table -
+  the split is exact: `Table` (472 rows), `Table MultiSelect` (35), `Image` (17)
+  and the seven layout types never have a column, and every other fieldtype
+  always does. A caller told `queryable: true` for an `Image` field was being
+  steered into an unknown-column error.
+- **A transient failure while enumerating a child table's owners no longer reads
+  as a permission denial.** The `DocField` enumeration was wrapped in a bare
+  catch, so a timeout or a 5xx fell through to the degraded path that names one
+  arbitrary owner from `getdoctype` - and since the caller is then gated against
+  that single name, someone who can read a _different_ owner was refused
+  metadata they are entitled to, on the strength of a network error. Only HTTP
+  403 now takes the fallback; anything else propagates.
+- **The tool no longer points callers at a call that cannot succeed.** For a
+  `Table` field the description said to query the child DocType instead, but a
+  child table carries no permissions of its own - which is precisely why this
+  module gates it against a parent - so `erpnext_doc_list` refuses it for every
+  account except Administrator. It now says to read a parent document with
+  `erpnext_doc_get`, which returns the child rows inline.
 
 ## [3.2.0] - 2026-08-17
 
