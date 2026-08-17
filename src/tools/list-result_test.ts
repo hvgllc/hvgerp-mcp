@@ -194,6 +194,11 @@ Deno.test("listResult - an unresolvable total never claims the page is everythin
   assertEquals(result.has_more, true);
   assertEquals(result.count_error?.includes("get_count exploded"), true);
   assertEquals(result.data.length, 50);
+  // A full page with an unknown total MAY be the whole result set - 50 of 50 is
+  // an ordinary outcome. Calling it incomplete states as fact something this
+  // code cannot know, which is the same overreach as calling it complete.
+  assertEquals(result.count_error?.includes("may not be the whole"), true);
+  assertEquals(result.count_error?.includes("but incomplete"), false);
 });
 
 Deno.test("resolveTotal - a fractional limit never passes off a full page as the total", async () => {

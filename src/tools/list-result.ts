@@ -116,8 +116,9 @@ export async function resolveTotal(
       error:
         `frappe.client.get_count on '${doctype}' failed (${
           err instanceof Error ? err.message : String(err)
-        }). The documents below are correct but incomplete; the total is unknown, ` +
-        "so do not answer a 'how many' question from this result.",
+        }). The documents below are correct, but this page may not be the whole ` +
+        "result set and the total is unknown, so do not answer a 'how many' " +
+        "question from this result.",
     };
   }
 }

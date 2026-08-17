@@ -730,6 +730,25 @@ export const discoveryTools: ErpNextTool[] = [
             "Check the spelling; DocType names are case- and space-sensitive.",
         );
       }
+      // `docs[0]` is only worth reading if it is the document that was asked
+      // for. `get_meta_bundle` puts the requested DocType first and appends the
+      // meta of every child table it declares, so a bundle whose head names a
+      // DIFFERENT DocType is a broken response - and a dangerous one, because
+      // the permission gate below is applied to the requested name while the
+      // schema returned would belong to the other one. The comparison ignores
+      // case and surrounding space on purpose: the database collation resolves
+      // `sales invoice` to `Sales Invoice`, so such a call works today and must
+      // keep working; only a genuinely different name is refused.
+      const metaName = typeof meta.name === "string" ? meta.name.trim() : "";
+      if (metaName.toLowerCase() !== doctype.toLowerCase()) {
+        throw new Error(
+          `[erpnext_doctype_fields] ERPNext returned metadata named ${
+            JSON.stringify(meta.name ?? null)
+          } ` +
+            `for '${doctype}'. This is a broken response, not the schema of the DocType ` +
+            "that was asked for; retry, and report it if it persists.",
+        );
+      }
       // A metadata document with no `fields` array is a broken response, not a
       // DocType that declares nothing: every DocType worth asking about
       // declares at least one field, and the seven standard columns below are
@@ -818,17 +837,42 @@ export const discoveryTools: ErpNextTool[] = [
           queryable: doctypeQueryable,
         }));
 
-      const declared = meta.fields
+      // `fieldtype` is mandatory on every `DocField` row, and it is what both
+      // the layout filter above and `queryable` below read. A row that declares
+      // a fieldname but no type is therefore a broken response, not a field of
+      // an unknown kind: kept, it would reach the caller as `fieldtype: null`
+      // and `isQueryable` would read the missing type as an ordinary stored
+      // column, promising a filter and an order_by that cannot work. The check
+      // runs before `include_hidden` and before the search filter so the verdict
+      // never depends on what the caller happened to ask for.
+      const declaredRows: (RawDocField & {
+        fieldname: string;
+        fieldtype: string;
+      })[] = [];
+      for (const field of meta.fields) {
+        if (!field.fieldname) continue;
+        if (LAYOUT_FIELDTYPES.has(field.fieldtype ?? "")) continue;
+        if (typeof field.fieldtype !== "string" || !field.fieldtype.trim()) {
+          throw new Error(
+            `[erpnext_doctype_fields] ERPNext returned a field of '${doctype}' ` +
+              `('${field.fieldname}') with no field type. This is a broken response, ` +
+              "not a schema; retry, and report it if it persists.",
+          );
+        }
+        declaredRows.push(
+          { ...field, fieldname: field.fieldname, fieldtype: field.fieldtype },
+        );
+      }
+
+      const declared = declaredRows
         .filter((field) => {
-          if (!field.fieldname) return false;
-          if (LAYOUT_FIELDTYPES.has(field.fieldtype ?? "")) return false;
           if (!input.include_hidden && field.hidden) return false;
           return matches(field.fieldname, field.label);
         })
         .map((field) => ({
           fieldname: field.fieldname,
           label: field.label ?? null,
-          fieldtype: field.fieldtype ?? null,
+          fieldtype: field.fieldtype,
           // For Link/Table/Select this carries the target DocType or the option list.
           options: field.options ?? null,
           reqd: Boolean(field.reqd),
@@ -845,7 +889,10 @@ export const discoveryTools: ErpNextTool[] = [
       const fields = [...standard, ...declared];
 
       return {
-        doctype: meta.name ?? doctype,
+        // Guaranteed non-empty and equal to `doctype` bar case by the check
+        // above; ERPNext's spelling is preferred so the caller sees the
+        // canonical name back.
+        doctype: metaName,
         module: meta.module ?? null,
         is_single: Boolean(meta.issingle),
         is_virtual: Boolean(meta.is_virtual),

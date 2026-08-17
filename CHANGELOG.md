@@ -50,9 +50,9 @@ requests and tags actually live.
   `Department Approver` and `Designation Skill` resolve to zero owners from
   `DocField` alone and were refused to every account including Administrator.
   Whenever a source refuses and no owner it did enumerate is readable, that
-  single arbitrary name is asked for after the real list has been exhausted,
-  and the refusal then names the source that was denied and says the owner list
-  may be partial instead of presenting it as complete.
+  single arbitrary name is asked for after the real list has been exhausted, and
+  the refusal then names the source that was denied and says the owner list may
+  be partial instead of presenting it as complete.
 - **`erpnext_calendar_events`.** Lists Events over a date range through the same
   call the ERPNext calendar uses, so a repeating event is expanded into one row
   per occurrence, each tagged `is_recurring` (read from the stored
@@ -197,12 +197,11 @@ requests and tags actually live.
   (an unquoted pattern also matches every longer id ending in the same
   characters) and a plain substring match for `_user_tags`, which `DocTags`
   writes as `",".join(tags)` with no leading or trailing comma - a comma-padded
-  pattern therefore never matches the first tag, the last tag, or any
-  single-tag document, and the empty result reads as "nothing carries this
-  tag". Measured on the live instance: 23 distinct values, 13 of them a bare
-  single tag, and 0 of 115 rows carrying a comma at either end. `_comments` is
-  named as the sidebar cache it is, pointing at the `Comment` DocType as the
-  record of truth.
+  pattern therefore never matches the first tag, the last tag, or any single-tag
+  document, and the empty result reads as "nothing carries this tag". Measured
+  on the live instance: 23 distinct values, 13 of them a bare single tag, and 0
+  of 115 rows carrying a comma at either end. `_comments` is named as the
+  sidebar cache it is, pointing at the `Comment` DocType as the record of truth.
 - **A truncated owner list no longer blames the caller's permissions.** The
   `DocField` enumeration behind a child table's owners is capped, and reaching
   that cap was reported with the same sentence as a `DocField` permission
@@ -273,6 +272,29 @@ requests and tags actually live.
   mandatory on every row of that table, so a row without it means the endpoint
   broke its contract. Dropping the row silently shrank the owner list and turned
   the fault into a permission refusal - the swap this module exists to avoid.
+- **Metadata describing a different DocType is refused.** `get_meta_bundle` puts
+  the requested DocType first, so a bundle whose head names another one is a
+  broken response - and the dangerous kind: the permission gate was applied to
+  the name that was asked for while the schema handed back belonged to whatever
+  came in. The head is now required to name the requested DocType before the
+  gate runs, which is also what decides whether the child-table gate applies at
+  all. The comparison ignores case and surrounding space, because the database
+  collation resolves `sales invoice` to `Sales Invoice` and those calls work
+  today.
+- **A declared field with no field type is refused.** `fieldtype` is mandatory
+  on every `DocField` row and it is what decides both the layout filter and
+  `queryable`. A row that declared a fieldname but no type reached the caller as
+  `fieldtype: null`, and the missing type read as an ordinary stored column, so
+  the tool promised a filter and an `order_by` that cannot work. The check runs
+  before `include_hidden` and before the search filter, so the verdict never
+  depends on what the caller happened to ask for.
+- **A page whose total could not be resolved is no longer declared incomplete.**
+  `count_error` stated as fact that documents were missing, while a full page
+  with an unknown total may well be the whole result set - 50 of 50 is an
+  ordinary outcome, and a short page reaches that message too when the limit
+  itself was unusable. It now says the page may not be the whole result set,
+  which is the honest form of the same warning; `count` stays `null` and
+  `has_more` stays `true`.
 
 ## [3.2.0] - 2026-08-17
 

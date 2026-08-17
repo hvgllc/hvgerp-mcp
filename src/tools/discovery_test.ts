@@ -25,7 +25,13 @@ function makeMockClient(overrides: Record<string, AnyFn> = {}): FrappeClient {
     update: async () => ({ name: "TEST-001" }),
     delete: async () => {},
     callMethod: async () => ({ has_permission: true }),
-    callMethodRaw: async () => ({ docs: [META] }),
+    // ERPNext answers `getdoctype` with the metadata OF the DocType that was
+    // asked for, and the tool refuses a bundle whose head names a different one,
+    // so the fixture has to behave the same way rather than hand `Account` back
+    // for every name.
+    callMethodRaw: async (_method: string, args: Record<string, unknown>) => ({
+      docs: [{ ...META, name: (args?.doctype as string) ?? META.name }],
+    }),
     invalidate: () => {},
     ...overrides,
   };
@@ -214,10 +220,17 @@ const PARENT_META = {
  */
 function makeChildClient(overrides: Record<string, AnyFn> = {}): FrappeClient {
   return makeMockClient({
-    callMethodRaw: async (_method: string, args: Record<string, unknown>) =>
-      args.with_parent
-        ? { docs: [PARENT_META, CHILD_META] }
-        : { docs: [CHILD_META] },
+    callMethodRaw: async (_method: string, args: Record<string, unknown>) => {
+      // The child is named after what was asked for, and the parent declares
+      // THAT child in its Table field - which is what makes the bundle answer
+      // about the requested DocType rather than about a fixed fixture name.
+      const child = { ...CHILD_META, name: args.doctype as string };
+      const parent = {
+        ...PARENT_META,
+        fields: [{ ...PARENT_META.fields[0], options: child.name }],
+      };
+      return args.with_parent ? { docs: [parent, child] } : { docs: [child] };
+    },
     // The owner enumeration has to answer with a row list. The blanket
     // `{ has_permission: true }` of the base mock is not one, and the tool now
     // treats a non-list as the broken contract it is - see the dedicated test.
@@ -632,6 +645,100 @@ Deno.test("erpnext_doctype_fields - refuses metadata that carries no field list"
     Error,
     "no field list",
   );
+});
+
+Deno.test("erpnext_doctype_fields - refuses metadata that describes a different doctype", async () => {
+  // `get_meta_bundle` puts the requested DocType first, so a head naming some
+  // other one is a broken response - and the dangerous kind: the permission
+  // gate is applied to the name that was ASKED for, while the schema returned
+  // would belong to the DocType that came back. The check therefore runs before
+  // the gate, which is also what decides whether the gate is the child-table
+  // one at all.
+  let permChecks = 0;
+  const client = makeMockClient({
+    callMethod: async () => {
+      permChecks++;
+      return { has_permission: true };
+    },
+    callMethodRaw: async () => ({ docs: [{ ...META, name: "Salary Slip" }] }),
+  });
+
+  const error = await assertRejects(
+    () =>
+      getTool("erpnext_doctype_fields").handler(
+        { doctype: "Account" },
+        makeCtx(client),
+      ),
+    Error,
+    "broken response",
+  );
+
+  assertStringIncludes(error.message, '"Salary Slip"');
+  assertEquals(permChecks, 0);
+
+  // A head with no name at all is the same fault, not a nameless DocType.
+  for (const nameless of [{}, { name: "" }, { name: "   " }, { name: 7 }]) {
+    await assertRejects(
+      () =>
+        getTool("erpnext_doctype_fields").handler(
+          { doctype: "Account" },
+          makeCtx(makeMockClient({
+            callMethodRaw: async () => ({ docs: [{ ...META, ...nameless }] }),
+          })),
+        ),
+      Error,
+      "broken response",
+    );
+  }
+});
+
+Deno.test("erpnext_doctype_fields - a name that differs only in case is the same doctype", async () => {
+  // The database collation resolves `account` to `Account`, so that call works
+  // against a real instance today and must keep working. ERPNext's own spelling
+  // is what comes back.
+  const result = await getTool("erpnext_doctype_fields").handler(
+    { doctype: "  account " },
+    makeCtx(makeMockClient({
+      callMethodRaw: async () => ({ docs: [META] }),
+    })),
+  ) as any;
+
+  assertEquals(result.doctype, "Account");
+});
+
+Deno.test("erpnext_doctype_fields - refuses a declared field that carries no field type", async () => {
+  // `fieldtype` is mandatory on every DocField row, and it is what decides both
+  // the layout filter and `queryable`. Kept, such a row reaches the caller as a
+  // field of no known kind, and the missing type reads as an ordinary stored
+  // column - promising a filter and an order_by that cannot work.
+  for (
+    const broken of [
+      { fieldname: "mystery" },
+      { fieldname: "mystery", fieldtype: "" },
+      { fieldname: "mystery", fieldtype: "   " },
+      { fieldname: "mystery", fieldtype: null },
+      { fieldname: "mystery", fieldtype: 7 },
+      // Hidden, and not matching the search: the verdict must not depend on
+      // what the caller happened to ask for.
+      { fieldname: "mystery", hidden: 1 },
+    ]
+  ) {
+    const client = makeMockClient({
+      callMethodRaw: async () => ({
+        docs: [{ ...META, fields: [...META.fields, broken] }],
+      }),
+    });
+
+    await assertRejects(
+      () =>
+        getTool("erpnext_doctype_fields").handler(
+          { doctype: "Account", search: "account_name" },
+          makeCtx(client),
+        ),
+      Error,
+      "no field type",
+    );
+  }
 });
 
 Deno.test("erpnext_doctype_fields - reports a misspelled doctype instead of returning nothing", async () => {
