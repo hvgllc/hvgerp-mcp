@@ -96,7 +96,16 @@ export class ErpNextToolsClient {
   constructor(options?: ErpNextToolsClientOptions) {
     this.enableLinkDisambiguation = options?.enableLinkDisambiguation ?? false;
     if (options?.categories) {
-      this.tools = options.categories.flatMap((cat) => getToolsByCategory(cat));
+      // `identity` is always loaded, even when the caller did not ask for it. It is not a business
+      // area like `sales` or `hr`: `erpnext_whoami` is the only tool that turns "my"/"me" into a
+      // User id, and the server instructions tell the model to call it before any first-person
+      // request. Honouring `--categories=project` literally would leave that instruction pointing
+      // at a tool absent from `tools/list`, so `erpnext_task_list({assigned_to: "me"})` - a call
+      // the selected category does support - would have no way to resolve its own subject.
+      const selected = options.categories.includes("identity")
+        ? options.categories
+        : ["identity", ...options.categories];
+      this.tools = selected.flatMap((cat) => getToolsByCategory(cat));
     } else {
       this.tools = allTools;
     }

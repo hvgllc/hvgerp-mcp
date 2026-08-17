@@ -271,3 +271,27 @@ Deno.test("execute - bounded tools stay bounded on the direct-execution path", a
     setFrappeClient(null);
   }
 });
+
+Deno.test("ErpNextToolsClient keeps identity tools under a category filter", () => {
+  const names = new ErpNextToolsClient({ categories: ["project"] })
+    .listTools()
+    .map((candidate) => candidate.name);
+
+  // `erpnext_whoami` is the only tool that turns "my"/"me" into a User id, and the
+  // server instructions tell the model to call it before any first-person request.
+  // Dropping it with the category filter leaves `erpnext_task_list({assigned_to:
+  // "me"})` - a call the selected category does support - unable to resolve its
+  // own subject.
+  assert(names.includes("erpnext_whoami"));
+  assert(names.includes("erpnext_task_list"));
+  // Control: the filter still filters — this is not "load everything".
+  assert(!names.includes("erpnext_sales_order_list"));
+});
+
+Deno.test("ErpNextToolsClient does not load erpnext_whoami twice", () => {
+  const names = new ErpNextToolsClient({ categories: ["identity", "project"] })
+    .listTools()
+    .map((candidate) => candidate.name);
+
+  assertEquals(names.filter((name) => name === "erpnext_whoami").length, 1);
+});

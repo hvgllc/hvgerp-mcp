@@ -168,7 +168,10 @@ Deno.test("erpnext_my_work skips employee-keyed sections without an Employee", a
     calls.filter((call) => call.doctype === "Leave Application").length,
     0,
   );
-  assertEquals(result.leave_applications, undefined);
+  assertEquals(
+    (result.sections as Record<string, unknown>).leave_applications,
+    undefined,
+  );
 });
 
 Deno.test("erpnext_my_work reports a refused section instead of failing the call", async () => {
@@ -188,12 +191,60 @@ Deno.test("erpnext_my_work reports a refused section instead of failing the call
     unknown
   >;
 
-  assertEquals(
-    (result.timesheets as Record<string, unknown>).error,
-    "Not permitted for Timesheet",
-  );
+  const sections = result.sections as Record<string, Record<string, unknown>>;
+  assertEquals(sections.timesheets.error, "Not permitted for Timesheet");
   // The other sections still answered.
-  assertEquals((result.todos as Record<string, unknown>).count, 0);
+  assertEquals(sections.todos.count, 0);
+});
+
+Deno.test("erpnext_my_work treats cancelled and rejected claims as closed", async () => {
+  clearCallerProfileCache();
+  const calls: ListCall[] = [];
+  await tool("erpnext_my_work").handler(
+    { sections: ["expense_claims"] },
+    makeCtx({}, calls),
+  );
+
+  // Excluding only `Paid` still let a CANCELLED or REJECTED claim through as "open
+  // work": both are finished business, not money the company still owes.
+  const claim = calls.find((call) => call.doctype === "Expense Claim");
+  assertEquals(claim?.options.filters, [
+    ["employee", "=", "HR-EMP-00044"],
+    ["status", "not in", ["Paid", "Cancelled", "Rejected"]],
+  ]);
+});
+
+Deno.test("erpnext_my_work returns one flat row array the viewer can render", async () => {
+  clearCallerProfileCache();
+  const ctx = makeCtx({
+    list: async (doctype: string) => {
+      if (doctype === "Employee") return [EMPLOYEE_ROW];
+      if (doctype === "ToDo") return [{ name: "TODO-1", status: "Open" }];
+      if (doctype === "Task") return [{ name: "TASK-1", status: "Working" }];
+      return [];
+    },
+  });
+
+  const result = await tool("erpnext_my_work").handler({}, ctx) as Record<
+    string,
+    unknown
+  >;
+
+  // `DoclistViewer.consumeToolResult()` refuses any payload whose `data` is not an
+  // array, so the old six-nested-objects shape left the viewer sitting on an empty
+  // state no matter how much work the tool had found.
+  const rows = result.data as Record<string, unknown>[];
+  assertEquals(Array.isArray(rows), true);
+  assertEquals(rows.length, 2);
+  assertEquals(result.count, 2);
+  assertStringIncludes(result._title as string, "Do Khoa");
+  // One flat table spans six doctypes, so every row has to name its own group.
+  assertEquals(rows.map((row) => row.section), ["todos", "tasks"]);
+  assertEquals(rows.map((row) => row.doctype), ["ToDo", "Task"]);
+  // Per-section counts stay reachable without repeating the rows.
+  const sections = result.sections as Record<string, Record<string, unknown>>;
+  assertEquals(sections.todos.count, 1);
+  assertEquals(sections.timesheets.count, 0);
 });
 
 Deno.test("erpnext_my_work ignores unknown section names", async () => {

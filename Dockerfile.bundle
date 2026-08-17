@@ -23,7 +23,19 @@ WORKDIR /app
 # User `node` không phải chủ sở hữu sẽ chỉ có quyền `--x`, và Node chết `EACCES: permission denied`
 # ngay khi đọc module - lỗi trông như hỏng image chứ không như lỗi quyền tệp.
 COPY --chmod=0644 dist-node/bin/hvgerp-mcp.mjs /app/hvgerp-mcp.mjs
-COPY --chmod=0644 dist-node/bin/ui-dist /app/ui-dist
+
+# `ui-dist` là một CÂY THƯ MỤC, nên `--chmod=0644` không dùng được ở đây: COPY áp cùng một mode cho
+# cả thư mục lẫn tệp, thư mục mất bit `x` và `node` không đi qua nổi. Đo trên chính image này:
+# `drw-r--r-- /app/ui-dist` và `ls /app/ui-dist/doclist-viewer` trả `Permission denied`, nên
+# `resolveViewerDistPath()` không thấy viewer nào và server khởi động với `Resources: 0` - trông như
+# thiếu hiện vật build chứ không như lỗi quyền tệp.
+#
+# Vì vậy COPY nguyên mode rồi chuẩn hoá bằng `find`: thư mục cần bit `x` để đi qua, tệp HTML chỉ cần
+# đọc. `find` chứ không phải `chmod -R a=rX` vì `X` giữ lại bit `x` sẵn có của tệp, tức vẫn phụ thuộc
+# umask của máy build - đúng thứ mà lớp này phải cắt đứt.
+COPY dist-node/bin/ui-dist /app/ui-dist
+RUN find /app/ui-dist -type d -exec chmod 0755 {} + \
+ && find /app/ui-dist -type f -exec chmod 0644 {} +
 
 USER node
 EXPOSE 7654

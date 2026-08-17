@@ -30,6 +30,10 @@ export const MAX_VISIBLE_COLUMNS = 6;
 
 /** Columns to prioritize (shown first). Order matters. */
 const PRIORITY_COLUMNS = [
+  // `erpnext_my_work` gộp sáu doctype vào một bảng, và `section` là cột duy nhất nói row thuộc
+  // nhóm nào. Bảng chỉ hiện tối đa MAX_VISIBLE_COLUMNS cột nên nếu để nó rơi vào phần xếp theo
+  // bảng chữ cái thì nó bị cắt mất. Payload khác không có khoá này nên dòng này không đụng tới ai.
+  "section",
   "name",
   "status",
   "customer",

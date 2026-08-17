@@ -57,6 +57,14 @@ function identityNote(profile: CallerProfile): string | undefined {
     : undefined;
 }
 
+/** Kết quả của một mục: hoặc các row đọc được, hoặc lý do không đọc được. */
+type SectionOutcome =
+  | { count: number; data: Record<string, unknown>[] }
+  | { error: string };
+
+/** Báo cáo một mục trong payload: chỉ số lượng hoặc lý do không đọc được, không lặp lại row. */
+type SectionSummary = { count: number } | { error: string };
+
 async function listSection(
   ctx: ErpNextToolContext,
   doctype: string,
@@ -64,7 +72,7 @@ async function listSection(
   filters: FrappeFilter[],
   limit: number,
   orderBy: string,
-): Promise<{ count: number; data: unknown[] } | { error: string }> {
+): Promise<SectionOutcome> {
   try {
     const data = await ctx.client.list(doctype, {
       fields,
@@ -72,7 +80,7 @@ async function listSection(
       limit,
       order_by: orderBy,
     });
-    return { count: data.length, data };
+    return { count: data.length, data: data as Record<string, unknown>[] };
   } catch (error) {
     // One inaccessible doctype must not blank the whole roll-up: a user without Payroll or Projects
     // permissions still has ToDos, and reporting the refusal per section is more useful than
@@ -207,137 +215,197 @@ export const identityTools: ErpNextTool[] = [
         };
       }
 
+      // Một mảng row duy nhất chứ không phải sáu object lồng nhau: `_meta: DOCLIST_META` gắn
+      // tool này vào doclist viewer, mà `DoclistViewer.consumeToolResult()` từ chối mọi payload
+      // không có `data` là mảng (`src/ui/doclist-viewer/src/DoclistViewer.tsx`), nên hình dạng cũ
+      // để viewer đứng yên ở trạng thái rỗng dù tool trả về đầy việc. Chi tiết từng mục chuyển
+      // sang `sections` dưới dạng count/error, không lặp lại row.
+      const sections: Record<string, SectionSummary> = {};
+      const rows: Record<string, unknown>[] = [];
+
+      const collect = (
+        section: WorkSection,
+        doctype: string,
+        outcome: SectionOutcome,
+      ): void => {
+        if ("error" in outcome) {
+          sections[section] = outcome;
+          return;
+        }
+        sections[section] = { count: outcome.count };
+        for (const row of outcome.data) rows.push({ ...row, section, doctype });
+      };
+
       for (const section of requested) {
         if (EMPLOYEE_SECTIONS.has(section) && !employeeId) continue;
 
         switch (section) {
           case "todos":
-            result.todos = await listSection(
-              ctx,
+            collect(
+              "todos",
               "ToDo",
-              [
-                "name",
-                "description",
-                "status",
-                "priority",
-                "date",
-                "reference_type",
-                "reference_name",
-              ],
-              includeClosed
-                ? [["allocated_to", "=", userId]]
-                : [["allocated_to", "=", userId], ["status", "=", "Open"]],
-              limit,
-              "date asc",
+              await listSection(
+                ctx,
+                "ToDo",
+                [
+                  "name",
+                  "description",
+                  "status",
+                  "priority",
+                  "date",
+                  "reference_type",
+                  "reference_name",
+                ],
+                includeClosed
+                  ? [["allocated_to", "=", userId]]
+                  : [["allocated_to", "=", userId], ["status", "=", "Open"]],
+                limit,
+                "date asc",
+              ),
             );
             break;
 
           case "tasks":
-            result.tasks = await listSection(
-              ctx,
+            collect(
+              "tasks",
               "Task",
-              [
-                "name",
-                "subject",
-                "project",
-                "status",
-                "priority",
-                "exp_end_date",
-                "progress",
-              ],
-              includeClosed ? [assigned] : [
-                assigned,
-                ["status", "not in", ["Completed", "Cancelled"]],
-              ],
-              limit,
-              "exp_end_date asc",
+              await listSection(
+                ctx,
+                "Task",
+                [
+                  "name",
+                  "subject",
+                  "project",
+                  "status",
+                  "priority",
+                  "exp_end_date",
+                  "progress",
+                ],
+                includeClosed ? [assigned] : [
+                  assigned,
+                  ["status", "not in", ["Completed", "Cancelled"]],
+                ],
+                limit,
+                "exp_end_date asc",
+              ),
             );
             break;
 
           case "projects":
-            result.projects = await listSection(
-              ctx,
+            collect(
+              "projects",
               "Project",
-              [
-                "name",
-                "project_name",
-                "status",
-                "percent_complete",
-                "expected_end_date",
-              ],
-              includeClosed ? [assigned] : [assigned, ["status", "=", "Open"]],
-              limit,
-              "expected_end_date asc",
+              await listSection(
+                ctx,
+                "Project",
+                [
+                  "name",
+                  "project_name",
+                  "status",
+                  "percent_complete",
+                  "expected_end_date",
+                ],
+                includeClosed
+                  ? [assigned]
+                  : [assigned, ["status", "=", "Open"]],
+                limit,
+                "expected_end_date asc",
+              ),
             );
             break;
 
           case "leave_applications":
-            result.leave_applications = await listSection(
-              ctx,
+            collect(
+              "leave_applications",
               "Leave Application",
-              [
-                "name",
-                "leave_type",
-                "from_date",
-                "to_date",
-                "total_leave_days",
-                "status",
-              ],
-              includeClosed
-                ? [["employee", "=", employeeId!]]
-                : [["employee", "=", employeeId!], ["status", "=", "Open"]],
-              limit,
-              "from_date desc",
+              await listSection(
+                ctx,
+                "Leave Application",
+                [
+                  "name",
+                  "leave_type",
+                  "from_date",
+                  "to_date",
+                  "total_leave_days",
+                  "status",
+                ],
+                includeClosed
+                  ? [["employee", "=", employeeId!]]
+                  : [["employee", "=", employeeId!], ["status", "=", "Open"]],
+                limit,
+                "from_date desc",
+              ),
             );
             break;
 
           case "expense_claims":
-            result.expense_claims = await listSection(
-              ctx,
+            collect(
+              "expense_claims",
               "Expense Claim",
-              [
-                "name",
-                "posting_date",
-                "total_claimed_amount",
-                "total_sanctioned_amount",
-                "approval_status",
-                "status",
-                "docstatus",
-              ],
-              includeClosed
-                ? [["employee", "=", employeeId!]]
-                : [["employee", "=", employeeId!], ["status", "!=", "Paid"]],
-              limit,
-              "posting_date desc",
+              await listSection(
+                ctx,
+                "Expense Claim",
+                [
+                  "name",
+                  "posting_date",
+                  "total_claimed_amount",
+                  "total_sanctioned_amount",
+                  "approval_status",
+                  "status",
+                  "docstatus",
+                ],
+                includeClosed
+                  ? [["employee", "=", employeeId!]]
+                  // `Expense Claim.status` có sáu giá trị trên ERPNext v16 (đo trên chính site:
+                  // Draft, Paid, Unpaid, Rejected, Submitted, Cancelled), nên loại mỗi `Paid` vẫn để
+                  // lọt đơn đã HUỶ và đơn bị TỪ CHỐI vào mục "việc đang mở" - cả hai đều là việc đã
+                  // khép lại, không phải khoản chờ thanh toán.
+                  : [
+                    ["employee", "=", employeeId!],
+                    ["status", "not in", ["Paid", "Cancelled", "Rejected"]],
+                  ],
+                limit,
+                "posting_date desc",
+              ),
             );
             break;
 
           case "timesheets":
-            result.timesheets = await listSection(
-              ctx,
+            collect(
+              "timesheets",
               "Timesheet",
-              [
-                "name",
-                "start_date",
-                "end_date",
-                "total_hours",
-                "status",
-                "docstatus",
-              ],
-              includeClosed
-                ? [["employee", "=", employeeId!]]
-                : [["employee", "=", employeeId!], [
+              await listSection(
+                ctx,
+                "Timesheet",
+                [
+                  "name",
+                  "start_date",
+                  "end_date",
+                  "total_hours",
                   "status",
-                  "!=",
-                  "Cancelled",
-                ]],
-              limit,
-              "start_date desc",
+                  "docstatus",
+                ],
+                includeClosed
+                  ? [["employee", "=", employeeId!]]
+                  : [["employee", "=", employeeId!], [
+                    "status",
+                    "!=",
+                    "Cancelled",
+                  ]],
+                limit,
+                "start_date desc",
+              ),
             );
             break;
         }
       }
 
+      result.count = rows.length;
+      result.data = rows;
+      result.sections = sections;
+      result._title = includeClosed
+        ? `All work for ${profile.user.full_name ?? userId}`
+        : `Open work for ${profile.user.full_name ?? userId}`;
       result._meta = DOCLIST_META;
       return result;
     },
