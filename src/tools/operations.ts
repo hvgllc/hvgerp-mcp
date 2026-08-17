@@ -917,7 +917,18 @@ export const operationsTools: ErpNextTool[] = [
         if (byStart !== 0) return byStart;
         return String(a.name ?? "").localeCompare(String(b.name ?? ""));
       });
-      const data = rows.slice(0, limit).map((event) => ({
+      const data = rows.slice(0, limit).map((event, index) => ({
+        // Every occurrence of a repeating event comes back carrying the stored
+        // master's `name`, so `name` is not a row identity here. The doclist
+        // viewer keys its expanded panel on `_id` when present, and without one
+        // clicking a Monday occurrence opened the same panel under every other
+        // occurrence of that master and clicking a second one collapsed them
+        // all. The index is what makes it unique, and it is stable across a
+        // refresh because the sort above is total: `starts_on` first, `name` to
+        // break ties. It never reaches the tool - the row action still passes
+        // `name`, which is the document ERPNext can actually fetch - and the
+        // viewer hides every underscore-prefixed key from its columns.
+        _id: `${event.name}::${index}`,
         name: event.name,
         subject: event.subject,
         starts_on: event.starts_on,

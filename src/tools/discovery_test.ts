@@ -406,6 +406,86 @@ Deno.test("erpnext_doctype_fields - an ordinary doctype keeps its fields queryab
   assertEquals(result.is_virtual, false);
 });
 
+Deno.test("erpnext_doctype_fields - a child table field is not queryable on the parent", async () => {
+  const client = makeMockClient({
+    callMethodRaw: async () => ({
+      docs: [{
+        ...META,
+        name: "Sales Invoice",
+        fields: [
+          ...META.fields,
+          {
+            fieldname: "items",
+            label: "Items",
+            fieldtype: "Table",
+            options: "Sales Invoice Item",
+          },
+          {
+            fieldname: "sales_team",
+            label: "Sales Team",
+            fieldtype: "Table MultiSelect",
+            options: "Sales Team",
+          },
+        ],
+      }],
+    }),
+  });
+
+  const result = await getTool("erpnext_doctype_fields").handler(
+    { doctype: "Sales Invoice" },
+    makeCtx(client),
+  ) as any;
+
+  // The rows live in the child DocType and are joined back by `parent`, so the
+  // parent table has no column of that name - measured on the live instance,
+  // `tabSales Invoice` has no column for any of its 11 `Table` fields.
+  const byName = (fieldname: string) =>
+    result.fields.find((f: any) => f.fieldname === fieldname);
+  assertEquals(byName("items").queryable, false);
+  assertEquals(byName("sales_team").queryable, false);
+  // The DocType itself is perfectly ordinary, so its stored fields stay queryable.
+  assertEquals(result.is_virtual, false);
+  assertEquals(byName("account_name").queryable, true);
+  assertEquals(byName("name").queryable, true);
+});
+
+Deno.test("erpnext_doctype_fields - a virtual field is not queryable on an ordinary doctype", async () => {
+  const client = makeMockClient({
+    callMethodRaw: async () => ({
+      docs: [{
+        ...META,
+        name: "Sales Invoice",
+        fields: [
+          ...META.fields,
+          {
+            fieldname: "last_scanned_warehouse",
+            label: "Last Scanned Warehouse",
+            fieldtype: "Data",
+            is_virtual: 1,
+          },
+        ],
+      }],
+    }),
+  });
+
+  const result = await getTool("erpnext_doctype_fields").handler(
+    { doctype: "Sales Invoice" },
+    makeCtx(client),
+  ) as any;
+
+  // Computed by a Python property, never stored - so there is no column to
+  // filter or sort on even though the DocType has a table.
+  assertEquals(
+    result.fields.find((f: any) => f.fieldname === "last_scanned_warehouse")
+      .queryable,
+    false,
+  );
+  assertEquals(
+    result.fields.find((f: any) => f.fieldname === "account_name").queryable,
+    true,
+  );
+});
+
 Deno.test("erpnext_doctype_fields - reports a misspelled doctype instead of returning nothing", async () => {
   const client = makeMockClient({ callMethodRaw: async () => ({ docs: [] }) });
 

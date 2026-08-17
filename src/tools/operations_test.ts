@@ -1014,6 +1014,47 @@ Deno.test("erpnext_calendar_events - refuses a date that matches the shape but d
   assertEquals(calls, 0);
 });
 
+Deno.test("erpnext_calendar_events - every occurrence gets its own row identity", async () => {
+  // Frappe returns each expanded occurrence carrying the stored master's
+  // `name`, so `name` cannot key viewer state: the doclist viewer would open
+  // one expanded panel under every occurrence of the master at once.
+  const client = makeMockClient({
+    callMethod: async () => [
+      {
+        name: "EV00045",
+        subject: "Hop giao ban tuan",
+        starts_on: "2026-08-17 08:30:00",
+        repeat_this_event: 1,
+        repeat_on: "Weekly",
+      },
+      {
+        name: "EV00045",
+        subject: "Hop giao ban tuan",
+        starts_on: "2026-08-24 08:30:00",
+        repeat_this_event: 1,
+        repeat_on: "Weekly",
+      },
+    ],
+  });
+
+  const result = await getTool("erpnext_calendar_events").handler(
+    { start: "2026-08-17", end: "2026-08-30" },
+    makeCtx(client),
+    // deno-lint-ignore no-explicit-any
+  ) as any;
+
+  assertEquals(result.data.length, 2);
+  // The document id is unchanged - the row action still has to fetch a real Event.
+  assertEquals(result.data[0].name, "EV00045");
+  assertEquals(result.data[1].name, "EV00045");
+  // The row identity is not.
+  assertEquals(result.data[0]._id === result.data[1]._id, false);
+  assertEquals(
+    new Set(result.data.map((row: { _id: string }) => row._id)).size,
+    2,
+  );
+});
+
 Deno.test("erpnext_calendar_events - rejects a non-array answer instead of reporting an empty calendar", async () => {
   const client = makeMockClient({
     // What a misconfigured or half-broken endpoint hands back.

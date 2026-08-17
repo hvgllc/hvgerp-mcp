@@ -148,6 +148,28 @@ requests and tags actually live.
   the reader was invited toward 47 rows that were never loaded. It now reads
   "first 50 of 97 records · 47 not fetched" with the concrete next action - ask
   again with a higher limit or a narrower filter.
+- **`queryable` is now decided per field, not per DocType.** An ordinary DocType
+  reported every one of its fields as queryable, but a `Table` /
+  `Table MultiSelect` field holds rows in the child DocType joined back by
+  `parent`, so the parent table has no column of that name: measured on the live
+  instance, `tabSales Invoice` has no column for any of its 11 `Table` fields
+  (`items`, `taxes`, `packed_items`, ...), and the instance carries 521 `Table`
+  plus 38 `Table MultiSelect` DocField rows in all. Virtual fields are the same
+  story from the other direction - 33 `is_virtual` DocField rows exist, and on
+  `tabSales Invoice` the only non-layout field without a column besides the
+  `Table` ones is `last_scanned_warehouse`, flagged exactly that way. Both now
+  come back `queryable: false`, and the tool description says to query the child
+  DocType instead.
+- **Every occurrence of a repeating event gets its own row identity.**
+  `erpnext_calendar_events` expands a recurring Event into one row per
+  occurrence, and Frappe hands every occurrence the stored master's `name`, so
+  the doclist viewer - which keyed its expanded panel on the row action's id
+  field - opened one panel under every occurrence of that master at once, and
+  clicking a second one collapsed them all. Each row now carries an `_id` the
+  viewer keys on, kept separate from the `name` the row action still passes to
+  the tool, since that is the document ERPNext can actually fetch. The viewer
+  hides every underscore-prefixed key from its columns, so the extra field is
+  invisible to the reader.
 
 ## [3.2.0] - 2026-08-17
 

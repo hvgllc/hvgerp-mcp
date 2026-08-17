@@ -36,6 +36,20 @@ const LAYOUT_FIELDTYPES = new Set([
   "Button",
 ]);
 
+/**
+ * Fieldtypes that carry real data but no column on the DocType's own table.
+ *
+ * A `Table` / `Table MultiSelect` field is a pointer to rows in the child
+ * DocType, joined back by `parent`; the parent table has no column of that
+ * name. Measured on the live instance, `tabSales Invoice` has no column for any
+ * of its 11 `Table` fields (`items`, `taxes`, `packed_items`, ...), and the
+ * instance holds 521 `Table` plus 38 `Table MultiSelect` DocField rows in all.
+ * So they are readable on a document and never usable in `filters` or
+ * `order_by` - a model that trusted a DocType-wide `queryable: true` here was
+ * being steered into a database error.
+ */
+const CHILD_LINK_FIELDTYPES = new Set(["Table", "Table MultiSelect"]);
+
 /** A field every DocType stores, described the way a `fields` row would be. */
 interface StandardField {
   fieldname: string;
@@ -153,6 +167,13 @@ interface RawDocField {
   permlevel?: number;
   description?: string | null;
   default?: string | null;
+  /**
+   * A field computed by a Python property instead of stored. 33 DocField rows
+   * carry it on the live instance, and none of them has a column - measured on
+   * `tabSales Invoice`, whose only non-layout field without a column besides the
+   * `Table` ones is `last_scanned_warehouse`, flagged exactly this way.
+   */
+  is_virtual?: number;
 }
 
 /** The DocType meta document `getdoctype` writes into `frappe.response.docs[0]`. */
@@ -349,9 +370,12 @@ export const discoveryTools: ErpNextTool[] = [
       "happen to be filled in. The answer also lists the standard columns every DocType stores " +
       "(name, owner, creation, modified, modified_by, docstatus, idx) marked is_standard, because " +
       "they appear in no form. Every field carries queryable: false means the value can be read " +
-      "but cannot be relied on in a filter or order_by, which is the case for every field of a " +
+      "but cannot be relied on in a filter or order_by. That is the case for every field of a " +
       "Single DocType (no table of its own) and of a virtual DocType (rows come from a Python " +
-      "controller, so only that controller decides what it will filter on). Fails with a permission error if the " +
+      "controller, so only that controller decides what it will filter on), and for individual " +
+      "Table / Table MultiSelect fields (their values are rows in the child DocType, so the " +
+      "parent table has no such column - query the child DocType instead) and virtual fields " +
+      "(computed in Python, never stored). Fails with a permission error if the " +
       "caller cannot read the DocType; for a child table the check runs against a parent DocType " +
       "that owns it, because child tables carry no permissions of their own.",
     category: "discovery",
@@ -385,11 +409,22 @@ export const discoveryTools: ErpNextTool[] = [
 
       // The meta is fetched BEFORE the permission gate because the gate itself
       // depends on it: a child DocType has to be checked against its parent,
-      // and nothing but the meta says whether this is one. That ordering leaks
-      // nothing - `getdoctype` performs no permission check of its own (which
-      // is exactly why this module imposes one), so reading it earlier grants
-      // the caller no access it did not already have, and no part of it is
-      // returned unless the gate below passes.
+      // and nothing but the meta says whether this is one. No part of it is
+      // returned unless the gate below passes, and reading it early grants no
+      // access the caller did not already have - `getdoctype` is whitelisted
+      // and performs no permission check of its own, which is exactly why this
+      // module imposes one.
+      //
+      // It does mean a missing DocType and an unreadable one fail differently.
+      // That is Frappe's own behaviour on every access path, not something this
+      // ordering introduces: measured as `khoa.do@` (an employee for whom
+      // `has_permission('DocType', 'read')` is false), `frappe.get_list` raises
+      // `DoesNotExistError` - HTTP 404, message "DocType X not found" - for a
+      // name that does not exist and `PermissionError` - HTTP 403 - for one
+      // that does, so `/api/resource/<name>` is already that oracle for any
+      // authenticated user. Collapsing the two here would hide nothing and
+      // would cost the caller the one distinction worth having: a typo in the
+      // DocType name versus a missing role.
       const envelope = await ctx.client.callMethodRaw<
         { docs?: RawDocTypeMeta[] }
       >(
@@ -431,7 +466,24 @@ export const discoveryTools: ErpNextTool[] = [
       // controller, so nothing here can promise it - 20 of them exist on the
       // live instance (RQ Job, Recorder, System Health Report, ...). Marking
       // them not queryable states what this tool can actually vouch for.
-      const queryable = !meta.issingle && !meta.is_virtual;
+      //
+      // This is the DocType-wide half of the answer. It is necessary but not
+      // sufficient: an ordinary DocType with a table behind it still holds
+      // individual fields that have no column of their own, so the per-field
+      // half is applied below.
+      const doctypeQueryable = !meta.issingle && !meta.is_virtual;
+
+      /**
+       * Whether one field is usable in `filters` or `order_by`.
+       *
+       * Storage decides this, not the form: a `Table` field points at rows in
+       * another table, and a virtual field is computed by a Python property, so
+       * neither exists as a column to compare or sort on.
+       */
+      const isQueryable = (field: RawDocField) =>
+        doctypeQueryable &&
+        !CHILD_LINK_FIELDTYPES.has(field.fieldtype ?? "") &&
+        !field.is_virtual;
 
       // Standard columns come first, and they are never subject to
       // `include_hidden`: they are not hidden form fields, they are columns that
@@ -453,7 +505,9 @@ export const discoveryTools: ErpNextTool[] = [
           permlevel: 0,
           description: field.description,
           is_standard: true,
-          queryable,
+          // Every standard column is a real column, so only the DocType-wide
+          // half applies here.
+          queryable: doctypeQueryable,
         }));
 
       const declared = (meta.fields ?? [])
@@ -477,7 +531,7 @@ export const discoveryTools: ErpNextTool[] = [
           permlevel: field.permlevel ?? 0,
           description: field.description ?? null,
           is_standard: false,
-          queryable,
+          queryable: isQueryable(field),
         }));
 
       const fields = [...standard, ...declared];

@@ -225,18 +225,42 @@ function DoclistContent({ data, error, refreshing, onRefresh, onError }: {
   const [chipFilters, setChipFilters] = useState<Record<string, string>>({});
   const actionTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const pendingRowIdRef = useRef<string | null>(null);
+  // The document id behind the expanded row, kept apart from the row's own
+  // identity because a refresh has to re-ask the tool for the document.
+  const pendingArgValueRef = useRef<string | null>(null);
 
   const rowAction = data._rowAction;
   const rows = data.data ?? [];
   const hasLocalDetail = rows.length > 0 && rows[0]._detail != null;
   const isClickable = !!rowAction || hasLocalDetail;
 
+  // ── Row identity vs the argument sent to the tool ────────
+
+  /**
+   * Which row is expanded. `_id` wins over the row action's id field because
+   * the two answer different questions: the id field says which *document* to
+   * fetch, while this says which *row* the reader clicked, and a result set can
+   * legitimately hold several rows for one document. Expanded recurring events
+   * are exactly that - Frappe returns every occurrence carrying the stored
+   * master's `name` - so keying the panel on `name` opened it under every
+   * occurrence of that master at once and made clicking a second one collapse
+   * them all.
+   */
+  const rowIdentity = (row: Record<string, unknown>) =>
+    row._id != null
+      ? String(row._id)
+      : rowAction
+      ? String(getNestedValue(row, rowAction.idField) ?? "")
+      : String(row.name ?? "");
+
+  /** The value the row action passes to its tool - always the document id. */
+  const rowArgValue = (row: Record<string, unknown>) =>
+    rowAction ? String(getNestedValue(row, rowAction.idField) ?? "") : "";
+
   // ── Row click handler ────────────────────────────────────
 
   async function onRowClick(row: Record<string, unknown>) {
-    const rowId = rowAction
-      ? String(getNestedValue(row, rowAction.idField) ?? "")
-      : String(row._id ?? row.name ?? "");
+    const rowId = rowIdentity(row);
     if (!rowId) return;
 
     if (expandedId === rowId) {
@@ -252,13 +276,20 @@ function DoclistContent({ data, error, refreshing, onRefresh, onError }: {
     }
     if (!rowAction) return;
 
+    const argValue = rowArgValue(row);
+    if (!argValue) return;
+
     setExpandedId(rowId);
     setExpandedData(null);
     setExpandedLoading(true);
     pendingRowIdRef.current = rowId;
+    pendingArgValueRef.current = argValue;
 
     try {
-      const toolArgs = { ...rowAction.extraArgs, [rowAction.argName]: rowId };
+      const toolArgs = {
+        ...rowAction.extraArgs,
+        [rowAction.argName]: argValue,
+      };
       const result = await app.callServerTool(
         { name: rowAction.toolName, arguments: toolArgs },
         { timeout: TOOL_CALL_TIMEOUT_MS },
@@ -296,16 +327,20 @@ function DoclistContent({ data, error, refreshing, onRefresh, onError }: {
       }, { timeout: TOOL_CALL_TIMEOUT_MS });
       if (result.isError) return false;
       const currentId = expandedId;
+      const currentArg = pendingArgValueRef.current;
       clearTimeout(actionTimerRef.current);
       actionTimerRef.current = setTimeout(async () => {
         // Only refresh if the same row is still expanded
-        if (currentId && rowAction && pendingRowIdRef.current === currentId) {
+        if (
+          currentId && currentArg && rowAction &&
+          pendingRowIdRef.current === currentId
+        ) {
           try {
             const r = await app.callServerTool({
               name: rowAction.toolName,
               arguments: {
                 ...rowAction.extraArgs,
-                [rowAction.argName]: currentId,
+                [rowAction.argName]: currentArg,
               },
             }, { timeout: TOOL_CALL_TIMEOUT_MS });
             if (pendingRowIdRef.current !== currentId) return;
@@ -657,9 +692,7 @@ function DoclistContent({ data, error, refreshing, onRefresh, onError }: {
                   </tr>
                 )
                 : pageRows.map((row, idx) => {
-                  const rowId = rowAction
-                    ? String(getNestedValue(row, rowAction.idField) ?? "")
-                    : String(row._id ?? row.name ?? idx);
+                  const rowId = rowIdentity(row) || String(idx);
                   const isExpanded = expandedId === rowId && rowId !== "";
                   return (
                     <Fragment key={idx}>
