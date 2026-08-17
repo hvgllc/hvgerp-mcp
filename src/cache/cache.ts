@@ -39,11 +39,23 @@ export function getCacheTtlMs(): number {
   return parsed;
 }
 
+/**
+ * Build a NEW cache of the configured backend.
+ *
+ * Exists because not every cache in the process can be the app-wide singleton: per-caller clients
+ * need one cache EACH (sharing one would hand one caller another caller's rows), and they must
+ * still honour `MCP_CACHE_ENABLED=false`. Constructing `new MemoryCache()` directly at those call
+ * sites is what made the operator's "caching off" switch apply to only some of the caches.
+ */
+export function createCache(): Cache {
+  const enabled = env("MCP_CACHE_ENABLED") !== "false";
+  return enabled ? new MemoryCache() : new NoopCache();
+}
+
 /** Get (or lazily create) the singleton app-wide Cache. */
 export function getCache(): Cache {
   if (_cache) return _cache;
-  const enabled = env("MCP_CACHE_ENABLED") !== "false";
-  _cache = enabled ? new MemoryCache() : new NoopCache();
+  _cache = createCache();
   return _cache;
 }
 

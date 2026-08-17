@@ -7,15 +7,19 @@
  * from the HTTP boundary down to the Frappe client without threading a parameter through all 125
  * tool handlers.
  *
- * `AsyncLocalStorage` is the mechanism because the alternative — a module-level "current caller"
+ * An async-scoped store is the mechanism because the alternative — a module-level "current caller"
  * variable — is silently wrong under concurrency: two overlapping requests would clobber each
  * other's identity and one caller would act as the other. The store is entered once per tool call by
  * `createCallerIdentityMiddleware` and is invisible to anything outside that call's async tree.
  *
+ * It comes from the runtime adapter, not from `node:async_hooks` directly: shared source must not
+ * name a platform module (AGENTS.md, "Dual-runtime design"). Both adapters happen to implement it
+ * with `AsyncLocalStorage`, which is exactly the detail the boundary is there to keep out of here.
+ *
  * @module lib/erpnext/src/api/caller-context
  */
 
-import { AsyncLocalStorage } from "node:async_hooks";
+import { createContextStore } from "../runtime.ts";
 
 export interface CallerIdentity {
   /**
@@ -31,7 +35,7 @@ export interface CallerIdentity {
   readonly principal: string;
 }
 
-const callerStorage = new AsyncLocalStorage<CallerIdentity>();
+const callerStorage = createContextStore<CallerIdentity>();
 
 /** Run `fn` with `identity` visible to `currentCaller()` anywhere in its async tree. */
 export function runWithCaller<T>(identity: CallerIdentity, fn: () => T): T {
@@ -40,5 +44,5 @@ export function runWithCaller<T>(identity: CallerIdentity, fn: () => T): T {
 
 /** The identity of the request currently being served, or `undefined` outside one. */
 export function currentCaller(): CallerIdentity | undefined {
-  return callerStorage.getStore();
+  return callerStorage.current();
 }

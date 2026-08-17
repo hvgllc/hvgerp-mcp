@@ -8,6 +8,9 @@
  * @module lib/erpnext/src/runtime.deno
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
+import type { ContextStore } from "./runtime-types.ts";
+
 // ─── Environment ─────────────────────────────────────────
 
 export function env(key: string): string | undefined {
@@ -51,4 +54,19 @@ export function exit(code: number): never {
 
 export function onSignal(signal: string, handler: () => void): void {
   Deno.addSignalListener(signal as Deno.Signal, handler);
+}
+
+// ─── Async context ───────────────────────────
+
+/**
+ * Deno has no async-context API of its own: `AsyncLocalStorage` from `node:async_hooks` is the
+ * supported way, and it is stable here. The import sits in the adapter precisely so shared source
+ * never names a `node:` module (AGENTS.md, "Dual-runtime design").
+ */
+export function createContextStore<T>(): ContextStore<T> {
+  const storage = new AsyncLocalStorage<T>();
+  return {
+    run: <R>(value: T, fn: () => R): R => storage.run(value, fn),
+    current: (): T | undefined => storage.getStore(),
+  };
 }

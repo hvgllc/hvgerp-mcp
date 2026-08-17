@@ -16,6 +16,10 @@
  * @module lib/erpnext/src/runtime
  */
 
+import type { ContextStore } from "./runtime-types.ts";
+
+export type { ContextStore };
+
 type RuntimePort = {
   env(key: string): string | undefined;
   readTextFile(path: string): Promise<string>;
@@ -24,6 +28,7 @@ type RuntimePort = {
   getArgs(): string[];
   exit(code: number): never;
   onSignal(signal: string, handler: () => void): void;
+  createContextStore<T>(): ContextStore<T>;
 };
 
 // Structural detection: a bare `globalThis.Deno = {}` shim (seen in some
@@ -44,3 +49,4 @@ export const readDirSync = impl.readDirSync;
 export const getArgs = impl.getArgs;
 export const exit = impl.exit;
 export const onSignal = impl.onSignal;
+export const createContextStore = impl.createContextStore;

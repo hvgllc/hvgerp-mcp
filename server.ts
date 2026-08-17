@@ -53,6 +53,7 @@ import { warmCache } from "./src/cache/warm.ts";
 import { resourceMetadataRoute } from "./src/auth/resource-metadata-route.ts";
 import { loadMrtrConfig } from "./src/mrtr/config.ts";
 import { installClaudeCodeStdioCompat } from "./src/claude-code-stdio-compat.ts";
+import { SERVER_VERSION } from "./src/version.ts";
 
 const DEFAULT_HTTP_PORT = 3012;
 
@@ -113,7 +114,7 @@ async function main() {
   // Build MCP server
   const server = new McpApp({
     name: "hvgerp-mcp",
-    version: "3.0.0",
+    version: SERVER_VERSION,
     transport: "stateless",
     cache: {
       // `private` once results are caller-scoped: with per-user identity the same tool call returns

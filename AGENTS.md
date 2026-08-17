@@ -97,16 +97,23 @@ cd src/ui && npm run dev:kanban    # also: dev:invoice, dev:stock, dev:doclist
 The project runs on **Deno** (development/JSR) and **Node.js** (npm).
 Platform-specific APIs are abstracted through a runtime adapter:
 
-- `src/runtime.ts` — Deno implementation (uses `Deno.env`, `Deno.readTextFile`,
-  etc.)
-- `src/runtime.node.ts` — Node.js implementation (uses `process.env`, `node:fs`)
+- `src/runtime.ts` — the port. Declares `RuntimePort`, picks an implementation
+  at **load time** (not build time), and re-exports every member.
+- `src/runtime-types.ts` — shared interfaces the port exposes (e.g.
+  `ContextStore`), kept separate so the adapters can import them without
+  importing the port itself.
+- `src/runtime.deno.ts` — Deno implementation (`Deno.env`, `Deno.readTextFile`).
+- `src/runtime.node.ts` — Node.js implementation (`process.env`, `node:fs`).
 
-The build script `scripts/build-node.sh` swaps `runtime.ts` with
-`runtime.node.ts`, strips `.ts` extensions from imports, and produces a single
-esbuild bundle at `dist-node/bin/hvgerp-mcp.mjs`.
+The build script `scripts/build-node.sh` copies `src/` wholesale, strips `.ts`
+extensions from imports, and produces a single esbuild bundle at
+`dist-node/bin/hvgerp-mcp.mjs`. It does **not** swap runtime files — that
+happened in an earlier design and the header comment of the script says so.
 
 **All source code imports `from "./runtime.ts"` — never import Deno or Node APIs
-directly.**
+directly.** The two adapter files are the only exception, and
+`src/runtime-boundary_test.ts` enforces it: any other module importing a
+`node:` builtin fails the suite.
 
 ### Tool architecture
 
@@ -399,13 +406,16 @@ This project follows **semver** (`MAJOR.MINOR.PATCH`):
 Version locations (both must stay in sync):
 
 1. `deno.json` → `version` field (used by JSR publish and npm build script)
-2. `server.ts` → `McpApp` constructor `version` parameter (runtime metadata)
+2. `src/version.ts` → `SERVER_VERSION`, which `server.ts` passes to the `McpApp`
+   constructor as runtime metadata. The npm bundle does not ship `deno.json`, so
+   the constant cannot be read from the manifest at runtime.
 
 Rules:
 
 - Do not bump version numbers during feature work.
 - Release version bumps require explicit approval and must update both
-  `deno.json` and `server.ts`.
+  `deno.json` and `src/version.ts`. `src/version_test.ts` fails when they drift,
+  and also fails if `server.ts` goes back to a hard-coded literal.
 - CHANGELOG follows [Keep a Changelog](https://keepachangelog.com/) format. Only
   user-facing changes.
 
