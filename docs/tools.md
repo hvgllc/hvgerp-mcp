@@ -1,4 +1,4 @@
-# Tools Reference (127)
+# Tools Reference (129)
 
 Full reference for all ERPNext MCP tools. See [README](../README.md) for
 overview.
@@ -76,14 +76,14 @@ read them before telling anyone they hold no roles or have no HR record.
 
 ## Accounting (6) → doclist-viewer
 
-| Tool                           | DocType       | Operations                                        |
-| ------------------------------ | ------------- | ------------------------------------------------- |
-| `erpnext_account_list`         | Account       | Chart of accounts + filters (root_type, is_group) |
-| `erpnext_journal_entry_list`   | Journal Entry | List + filters (voucher_type, dates)              |
-| `erpnext_journal_entry_get`    | Journal Entry | Get with accounts                                 |
-| `erpnext_journal_entry_create` | Journal Entry | Create (voucher_type + balanced accounts)         |
-| `erpnext_payment_entry_list`   | Payment Entry | List + filters (type, party, dates)               |
-| `erpnext_payment_entry_get`    | Payment Entry | Get with references                               |
+| Tool                           | DocType       | Operations                                                  |
+| ------------------------------ | ------------- | ----------------------------------------------------------- |
+| `erpnext_account_list`         | Account       | Chart of accounts + filters (root_type, is_group, disabled) |
+| `erpnext_journal_entry_list`   | Journal Entry | List + filters (voucher_type, dates)                        |
+| `erpnext_journal_entry_get`    | Journal Entry | Get with accounts                                           |
+| `erpnext_journal_entry_create` | Journal Entry | Create (voucher_type + balanced accounts)                   |
+| `erpnext_payment_entry_list`   | Payment Entry | List + filters (type, party, dates)                         |
+| `erpnext_payment_entry_get`    | Payment Entry | Get with references                                         |
 
 ## HR (12) → doclist-viewer
 
@@ -164,21 +164,22 @@ read them before telling anyone they hold no roles or have no HR record.
 | `erpnext_asset_maintenance_get`  | Asset Maintenance | Get with maintenance tasks                            |
 | `erpnext_asset_category_list`    | Asset Category    | List all categories                                   |
 
-## Generic Operations (11) → doclist-viewer
+## Generic Operations (12) → doclist-viewer
 
-| Tool                   | Operation | Notes                                             |
-| ---------------------- | --------- | ------------------------------------------------- |
-| `erpnext_doc_create`   | Create    | Any DocType — essential for master data setup     |
-| `erpnext_doc_get`      | Get       | Any document by DocType + name                    |
-| `erpnext_doc_list`     | List      | Any DocType with fields, filters, limit, order_by |
-| `erpnext_doc_update`   | Update    | Partial patch — pass only fields to change        |
-| `erpnext_doc_delete`   | Delete    | Draft documents only                              |
-| `erpnext_doc_submit`   | Submit    | Any submittable document                          |
-| `erpnext_doc_cancel`   | Cancel    | Any submitted document                            |
-| `erpnext_doc_assign`   | Assign    | Native assignment (ToDo + notification) to users  |
-| `erpnext_doc_unassign` | Unassign  | Remove one user's native assignment               |
-| `erpnext_file_upload`  | Upload    | Attach base64 data as a native File               |
-| `erpnext_method_call`  | Call      | Any allowlisted whitelisted method by dotted path |
+| Tool                      | Operation | Notes                                             |
+| ------------------------- | --------- | ------------------------------------------------- |
+| `erpnext_calendar_events` | List      | Calendar range, repeating events expanded         |
+| `erpnext_doc_create`      | Create    | Any DocType — essential for master data setup     |
+| `erpnext_doc_get`         | Get       | Any document by DocType + name                    |
+| `erpnext_doc_list`        | List      | Any DocType with fields, filters, limit, order_by |
+| `erpnext_doc_update`      | Update    | Partial patch — pass only fields to change        |
+| `erpnext_doc_delete`      | Delete    | Draft documents only                              |
+| `erpnext_doc_submit`      | Submit    | Any submittable document                          |
+| `erpnext_doc_cancel`      | Cancel    | Any submitted document                            |
+| `erpnext_doc_assign`      | Assign    | Native assignment (ToDo + notification) to users  |
+| `erpnext_doc_unassign`    | Unassign  | Remove one user's native assignment               |
+| `erpnext_file_upload`     | Upload    | Attach base64 data as a native File               |
+| `erpnext_method_call`     | Call      | Any allowlisted whitelisted method by dotted path |
 
 `erpnext_file_upload` requires `file_name`, `content_base64`,
 `attached_to_doctype`, and `attached_to_name`; `attached_to_field` is optional.
@@ -186,6 +187,16 @@ Files are private by default (`is_private: false` makes them public), accept no
 local path or URL, are capped at 10 MiB decoded by default (override with
 positive-integer-byte `ERPNEXT_MAX_UPLOAD_BYTES`), require write permission on
 the DocType, and return native `File` metadata.
+
+`erpnext_calendar_events` takes `start` (`YYYY-MM-DD`), optional `end` (defaults
+to seven days after `start`), optional `user`, and optional `limit`. It goes
+through the same call the ERPNext calendar uses, so a repeating event comes back
+once per occurrence in the range, each carrying `recurring_from` (the stored
+master's start). A plain `erpnext_doc_list` on `Event` cannot do this: it
+returns the single stored row. Scope is the caller's own calendar: open events
+that are Public, owned by them, or shared with them through DocShare.
+Participation alone does not make an event visible, so the result is the shared
+calendar rather than a complete personal schedule.
 
 `erpnext_method_call` reaches business endpoints that no typed tool wraps,
 including custom-app methods that are the only supported way to change a field
@@ -214,6 +225,31 @@ another endpoint.
   "invalidate": { "doctype": "Task", "name": "TASK-2026-00001" }
 }
 ```
+
+## Discovery (1)
+
+| Tool                     | DocType | Operations                                  |
+| ------------------------ | ------- | ------------------------------------------- |
+| `erpnext_doctype_fields` | any     | Field schema of a DocType, permission-gated |
+
+`erpnext_doctype_fields` answers "what does this DocType actually store?" before
+a `_list`, `_get`, or `erpnext_doc_update` call has to guess. It takes
+`doctype`, optional `search` (substring on fieldname and label), and optional
+`include_hidden`. Each field comes back with `fieldname`, `label`, `fieldtype`,
+`options` (the target DocType for a Link, the choices for a Select), `reqd`,
+`read_only`, `in_list_view`, `permlevel`, and `description`; layout-only
+fieldtypes (Section Break, Column Break, Tab Break, Fold, Heading, HTML, Button)
+are dropped. The document header reports `module`, `is_single`,
+`is_child_table`, `is_submittable`, `is_tree`, and `title_field`.
+
+Reading a sample document is not a substitute: it shows only the fields that
+happen to be filled in, without labels, types, or link targets.
+
+The underlying Frappe metadata endpoint performs no permission check of its own,
+so the tool asks ERPNext first (`frappe.client.has_permission`) and fails with a
+permission error when the caller cannot read the DocType. `permlevel` above 0
+marks a field governed by a separate role permission, which can be absent from
+documents even when the DocType itself is readable.
 
 ## Kanban (2) → kanban-viewer
 

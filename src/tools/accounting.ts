@@ -9,6 +9,7 @@
 
 import type { FrappeFilter } from "../api/types.ts";
 import type { ErpNextTool } from "./types.ts";
+import { listResult } from "./list-result.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
 import { resolveDynamicLink } from "../api/resolve.ts";
 
@@ -20,9 +21,10 @@ export const accountingTools: ErpNextTool[] = [
     annotations: { readOnlyHint: true },
     _meta: DOCLIST_META,
     description:
-      "List Chart of Accounts. Filterable by root_type and is_group. " +
-      "Fields: name, account_name, account_type, root_type, parent_account, is_group. " +
-      "root_type values: Asset, Liability, Income, Expense, Equity.",
+      "List Chart of Accounts. Filterable by root_type, is_group and disabled. " +
+      "Fields: name, account_name, account_type, root_type, parent_account, is_group, disabled. " +
+      "root_type values: Asset, Liability, Income, Expense, Equity. " +
+      "An account is 'active' when disabled is 0; pass disabled:false to count only those.",
     category: "accounting",
     inputSchema: {
       type: "object",
@@ -39,6 +41,11 @@ export const accountingTools: ErpNextTool[] = [
           description: "Filter by group accounts only",
         },
         company: { type: "string", description: "Filter by company" },
+        disabled: {
+          type: "boolean",
+          description:
+            "Filter by disabled flag. Omit to list every account regardless of state.",
+        },
       },
     },
     handler: async (input, ctx) => {
@@ -53,6 +60,9 @@ export const accountingTools: ErpNextTool[] = [
       if (input.company) {
         filters.push(["company", "=", input.company as string]);
       }
+      if (input.disabled !== undefined) {
+        filters.push(["disabled", "=", (input.disabled as boolean) ? 1 : 0]);
+      }
 
       const docs = await ctx.client.list("Account", {
         fields: [
@@ -62,18 +72,17 @@ export const accountingTools: ErpNextTool[] = [
           "root_type",
           "parent_account",
           "is_group",
+          "disabled",
         ],
         filters,
         limit,
         order_by: "name asc",
       });
 
-      return {
-        doctype: "Account",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Account", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -130,12 +139,10 @@ export const accountingTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Journal Entry",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Journal Entry", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -247,12 +254,10 @@ export const accountingTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Payment Entry",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Payment Entry", docs, {
+        filters,
+        limit,
+      });
     },
   },
 

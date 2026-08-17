@@ -114,8 +114,8 @@ happened in an earlier design and the header comment of the script says so.
 
 **All source code imports `from "./runtime.ts"` — never import Deno or Node APIs
 directly.** The two adapter files are the only exception, and
-`src/runtime-boundary_test.ts` enforces it: any other module importing a
-`node:` builtin fails the suite.
+`src/runtime-boundary_test.ts` enforces it: any other module importing a `node:`
+builtin fails the suite.
 
 ### Tool architecture
 

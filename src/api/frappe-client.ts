@@ -694,6 +694,28 @@ export class FrappeClient {
     args: Record<string, unknown> = {},
     opts: { httpMethod?: "GET" | "POST" } = {},
   ): Promise<T> {
+    const res = await this.callMethodRaw<FrappeMethodResponse<T>>(
+      method,
+      args,
+      opts,
+    );
+    return res.message;
+  }
+
+  /**
+   * Call a whitelisted Frappe method and return the whole response envelope.
+   *
+   * Most Frappe methods answer through `message`, which `callMethod` unwraps.
+   * A few write their payload onto other keys of `frappe.response` instead and
+   * return `None` — `frappe.desk.form.load.getdoctype` puts the meta bundle in
+   * `docs`, so unwrapping `message` would yield `undefined`. Those callers need
+   * the envelope.
+   */
+  async callMethodRaw<T = Record<string, unknown>>(
+    method: string,
+    args: Record<string, unknown> = {},
+    opts: { httpMethod?: "GET" | "POST" } = {},
+  ): Promise<T> {
     if (opts.httpMethod === "GET") {
       const params = new URLSearchParams();
       for (const [key, value] of Object.entries(args)) {
@@ -704,19 +726,10 @@ export class FrappeClient {
         );
       }
       const query = params.toString() ? `?${params.toString()}` : "";
-      const res = await this.request<FrappeMethodResponse<T>>(
-        "GET",
-        `/api/method/${method}${query}`,
-      );
-      return res.message;
+      return await this.request<T>("GET", `/api/method/${method}${query}`);
     }
 
-    const res = await this.request<FrappeMethodResponse<T>>(
-      "POST",
-      `/api/method/${method}`,
-      args,
-    );
-    return res.message;
+    return await this.request<T>("POST", `/api/method/${method}`, args);
   }
 }
 

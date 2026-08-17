@@ -9,6 +9,7 @@
 
 import type { FrappeFilter } from "../api/types.ts";
 import type { ErpNextTool } from "./types.ts";
+import { listResult } from "./list-result.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
 import { resolveItem } from "../api/resolve.ts";
 
@@ -81,12 +82,10 @@ export const manufacturingTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "BOM",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "BOM", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -183,12 +182,10 @@ export const manufacturingTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Work Order",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Work Order", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -335,12 +332,10 @@ export const manufacturingTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Job Card",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Job Card", docs, {
+        filters,
+        limit,
+      });
     },
   },
 

@@ -9,6 +9,7 @@
 
 import type { FrappeFilter } from "../api/types.ts";
 import type { ErpNextTool } from "./types.ts";
+import { listResult } from "./list-result.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
 import { resolveDynamicLink, resolveUserFilter } from "../api/resolve.ts";
 
@@ -66,12 +67,10 @@ export const crmTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Lead",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Lead", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -239,12 +238,10 @@ export const crmTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Opportunity",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Opportunity", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -315,12 +312,10 @@ export const crmTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Contact",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Contact", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -396,12 +391,10 @@ export const crmTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Campaign",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Campaign", docs, {
+        filters,
+        limit,
+      });
     },
   },
 ];

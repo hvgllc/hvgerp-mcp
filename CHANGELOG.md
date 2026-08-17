@@ -8,6 +8,44 @@ This package is a fork of
 deliberately still point at the upstream repository, where those commits, pull
 requests and tags actually live.
 
+## [Unreleased]
+
+### Added
+
+- **`erpnext_doctype_fields`** (new `discovery` category). Returns the real
+  field schema of a DocType: fieldname, label, fieldtype, link target,
+  mandatory, read-only, permlevel and description, plus whether the doctype is
+  single, a child table, submittable or a tree. Before this, a model that needed
+  to filter or write a field had one way to learn the schema - fetch a sample
+  document and look at the keys it happened to carry - which silently misses
+  every field left null on that row and reports no labels, types or link
+  targets. The Frappe metadata endpoint behind it performs no permission check
+  of its own, so the tool asks ERPNext first through
+  `frappe.client.has_permission` and refuses when the caller cannot read the
+  doctype.
+- **`erpnext_calendar_events`.** Lists Events over a date range through the same
+  call the ERPNext calendar uses, so a repeating event is expanded into one row
+  per occurrence, each tagged with `recurring_from`. `erpnext_doc_list` on
+  `Event` returns the single stored row instead, which turns a weekly stand-up
+  into zero or one meeting for the week. The tool description states the scope
+  it actually covers - open events that are Public, owned by the caller, or
+  shared with them - so an answer is not presented as a complete personal
+  schedule.
+- **`erpnext_account_list` filters on `disabled`** and returns the field, so
+  "how many accounts are active" is a direct question rather than an inference.
+
+### Fixed
+
+- **`count` in every list result is the total, not the page size.** All 42 list
+  tools returned `count: docs.length`, while the doclist viewer renders it as
+  `{shown} of {count} records`. A 97-row chart of accounts therefore reported
+  "50 of 50 records" under the default limit, and a model reading that answered
+  "50 accounts". Results now carry `count` (total matching documents),
+  `returned` (rows in this page) and `has_more`. The total comes from
+  `frappe.client.get_count`, which runs through the same permissions as the
+  list, and is only requested when the page came back full - a short page
+  already proves the total.
+
 ## [3.2.0] - 2026-08-17
 
 ### Added

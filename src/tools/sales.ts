@@ -8,6 +8,7 @@
 
 import type { FrappeFilter } from "../api/types.ts";
 import type { ErpNextTool } from "./types.ts";
+import { listResult } from "./list-result.ts";
 import { DOCLIST_META, INVOICE_META } from "./viewer-meta.ts";
 import { resolveCustomer, resolveDynamicLink } from "../api/resolve.ts";
 import {
@@ -120,12 +121,10 @@ export const salesTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Customer",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Customer", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -327,12 +326,10 @@ export const salesTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Sales Order",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Sales Order", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -671,12 +668,10 @@ export const salesTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Sales Invoice",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Sales Invoice", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -934,12 +929,10 @@ export const salesTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Quotation",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Quotation", docs, {
+        filters,
+        limit,
+      });
     },
   },
 

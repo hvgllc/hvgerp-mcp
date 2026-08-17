@@ -10,6 +10,7 @@
 
 import type { FrappeFilter } from "../api/types.ts";
 import type { ErpNextTool } from "./types.ts";
+import { listResult } from "./list-result.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
 import {
   roundedTotalFallbackWarning,
@@ -31,6 +32,34 @@ import {
   isMethodAllowed,
   isValidMethodPath,
 } from "./method-allowlist.ts";
+
+/** One row as `frappe.desk.doctype.event.event.get_events` returns it. */
+interface CalendarEvent {
+  name?: string;
+  subject?: string;
+  description?: string | null;
+  starts_on?: string;
+  ends_on?: string | null;
+  all_day?: number;
+  event_type?: string;
+  owner?: string;
+  repeat_on?: string | null;
+  /** Set by ERPNext only on an occurrence expanded out of a repeating event. */
+  original_starts_on?: string;
+}
+
+/**
+ * Shift a YYYY-MM-DD date by whole days, staying in UTC.
+ *
+ * Date-only arithmetic must not touch a local timezone: `new Date("2026-08-17")`
+ * parses as UTC midnight, so reading the result back with `toISOString` keeps the
+ * calendar day intact wherever this process happens to run.
+ */
+function addDaysISO(date: string, days: number): string {
+  const shifted = new Date(`${date}T00:00:00Z`);
+  shifted.setUTCDate(shifted.getUTCDate() + days);
+  return shifted.toISOString().slice(0, 10);
+}
 
 function parseInvalidateTarget(
   raw: unknown,
@@ -559,12 +588,10 @@ export const operationsTools: ErpNextTool[] = [
         order_by,
       });
 
-      return {
-        doctype: input.doctype as string,
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, input.doctype as string, docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -719,6 +746,105 @@ export const operationsTools: ErpNextTool[] = [
         data: doc,
         message: `${assignee} unassigned from ${doctype} ${name}`,
         assignment: unassignment,
+      };
+    },
+  },
+
+  // ── Calendar ──────────────────────────────────────────────────────────────
+
+  {
+    name: "erpnext_calendar_events",
+    annotations: { readOnlyHint: true },
+    _meta: DOCLIST_META,
+    description:
+      "List calendar events (Event documents) that fall inside a date range, the way the " +
+      "ERPNext calendar itself computes them. Prefer this over erpnext_doc_list on 'Event' " +
+      "for any question about meetings or schedules: a plain list query returns the stored " +
+      "rows, so a weekly stand-up recorded once as a repeating event appears zero or one " +
+      "time instead of once per occurrence. " +
+      "Scope: open events that are Public, owned by the caller, or explicitly shared with " +
+      "them. An event someone else created and did not share is invisible here even if the " +
+      "caller is listed as a participant, so say the answer covers the shared calendar " +
+      "rather than claiming it is the person's complete schedule.",
+    category: "operations",
+    inputSchema: {
+      type: "object",
+      properties: {
+        start: {
+          type: "string",
+          description: "First day of the range, YYYY-MM-DD.",
+          minLength: 1,
+        },
+        end: {
+          type: "string",
+          description:
+            "Last day of the range, YYYY-MM-DD, inclusive. Defaults to 7 days after start.",
+        },
+        user: {
+          type: "string",
+          description:
+            "Look at another user's calendar instead of your own. Requires read " +
+            "permission on Event; ERPNext refuses otherwise.",
+        },
+        limit: { type: "number", description: "Max results (default 50)" },
+      },
+      required: ["start"],
+    },
+    handler: async (input, ctx) => {
+      const start = (input.start as string).trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) {
+        throw new Error(
+          "[erpnext_calendar_events] 'start' must be a date in YYYY-MM-DD form",
+        );
+      }
+      const rawEnd = (input.end as string | undefined)?.trim();
+      if (rawEnd && !/^\d{4}-\d{2}-\d{2}$/.test(rawEnd)) {
+        throw new Error(
+          "[erpnext_calendar_events] 'end' must be a date in YYYY-MM-DD form",
+        );
+      }
+      // Default the range from `start` rather than from the server clock: the MCP
+      // process and the ERPNext site need not share a timezone, and "today" read
+      // on the wrong side of midnight silently shifts the whole week.
+      const end = rawEnd ?? addDaysISO(start, 7);
+      const limit = (input.limit as number) ?? 50;
+
+      const events = await ctx.client.callMethod<CalendarEvent[]>(
+        "frappe.desk.doctype.event.event.get_events",
+        {
+          start,
+          end,
+          ...(input.user ? { user: input.user as string } : {}),
+        },
+        { httpMethod: "GET" },
+      );
+      const rows = Array.isArray(events) ? events : [];
+      const data = rows.slice(0, limit).map((event) => ({
+        name: event.name,
+        subject: event.subject,
+        starts_on: event.starts_on,
+        ends_on: event.ends_on ?? null,
+        all_day: Boolean(event.all_day),
+        event_type: event.event_type ?? null,
+        owner: event.owner ?? null,
+        description: event.description ?? null,
+        // Present only on an occurrence expanded from a repeating event; it is the
+        // date of the stored master row, which is what "since when" questions need.
+        ...(event.original_starts_on
+          ? { recurring_from: event.original_starts_on }
+          : {}),
+        repeat_on: event.repeat_on ?? null,
+      }));
+
+      return {
+        doctype: "Event",
+        start,
+        end,
+        count: rows.length,
+        returned: data.length,
+        has_more: rows.length > data.length,
+        data,
+        _meta: DOCLIST_META,
       };
     },
   },

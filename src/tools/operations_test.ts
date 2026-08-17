@@ -790,3 +790,129 @@ Deno.test("erpnext_doc_list - a full name in assigned_to is still looked up", as
 
   assertStringIncludes(JSON.stringify(searchFilters), "Do Khoa");
 });
+
+// ── erpnext_calendar_events ──────────────────────────────────────────────────
+
+Deno.test("erpnext_calendar_events - rejects a range that is not a plain date", async () => {
+  const tool = getTool("erpnext_calendar_events");
+  await assertRejects(
+    () => tool.handler({ start: "next monday" }, makeCtx(makeMockClient())),
+    Error,
+    "YYYY-MM-DD",
+  );
+  await assertRejects(
+    () =>
+      tool.handler(
+        { start: "2026-08-17", end: "2026/08/24" },
+        makeCtx(makeMockClient()),
+      ),
+    Error,
+    "YYYY-MM-DD",
+  );
+});
+
+Deno.test("erpnext_calendar_events - defaults the range to a week after start", async () => {
+  // deno-lint-ignore no-explicit-any
+  let seenArgs: Record<string, any> = {};
+  const client = makeMockClient({
+    // deno-lint-ignore no-explicit-any
+    callMethod: async (method: string, args: Record<string, any>) => {
+      assertEquals(method, "frappe.desk.doctype.event.event.get_events");
+      seenArgs = args;
+      return [];
+    },
+  });
+
+  await getTool("erpnext_calendar_events").handler(
+    { start: "2026-08-28" },
+    makeCtx(client),
+  );
+
+  assertEquals(seenArgs.start, "2026-08-28");
+  // Crossing a month boundary is where naive string arithmetic breaks.
+  assertEquals(seenArgs.end, "2026-09-04");
+  assertEquals("user" in seenArgs, false);
+});
+
+Deno.test("erpnext_calendar_events - keeps each expanded occurrence and marks its origin", async () => {
+  const client = makeMockClient({
+    callMethod: async () => [
+      {
+        name: "EV00045",
+        subject: "Hop giao ban tuan",
+        starts_on: "2026-08-17 08:30:00",
+        ends_on: null,
+        all_day: 0,
+        event_type: "Public",
+        owner: "lead@example.com",
+        repeat_this_event: 1,
+        repeat_on: "Weekly",
+        original_starts_on: "2026-01-05 08:30:00",
+      },
+      {
+        name: "EV00046",
+        subject: "Review thang",
+        starts_on: "2026-08-19 14:00:00",
+        ends_on: "2026-08-19 15:00:00",
+        all_day: 0,
+        event_type: "Private",
+        owner: "me@example.com",
+      },
+    ],
+  });
+
+  const result = await getTool("erpnext_calendar_events").handler(
+    { start: "2026-08-17", end: "2026-08-23" },
+    makeCtx(client),
+    // deno-lint-ignore no-explicit-any
+  ) as any;
+
+  assertEquals(result.doctype, "Event");
+  assertEquals(result.count, 2);
+  assertEquals(result.returned, 2);
+  assertEquals(result.has_more, false);
+  assertEquals(result.data[0].recurring_from, "2026-01-05 08:30:00");
+  // A one-off event must not claim to be an occurrence of anything.
+  assertEquals("recurring_from" in result.data[1], false);
+  assertEquals(result.data[1].ends_on, "2026-08-19 15:00:00");
+});
+
+Deno.test("erpnext_calendar_events - limit truncates the page but not the total", async () => {
+  const client = makeMockClient({
+    callMethod: async () =>
+      Array.from({ length: 5 }, (_, index) => ({
+        name: `EV-${index}`,
+        subject: `Event ${index}`,
+        starts_on: "2026-08-17 08:30:00",
+      })),
+  });
+
+  const result = await getTool("erpnext_calendar_events").handler(
+    { start: "2026-08-17", limit: 2 },
+    makeCtx(client),
+    // deno-lint-ignore no-explicit-any
+  ) as any;
+
+  assertEquals(result.count, 5);
+  assertEquals(result.returned, 2);
+  assertEquals(result.has_more, true);
+});
+
+Deno.test("erpnext_calendar_events - forwards an explicit user to ERPNext", async () => {
+  // deno-lint-ignore no-explicit-any
+  let seenArgs: Record<string, any> = {};
+  const client = makeMockClient({
+    // deno-lint-ignore no-explicit-any
+    callMethod: async (_method: string, args: Record<string, any>) => {
+      seenArgs = args;
+      return [];
+    },
+  });
+
+  await getTool("erpnext_calendar_events").handler(
+    { start: "2026-08-17", user: "boss@example.com" },
+    makeCtx(client),
+  );
+
+  assertEquals(seenArgs.user, "boss@example.com");
+});

@@ -9,6 +9,7 @@
 
 import type { FrappeFilter } from "../api/types.ts";
 import type { ErpNextTool } from "./types.ts";
+import { listResult } from "./list-result.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
 import { resolveEmployee } from "../api/resolve.ts";
 
@@ -98,12 +99,10 @@ export const assetsTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Asset",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Asset", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -276,12 +275,10 @@ export const assetsTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Asset Movement",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Asset Movement", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -356,12 +353,10 @@ export const assetsTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Asset Maintenance",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Asset Maintenance", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -415,12 +410,10 @@ export const assetsTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Asset Category",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Asset Category", docs, {
+        filters: [],
+        limit,
+      });
     },
   },
 ];

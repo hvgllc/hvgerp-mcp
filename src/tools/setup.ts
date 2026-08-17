@@ -9,6 +9,7 @@
 
 import type { FrappeFilter } from "../api/types.ts";
 import type { ErpNextTool } from "./types.ts";
+import { listResult } from "./list-result.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
 
 export const setupTools: ErpNextTool[] = [
@@ -63,12 +64,10 @@ export const setupTools: ErpNextTool[] = [
         order_by: "full_name asc",
       });
 
-      return {
-        doctype: "User",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "User", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -96,12 +95,9 @@ export const setupTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Company",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Company", docs, {
+        limit,
+      });
     },
   },
 
