@@ -9,6 +9,7 @@
 
 import type { FrappeFilter } from "../api/types.ts";
 import type { ErpNextTool } from "./types.ts";
+import { listResult } from "./list-result.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
 import { resolveItem } from "../api/resolve.ts";
 
@@ -26,7 +27,11 @@ export const manufacturingTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         item: {
           type: "string",
           description:
@@ -81,12 +86,10 @@ export const manufacturingTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "BOM",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "BOM", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -125,7 +128,11 @@ export const manufacturingTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         production_item: {
           type: "string",
           description:
@@ -183,12 +190,10 @@ export const manufacturingTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Work Order",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Work Order", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -297,7 +302,11 @@ export const manufacturingTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         work_order: { type: "string", description: "Filter by Work Order" },
         status: {
           type: "string",
@@ -335,12 +344,10 @@ export const manufacturingTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Job Card",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Job Card", docs, {
+        filters,
+        limit,
+      });
     },
   },
 

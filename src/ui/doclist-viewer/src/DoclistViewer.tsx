@@ -28,6 +28,7 @@ import {
   type ToolResultPayload,
   type UiRefreshRequestData,
 } from "~/shared/refresh";
+import { getErrorPresentation } from "~/shared/presentation";
 
 import type { DoclistData, SortDir } from "./types";
 import {
@@ -42,6 +43,7 @@ import {
 import { StatusCell } from "./components/StatusCell";
 import { LoadingSkeleton } from "./components/LoadingSkeleton";
 import { DoclistEmptyState } from "./components/EmptyState";
+import { DoclistErrorState } from "./components/ErrorState";
 import { InlineDetailPanel } from "./components/InlineDetailPanel";
 import { ChipFilters } from "./components/ChipFilters";
 import { PagBtn } from "./components/PagBtn";
@@ -90,11 +92,27 @@ export function DoclistViewer() {
       const parsed = JSON.parse(text);
       if (!parsed) return false;
       if (!Array.isArray(parsed.data)) {
-        if (parsed._title || parsed._rowAction || parsed.count != null) {
-          parsed.data = [];
-        } else {
-          return false;
+        // Two different failures used to share one branch. A payload with no
+        // doclist marker at all belongs to some other viewer and is simply not
+        // ours - return false and let it pass. A payload that DOES carry a
+        // doclist marker but no row array is a broken contract: every producer
+        // sets `data` (`listResult` and `erpnext_my_work` both assign it
+        // unconditionally), so its absence means the response was mangled in
+        // transit. Synthesising `data: []` there rendered "0 records" - telling
+        // the reader their query found nothing at the exact moment nothing was
+        // known. AGENTS.md:450-451 forbids that swap.
+        //
+        // `"count" in parsed` rather than `parsed.count != null`: an explicit
+        // null count is a doclist payload whose total could not be resolved,
+        // not a payload of some other shape.
+        if (parsed._title || parsed._rowAction || "count" in parsed) {
+          setError(
+            "The tool returned a doclist payload with no rows array. This is a " +
+              "broken response, not an empty result - ask again.",
+          );
+          setLoading(false);
         }
+        return false;
       }
       hydrateData(parsed as DoclistData);
       setError(null);
@@ -171,6 +189,14 @@ export function DoclistViewer() {
     };
   }, []);
 
+  // A rejected payload sets `error` and leaves `data` null, so the empty state
+  // has to come AFTER the error branch: reaching it first answered a broken
+  // response with "No documents to display", which is the same lie the
+  // rejection was added to stop telling. Once data exists the message is a
+  // failed refresh instead, and stays inline beside the rows it did not
+  // invalidate.
+  const errorPresentation = getErrorPresentation({ data, error });
+
   return (
     <div
       style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}
@@ -180,12 +206,14 @@ export function DoclistViewer() {
       <div style={{ flex: 1 }}>
         {loading
           ? <LoadingSkeleton />
+          : errorPresentation.blockingError
+          ? <DoclistErrorState message={errorPresentation.blockingError} />
           : !data
           ? <DoclistEmptyState />
           : (
             <DoclistContent
               data={data}
-              error={error}
+              error={errorPresentation.inlineError}
               refreshing={refreshing}
               onRefresh={() => void requestRefresh({ ignoreInterval: true })}
               onError={setError}
@@ -222,18 +250,42 @@ function DoclistContent({ data, error, refreshing, onRefresh, onError }: {
   const [chipFilters, setChipFilters] = useState<Record<string, string>>({});
   const actionTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const pendingRowIdRef = useRef<string | null>(null);
+  // The document id behind the expanded row, kept apart from the row's own
+  // identity because a refresh has to re-ask the tool for the document.
+  const pendingArgValueRef = useRef<string | null>(null);
 
   const rowAction = data._rowAction;
   const rows = data.data ?? [];
   const hasLocalDetail = rows.length > 0 && rows[0]._detail != null;
   const isClickable = !!rowAction || hasLocalDetail;
 
+  // ── Row identity vs the argument sent to the tool ────────
+
+  /**
+   * Which row is expanded. `_id` wins over the row action's id field because
+   * the two answer different questions: the id field says which *document* to
+   * fetch, while this says which *row* the reader clicked, and a result set can
+   * legitimately hold several rows for one document. Expanded recurring events
+   * are exactly that - Frappe returns every occurrence carrying the stored
+   * master's `name` - so keying the panel on `name` opened it under every
+   * occurrence of that master at once and made clicking a second one collapse
+   * them all.
+   */
+  const rowIdentity = (row: Record<string, unknown>) =>
+    row._id != null
+      ? String(row._id)
+      : rowAction
+      ? String(getNestedValue(row, rowAction.idField) ?? "")
+      : String(row.name ?? "");
+
+  /** The value the row action passes to its tool - always the document id. */
+  const rowArgValue = (row: Record<string, unknown>) =>
+    rowAction ? String(getNestedValue(row, rowAction.idField) ?? "") : "";
+
   // ── Row click handler ────────────────────────────────────
 
   async function onRowClick(row: Record<string, unknown>) {
-    const rowId = rowAction
-      ? String(getNestedValue(row, rowAction.idField) ?? "")
-      : String(row._id ?? row.name ?? "");
+    const rowId = rowIdentity(row);
     if (!rowId) return;
 
     if (expandedId === rowId) {
@@ -249,13 +301,20 @@ function DoclistContent({ data, error, refreshing, onRefresh, onError }: {
     }
     if (!rowAction) return;
 
+    const argValue = rowArgValue(row);
+    if (!argValue) return;
+
     setExpandedId(rowId);
     setExpandedData(null);
     setExpandedLoading(true);
     pendingRowIdRef.current = rowId;
+    pendingArgValueRef.current = argValue;
 
     try {
-      const toolArgs = { ...rowAction.extraArgs, [rowAction.argName]: rowId };
+      const toolArgs = {
+        ...rowAction.extraArgs,
+        [rowAction.argName]: argValue,
+      };
       const result = await app.callServerTool(
         { name: rowAction.toolName, arguments: toolArgs },
         { timeout: TOOL_CALL_TIMEOUT_MS },
@@ -293,16 +352,20 @@ function DoclistContent({ data, error, refreshing, onRefresh, onError }: {
       }, { timeout: TOOL_CALL_TIMEOUT_MS });
       if (result.isError) return false;
       const currentId = expandedId;
+      const currentArg = pendingArgValueRef.current;
       clearTimeout(actionTimerRef.current);
       actionTimerRef.current = setTimeout(async () => {
         // Only refresh if the same row is still expanded
-        if (currentId && rowAction && pendingRowIdRef.current === currentId) {
+        if (
+          currentId && currentArg && rowAction &&
+          pendingRowIdRef.current === currentId
+        ) {
           try {
             const r = await app.callServerTool({
               name: rowAction.toolName,
               arguments: {
                 ...rowAction.extraArgs,
-                [rowAction.argName]: currentId,
+                [rowAction.argName]: currentArg,
               },
             }, { timeout: TOOL_CALL_TIMEOUT_MS });
             if (pendingRowIdRef.current !== currentId) return;
@@ -429,7 +492,45 @@ function DoclistContent({ data, error, refreshing, onRefresh, onError }: {
             {title}
           </div>
           <div style={{ fontSize: 12, color: colors.text.muted }}>
-            {sorted.length} of {data.count ?? rows.length} records
+            {
+              /* Two separate scopes, and conflating them lies twice.
+                `data.count` is the server's total for the UNFILTERED query,
+                while the search box and the chips narrow only the rows this
+                page happens to hold - so "0 of 97 records" could be printed
+                while a match sits in the 47 rows that were never fetched.
+                A null total is not papered over with `rows.length` either: the
+                page length is not a total, and substituting it would read as
+                complete exactly when the list is most likely truncated.
+                And a total larger than the page says so out loud: the pager
+                below walks the rows actually in hand, so "50 of 97 records"
+                on its own would invite a reader to page toward 47 rows that
+                were never fetched and are not reachable from here. */
+            }
+            {sorted.length < rows.length
+              ? (
+                <>
+                  {sorted.length} of {rows.length} loaded records ·{" "}
+                  {typeof data.count === "number"
+                    ? `${data.count} match the query`
+                    : "total unknown"}
+                </>
+              )
+              : typeof data.count === "number" && data.count > rows.length
+              ? (
+                <>
+                  first {rows.length} of {data.count} records ·{" "}
+                  {data.count - rows.length}{" "}
+                  not fetched (ask again with a higher limit or a narrower
+                  filter)
+                </>
+              )
+              : (
+                <>
+                  {sorted.length} of {typeof data.count === "number"
+                    ? data.count
+                    : "an unknown number of"} records
+                </>
+              )}
           </div>
           <div
             aria-live="polite"
@@ -439,7 +540,12 @@ function DoclistContent({ data, error, refreshing, onRefresh, onError }: {
               marginTop: 4,
             }}
           >
-            {error ?? (refreshing ? "Refreshing…" : "Auto-refresh on focus")}
+            {error ??
+              (refreshing
+                ? "Refreshing…"
+                : data.count === null && data.count_error
+                ? `Total unavailable: ${data.count_error}`
+                : "Auto-refresh on focus")}
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -611,9 +717,7 @@ function DoclistContent({ data, error, refreshing, onRefresh, onError }: {
                   </tr>
                 )
                 : pageRows.map((row, idx) => {
-                  const rowId = rowAction
-                    ? String(getNestedValue(row, rowAction.idField) ?? "")
-                    : String(row._id ?? row.name ?? idx);
+                  const rowId = rowIdentity(row) || String(idx);
                   const isExpanded = expandedId === rowId && rowId !== "";
                   return (
                     <Fragment key={idx}>

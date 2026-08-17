@@ -34,6 +34,46 @@ import { MemoryCache } from "../cache/memory.ts";
 import { createCache, getCache, getCacheTtlMs } from "../cache/cache.ts";
 import { currentCaller } from "./caller-context.ts";
 
+/**
+ * Whether a number can serve as a page length at all.
+ *
+ * The bound is 1, not 0. ERPNext reads a page length of 0 as "no `LIMIT`
+ * clause": measured against the live instance, `limit_page_length=0` returned
+ * all 2235 `Account` rows while `limit_page_length=5` returned 5. So every
+ * value below 1 - `0`, `0.5`, `-3` - either fetches the whole doctype or slices
+ * from the wrong end, and none of them is a page length that can be honoured.
+ */
+export function isUsableLimit(limit: number): boolean {
+  return Number.isFinite(limit) && limit >= 1;
+}
+
+/**
+ * Coerce a page limit to the integer Frappe will actually apply.
+ *
+ * Every tool declares `limit` as a JSON `number`, so a caller may hand over
+ * `2.5`. Frappe truncates that to 2 rows, which leaves the caller's own view of
+ * the request out of step with the answer: any code comparing the page it got
+ * back against the limit it asked for then reads 2 < 2.5 as "the result set is
+ * exhausted" when it is not. Truncating here, at the single point the request
+ * is built, keeps the requested limit and the applied limit the same number.
+ *
+ * A value below 1 throws instead of being quietly repaired. Flooring it would
+ * hand ERPNext a 0 that means "every row", so `limit: 0.5` - a request for at
+ * most one document - would come back with the entire doctype; and clamping it
+ * up to 1 would answer a nonsensical request with an invented one. The error
+ * says which number arrived and why it cannot be a page length.
+ */
+export function normalizeLimit(limit: number): number {
+  if (!isUsableLimit(limit)) {
+    throw new Error(
+      `[FrappeClient] limit must be a finite number of at least 1, got ${limit}. ` +
+        "ERPNext treats a page length below 1 as no limit at all, so this " +
+        "request would return the entire doctype rather than the page asked for.",
+    );
+  }
+  return Math.floor(limit);
+}
+
 /** Deterministic JSON.stringify — sorts object keys so equivalent options produce the same cache key. */
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) {
@@ -474,9 +514,17 @@ export class FrappeClient {
    */
   async list<T extends FrappeDoc = FrappeDoc>(
     doctype: string,
-    options: FrappeListOptions = {},
+    rawOptions: FrappeListOptions = {},
     opts: { skipCache?: boolean } = {},
   ): Promise<T[]> {
+    // Normalise before the cache key so a fractional limit and the integer
+    // Frappe would coerce it to are the same query, not two.
+    const options: FrappeListOptions = {
+      ...rawOptions,
+      ...(rawOptions.limit === undefined
+        ? {}
+        : { limit: normalizeLimit(rawOptions.limit) }),
+    };
     const cacheKey = `list:${doctype}:${stableStringify(options)}`;
     if (!opts.skipCache) {
       const cached = this.cache.get<T[]>(cacheKey);
@@ -694,6 +742,28 @@ export class FrappeClient {
     args: Record<string, unknown> = {},
     opts: { httpMethod?: "GET" | "POST" } = {},
   ): Promise<T> {
+    const res = await this.callMethodRaw<FrappeMethodResponse<T>>(
+      method,
+      args,
+      opts,
+    );
+    return res.message;
+  }
+
+  /**
+   * Call a whitelisted Frappe method and return the whole response envelope.
+   *
+   * Most Frappe methods answer through `message`, which `callMethod` unwraps.
+   * A few write their payload onto other keys of `frappe.response` instead and
+   * return `None` — `frappe.desk.form.load.getdoctype` puts the meta bundle in
+   * `docs`, so unwrapping `message` would yield `undefined`. Those callers need
+   * the envelope.
+   */
+  async callMethodRaw<T = Record<string, unknown>>(
+    method: string,
+    args: Record<string, unknown> = {},
+    opts: { httpMethod?: "GET" | "POST" } = {},
+  ): Promise<T> {
     if (opts.httpMethod === "GET") {
       const params = new URLSearchParams();
       for (const [key, value] of Object.entries(args)) {
@@ -704,19 +774,10 @@ export class FrappeClient {
         );
       }
       const query = params.toString() ? `?${params.toString()}` : "";
-      const res = await this.request<FrappeMethodResponse<T>>(
-        "GET",
-        `/api/method/${method}${query}`,
-      );
-      return res.message;
+      return await this.request<T>("GET", `/api/method/${method}${query}`);
     }
 
-    const res = await this.request<FrappeMethodResponse<T>>(
-      "POST",
-      `/api/method/${method}`,
-      args,
-    );
-    return res.message;
+    return await this.request<T>("POST", `/api/method/${method}`, args);
   }
 }
 

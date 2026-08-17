@@ -1,21 +1,20 @@
 import type { KanbanViewerState } from "./state.ts";
 import type { KanbanBoardData } from "./types.ts";
+import { getErrorPresentation as getViewerErrorPresentation } from "../presentation.ts";
 
+/**
+ * The rule itself is viewer-agnostic and lives in `../presentation.ts`, because
+ * the doclist viewer needs the same verdict and a second copy of it is how the
+ * two drift apart. This wrapper only translates: `board` is what this viewer
+ * calls the data it already holds.
+ */
 export function getErrorPresentation(
   state: Pick<KanbanViewerState, "board" | "error">,
 ): {
   blockingError: string | null;
   inlineError: string | null;
 } {
-  if (!state.error) {
-    return { blockingError: null, inlineError: null };
-  }
-
-  if (state.board) {
-    return { blockingError: null, inlineError: state.error };
-  }
-
-  return { blockingError: state.error, inlineError: null };
+  return getViewerErrorPresentation({ data: state.board, error: state.error });
 }
 
 export function formatBoardSummary(

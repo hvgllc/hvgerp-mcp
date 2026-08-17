@@ -8,6 +8,7 @@
 
 import type { FrappeFilter } from "../api/types.ts";
 import type { ErpNextTool } from "./types.ts";
+import { listResult } from "./list-result.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
 import { resolveEmployee, resolveLink } from "../api/resolve.ts";
 
@@ -24,7 +25,11 @@ export const hrTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         department: { type: "string", description: "Filter by department" },
         status: {
           type: "string",
@@ -62,12 +67,10 @@ export const hrTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Employee",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Employee", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -120,7 +123,11 @@ export const hrTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         employee: {
           type: "string",
           description:
@@ -173,12 +180,10 @@ export const hrTools: ErpNextTool[] = [
         order_by: "attendance_date desc",
       });
 
-      return {
-        doctype: "Attendance",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Attendance", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -195,7 +200,11 @@ export const hrTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         employee: {
           type: "string",
           description:
@@ -257,12 +266,10 @@ export const hrTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Leave Application",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Leave Application", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -380,7 +387,11 @@ export const hrTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         employee: {
           type: "string",
           description:
@@ -440,12 +451,10 @@ export const hrTools: ErpNextTool[] = [
         order_by: "posting_date desc",
       });
 
-      return {
-        doctype: "Salary Slip",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Salary Slip", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -486,7 +495,11 @@ export const hrTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         company: { type: "string", description: "Filter by company" },
         status: {
           type: "string",
@@ -529,12 +542,10 @@ export const hrTools: ErpNextTool[] = [
         order_by: "posting_date desc",
       });
 
-      return {
-        doctype: "Payroll Entry",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Payroll Entry", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -551,7 +562,11 @@ export const hrTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         employee: {
           type: "string",
           description:
@@ -615,12 +630,10 @@ export const hrTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Expense Claim",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Expense Claim", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -765,12 +778,13 @@ export const hrTools: ErpNextTool[] = [
         order_by: "leave_type asc",
       });
 
+      const result = await listResult(ctx, "Leave Allocation", docs, {
+        filters,
+        limit: 50,
+      });
       return {
-        doctype: "Leave Allocation",
+        ...result,
         employee: input.employee as string,
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
       };
     },
   },

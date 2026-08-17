@@ -8,6 +8,7 @@
 
 import type { FrappeFilter } from "../api/types.ts";
 import type { ErpNextTool } from "./types.ts";
+import { listResult } from "./list-result.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
 import { resolveCustomer } from "../api/resolve.ts";
 
@@ -25,7 +26,11 @@ export const deliveryTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         customer: {
           type: "string",
           description:
@@ -79,12 +84,10 @@ export const deliveryTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Delivery Note",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Delivery Note", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -208,7 +211,11 @@ export const deliveryTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         status: {
           type: "string",
           description:
@@ -255,12 +262,10 @@ export const deliveryTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Shipment",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Shipment", docs, {
+        filters,
+        limit,
+      });
     },
   },
 

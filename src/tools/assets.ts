@@ -9,6 +9,7 @@
 
 import type { FrappeFilter } from "../api/types.ts";
 import type { ErpNextTool } from "./types.ts";
+import { listResult } from "./list-result.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
 import { resolveEmployee } from "../api/resolve.ts";
 
@@ -27,7 +28,11 @@ export const assetsTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         status: {
           type: "string",
           description:
@@ -98,12 +103,10 @@ export const assetsTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Asset",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Asset", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -241,7 +244,11 @@ export const assetsTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         purpose: {
           type: "string",
           description: "Filter by purpose (Issue, Transfer, Receipt)",
@@ -276,12 +283,10 @@ export const assetsTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Asset Movement",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Asset Movement", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -320,7 +325,11 @@ export const assetsTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         asset_name: { type: "string", description: "Filter by asset name" },
         maintenance_status: {
           type: "string",
@@ -356,12 +365,10 @@ export const assetsTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Asset Maintenance",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Asset Maintenance", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -402,7 +409,11 @@ export const assetsTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
       },
     },
     handler: async (input, ctx) => {
@@ -415,12 +426,10 @@ export const assetsTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Asset Category",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Asset Category", docs, {
+        filters: [],
+        limit,
+      });
     },
   },
 ];

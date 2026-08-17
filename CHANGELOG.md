@@ -8,6 +8,315 @@ This package is a fork of
 deliberately still point at the upstream repository, where those commits, pull
 requests and tags actually live.
 
+## [3.3.0] - 2026-08-17
+
+### Added
+
+- **`erpnext_doctype_fields`** (new `discovery` category). Returns the real
+  field schema of a DocType: fieldname, label, fieldtype, link target,
+  mandatory, read-only, permlevel and description, plus whether the doctype is
+  single, a child table, submittable or a tree. Before this, a model that needed
+  to filter or write a field had one way to learn the schema - fetch a sample
+  document and look at the keys it happened to carry - which silently misses
+  every field left null on that row and reports no labels, types or link
+  targets. The Frappe metadata endpoint behind it performs no permission check
+  of its own, so the tool asks ERPNext first through
+  `frappe.client.has_permission` and refuses when the caller cannot read the
+  doctype. The answer also lists the seven columns Frappe stores on every
+  DocType (`name`, `owner`, `creation`, `modified`, `modified_by`, `docstatus`,
+  `idx`, plus `parent`/`parentfield`/`parenttype` on a child table) marked
+  `is_standard`: no form declares them so the metadata endpoint omits them, yet
+  they are real, filterable columns and they are the ones a caller reaches for
+  first. `doctype` is deliberately not among them - it is in Frappe's
+  `default_fields` tuple but is attached in memory rather than stored, so
+  filtering or sorting on it fails at the database. A child table is gated
+  against the DocTypes that own it rather than against itself: a child carries
+  no role permissions, so `has_permission('Sales Invoice Item', 'read')` answers
+  false for every account except Administrator - measured on a live instance -
+  and asking it directly would have refused the schema to every real user. Every
+  field also carries `queryable`, which is `false` throughout a Single: a Single
+  stores its values as rows in `tabSingles` and has no table of its own, so its
+  fields are readable but can never appear in a `filters` or `order_by` clause.
+  A virtual DocType gets the same flag and the header carries `is_virtual`:
+  there is no table behind it either, its rows come from a Python controller,
+  and only that controller decides what it will filter on. The owners of a child
+  table are enumerated from `DocField` and `Custom Field` rather than taken from
+  `getdoctype`, whose `with_parent` helper is built on `frappe.db.get_value` and
+  therefore names exactly one arbitrary owner - `Sales Taxes and Charges` has
+  six on a live instance and the endpoint names only `Quotation`, which would
+  have refused a caller who can read `Sales Invoice`. `Custom Field` is the
+  second source because a Table field added through Customize Form or an app
+  installer is declared there and nowhere else: measured on a live instance,
+  `Department Approver` and `Designation Skill` resolve to zero owners from
+  `DocField` alone and were refused to every account including Administrator.
+  Whenever a source refuses and no owner it did enumerate is readable, that
+  single arbitrary name is asked for after the real list has been exhausted, and
+  the refusal then names the source that was denied and says the owner list may
+  be partial instead of presenting it as complete.
+- **`erpnext_calendar_events`.** Lists Events over a date range through the same
+  call the ERPNext calendar uses, so a repeating event is expanded into one row
+  per occurrence, each tagged `is_recurring` (read from the stored
+  `repeat_this_event` column, so it does not depend on what the expansion pass
+  chooses to attach) and, where ERPNext supplies it, `recurring_from`.
+  `erpnext_doc_list` on `Event` returns the single stored row instead, which
+  turns a weekly stand-up into zero or one meeting for the week. Both ends of
+  the range are inclusive, matching ERPNext's own `BETWEEN` comparison, so the
+  default window is `start` plus six days - seven days, not eight - and a range
+  wider than 366 days is refused before any request goes out, because recurrence
+  expansion walks day by day server-side. The tool description states the scope
+  it actually covers - open events that are Public, owned by the caller, or
+  shared with them - so an answer is not presented as a complete personal
+  schedule. Rows are ordered by `starts_on` before `limit` applies, because
+  ERPNext appends each master's expanded occurrences in that master's own
+  position rather than in chronological order, so an unsorted page could spend
+  its whole limit on late occurrences of one recurring event and drop the
+  earliest meeting of the week. A `start` or `end` that has the right shape but
+  is not a real date (`2026-02-31`) is refused instead of silently rolling into
+  the next month, and a non-array answer from ERPNext raises an error rather
+  than being reported as an empty calendar.
+- **`erpnext_account_list` filters on `disabled`** and returns the field, so
+  "how many accounts are active" is a direct question rather than an inference.
+
+### Fixed
+
+- **`count` in every list result is the total, not the page size.** All 42 list
+  tools returned `count: docs.length`, while the doclist viewer renders it as
+  `{shown} of {count} records`. A 97-row chart of accounts therefore reported
+  "50 of 50 records" under the default limit, and a model reading that answered
+  "50 accounts". Results now carry `count` (total matching documents),
+  `returned` (rows in this page) and `has_more`. The total comes from
+  `frappe.client.get_count`, which runs through the same permissions as the
+  list, and is only requested when the page came back full - a short page
+  already proves the total. When that call fails or answers with something that
+  cannot be a total, `count` is `null` and `count_error` explains why, and
+  `has_more` stays `true`; the page length is never substituted, because doing
+  so would restore the same lie in the one case where the list is most likely to
+  really be truncated. The doclist viewer prints "N of an unknown number of
+  records" in that case and says why in its status line, rather than falling
+  back to the page length.
+- **A fractional `limit` no longer passes a truncated page off as the total.**
+  The tool schemas declare `limit` as a number, so `limit: 2.5` is accepted;
+  ERPNext truncates it to 2 rows, and comparing that page against the
+  untruncated 2.5 read `2 < 2.5` as proof the result set was exhausted, so the
+  count was skipped and a truncated list reported itself complete. Both the page
+  fetch and the completeness test now go through `normalizeLimit`, which floors
+  the value before it reaches ERPNext and before it becomes a cache key - so a
+  fractional limit and the integer ERPNext would apply are one cached query, not
+  two. A limit that is not a finite positive number never proves completeness
+  either and now falls through to the real count.
+- **The stock viewer no longer prints "filtered from null".** It still declared
+  `count` as a plain number and interpolated it directly, so an unresolved total
+  rendered the word `null` into the footer. It now carries the same nullable
+  contract as the doclist viewer (`count: number | null` plus `count_error`),
+  says "total unknown" when there is no total, and surfaces the reason in its
+  `aria-live` status line.
+- **Both viewers distinguish the loaded page from the server total.** The search
+  box and the filter chips narrow only the rows that were fetched, while `count`
+  is the total for the unfiltered query, so filtering could print "0 of 97
+  records" while a match sat in a page never fetched. The counter now reads "N
+  of M loaded records · K match the query" whenever a client-side filter is
+  active.
+- **A page length below 1 is refused instead of quietly fetching everything.**
+  `normalizeLimit` floored whatever it was given, so `limit: 0.5` reached
+  ERPNext as `0` - and ERPNext reads a page length of `0` as "no `LIMIT`
+  clause": measured on a live instance, `limit_page_length=0` returned all 2235
+  `Account` rows where `limit_page_length=5` returned 5. A caller asking for a
+  fraction of a page therefore pulled the entire doctype. Every value below 1 is
+  now rejected with a message that says why, rather than being floored into that
+  meaning or clamped up into a page nobody asked for, and the 52 `limit` schemas
+  across the tool set declare `minimum: 1` so the model is told the rule before
+  it makes the call.
+- **In-memory page cuts go through the same rule.** Thirteen `.slice(0, limit)`
+  sites in the analytics, operations and kanban tools built their limit straight
+  from `input.limit`, so a non-numeric value became `slice(0, NaN)` - an empty
+  list presented as the answer - and a negative one sliced from the wrong end.
+  The limit is now validated once where it is derived, which makes every slice
+  downstream safe by construction.
+- **A `frappe.client.get_count` response that is not a number is unknown, not
+  zero.** The total was coerced with `Number()`, which turns `null`, `""`, `[]`
+  and `false` into `0`. On an empty page that `0` cleared every later check and
+  was reported as "no matching documents" - a confident answer assembled from a
+  response that carried no count at all. Only a number, or a string that is
+  entirely a number, is accepted now; anything else yields an unknown total with
+  the reason attached.
+- **A child table is checked against every DocType that owns it.** The owner
+  came from `getdoctype`'s `with_parent` helper, which is built on
+  `frappe.db.get_value` and therefore names exactly one arbitrary parent:
+  `Sales Taxes and Charges` has six owners on a live instance and the endpoint
+  named only `Quotation`, so a caller who can read `Sales Invoice` was refused
+  its schema. Owners are now enumerated from `DocField` and `Custom Field` and
+  each one is probed. When a source refuses and none of the owners it did
+  enumerate is readable, that single arbitrary name is asked for afterwards -
+  after the real list, never before it - and the refusal names the source that
+  was denied and says the list may be partial rather than presenting it as
+  complete.
+- **Both viewers name a truncated page as a page.** When the server total
+  exceeded the rows in hand and no client-side filter was active, the header
+  printed "50 of 97 records" while the pager walked only the 50 rows fetched, so
+  the reader was invited toward 47 rows that were never loaded. It now reads
+  "first 50 of 97 records · 47 not fetched" with the concrete next action - ask
+  again with a higher limit or a narrower filter.
+- **`queryable` is now decided per field, not per DocType.** An ordinary DocType
+  reported every one of its fields as queryable, but a `Table` /
+  `Table MultiSelect` field holds rows in the child DocType joined back by
+  `parent`, so the parent table has no column of that name: measured on the live
+  instance, `tabSales Invoice` has no column for any of its 11 `Table` fields
+  (`items`, `taxes`, `packed_items`, ...), and the instance carries 521 `Table`
+  plus 38 `Table MultiSelect` DocField rows in all. Virtual fields are the same
+  story from the other direction - 33 `is_virtual` DocField rows exist, and on
+  `tabSales Invoice` the only non-layout field without a column besides the
+  `Table` ones is `last_scanned_warehouse`, flagged exactly that way. Both now
+  come back `queryable: false`, and the tool description says to query the child
+  DocType instead.
+- **Every occurrence of a repeating event gets its own row identity.**
+  `erpnext_calendar_events` expands a recurring Event into one row per
+  occurrence, and Frappe hands every occurrence the stored master's `name`, so
+  the doclist viewer - which keyed its expanded panel on the row action's id
+  field - opened one panel under every occurrence of that master at once, and
+  clicking a second one collapsed them all. Each row now carries an `_id` the
+  viewer keys on, kept separate from the `name` the row action still passes to
+  the tool, since that is the document ERPNext can actually fetch. The viewer
+  hides every underscore-prefixed key from its columns, so the extra field is
+  invisible to the reader.
+- **All five of Frappe's `optional_fields` are listed among the standard
+  columns.** None of them is in `default_fields`, so no form declares them and
+  the metadata endpoint never mentions them - yet they are real, queryable
+  columns, and `_assign` is the one this server's own assignment filter queries.
+  A caller asking the schema for the field behind "assigned to me", "tagged
+  how", or "liked by whom" was told no such field exists. They do not all behave
+  alike, and the difference is measured rather than assumed: `_assign`,
+  `_user_tags`, `_comments` and `_liked_by` are present on all 625 DocTypes with
+  `istable = 0, issingle = 0, is_virtual = 0` and on none of the 435 readable
+  child tables, so they are listed unconditionally; `_seen` exists only where
+  the DocType sets `track_seen`, present on exactly the 21 that set the flag and
+  absent on the other 604 with zero mismatches in either direction, so it is
+  listed only when `getdoctype` reports that flag. Announcing `_seen`
+  unconditionally would have invented a column on 604 DocTypes - the failure
+  this tool exists to prevent. Each description says how to filter the column: a
+  substring match that keeps the quotes around a User id for the JSON-array ones
+  (an unquoted pattern also matches every longer id ending in the same
+  characters) and a plain substring match for `_user_tags`, which `DocTags`
+  writes as `",".join(tags)` with no leading or trailing comma - a comma-padded
+  pattern therefore never matches the first tag, the last tag, or any single-tag
+  document, and the empty result reads as "nothing carries this tag". Measured
+  on the live instance: 23 distinct values, 13 of them a bare single tag, and 0
+  of 115 rows carrying a comma at either end. `_comments` is named as the
+  sidebar cache it is, pointing at the `Comment` DocType as the record of truth.
+- **A truncated owner list no longer blames the caller's permissions.** The
+  `DocField` enumeration behind a child table's owners is capped, and reaching
+  that cap was reported with the same sentence as a `DocField` permission
+  denial - so an administrator who holds that permission was told to go ask for
+  it. The two gaps are now separate: a denial still names the missing `DocField`
+  access, while a truncated list says the cap is a fault on this server,
+  unrelated to the caller's roles, and asks for it to be reported. The cap
+  itself stays as a runaway guard rather than becoming pagination: measured on
+  the live instance the busiest child table is `Has Role` with 10 owning
+  DocTypes, an order of magnitude below the ceiling, so reaching it means the
+  enumeration is broken rather than long.
+- **An owner enumeration that answers with something other than a row list is an
+  error.** A non-array response means the endpoint broke its contract - a custom
+  app shadowing `frappe.client.get_list`, a proxy rewriting the body - and none
+  of those says anything about who owns the child table. It used to fall through
+  to the degraded single-owner path, which answers a broken contract with a
+  permission verdict.
+- **The doclist viewer no longer turns a broken payload into an empty result.**
+  A payload whose `data` was not an array was rendered as a successful list of
+  zero rows, which reads as "there are none" for a response that carried no rows
+  array at all. Every producer of this payload sets `data` unconditionally, so
+  the shape is a fault: when the payload carries doclist markers (`_title`,
+  `_rowAction`, or a `count` key, including an explicit null count) the viewer
+  now says the response is broken and asks the reader to ask again.
+- **The stock viewer counts entries, not stock.** Its footer read "N in stock
+  overall", but `erpnext_stock_balance` lists `Bin` rows with no `actual_qty`
+  filter, so the total includes zero-quantity and negative bins and is a row
+  count rather than a quantity. It now reads "N matching entries overall",
+  matching the two sibling branches of the same counter, which already said
+  "entries".
+- **Metadata with no field list is refused instead of being answered.** When
+  `getdoctype` returned a document without a `fields` array - a broken response,
+  not a DocType that declares nothing - the tool fell through to a successful
+  schema containing only the synthetic standard columns, and a model reading it
+  would conclude that every real field of the DocType does not exist. It now
+  says the response is broken and asks for a retry.
+- **An `Image` field is no longer reported as queryable.** `Image` is one of
+  Frappe's ten `no_value_fields`: it renders a URL held by another field (its
+  `options`) and stores nothing itself, so the DocType's table has no column of
+  that name. Measured against the real schema - every non-virtual `DocField` of
+  every table-backed DocType checked against `DESCRIBE` of its parent table -
+  the split is exact: `Table` (472 rows), `Table MultiSelect` (35), `Image` (17)
+  and the seven layout types never have a column, and every other fieldtype
+  always does. A caller told `queryable: true` for an `Image` field was being
+  steered into an unknown-column error.
+- **A transient failure while enumerating a child table's owners no longer reads
+  as a permission denial.** The `DocField` enumeration was wrapped in a bare
+  catch, so a timeout or a 5xx fell through to the degraded path that names one
+  arbitrary owner from `getdoctype` - and since the caller is then gated against
+  that single name, someone who can read a _different_ owner was refused
+  metadata they are entitled to, on the strength of a network error. Only HTTP
+  403 now takes the fallback; anything else propagates.
+- **The tool no longer points callers at a call that cannot succeed.** For a
+  `Table` field the description said to query the child DocType instead, but a
+  child table carries no permissions of its own - which is precisely why this
+  module gates it against a parent - so `erpnext_doc_list` refuses it for every
+  account except Administrator. It now says to read a parent document with
+  `erpnext_doc_get`, which returns the child rows inline.
+- **A calendar row without a name or a start is refused, not turned into a
+  meeting.** The response being an array said nothing about its elements, and
+  `name` and `starts_on` are both mandatory stored columns of `Event`, so a row
+  missing either had broken the same contract a non-array answer breaks. It
+  survived the mapping instead and reached the model as a real calendar entry
+  with no subject, no time and an `_id` of `undefined::#0` - a phantom meeting,
+  which a model presents as fact rather than as the upstream fault it is.
+- **An owner row that omits the field it was asked for is a broken response.**
+  The owner column is the only field the enumeration requests and it is
+  mandatory on every row of that table, so a row without it means the endpoint
+  broke its contract. Dropping the row silently shrank the owner list and turned
+  the fault into a permission refusal - the swap this module exists to avoid.
+- **Metadata describing a different DocType is refused.** `get_meta_bundle` puts
+  the requested DocType first, so a bundle whose head names another one is a
+  broken response - and the dangerous kind: the permission gate was applied to
+  the name that was asked for while the schema handed back belonged to whatever
+  came in. The head is now required to name the requested DocType before the
+  gate runs, which is also what decides whether the child-table gate applies at
+  all. The comparison ignores case and surrounding space, because the database
+  collation resolves `sales invoice` to `Sales Invoice` and those calls work
+  today.
+- **A declared field with no field type is refused.** `fieldtype` is mandatory
+  on every `DocField` row and it is what decides both the layout filter and
+  `queryable`. A row that declared a fieldname but no type reached the caller as
+  `fieldtype: null`, and the missing type read as an ordinary stored column, so
+  the tool promised a filter and an `order_by` that cannot work. The check runs
+  before `include_hidden` and before the search filter, so the verdict never
+  depends on what the caller happened to ask for.
+- **A page whose total could not be resolved is no longer declared incomplete.**
+  `count_error` stated as fact that documents were missing, while a full page
+  with an unknown total may well be the whole result set - 50 of 50 is an
+  ordinary outcome, and a short page reaches that message too when the limit
+  itself was unusable. It now says the page may not be the whole result set,
+  which is the honest form of the same warning; `count` stays `null` and
+  `has_more` stays `true`.
+- **A data field with no field name is refused.** A layout row legitimately
+  carries no fieldname, so layout is now recognised by type and dropped first;
+  everything still standing is a data field, and one without a fieldname was
+  dropped just as silently. That returned a successful schema short by a field,
+  and a model reading it concluded the field does not exist - a contract failure
+  masquerading as an answer.
+- **The permission gate gets ERPNext's spelling of the DocType, not the
+  caller's.** Both owner lookups behind the child-table gate compare names in
+  JavaScript: the enumeration skips a self-referencing table by name, and the
+  `getdoctype` fallback recognises an owner by `field.options`. ERPNext answers
+  both with the canonical name, so a caller who wrote `sales invoice item` - a
+  spelling the collation resolves and the metadata check accepts - resolved no
+  parent and was refused a child table readable through a parent they hold.
+- **A rejected payload renders as an error, not as "no documents".** The doclist
+  viewer chose its empty state on `!data`, and a payload rejected on first load
+  leaves `data` null while setting `error`, which was only rendered beside rows
+  that exist. So the rejection added above still reached the reader as an empty
+  result. The blocking-vs-inline rule now lives in one shared function that both
+  the doclist and the kanban viewer call: an error over existing data stays
+  inline next to the rows it did not invalidate, an error with nothing to show
+  takes over the view.
+
 ## [3.2.0] - 2026-08-17
 
 ### Added

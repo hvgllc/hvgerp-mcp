@@ -1,7 +1,15 @@
-# Tools Reference (127)
+# Tools Reference (129)
 
 Full reference for all ERPNext MCP tools. See [README](../README.md) for
 overview.
+
+Every `limit` is a page length of at least 1, and anything below that is
+rejected rather than repaired. ERPNext reads a page length of 0 as "no `LIMIT`
+clause": on the reference instance `limit_page_length=0` returns all 2235
+`Account` rows while `limit_page_length=5` returns 5. So `limit: 0.5` - a
+request for at most one document - would otherwise come back with the whole
+DocType. Fractions above 1 are truncated the way Frappe truncates them, so the
+limit asked for and the limit applied stay the same number.
 
 ## Identity (2) → doclist-viewer
 
@@ -76,14 +84,14 @@ read them before telling anyone they hold no roles or have no HR record.
 
 ## Accounting (6) → doclist-viewer
 
-| Tool                           | DocType       | Operations                                        |
-| ------------------------------ | ------------- | ------------------------------------------------- |
-| `erpnext_account_list`         | Account       | Chart of accounts + filters (root_type, is_group) |
-| `erpnext_journal_entry_list`   | Journal Entry | List + filters (voucher_type, dates)              |
-| `erpnext_journal_entry_get`    | Journal Entry | Get with accounts                                 |
-| `erpnext_journal_entry_create` | Journal Entry | Create (voucher_type + balanced accounts)         |
-| `erpnext_payment_entry_list`   | Payment Entry | List + filters (type, party, dates)               |
-| `erpnext_payment_entry_get`    | Payment Entry | Get with references                               |
+| Tool                           | DocType       | Operations                                                  |
+| ------------------------------ | ------------- | ----------------------------------------------------------- |
+| `erpnext_account_list`         | Account       | Chart of accounts + filters (root_type, is_group, disabled) |
+| `erpnext_journal_entry_list`   | Journal Entry | List + filters (voucher_type, dates)                        |
+| `erpnext_journal_entry_get`    | Journal Entry | Get with accounts                                           |
+| `erpnext_journal_entry_create` | Journal Entry | Create (voucher_type + balanced accounts)                   |
+| `erpnext_payment_entry_list`   | Payment Entry | List + filters (type, party, dates)                         |
+| `erpnext_payment_entry_get`    | Payment Entry | Get with references                                         |
 
 ## HR (12) → doclist-viewer
 
@@ -164,21 +172,22 @@ read them before telling anyone they hold no roles or have no HR record.
 | `erpnext_asset_maintenance_get`  | Asset Maintenance | Get with maintenance tasks                            |
 | `erpnext_asset_category_list`    | Asset Category    | List all categories                                   |
 
-## Generic Operations (11) → doclist-viewer
+## Generic Operations (12) → doclist-viewer
 
-| Tool                   | Operation | Notes                                             |
-| ---------------------- | --------- | ------------------------------------------------- |
-| `erpnext_doc_create`   | Create    | Any DocType — essential for master data setup     |
-| `erpnext_doc_get`      | Get       | Any document by DocType + name                    |
-| `erpnext_doc_list`     | List      | Any DocType with fields, filters, limit, order_by |
-| `erpnext_doc_update`   | Update    | Partial patch — pass only fields to change        |
-| `erpnext_doc_delete`   | Delete    | Draft documents only                              |
-| `erpnext_doc_submit`   | Submit    | Any submittable document                          |
-| `erpnext_doc_cancel`   | Cancel    | Any submitted document                            |
-| `erpnext_doc_assign`   | Assign    | Native assignment (ToDo + notification) to users  |
-| `erpnext_doc_unassign` | Unassign  | Remove one user's native assignment               |
-| `erpnext_file_upload`  | Upload    | Attach base64 data as a native File               |
-| `erpnext_method_call`  | Call      | Any allowlisted whitelisted method by dotted path |
+| Tool                      | Operation | Notes                                             |
+| ------------------------- | --------- | ------------------------------------------------- |
+| `erpnext_calendar_events` | List      | Calendar range, repeating events expanded         |
+| `erpnext_doc_create`      | Create    | Any DocType — essential for master data setup     |
+| `erpnext_doc_get`         | Get       | Any document by DocType + name                    |
+| `erpnext_doc_list`        | List      | Any DocType with fields, filters, limit, order_by |
+| `erpnext_doc_update`      | Update    | Partial patch — pass only fields to change        |
+| `erpnext_doc_delete`      | Delete    | Draft documents only                              |
+| `erpnext_doc_submit`      | Submit    | Any submittable document                          |
+| `erpnext_doc_cancel`      | Cancel    | Any submitted document                            |
+| `erpnext_doc_assign`      | Assign    | Native assignment (ToDo + notification) to users  |
+| `erpnext_doc_unassign`    | Unassign  | Remove one user's native assignment               |
+| `erpnext_file_upload`     | Upload    | Attach base64 data as a native File               |
+| `erpnext_method_call`     | Call      | Any allowlisted whitelisted method by dotted path |
 
 `erpnext_file_upload` requires `file_name`, `content_base64`,
 `attached_to_doctype`, and `attached_to_name`; `attached_to_field` is optional.
@@ -186,6 +195,41 @@ Files are private by default (`is_private: false` makes them public), accept no
 local path or URL, are capped at 10 MiB decoded by default (override with
 positive-integer-byte `ERPNEXT_MAX_UPLOAD_BYTES`), require write permission on
 the DocType, and return native `File` metadata.
+
+`erpnext_calendar_events` takes `start` (`YYYY-MM-DD`), optional `end`, optional
+`user`, and optional `limit`. It goes through the same call the ERPNext calendar
+uses, so a repeating event comes back once per occurrence in the range. Every
+row carries `is_recurring` (read from the stored `repeat_this_event` column, so
+it holds on any ERPNext build) and, when ERPNext supplies it, `recurring_from`
+(the stored master's start). A plain `erpnext_doc_list` on `Event` cannot do
+this: it returns the single stored row.
+
+Rows are sorted by `starts_on` (ties broken by `name`) before `limit` cuts the
+page, so "the next N events" really is the next N. ERPNext does not sort its
+answer: it appends every expansion of a repeating master in that master's own
+position, so the raw array arrives in per-master blocks. `start` and `end` must
+be dates that exist - `2026-02-31` matches the `YYYY-MM-DD` shape but silently
+rolls into March, so it is rejected rather than sent. A non-array answer from
+ERPNext is an error, never an empty calendar.
+
+Both ends of the range are **inclusive** - ERPNext compares with
+`date(starts_on) BETWEEN date(start) AND date(end)` and expands occurrences
+while `target_date <= end` - so `end` defaults to `start` plus six days, which
+is a seven-day week rather than eight days. The range is capped at 366 days:
+recurrence expansion runs server-side and walks day by day for Daily and Weekly
+events, so a multi-year window materialises thousands of rows in ERPNext before
+`limit` can cut anything.
+
+Scope is the caller's own calendar: open events that are Public, owned by them,
+or shared with them through DocShare. Participation alone does not make an event
+visible - the visibility clause in Frappe's `get_events` is
+`event_type='Public' OR owner=<user> OR EXISTS(DocShare)`, and the
+`Event Participants` table is joined only when a caller-supplied `filters`
+argument mentions it, which this tool never sends. The result is therefore the
+shared calendar rather than a complete personal schedule. Passing `user` reads
+someone else's calendar; ERPNext allows it only for a caller holding read
+permission on the `Event` DocType, which is a role-level check rather than a
+grant from the person whose calendar it is.
 
 `erpnext_method_call` reaches business endpoints that no typed tool wraps,
 including custom-app methods that are the only supported way to change a field
@@ -214,6 +258,99 @@ another endpoint.
   "invalidate": { "doctype": "Task", "name": "TASK-2026-00001" }
 }
 ```
+
+## Discovery (1)
+
+| Tool                     | DocType | Operations                                  |
+| ------------------------ | ------- | ------------------------------------------- |
+| `erpnext_doctype_fields` | any     | Field schema of a DocType, permission-gated |
+
+`erpnext_doctype_fields` answers "what does this DocType actually store?" before
+a `_list`, `_get`, or `erpnext_doc_update` call has to guess. It takes
+`doctype`, optional `search` (substring on fieldname and label), and optional
+`include_hidden`. Each field comes back with `fieldname`, `label`, `fieldtype`,
+`options` (the target DocType for a Link, the choices for a Select), `reqd`,
+`read_only`, `in_list_view`, `permlevel`, `description`, `is_standard`, and
+`queryable`; layout-only fieldtypes (Section Break, Column Break, Tab Break,
+Fold, Heading, HTML, Button) are dropped. The document header reports `module`,
+`is_single`, `is_virtual`, `is_child_table`, `is_submittable`, `is_tree`, and
+`title_field`.
+
+`queryable` is `false` for every field of a Single DocType. A Single has no
+table of its own - `System Settings` stores its values as rows in `tabSingles` -
+so its fields are readable but can never appear in a `filters` or `order_by`
+clause. Reading it as "the field does not exist" is the opposite of the truth,
+which is why it is a flag on the field rather than an omission.
+
+A virtual DocType gets the same `false`, for the same missing table: its rows
+are produced by a Python controller, so whether a filter or an `order_by` is
+honoured is that controller's decision and nothing in the metadata can promise
+it. Twenty of them exist on the reference instance (`RQ Job`, `Recorder`,
+`System Health Report`, ...).
+
+The answer opens with the seven columns Frappe stores on every DocType - `name`,
+`owner`, `creation`, `modified`, `modified_by`, `docstatus`, `idx` - marked
+`is_standard: true`, plus `parent`, `parentfield`, and `parenttype` when the
+DocType is a child table. No form declares them, so the metadata endpoint does
+not list them, yet they are real columns and they are the ones a caller reaches
+for first: `owner` to ask "mine", `modified` to ask "recent", `docstatus` to
+tell a draft from a submitted document. Omitting them made the tool answer "no
+such field" for a field that exists. `include_hidden` does not apply to them
+(they are not hidden form fields; they are columns no form declared), but
+`search` does. `doctype` is deliberately absent: it is in Frappe's
+`default_fields` tuple but is attached in memory rather than stored, so
+filtering or sorting on it fails at the database.
+
+Reading a sample document is not a substitute: it shows only the fields that
+happen to be filled in, without labels, types, or link targets.
+
+The underlying Frappe metadata endpoint performs no permission check of its own,
+so the tool asks ERPNext first (`frappe.client.has_permission`) and fails with a
+permission error when the caller cannot read the DocType.
+
+For a child table the question is asked about a parent instead. A child DocType
+carries no role permissions of its own, so
+`has_permission('Sales Invoice
+Item', 'read')` answers false for every account
+except Administrator - measured on a live instance - and gating on it would have
+refused the schema to every real user. The tool resolves the DocTypes that own
+the child (the ones carrying a Table or Table MultiSelect field pointing at it)
+and passes as soon as the caller can read any of them; when none is readable,
+the error names them.
+
+That list comes from enumerating the DocTypes that declare the Table field, not
+from `getdoctype`. Frappe's `with_parent` helper is built on
+`frappe.db.get_value`, so it returns exactly one owner and which one is
+arbitrary: `Sales Taxes and Charges` is owned by six DocTypes on the reference
+instance and the endpoint names only `Quotation`, so a caller who can read
+`Sales Invoice` would have been refused.
+
+A Table field can be declared in two places, and both are read. `DocField` holds
+the ones shipped in a DocType's own definition; `Custom Field` holds the ones
+added through Customize Form or by an app's installer, keyed by `dt` rather than
+`parent`. `DocField` alone is not enough: on the reference instance it carries
+559 Table rows against 4 in `Custom Field`, but those 4 are the only owner their
+child has, so `Department Approver` and `Designation Skill` resolved to no owner
+at all and were refused for every account including Administrator.
+
+Enumeration is not a permission hole - `frappe.client.get_list` applies DocType
+permissions like any other list - but an account may be able to read one source
+and not the other. A source that refuses is skipped, and the refusal names that
+source specifically, so the caller is not sent to ask for a permission they
+already hold. The fallback to the single arbitrary owner from `getdoctype` is
+reached whenever a source refused **and** no enumerated owner turned out
+readable - not only when both sources refused. Requiring both denied the
+ordinary case: a standard child table declares its owner in `DocField` alone, so
+an account that may read `Custom Field` but not `DocField` enumerated an empty
+list, never met the stricter condition, and was refused while `getdoctype` would
+have named the parent it could read all along. The fallback still runs last,
+after every enumerated owner has been probed, so one arbitrary name can never
+decide a verdict the full list disagrees with. Either gap is flagged in the
+refusal, which says the list may be partial rather than presenting one name as
+the complete set of owners.
+
+`permlevel` above 0 marks a field governed by a separate role permission, which
+can be absent from documents even when the DocType itself is readable.
 
 ## Kanban (2) → kanban-viewer
 

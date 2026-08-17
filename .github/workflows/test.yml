@@ -4,6 +4,13 @@ on:
   pull_request:
   push:
     branches: [main]
+  # This repository is a fork, and GitHub suppresses `push`/`pull_request`
+  # triggers on a fork until the owner acknowledges workflows in the Actions
+  # tab. `workflow_dispatch` is exempt from that suppression, so it is the only
+  # way to get a Deno test run here without that one-time click - and the local
+  # route is closed too, because jsr.io answers this host with a Cloudflare
+  # challenge (403) for every package the project imports.
+  workflow_dispatch:
 
 jobs:
   deno:

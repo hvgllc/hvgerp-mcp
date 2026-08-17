@@ -166,6 +166,7 @@ export const identityTools: ErpNextTool[] = [
       properties: {
         limit: {
           type: "number",
+          minimum: 1,
           description: "Max rows per section (default 10)",
         },
         sections: {

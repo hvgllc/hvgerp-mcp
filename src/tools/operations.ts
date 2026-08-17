@@ -9,7 +9,9 @@
  */
 
 import type { FrappeFilter } from "../api/types.ts";
+import { normalizeLimit } from "../api/frappe-client.ts";
 import type { ErpNextTool } from "./types.ts";
+import { listResult } from "./list-result.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
 import {
   roundedTotalFallbackWarning,
@@ -31,6 +33,96 @@ import {
   isMethodAllowed,
   isValidMethodPath,
 } from "./method-allowlist.ts";
+
+/** One row as `frappe.desk.doctype.event.event.get_events` returns it. */
+interface CalendarEvent {
+  name?: string;
+  subject?: string;
+  description?: string | null;
+  starts_on?: string;
+  ends_on?: string | null;
+  all_day?: number;
+  event_type?: string;
+  owner?: string;
+  repeat_on?: string | null;
+  /** 1 on the stored master row of a repeating event, and on every occurrence
+   * copied out of it. This is the version-proof way to tell a repeating event
+   * apart, because it is a stored column rather than something the expansion
+   * pass has to remember to attach. */
+  repeat_this_event?: number;
+  /** Set by ERPNext only on an occurrence expanded out of a repeating event. */
+  original_starts_on?: string;
+}
+
+/**
+ * A calendar row after the two columns every occurrence must carry have been
+ * checked. `name` and `starts_on` are mandatory stored columns of Event, so
+ * anything missing them is a broken response rather than a sparse one.
+ */
+type ResolvedCalendarEvent = CalendarEvent & {
+  name: string;
+  starts_on: string;
+};
+
+/**
+ * Widest calendar range this tool will forward to ERPNext, in days.
+ *
+ * The recurrence expansion runs server-side and walks day by day for Daily and
+ * Weekly events, so the cost of a query is set by the range, not by the `limit`
+ * the caller asked for: a ten-year window over one daily stand-up materialises
+ * ~3,650 rows in ERPNext and ships them all here before `limit` gets a chance
+ * to cut anything. A year covers every realistic calendar question, and asking
+ * for more is far more likely to be a typo in the year than a real need.
+ */
+const MAX_CALENDAR_SPAN_DAYS = 366;
+
+/**
+ * Assert that a string is a calendar date that actually exists.
+ *
+ * The shape check alone is not enough. `2026-02-31` matches `\d{4}-\d{2}-\d{2}`
+ * and `9999-99-99` does too, and the two fail in different, equally quiet ways:
+ * a rolled-over date shifts the whole window into another month, while an
+ * unparseable one turns every later comparison into `NaN`, which is false
+ * against both `<` and `>` - so the range guards wave it through and ERPNext
+ * answers with a database error instead of the validation message this tool
+ * promises. Round-tripping through UTC catches both.
+ */
+function assertRealDate(label: string, value: string): void {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new Error(
+      `[erpnext_calendar_events] '${label}' must be a date in YYYY-MM-DD form`,
+    );
+  }
+  const parsed = new Date(`${value}T00:00:00Z`);
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.toISOString().slice(0, 10) !== value
+  ) {
+    throw new Error(
+      `[erpnext_calendar_events] '${label}' (${value}) is not a real calendar date`,
+    );
+  }
+}
+
+/** Whole days from one YYYY-MM-DD date to another, in UTC. */
+function daysBetweenISO(from: string, to: string): number {
+  const a = Date.parse(`${from}T00:00:00Z`);
+  const b = Date.parse(`${to}T00:00:00Z`);
+  return Math.round((b - a) / 86_400_000);
+}
+
+/**
+ * Shift a YYYY-MM-DD date by whole days, staying in UTC.
+ *
+ * Date-only arithmetic must not touch a local timezone: `new Date("2026-08-17")`
+ * parses as UTC midnight, so reading the result back with `toISOString` keeps the
+ * calendar day intact wherever this process happens to run.
+ */
+function addDaysISO(date: string, days: number): string {
+  const shifted = new Date(`${date}T00:00:00Z`);
+  shifted.setUTCDate(shifted.getUTCDate() + days);
+  return shifted.toISOString().slice(0, 10);
+}
 
 function parseInvalidateTarget(
   raw: unknown,
@@ -509,7 +601,11 @@ export const operationsTools: ErpNextTool[] = [
             'Only documents created by this person. Accepts "me" for the calling user, ' +
             "a User id (email) or a full name.",
         },
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         order_by: {
           type: "string",
           description: "Order by clause (e.g. 'modified desc', 'name asc')",
@@ -522,7 +618,7 @@ export const operationsTools: ErpNextTool[] = [
         throw new Error("[erpnext_doc_list] 'doctype' is required");
       }
 
-      const limit = (input.limit as number) ?? 20;
+      const limit = normalizeLimit((input.limit as number) ?? 20);
       const fields = (input.fields as string[]) ?? ["name", "modified"];
       const filters = [...((input.filters as FrappeFilter[]) ?? [])];
       const order_by = (input.order_by as string) ?? "modified desc";
@@ -559,12 +655,10 @@ export const operationsTools: ErpNextTool[] = [
         order_by,
       });
 
-      return {
-        doctype: input.doctype as string,
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, input.doctype as string, docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -719,6 +813,208 @@ export const operationsTools: ErpNextTool[] = [
         data: doc,
         message: `${assignee} unassigned from ${doctype} ${name}`,
         assignment: unassignment,
+      };
+    },
+  },
+
+  // ── Calendar ──────────────────────────────────────────────────────────────
+
+  {
+    name: "erpnext_calendar_events",
+    annotations: { readOnlyHint: true },
+    _meta: DOCLIST_META,
+    description:
+      "List calendar events (Event documents) that fall inside a date range, the way the " +
+      "ERPNext calendar itself computes them. Prefer this over erpnext_doc_list on 'Event' " +
+      "for any question about meetings or schedules: a plain list query returns the stored " +
+      "rows, so a weekly stand-up recorded once as a repeating event appears zero or one " +
+      "time instead of once per occurrence. " +
+      "Scope: open events that are Public, owned by the caller, or explicitly shared with " +
+      "them. An event someone else created and did not share is invisible here even if the " +
+      "caller is listed as a participant, so say the answer covers the shared calendar " +
+      "rather than claiming it is the person's complete schedule.",
+    category: "operations",
+    inputSchema: {
+      type: "object",
+      properties: {
+        start: {
+          type: "string",
+          description: "First day of the range, YYYY-MM-DD.",
+          minLength: 1,
+        },
+        end: {
+          type: "string",
+          description:
+            "Last day of the range, YYYY-MM-DD, inclusive. Defaults to a seven-day " +
+            "window starting at 'start'. At most 366 days may be requested at once.",
+        },
+        user: {
+          type: "string",
+          description:
+            "Look at another user's calendar instead of your own. ERPNext refuses " +
+            "unless the caller holds read permission on the Event DocType - that is " +
+            "a role-level check, not a grant from the person whose calendar it is.",
+        },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 50)",
+        },
+      },
+      required: ["start"],
+    },
+    handler: async (input, ctx) => {
+      const start = (input.start as string).trim();
+      assertRealDate("start", start);
+      const rawEnd = (input.end as string | undefined)?.trim();
+      if (rawEnd) assertRealDate("end", rawEnd);
+      // Default the range from `start` rather than from the server clock: the MCP
+      // process and the ERPNext site need not share a timezone, and "today" read
+      // on the wrong side of midnight silently shifts the whole week.
+      // `end` is inclusive on both sides of the wire: ERPNext compares with
+      // `date(starts_on) BETWEEN date(start) AND date(end)` and expands
+      // occurrences while `target_date <= end`, so a default of start + 6 is a
+      // seven-day week, not eight days.
+      const end = rawEnd ?? addDaysISO(start, 6);
+      const span = daysBetweenISO(start, end);
+      if (span < 0) {
+        throw new Error(
+          `[erpnext_calendar_events] 'end' (${end}) is before 'start' (${start})`,
+        );
+      }
+      if (span + 1 > MAX_CALENDAR_SPAN_DAYS) {
+        throw new Error(
+          `[erpnext_calendar_events] the range ${start}..${end} spans ${
+            span + 1
+          } days; at most ${MAX_CALENDAR_SPAN_DAYS} are allowed because ERPNext ` +
+            "expands every repeating event day by day across the whole range. " +
+            "Ask for a narrower window.",
+        );
+      }
+      const limit = normalizeLimit((input.limit as number) ?? 50);
+
+      const events = await ctx.client.callMethod<CalendarEvent[]>(
+        "frappe.desk.doctype.event.event.get_events",
+        {
+          start,
+          end,
+          ...(input.user ? { user: input.user as string } : {}),
+        },
+        { httpMethod: "GET" },
+      );
+      // A non-array here is a broken contract, not an empty calendar. Coercing it
+      // to `[]` would hand back `count: 0` and let a model tell someone they have
+      // no meetings at the exact moment the endpoint stopped working as expected.
+      if (!Array.isArray(events)) {
+        throw new Error(
+          "[erpnext_calendar_events] frappe.desk.doctype.event.event.get_events " +
+            `returned ${
+              JSON.stringify(events)
+            } instead of an array of events. ` +
+            "Treat this as an ERPNext-side failure, not as an empty calendar.",
+        );
+      }
+      // The array being well formed says nothing about its elements. `name` and
+      // `starts_on` are both stored, mandatory columns of Event, so a row that
+      // arrives without either is the same broken contract as a non-array
+      // answer - and it fails in a nastier way, because the row survives the
+      // mapping below and reaches the model as a real calendar entry with no
+      // subject, no time and an `_id` of `undefined::#0`. A phantom meeting is
+      // worse than an error: the model presents it as fact.
+      const rows: ResolvedCalendarEvent[] = [];
+      for (const event of events) {
+        if (
+          !event || typeof event !== "object" || Array.isArray(event) ||
+          typeof event.name !== "string" || !event.name ||
+          typeof event.starts_on !== "string" || !event.starts_on
+        ) {
+          throw new Error(
+            "[erpnext_calendar_events] frappe.desk.doctype.event.event.get_events " +
+              `returned a row without a usable name and start: ${
+                JSON.stringify(event)
+              }. ` +
+              "Both are mandatory stored columns of Event, so treat this as an " +
+              "ERPNext-side failure rather than as a calendar entry.",
+          );
+        }
+        rows.push(event as ResolvedCalendarEvent);
+      }
+      // ERPNext returns candidates ordered by `starts_on`, then appends every
+      // expanded occurrence of a repeating master in that master's own position -
+      // so the array arrives in per-master blocks, not globally chronological.
+      // Slicing it unsorted would spend the limit on late occurrences of an early
+      // recurring event while dropping an earlier one-off meeting from a later
+      // block, which is the opposite of what "the next N events" means.
+      rows.sort((a, b) => {
+        const byStart = a.starts_on.localeCompare(b.starts_on);
+        if (byStart !== 0) return byStart;
+        return a.name.localeCompare(b.name);
+      });
+      // Identity for the viewer's expanded panel, one entry per row.
+      //
+      // Every occurrence of a repeating event comes back carrying the stored
+      // master's `name`, so `name` alone is not a row identity: without `_id`,
+      // clicking a Monday occurrence opened the same panel under every other
+      // occurrence of that master and clicking a second one collapsed them all.
+      //
+      // The identity must be a property of the occurrence, not of its position.
+      // `${name}::${index}` was unique but positional, and `DoclistViewer`
+      // keeps `expandedId` across a refresh: one event created or deleted
+      // earlier in the window shifts every later index by one, so the panel the
+      // user left open silently reattaches to a different occurrence. A total
+      // sort makes the order deterministic, which is not the same as making an
+      // index stable - the set it indexes changes. `starts_on` is what actually
+      // distinguishes two occurrences of one master, so it carries the identity.
+      //
+      // `_id` never reaches the tool - the row action still passes `name`, which
+      // is the document ERPNext can actually fetch - and the viewer hides every
+      // underscore-prefixed key from its columns.
+      const usedIds = new Set<string>();
+      const occurrenceId = (event: ResolvedCalendarEvent): string => {
+        // A suffix covers the one case the pair cannot separate: two rows
+        // ERPNext returned with the same master AND the same start. That is
+        // degenerate enough that a counter is the right answer - a colliding
+        // id would put both rows back under one panel, which is the bug this
+        // whole identity exists to fix.
+        const base = `${event.name}::${event.starts_on}`;
+        let id = base;
+        for (let duplicate = 2; usedIds.has(id); duplicate++) {
+          id = `${base}#${duplicate}`;
+        }
+        usedIds.add(id);
+        return id;
+      };
+
+      const data = rows.slice(0, limit).map((event) => ({
+        _id: occurrenceId(event),
+        name: event.name,
+        subject: event.subject,
+        starts_on: event.starts_on,
+        ends_on: event.ends_on ?? null,
+        all_day: Boolean(event.all_day),
+        event_type: event.event_type ?? null,
+        owner: event.owner ?? null,
+        description: event.description ?? null,
+        // Whether this row comes from a repeating event is answered by the stored
+        // column, so it holds on any ERPNext build. `recurring_from` is the extra
+        // detail - the master row's own start, which "since when" questions need -
+        // and it is only present when the expansion pass attached it.
+        is_recurring: Boolean(event.repeat_this_event),
+        ...(event.original_starts_on
+          ? { recurring_from: event.original_starts_on }
+          : {}),
+        repeat_on: event.repeat_on ?? null,
+      }));
+
+      return {
+        doctype: "Event",
+        start,
+        end,
+        count: rows.length,
+        returned: data.length,
+        has_more: rows.length > data.length,
+        data,
+        _meta: DOCLIST_META,
       };
     },
   },

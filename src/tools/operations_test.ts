@@ -790,3 +790,458 @@ Deno.test("erpnext_doc_list - a full name in assigned_to is still looked up", as
 
   assertStringIncludes(JSON.stringify(searchFilters), "Do Khoa");
 });
+
+// ── erpnext_calendar_events ──────────────────────────────────────────────────
+
+Deno.test("erpnext_calendar_events - rejects a range that is not a plain date", async () => {
+  const tool = getTool("erpnext_calendar_events");
+  await assertRejects(
+    () => tool.handler({ start: "next monday" }, makeCtx(makeMockClient())),
+    Error,
+    "YYYY-MM-DD",
+  );
+  await assertRejects(
+    () =>
+      tool.handler(
+        { start: "2026-08-17", end: "2026/08/24" },
+        makeCtx(makeMockClient()),
+      ),
+    Error,
+    "YYYY-MM-DD",
+  );
+});
+
+Deno.test("erpnext_calendar_events - defaults the range to a week after start", async () => {
+  // deno-lint-ignore no-explicit-any
+  let seenArgs: Record<string, any> = {};
+  const client = makeMockClient({
+    // deno-lint-ignore no-explicit-any
+    callMethod: async (method: string, args: Record<string, any>) => {
+      assertEquals(method, "frappe.desk.doctype.event.event.get_events");
+      seenArgs = args;
+      return [];
+    },
+  });
+
+  await getTool("erpnext_calendar_events").handler(
+    { start: "2026-08-28" },
+    makeCtx(client),
+  );
+
+  assertEquals(seenArgs.start, "2026-08-28");
+  // Seven days INCLUSIVE of start, because ERPNext compares both bounds with
+  // BETWEEN; start + 7 would quietly return an eight-day week.
+  // Crossing a month boundary is where naive string arithmetic breaks.
+  assertEquals(seenArgs.end, "2026-09-03");
+  assertEquals("user" in seenArgs, false);
+});
+
+Deno.test("erpnext_calendar_events - refuses a range wider than a year", async () => {
+  let calls = 0;
+  const client = makeMockClient({
+    callMethod: async () => {
+      calls++;
+      return [];
+    },
+  });
+
+  await assertRejects(
+    () =>
+      getTool("erpnext_calendar_events").handler(
+        { start: "2026-01-01", end: "2030-01-01" },
+        makeCtx(client),
+      ),
+    Error,
+    "narrower window",
+  );
+  // ERPNext expands the whole range before `limit` applies, so the guard is
+  // worth nothing unless it fires before the call goes out.
+  assertEquals(calls, 0);
+});
+
+Deno.test("erpnext_calendar_events - refuses an end that precedes start", async () => {
+  await assertRejects(
+    () =>
+      getTool("erpnext_calendar_events").handler(
+        { start: "2026-08-17", end: "2026-08-10" },
+        makeCtx(makeMockClient()),
+      ),
+    Error,
+    "is before",
+  );
+});
+
+Deno.test("erpnext_calendar_events - accepts a range of exactly the maximum span", async () => {
+  let calls = 0;
+  const client = makeMockClient({
+    callMethod: async () => {
+      calls++;
+      return [];
+    },
+  });
+
+  // 2026 is not a leap year, so start + 365 days is a 366-day inclusive range.
+  await getTool("erpnext_calendar_events").handler(
+    { start: "2026-01-01", end: "2027-01-01" },
+    makeCtx(client),
+  );
+
+  assertEquals(calls, 1);
+});
+
+Deno.test("erpnext_calendar_events - keeps each expanded occurrence and marks its origin", async () => {
+  const client = makeMockClient({
+    callMethod: async () => [
+      {
+        name: "EV00045",
+        subject: "Hop giao ban tuan",
+        starts_on: "2026-08-17 08:30:00",
+        ends_on: null,
+        all_day: 0,
+        event_type: "Public",
+        owner: "lead@example.com",
+        repeat_this_event: 1,
+        repeat_on: "Weekly",
+        original_starts_on: "2026-01-05 08:30:00",
+      },
+      {
+        name: "EV00046",
+        subject: "Review thang",
+        starts_on: "2026-08-19 14:00:00",
+        ends_on: "2026-08-19 15:00:00",
+        all_day: 0,
+        event_type: "Private",
+        owner: "me@example.com",
+      },
+    ],
+  });
+
+  const result = await getTool("erpnext_calendar_events").handler(
+    { start: "2026-08-17", end: "2026-08-23" },
+    makeCtx(client),
+    // deno-lint-ignore no-explicit-any
+  ) as any;
+
+  assertEquals(result.doctype, "Event");
+  assertEquals(result.count, 2);
+  assertEquals(result.returned, 2);
+  assertEquals(result.has_more, false);
+  assertEquals(result.data[0].recurring_from, "2026-01-05 08:30:00");
+  assertEquals(result.data[0].is_recurring, true);
+  // A one-off event must not claim to be an occurrence of anything.
+  assertEquals("recurring_from" in result.data[1], false);
+  assertEquals(result.data[1].is_recurring, false);
+  assertEquals(result.data[1].ends_on, "2026-08-19 15:00:00");
+});
+
+Deno.test("erpnext_calendar_events - flags a repeating event even without original_starts_on", async () => {
+  // Older expansion passes copy the row without attaching `original_starts_on`;
+  // the caller must still be able to tell the occurrence is a repeat.
+  const client = makeMockClient({
+    callMethod: async () => [
+      {
+        name: "EV00045",
+        subject: "Hop giao ban tuan",
+        starts_on: "2026-08-17 08:30:00",
+        repeat_this_event: 1,
+        repeat_on: "Weekly",
+      },
+    ],
+  });
+
+  const result = await getTool("erpnext_calendar_events").handler(
+    { start: "2026-08-17", end: "2026-08-23" },
+    makeCtx(client),
+    // deno-lint-ignore no-explicit-any
+  ) as any;
+
+  assertEquals(result.data[0].is_recurring, true);
+  assertEquals("recurring_from" in result.data[0], false);
+});
+
+Deno.test("erpnext_calendar_events - limit truncates the page but not the total", async () => {
+  const client = makeMockClient({
+    callMethod: async () =>
+      Array.from({ length: 5 }, (_, index) => ({
+        name: `EV-${index}`,
+        subject: `Event ${index}`,
+        starts_on: "2026-08-17 08:30:00",
+      })),
+  });
+
+  const result = await getTool("erpnext_calendar_events").handler(
+    { start: "2026-08-17", limit: 2 },
+    makeCtx(client),
+    // deno-lint-ignore no-explicit-any
+  ) as any;
+
+  assertEquals(result.count, 5);
+  assertEquals(result.returned, 2);
+  assertEquals(result.has_more, true);
+});
+
+Deno.test("erpnext_calendar_events - refuses a date that matches the shape but does not exist", async () => {
+  let calls = 0;
+  const client = makeMockClient({
+    callMethod: async () => {
+      calls++;
+      return [];
+    },
+  });
+
+  // Rolls over to 2026-03-03 if it is merely parsed, silently shifting the
+  // whole window into another month.
+  await assertRejects(
+    () =>
+      getTool("erpnext_calendar_events").handler(
+        { start: "2026-02-31" },
+        makeCtx(client),
+      ),
+    Error,
+    "not a real calendar date",
+  );
+  // Unparseable: every later comparison becomes NaN, which is false against
+  // both < and >, so the range guards would wave it through.
+  await assertRejects(
+    () =>
+      getTool("erpnext_calendar_events").handler(
+        { start: "2026-08-17", end: "9999-99-99" },
+        makeCtx(client),
+      ),
+    Error,
+    "not a real calendar date",
+  );
+  assertEquals(calls, 0);
+});
+
+Deno.test("erpnext_calendar_events - every occurrence gets its own row identity", async () => {
+  // Frappe returns each expanded occurrence carrying the stored master's
+  // `name`, so `name` cannot key viewer state: the doclist viewer would open
+  // one expanded panel under every occurrence of the master at once.
+  const client = makeMockClient({
+    callMethod: async () => [
+      {
+        name: "EV00045",
+        subject: "Hop giao ban tuan",
+        starts_on: "2026-08-17 08:30:00",
+        repeat_this_event: 1,
+        repeat_on: "Weekly",
+      },
+      {
+        name: "EV00045",
+        subject: "Hop giao ban tuan",
+        starts_on: "2026-08-24 08:30:00",
+        repeat_this_event: 1,
+        repeat_on: "Weekly",
+      },
+    ],
+  });
+
+  const result = await getTool("erpnext_calendar_events").handler(
+    { start: "2026-08-17", end: "2026-08-30" },
+    makeCtx(client),
+    // deno-lint-ignore no-explicit-any
+  ) as any;
+
+  assertEquals(result.data.length, 2);
+  // The document id is unchanged - the row action still has to fetch a real Event.
+  assertEquals(result.data[0].name, "EV00045");
+  assertEquals(result.data[1].name, "EV00045");
+  // The row identity is not.
+  assertEquals(result.data[0]._id === result.data[1]._id, false);
+  assertEquals(
+    new Set(result.data.map((row: { _id: string }) => row._id)).size,
+    2,
+  );
+});
+
+Deno.test("erpnext_calendar_events - rejects a non-array answer instead of reporting an empty calendar", async () => {
+  const client = makeMockClient({
+    // What a misconfigured or half-broken endpoint hands back.
+    // deno-lint-ignore no-explicit-any
+    callMethod: async () => ({ message: "no" }) as any,
+  });
+
+  await assertRejects(
+    () =>
+      getTool("erpnext_calendar_events").handler(
+        { start: "2026-08-17" },
+        makeCtx(client),
+      ),
+    Error,
+    "instead of an array of events",
+  );
+});
+
+Deno.test("erpnext_calendar_events - orders occurrences by start before applying the limit", async () => {
+  // ERPNext appends every expansion of a repeating master in that master's own
+  // position, so the array arrives in per-master blocks. Unsorted, the limit
+  // would be spent on late occurrences of the first master and drop the
+  // earliest one-off event entirely.
+  const client = makeMockClient({
+    callMethod: async () => [
+      { name: "EV-A", subject: "Daily", starts_on: "2026-08-18 09:00:00" },
+      { name: "EV-A", subject: "Daily", starts_on: "2026-08-19 09:00:00" },
+      { name: "EV-A", subject: "Daily", starts_on: "2026-08-20 09:00:00" },
+      { name: "EV-B", subject: "Kickoff", starts_on: "2026-08-17 15:00:00" },
+    ],
+  });
+
+  const result = await getTool("erpnext_calendar_events").handler(
+    { start: "2026-08-17", end: "2026-08-23", limit: 2 },
+    makeCtx(client),
+    // deno-lint-ignore no-explicit-any
+  ) as any;
+
+  assertEquals(result.data.map((row: { starts_on: string }) => row.starts_on), [
+    "2026-08-17 15:00:00",
+    "2026-08-18 09:00:00",
+  ]);
+  assertEquals(result.count, 4);
+  assertEquals(result.has_more, true);
+});
+
+Deno.test("erpnext_calendar_events - breaks a start-time tie by name so the order is stable", async () => {
+  const client = makeMockClient({
+    callMethod: async () => [
+      { name: "EV-Z", subject: "Later name", starts_on: "2026-08-17 09:00:00" },
+      {
+        name: "EV-A",
+        subject: "Earlier name",
+        starts_on: "2026-08-17 09:00:00",
+      },
+    ],
+  });
+
+  const result = await getTool("erpnext_calendar_events").handler(
+    { start: "2026-08-17" },
+    makeCtx(client),
+    // deno-lint-ignore no-explicit-any
+  ) as any;
+
+  assertEquals(result.data.map((row: { name: string }) => row.name), [
+    "EV-A",
+    "EV-Z",
+  ]);
+});
+
+Deno.test("erpnext_calendar_events - forwards an explicit user to ERPNext", async () => {
+  // deno-lint-ignore no-explicit-any
+  let seenArgs: Record<string, any> = {};
+  const client = makeMockClient({
+    // deno-lint-ignore no-explicit-any
+    callMethod: async (_method: string, args: Record<string, any>) => {
+      seenArgs = args;
+      return [];
+    },
+  });
+
+  await getTool("erpnext_calendar_events").handler(
+    { start: "2026-08-17", user: "boss@example.com" },
+    makeCtx(client),
+  );
+
+  assertEquals(seenArgs.user, "boss@example.com");
+});
+
+Deno.test("erpnext_calendar_events - row identity survives an event appearing earlier in the window", async () => {
+  // `DoclistViewer` keeps `expandedId` across a refresh, so a positional id
+  // silently reattaches the open panel to a different occurrence the moment the
+  // set shifts. One event created earlier in the window is enough: with
+  // `${name}::${index}` every later occurrence moved by one.
+  const OCCURRENCES = [
+    {
+      name: "EV00045",
+      subject: "Hop giao ban tuan",
+      starts_on: "2026-08-17 08:30:00",
+      repeat_this_event: 1,
+      repeat_on: "Weekly",
+    },
+    {
+      name: "EV00045",
+      subject: "Hop giao ban tuan",
+      starts_on: "2026-08-24 08:30:00",
+      repeat_this_event: 1,
+      repeat_on: "Weekly",
+    },
+  ];
+  const EARLIER = {
+    name: "EV00099",
+    subject: "Hop dot xuat",
+    starts_on: "2026-08-16 09:00:00",
+  };
+
+  const ask = async (events: unknown[]) =>
+    await getTool("erpnext_calendar_events").handler(
+      { start: "2026-08-16", end: "2026-08-30" },
+      makeCtx(makeMockClient({ callMethod: async () => events })),
+      // deno-lint-ignore no-explicit-any
+    ) as any;
+
+  const before = await ask(OCCURRENCES);
+  const after = await ask([EARLIER, ...OCCURRENCES]);
+
+  const idOf = (
+    // deno-lint-ignore no-explicit-any
+    result: any,
+    startsOn: string,
+    // deno-lint-ignore no-explicit-any
+  ) => result.data.find((row: any) => row.starts_on === startsOn)._id;
+
+  assertEquals(after.data.length, 3);
+  for (const occurrence of OCCURRENCES) {
+    assertEquals(
+      idOf(after, occurrence.starts_on),
+      idOf(before, occurrence.starts_on),
+    );
+  }
+});
+
+Deno.test("erpnext_calendar_events - two rows with the same master and start still differ", async () => {
+  // The guarantee the positional id used to provide, kept: an identity built
+  // from attributes has to stay unique even when ERPNext hands back a row
+  // twice, or the viewer is back to opening one panel under both.
+  const duplicate = {
+    name: "EV00045",
+    subject: "Hop giao ban tuan",
+    starts_on: "2026-08-17 08:30:00",
+  };
+  const result = await getTool("erpnext_calendar_events").handler(
+    { start: "2026-08-17", end: "2026-08-30" },
+    makeCtx(makeMockClient({ callMethod: async () => [duplicate, duplicate] })),
+    // deno-lint-ignore no-explicit-any
+  ) as any;
+
+  assertEquals(result.data.length, 2);
+  assertEquals(
+    new Set(result.data.map((row: { _id: string }) => row._id)).size,
+    2,
+  );
+});
+
+Deno.test("erpnext_calendar_events - rejects a row that carries no name or start", async () => {
+  // The outer array being well formed says nothing about its elements. A row
+  // without `name`/`starts_on` used to survive the mapping and reach the model
+  // as a real calendar entry with no subject and no time - a phantom meeting,
+  // which a model presents as fact rather than as the upstream fault it is.
+  for (
+    const broken of [
+      {},
+      { name: "EV00045" },
+      { starts_on: "2026-08-17 08:30:00" },
+      { name: "", starts_on: "2026-08-17 08:30:00" },
+      { name: "EV00045", starts_on: "" },
+      null,
+    ]
+  ) {
+    await assertRejects(
+      () =>
+        getTool("erpnext_calendar_events").handler(
+          { start: "2026-08-17" },
+          makeCtx(makeMockClient({ callMethod: async () => [broken] })),
+        ),
+      Error,
+      "without a usable name and start",
+    );
+  }
+});

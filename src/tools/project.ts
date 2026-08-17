@@ -8,6 +8,7 @@
 
 import type { FrappeFilter } from "../api/types.ts";
 import type { ErpNextTool } from "./types.ts";
+import { listResult } from "./list-result.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
 import {
   applyAssignment,
@@ -34,7 +35,11 @@ export const projectTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         status: {
           type: "string",
           description: "Filter by status (Open, Completed, Cancelled)",
@@ -79,12 +84,10 @@ export const projectTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Project",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Project", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -122,7 +125,11 @@ export const projectTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         project: { type: "string", description: "Filter by project name" },
         status: {
           type: "string",
@@ -193,12 +200,10 @@ export const projectTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Task",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Task", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -455,7 +460,11 @@ export const projectTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         employee: {
           type: "string",
           description:
@@ -512,12 +521,10 @@ export const projectTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Timesheet",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Timesheet", docs, {
+        filters,
+        limit,
+      });
     },
   },
 

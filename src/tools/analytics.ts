@@ -12,6 +12,7 @@
  */
 
 import type { FrappeFilter } from "../api/types.ts";
+import { normalizeLimit } from "../api/frappe-client.ts";
 import type { ErpNextTool } from "./types.ts";
 import { CHART_META, FUNNEL_META, KPI_META } from "./viewer-meta.ts";
 
@@ -48,6 +49,7 @@ export const analyticsTools: ErpNextTool[] = [
         item_group: { type: "string", description: "Filter by item group" },
         limit: {
           type: "number",
+          minimum: 1,
           description: "Max items to show (default 20)",
         },
         type: {
@@ -64,7 +66,7 @@ export const analyticsTools: ErpNextTool[] = [
       },
     },
     handler: async (input, ctx) => {
-      const limit = (input.limit as number) ?? 20;
+      const limit = normalizeLimit((input.limit as number) ?? 20);
       const filters: FrappeFilter[] = [[
         "actual_qty",
         ">",
@@ -152,7 +154,11 @@ export const analyticsTools: ErpNextTool[] = [
           enum: ["customer", "item", "status"],
           description: "Dimension to group by (default: customer)",
         },
-        limit: { type: "number", description: "Top N results (default 10)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Top N results (default 10)",
+        },
         include_drafts: {
           type: "boolean",
           description: "Include Draft invoices (default false)",
@@ -160,7 +166,7 @@ export const analyticsTools: ErpNextTool[] = [
       },
     },
     handler: async (input, ctx) => {
-      const limit = (input.limit as number) ?? 10;
+      const limit = normalizeLimit((input.limit as number) ?? 10);
       const groupBy = (input.group_by as string) ?? "customer";
       const filters: FrappeFilter[] = [];
 
@@ -435,12 +441,16 @@ export const analyticsTools: ErpNextTool[] = [
           enum: ["stacked-bar", "pie", "donut"],
           description: "Chart type (default: stacked-bar)",
         },
-        limit: { type: "number", description: "Top N customers (default 8)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Top N customers (default 8)",
+        },
       },
     },
     handler: async (input, ctx) => {
       const chartType = (input.type as string) ?? "stacked-bar";
-      const limit = (input.limit as number) ?? 8;
+      const limit = normalizeLimit((input.limit as number) ?? 8);
 
       const orders = await ctx.client.list("Sales Order", {
         fields: ["customer_name", "status", "grand_total"],
@@ -538,11 +548,15 @@ export const analyticsTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Top N customers (default 8)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Top N customers (default 8)",
+        },
       },
     },
     handler: async (input, ctx) => {
-      const limit = (input.limit as number) ?? 8;
+      const limit = normalizeLimit((input.limit as number) ?? 8);
       const orders = await ctx.client.list("Sales Order", {
         fields: ["customer_name", "grand_total"],
         filters: [["docstatus", "!=", 2]],
@@ -610,12 +624,16 @@ export const analyticsTools: ErpNextTool[] = [
           enum: ["item", "warehouse"],
           description: "Group by item or warehouse (default: item)",
         },
-        limit: { type: "number", description: "Top N entries (default 15)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Top N entries (default 15)",
+        },
       },
     },
     handler: async (input, ctx) => {
       const groupBy = (input.group_by as string) ?? "item";
-      const limit = (input.limit as number) ?? 15;
+      const limit = normalizeLimit((input.limit as number) ?? 15);
 
       const bins = await ctx.client.list("Bin", {
         fields: ["item_code", "warehouse", "stock_value"],
@@ -814,12 +832,13 @@ export const analyticsTools: ErpNextTool[] = [
       properties: {
         limit: {
           type: "number",
+          minimum: 1,
           description: "Max items to show (default 30)",
         },
       },
     },
     handler: async (input, ctx) => {
-      const limit = (input.limit as number) ?? 30;
+      const limit = normalizeLimit((input.limit as number) ?? 30);
 
       // Get items with selling price
       const items = await ctx.client.list("Item Price", {
@@ -1321,7 +1340,11 @@ export const analyticsTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Top N customers (default 10)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Top N customers (default 10)",
+        },
         type: {
           type: "string",
           enum: ["stacked-bar", "horizontal-bar", "treemap"],
@@ -1330,7 +1353,7 @@ export const analyticsTools: ErpNextTool[] = [
       },
     },
     handler: async (input, ctx) => {
-      const limit = (input.limit as number) ?? 10;
+      const limit = normalizeLimit((input.limit as number) ?? 10);
       const chartType = (input.type as string) ?? "stacked-bar";
 
       const invoices = await ctx.client.list("Sales Invoice", {
@@ -1450,7 +1473,11 @@ export const analyticsTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Top N entries (default 10)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Top N entries (default 10)",
+        },
         group_by: {
           type: "string",
           enum: ["item", "customer"],
@@ -1459,7 +1486,7 @@ export const analyticsTools: ErpNextTool[] = [
       },
     },
     handler: async (input, ctx) => {
-      const limit = (input.limit as number) ?? 10;
+      const limit = normalizeLimit((input.limit as number) ?? 10);
       const groupBy = (input.group_by as string) ?? "item";
 
       // Revenue, cost and (when grouping by customer) the invoice→customer map

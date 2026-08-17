@@ -5,8 +5,8 @@
 [![MCP](https://img.shields.io/badge/MCP-server-1f6feb?logo=modelcontextprotocol&logoColor=white)](https://modelcontextprotocol.io)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-MCP server for [ERPNext](https://erpnext.com) / Frappe ERP — **127 tools**
-across **15 categories**, with **7 interactive UI viewers**.
+MCP server for [ERPNext](https://erpnext.com) / Frappe ERP — **129 tools**
+across **16 categories**, with **7 interactive UI viewers**.
 
 Connect any MCP-compatible AI agent (Claude Desktop, Claude Code, VS Code
 Copilot, custom) to your ERPNext instance via the
@@ -223,9 +223,9 @@ npm install
 node build-all.mjs
 ```
 
-## Tools (127)
+## Tools (129)
 
-127 tools across 15 categories. Each `_list` tool returns interactive results
+129 tools across 16 categories. Each `_list` tool returns interactive results
 via the doclist-viewer with row click, inline detail, and cross-viewer
 navigation.
 
@@ -240,7 +240,8 @@ navigation.
 - **Purchasing** (11) — Suppliers, Purchase Orders, Purchase Invoices, Receipts,
   and Supplier Quotations.
 - **Inventory** (9) — Items, Stock Balance, Warehouses, and Stock Entries.
-- **Accounting** (6) — Chart of Accounts, Journal Entries, and Payment Entries.
+- **Accounting** (6) — Chart of Accounts (filterable by `disabled`), Journal
+  Entries, and Payment Entries.
 - **HR** (12) — Employees, Attendance, Leave Applications, Salary Slips, Payroll
   Entries, and Expense Claims.
 - **Project** (9) — Projects, Tasks (with native assignment), and Timesheets.
@@ -248,14 +249,20 @@ navigation.
 - **Manufacturing** (7) — BOMs, Work Orders, and Job Cards.
 - **CRM** (8) — Leads, Opportunities, Contacts, and Campaigns.
 - **Assets** (8) — Assets, Movements, Maintenance records, and Categories.
-- **Operations** (11) — Generic CRUD, native assignment, and file upload for any
+- **Operations** (12) — Generic CRUD, native assignment, and file upload for any
   DocType (`erpnext_doc_*`, `erpnext_file_upload`), plus `erpnext_method_call`
-  for allowlisted whitelisted-method calls.
+  for allowlisted whitelisted-method calls and `erpnext_calendar_events`, which
+  reads a date range the way the ERPNext calendar does so a repeating event
+  appears once per occurrence instead of once in total.
 - **Kanban** (2) — Read-write boards for Task, Opportunity, and Issue with
   drag-and-drop.
 - **Analytics** (17) — 11 analytics charts (bar, area, treemap, radar, scatter,
   P&L…), 5 KPIs with sparklines, and a sales funnel.
 - **Setup** (3) — Company creation and assignable user listing.
+- **Discovery** (1) — `erpnext_doctype_fields`: the field schema of any DocType
+  (name, label, type, link target, mandatory, permlevel), gated on the caller's
+  own read permission. Use it instead of inferring a schema from one sample
+  document, which only shows the fields that happen to be filled in.
 
 Full per-tool reference with parameters: [`docs/tools.md`](docs/tools.md).
 

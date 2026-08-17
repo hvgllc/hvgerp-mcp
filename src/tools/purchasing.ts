@@ -9,6 +9,7 @@
 
 import type { FrappeFilter } from "../api/types.ts";
 import type { ErpNextTool } from "./types.ts";
+import { listResult } from "./list-result.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
 import { resolveLink, resolveSupplier } from "../api/resolve.ts";
 
@@ -26,7 +27,11 @@ export const purchasingTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         supplier_group: {
           type: "string",
           description: "Filter by supplier group",
@@ -68,12 +73,10 @@ export const purchasingTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Supplier",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Supplier", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -177,7 +180,11 @@ export const purchasingTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         supplier: {
           type: "string",
           description:
@@ -232,12 +239,10 @@ export const purchasingTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Purchase Order",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Purchase Order", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -371,7 +376,11 @@ export const purchasingTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         supplier: {
           type: "string",
           description:
@@ -426,12 +435,10 @@ export const purchasingTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Purchase Invoice",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Purchase Invoice", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -476,7 +483,11 @@ export const purchasingTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         supplier: {
           type: "string",
           description:
@@ -530,12 +541,10 @@ export const purchasingTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Purchase Receipt",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Purchase Receipt", docs, {
+        filters,
+        limit,
+      });
     },
   },
 
@@ -580,7 +589,11 @@ export const purchasingTools: ErpNextTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Max results (default 20)" },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
         supplier: {
           type: "string",
           description:
@@ -633,12 +646,10 @@ export const purchasingTools: ErpNextTool[] = [
         order_by: "modified desc",
       });
 
-      return {
-        doctype: "Supplier Quotation",
-        count: docs.length,
-        data: docs,
-        _meta: DOCLIST_META,
-      };
+      return await listResult(ctx, "Supplier Quotation", docs, {
+        filters,
+        limit,
+      });
     },
   },
 ];

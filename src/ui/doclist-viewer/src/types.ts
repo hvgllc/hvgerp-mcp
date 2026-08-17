@@ -18,7 +18,14 @@ export interface SendMessageHint {
 }
 
 export interface DoclistData {
-  count: number;
+  /**
+   * Total matching the query, or `null` when the server could not establish one.
+   * Never fall back to the page length here: a page is what got returned, and
+   * printing it as the total is a lie precisely when the list IS truncated.
+   */
+  count: number | null;
+  /** Why `count` is null, when it is. */
+  count_error?: string;
   doctype?: string;
   _title?: string;
   data: Record<string, unknown>[];
