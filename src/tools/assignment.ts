@@ -152,7 +152,23 @@ export function prepareAssignment(
  * array element: without the quotes, a short id would also match every longer id that ends with it.
  */
 export function assignedToFilter(userId: string): FrappeFilter {
-  return ["_assign", "like", `%"${userId}"%`];
+  return ["_assign", "like", `%"${escapeLikeWildcards(userId)}"%`];
+}
+
+/**
+ * Neutralise the characters MariaDB's `LIKE` reads as wildcards.
+ *
+ * A `User` id here is an email address, and `_` is legal in one. Interpolated raw,
+ * `john_doe@example.com` becomes a pattern whose `_` matches ANY single character, so the filter
+ * also matches `john-doe@example.com` and `johnXdoe@example.com`. That is not a merely wider
+ * result set: it hands one person another person's assigned work, silently, in every tool that
+ * filters by assignee. `%` is the same failure with a wider blast radius.
+ *
+ * The backslash must be escaped FIRST, or the escapes added for `%` and `_` would themselves be
+ * escaped a second time and stop working. One pass over a character class does that for free.
+ */
+function escapeLikeWildcards(value: string): string {
+  return value.replace(/[\\%_]/g, "\\$&");
 }
 
 /**
