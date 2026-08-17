@@ -28,6 +28,7 @@ import {
   type ToolResultPayload,
   type UiRefreshRequestData,
 } from "~/shared/refresh";
+import { getErrorPresentation } from "~/shared/presentation";
 
 import type { DoclistData, SortDir } from "./types";
 import {
@@ -42,6 +43,7 @@ import {
 import { StatusCell } from "./components/StatusCell";
 import { LoadingSkeleton } from "./components/LoadingSkeleton";
 import { DoclistEmptyState } from "./components/EmptyState";
+import { DoclistErrorState } from "./components/ErrorState";
 import { InlineDetailPanel } from "./components/InlineDetailPanel";
 import { ChipFilters } from "./components/ChipFilters";
 import { PagBtn } from "./components/PagBtn";
@@ -187,6 +189,14 @@ export function DoclistViewer() {
     };
   }, []);
 
+  // A rejected payload sets `error` and leaves `data` null, so the empty state
+  // has to come AFTER the error branch: reaching it first answered a broken
+  // response with "No documents to display", which is the same lie the
+  // rejection was added to stop telling. Once data exists the message is a
+  // failed refresh instead, and stays inline beside the rows it did not
+  // invalidate.
+  const errorPresentation = getErrorPresentation({ data, error });
+
   return (
     <div
       style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}
@@ -196,12 +206,14 @@ export function DoclistViewer() {
       <div style={{ flex: 1 }}>
         {loading
           ? <LoadingSkeleton />
+          : errorPresentation.blockingError
+          ? <DoclistErrorState message={errorPresentation.blockingError} />
           : !data
           ? <DoclistEmptyState />
           : (
             <DoclistContent
               data={data}
-              error={error}
+              error={errorPresentation.inlineError}
               refreshing={refreshing}
               onRefresh={() => void requestRefresh({ ignoreInterval: true })}
               onError={setError}

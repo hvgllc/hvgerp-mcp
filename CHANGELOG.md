@@ -308,6 +308,14 @@ requests and tags actually live.
   both with the canonical name, so a caller who wrote `sales invoice item` - a
   spelling the collation resolves and the metadata check accepts - resolved no
   parent and was refused a child table readable through a parent they hold.
+- **A rejected payload renders as an error, not as "no documents".** The doclist
+  viewer chose its empty state on `!data`, and a payload rejected on first load
+  leaves `data` null while setting `error`, which was only rendered beside rows
+  that exist. So the rejection added above still reached the reader as an empty
+  result. The blocking-vs-inline rule now lives in one shared function that both
+  the doclist and the kanban viewer call: an error over existing data stays
+  inline next to the rows it did not invalidate, an error with nothing to show
+  takes over the view.
 
 ## [3.2.0] - 2026-08-17
 
