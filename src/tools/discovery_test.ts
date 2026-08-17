@@ -676,8 +676,17 @@ Deno.test("erpnext_doctype_fields - refuses metadata that describes a different 
   assertStringIncludes(error.message, '"Salary Slip"');
   assertEquals(permChecks, 0);
 
-  // A head with no name at all is the same fault, not a nameless DocType.
-  for (const nameless of [{}, { name: "" }, { name: "   " }, { name: 7 }]) {
+  // A head with no usable name is the same contract breach, not a nameless
+  // DocType: absent, empty, whitespace-only and non-string all take the same
+  // refusal branch.
+  for (
+    const nameless of [
+      { name: undefined },
+      { name: "" },
+      { name: "   " },
+      { name: 7 },
+    ]
+  ) {
     await assertRejects(
       () =>
         getTool("erpnext_doctype_fields").handler(
