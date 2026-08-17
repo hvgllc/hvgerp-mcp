@@ -55,6 +55,16 @@ interface CalendarEvent {
 }
 
 /**
+ * A calendar row after the two columns every occurrence must carry have been
+ * checked. `name` and `starts_on` are mandatory stored columns of Event, so
+ * anything missing them is a broken response rather than a sparse one.
+ */
+type ResolvedCalendarEvent = CalendarEvent & {
+  name: string;
+  starts_on: string;
+};
+
+/**
  * Widest calendar range this tool will forward to ERPNext, in days.
  *
  * The recurrence expansion runs server-side and walks day by day for Daily and
@@ -904,18 +914,41 @@ export const operationsTools: ErpNextTool[] = [
             "Treat this as an ERPNext-side failure, not as an empty calendar.",
         );
       }
+      // The array being well formed says nothing about its elements. `name` and
+      // `starts_on` are both stored, mandatory columns of Event, so a row that
+      // arrives without either is the same broken contract as a non-array
+      // answer - and it fails in a nastier way, because the row survives the
+      // mapping below and reaches the model as a real calendar entry with no
+      // subject, no time and an `_id` of `undefined::#0`. A phantom meeting is
+      // worse than an error: the model presents it as fact.
+      const rows: ResolvedCalendarEvent[] = [];
+      for (const event of events) {
+        if (
+          !event || typeof event !== "object" || Array.isArray(event) ||
+          typeof event.name !== "string" || !event.name ||
+          typeof event.starts_on !== "string" || !event.starts_on
+        ) {
+          throw new Error(
+            "[erpnext_calendar_events] frappe.desk.doctype.event.event.get_events " +
+              `returned a row without a usable name and start: ${
+                JSON.stringify(event)
+              }. ` +
+              "Both are mandatory stored columns of Event, so treat this as an " +
+              "ERPNext-side failure rather than as a calendar entry.",
+          );
+        }
+        rows.push(event as ResolvedCalendarEvent);
+      }
       // ERPNext returns candidates ordered by `starts_on`, then appends every
       // expanded occurrence of a repeating master in that master's own position -
       // so the array arrives in per-master blocks, not globally chronological.
       // Slicing it unsorted would spend the limit on late occurrences of an early
       // recurring event while dropping an earlier one-off meeting from a later
       // block, which is the opposite of what "the next N events" means.
-      const rows = [...events].sort((a, b) => {
-        const byStart = String(a.starts_on ?? "").localeCompare(
-          String(b.starts_on ?? ""),
-        );
+      rows.sort((a, b) => {
+        const byStart = a.starts_on.localeCompare(b.starts_on);
         if (byStart !== 0) return byStart;
-        return String(a.name ?? "").localeCompare(String(b.name ?? ""));
+        return a.name.localeCompare(b.name);
       });
       // Identity for the viewer's expanded panel, one entry per row.
       //
@@ -937,15 +970,13 @@ export const operationsTools: ErpNextTool[] = [
       // is the document ERPNext can actually fetch - and the viewer hides every
       // underscore-prefixed key from its columns.
       const usedIds = new Set<string>();
-      const occurrenceId = (
-        event: { name?: unknown; starts_on?: unknown },
-        index: number,
-      ): string => {
-        // The index survives only as the last resort for a row with no
-        // `starts_on` at all, and as the tie-breaker for two rows ERPNext
-        // returned with the same master and the same start. Both are degenerate
-        // enough that a positional id is better than a colliding one.
-        const base = `${event.name}::${event.starts_on ?? `#${index}`}`;
+      const occurrenceId = (event: ResolvedCalendarEvent): string => {
+        // A suffix covers the one case the pair cannot separate: two rows
+        // ERPNext returned with the same master AND the same start. That is
+        // degenerate enough that a counter is the right answer - a colliding
+        // id would put both rows back under one panel, which is the bug this
+        // whole identity exists to fix.
+        const base = `${event.name}::${event.starts_on}`;
         let id = base;
         for (let duplicate = 2; usedIds.has(id); duplicate++) {
           id = `${base}#${duplicate}`;
@@ -954,8 +985,8 @@ export const operationsTools: ErpNextTool[] = [
         return id;
       };
 
-      const data = rows.slice(0, limit).map((event, index) => ({
-        _id: occurrenceId(event, index),
+      const data = rows.slice(0, limit).map((event) => ({
+        _id: occurrenceId(event),
         name: event.name,
         subject: event.subject,
         starts_on: event.starts_on,

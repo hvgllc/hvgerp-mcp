@@ -1218,3 +1218,30 @@ Deno.test("erpnext_calendar_events - two rows with the same master and start sti
     2,
   );
 });
+
+Deno.test("erpnext_calendar_events - rejects a row that carries no name or start", async () => {
+  // The outer array being well formed says nothing about its elements. A row
+  // without `name`/`starts_on` used to survive the mapping and reach the model
+  // as a real calendar entry with no subject and no time - a phantom meeting,
+  // which a model presents as fact rather than as the upstream fault it is.
+  for (
+    const broken of [
+      {},
+      { name: "EV00045" },
+      { starts_on: "2026-08-17 08:30:00" },
+      { name: "", starts_on: "2026-08-17 08:30:00" },
+      { name: "EV00045", starts_on: "" },
+      null,
+    ]
+  ) {
+    await assertRejects(
+      () =>
+        getTool("erpnext_calendar_events").handler(
+          { start: "2026-08-17" },
+          makeCtx(makeMockClient({ callMethod: async () => [broken] })),
+        ),
+      Error,
+      "without a usable name and start",
+    );
+  }
+});

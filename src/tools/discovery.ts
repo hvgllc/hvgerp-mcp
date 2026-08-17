@@ -441,15 +441,17 @@ interface ParentResolution {
  * list, so an account that cannot read `DocField` gets a `PermissionError`
  * here - measured for `khoa.do@havigroup.com`, whose
  * `has_permission('DocField', 'read')` is false. A source that refuses is
- * skipped and named, and only when EVERY source refuses does this fall back to
- * the single arbitrary name.
+ * skipped and named; the caller decides what a partial list is worth, which is
+ * why the single-name fallback lives in `resolveParentsFromMeta` rather than
+ * here.
  *
  * Every other outcome of those calls is an error, not a short list. A response
- * that is not an array means the endpoint broke its contract - a compatibility
- * break, a custom app shadowing `frappe.client.get_list`, a proxy rewriting the
- * body - and none of those says anything about who owns this child table.
- * Falling through to the single arbitrary name would answer a broken contract
- * with a permission verdict, which is exactly the swap AGENTS.md forbids.
+ * that is not an array - or a row that arrives without the owner field it was
+ * asked for - means the endpoint broke its contract: a compatibility break, a
+ * custom app shadowing `frappe.client.get_list`, a proxy rewriting the body.
+ * None of those says anything about who owns this child table, and shrinking
+ * the owner list over one would answer a broken contract with a permission
+ * verdict, which is exactly the swap AGENTS.md forbids.
  */
 async function resolveChildParents(
   ctx: Parameters<ErpNextTool["handler"]>[1],
@@ -484,9 +486,22 @@ async function resolveChildParents(
       }
       for (const row of rows) {
         const name = row?.[source.ownerField];
-        if (typeof name === "string" && name && name !== doctype) {
-          parents.add(name);
+        if (typeof name !== "string" || !name) {
+          throw new Error(
+            `[erpnext_doctype_fields] Listing the ${source.doctype} rows that own ` +
+              `'${doctype}' returned a row with no '${source.ownerField}' value: ` +
+              `${
+                JSON.stringify(row)
+              }. That field was the only one requested and ` +
+              "is mandatory on every row of this table, so this is a broken " +
+              "response; dropping the row would shrink the owner list and turn " +
+              "the fault into a permission refusal.",
+          );
         }
+        // A child table can declare a Table field pointing at itself (a tree of
+        // rows). That is not an owner, and probing it would ask for permission
+        // on the very DocType whose access is in question.
+        if (name !== doctype) parents.add(name);
       }
       if (rows.length >= MAX_PARENT_ROWS) truncated = true;
     } catch (error) {
@@ -501,38 +516,51 @@ async function resolveChildParents(
     }
   }
 
-  // Only when NO source could be read at all is the single arbitrary name worth
-  // having. Reaching for it while one source answered would add a name the
-  // caller is then gated against, on top of a list that is already real.
-  if (deniedSources.length === OWNER_SOURCES.length) {
-    // `with_parent: 1` makes `getdoctype` attach the owning DocType alongside
-    // the child. One name only, but it is the one answer a caller with no
-    // access to any owner source can still get.
-    const envelope = await ctx.client.callMethodRaw<
-      { docs?: RawDocTypeMeta[] }
-    >(
-      "frappe.desk.form.load.getdoctype",
-      { doctype, with_parent: 1 },
-      { httpMethod: "GET" },
-    );
-    for (const candidate of envelope?.docs ?? []) {
-      const name = candidate.name;
-      if (!name || name === doctype) continue;
-      const ownsIt = (candidate.fields ?? []).some(
-        (field) =>
-          (field.fieldtype === "Table" ||
-            field.fieldtype === "Table MultiSelect") &&
-          field.options === doctype,
-      );
-      if (ownsIt) parents.add(name);
-    }
-  }
-
   return {
     parents: [...parents],
     gap: truncated ? "truncated" : deniedSources.length > 0 ? "denied" : "none",
     deniedSources,
   };
+}
+
+/**
+ * The one owner name a caller who cannot enumerate the sources can still get.
+ *
+ * `with_parent: 1` makes `getdoctype` attach the owning DocType alongside the
+ * child. It answers with ONE parent and which one is arbitrary (see
+ * `resolveChildParents`), so it is a last resort rather than the primary path -
+ * but a last resort is exactly what a permission gap leaves.
+ *
+ * It is reached whenever the enumeration was incomplete AND no enumerated owner
+ * granted access, not only when every source refused. The stricter rule denied
+ * the ordinary case: standard child tables declare their owner in `DocField`
+ * alone, so a caller who cannot read `DocField` but can read `Custom Field`
+ * enumerated an empty list, hit no refusal count high enough to fall back, and
+ * was told no parent could be resolved - while `getdoctype` would have named
+ * the parent they could read all along.
+ */
+async function resolveParentsFromMeta(
+  ctx: Parameters<ErpNextTool["handler"]>[1],
+  doctype: string,
+): Promise<string[]> {
+  const parents: string[] = [];
+  const envelope = await ctx.client.callMethodRaw<{ docs?: RawDocTypeMeta[] }>(
+    "frappe.desk.form.load.getdoctype",
+    { doctype, with_parent: 1 },
+    { httpMethod: "GET" },
+  );
+  for (const candidate of envelope?.docs ?? []) {
+    const name = candidate.name;
+    if (!name || name === doctype) continue;
+    const ownsIt = (candidate.fields ?? []).some(
+      (field) =>
+        (field.fieldtype === "Table" ||
+          field.fieldtype === "Table MultiSelect") &&
+        field.options === doctype,
+    );
+    if (ownsIt && !parents.includes(name)) parents.push(name);
+  }
+  return parents;
 }
 
 /**
@@ -565,6 +593,24 @@ async function assertChildReadable(
     if (await canRead(ctx, parent)) return;
   }
 
+  // The enumeration answered incompletely and nothing it did find is readable,
+  // so the arbitrary single name is now worth asking for: it is the only owner
+  // still unaccounted for. Ordering matters - probing it first would spend a
+  // request on a name the enumeration usually already contains, and probing it
+  // at all before the real list is exhausted would let one arbitrary parent
+  // decide a verdict the full list disagrees with. A `truncated` gap is left
+  // out on purpose: that list is long, not short, and `getdoctype` cannot add
+  // to it.
+  const fallbackParents = gap === "denied"
+    ? (await resolveParentsFromMeta(ctx, doctype)).filter(
+      (parent) => !parents.includes(parent),
+    )
+    : [];
+  for (const parent of fallbackParents) {
+    if (await canRead(ctx, parent)) return;
+  }
+  const probed = [...parents, ...fallbackParents];
+
   // Each gap has its own sentence because they point at different remedies. A
   // single "the list may be partial" that blamed DocField access told an
   // administrator-level caller to go ask for a permission they already hold.
@@ -583,12 +629,12 @@ async function assertChildReadable(
   throw new Error(
     `[erpnext_doctype_fields] '${doctype}' is a child table, so it has no ` +
       "permissions of its own; access comes from the document that owns it. " +
-      (parents.length > 0
+      (probed.length > 0
         ? `You cannot read ${
-          parents.length > 1
+          probed.length > 1
             ? "any of its parent DocTypes"
             : "its parent DocType"
-        } (${parents.join(", ")}), so its schema stays out of scope.`
+        } (${probed.join(", ")}), so its schema stays out of scope.`
         : "No parent DocType could be resolved for it, so there is nothing to " +
           "check the permission against.") +
       gapNote +

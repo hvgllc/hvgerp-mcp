@@ -221,9 +221,12 @@ function makeChildClient(overrides: Record<string, AnyFn> = {}): FrappeClient {
     // The owner enumeration has to answer with a row list. The blanket
     // `{ has_permission: true }` of the base mock is not one, and the tool now
     // treats a non-list as the broken contract it is - see the dedicated test.
-    callMethod: async (method: string) =>
+    // Each source answers with its OWN owner column (`parent` for `DocField`,
+    // `dt` for `Custom Field`); a row missing the column it was asked for is a
+    // broken response, so the fixture may not hand `{ parent }` to both.
+    callMethod: async (method: string, args: Record<string, unknown>) =>
       method === "frappe.client.get_list"
-        ? [{ parent: "Sales Invoice" }]
+        ? (args.doctype === "Custom Field" ? [] : [{ parent: "Sales Invoice" }])
         : { has_permission: true },
     ...overrides,
   });
@@ -263,9 +266,18 @@ function makeChildPermissionClient(
         // A real denial arrives as HTTP 403, which is what separates it from a
         // timeout or a 5xx.
         if (owners === null) {
-          throw new FrappeAPIError("Not permitted for DocField", 403, {});
+          throw new FrappeAPIError(
+            `Not permitted for ${args.doctype}`,
+            403,
+            {},
+          );
         }
-        return owners.map((parent) => ({ parent }));
+        // These fixtures describe standard child tables, whose owners are all
+        // declared in `DocField`; `Custom Field` legitimately owns none of
+        // them, and must answer with its own column rather than `parent`.
+        return args.doctype === "Custom Field"
+          ? []
+          : owners.map((parent) => ({ parent }));
       }
       asked.push(args.doctype as string);
       // The child itself is unreadable for everyone but Administrator, which is
@@ -893,9 +905,9 @@ Deno.test("erpnext_doctype_fields - names the owner source that was actually den
 });
 
 Deno.test("erpnext_doctype_fields - one readable source is not degraded by the other being denied", async () => {
-  // `DocField` answered, so the single arbitrary name from `getdoctype` must
-  // NOT be reached for: adding it would put a DocType on the list that the
-  // caller is then gated against, on top of a list that is already real.
+  // `DocField` answered and its owner is readable, so the verdict is already
+  // decided and the single arbitrary name from `getdoctype` must NOT be
+  // reached for: it would spend a request on a name that changes nothing.
   const denial = new FrappeAPIError("Not permitted for Custom Field", 403, {});
   const asked: string[] = [];
   const client = makeOwnerSourceClient(
@@ -936,6 +948,74 @@ Deno.test("erpnext_doctype_fields - both sources denied names both and falls bac
   // Only when no source could be read at all is the single arbitrary owner
   // from `getdoctype` worth having.
   assertEquals(asked, ["Sales Invoice"]);
+});
+
+Deno.test("erpnext_doctype_fields - a denied source still reaches the fallback when nothing enumerated is readable", async () => {
+  // The regression a stricter rule caused: a standard child table declares its
+  // owner in `DocField` alone, so a caller who may not read `DocField` but may
+  // read `Custom Field` enumerated an EMPTY list without every source refusing.
+  // A fallback gated on "all sources refused" never fired, and the caller was
+  // told no parent could be resolved - while `getdoctype` names the parent they
+  // can read all along.
+  const denial = new FrappeAPIError("Not permitted for DocField", 403, {});
+  const asked: string[] = [];
+  const client = makeOwnerSourceClient(denial, [], ["Sales Invoice"], asked);
+
+  const result = await getTool("erpnext_doctype_fields").handler(
+    { doctype: "Sales Invoice Item" },
+    makeCtx(client),
+  ) as any;
+
+  assertEquals(asked, ["Sales Invoice"]);
+  assertEquals(result.is_child_table, true);
+});
+
+Deno.test("erpnext_doctype_fields - the fallback stays unprobed when the enumeration was complete", async () => {
+  // No source refused, so the list is the whole truth. Reaching for the
+  // arbitrary single name would put a DocType in the refusal message that the
+  // enumeration already proved is not an owner of this child.
+  const asked: string[] = [];
+  const client = makeOwnerSourceClient(["Quotation"], [], [], asked);
+
+  const error = await assertRejects(
+    () =>
+      getTool("erpnext_doctype_fields").handler(
+        { doctype: "Sales Invoice Item" },
+        makeCtx(client),
+      ),
+    Error,
+  );
+
+  assertEquals(asked, ["Quotation"]);
+  assertStringIncludes(error.message, "(Quotation)");
+  assertEquals(error.message.includes("That list may be partial"), false);
+});
+
+Deno.test("erpnext_doctype_fields - an owner row without the field it was asked for is a broken response", async () => {
+  // `fields: [ownerField]` was the only column requested and it is mandatory on
+  // every row of that table, so a row without it broke the contract. Dropping
+  // it would shrink the owner list and hand back a permission refusal for what
+  // is really an upstream fault.
+  for (const broken of [{}, { parent: "" }, { parent: null }, { dt: "X" }]) {
+    const client = makeChildClient({
+      callMethod: async (method: string, args: Record<string, unknown>) =>
+        method === "frappe.client.get_list"
+          ? (args.doctype === "Custom Field" ? [] : [broken])
+          : { has_permission: true },
+    });
+
+    const error = await assertRejects(
+      () =>
+        getTool("erpnext_doctype_fields").handler(
+          { doctype: "Sales Invoice Item" },
+          makeCtx(client),
+        ),
+      Error,
+      "no 'parent' value",
+    );
+    // A broken response must not be reported as a permission verdict.
+    assertEquals(error.message.includes("stays out of scope"), false);
+  }
 });
 
 Deno.test("erpnext_doctype_fields - the _user_tags filter advice matches how v16 stores tags", async () => {
