@@ -13,6 +13,12 @@
 FROM node:22-slim
 
 # Ghim phiên bản để image tái lập được. Nâng cấp = đổi giá trị này, không phải build lại cùng tag.
+#
+# Giá trị này bám theo bản MỚI NHẤT ĐÃ PUBLISH lên npm, KHÔNG bám theo `version` trong `deno.json`.
+# Hai con số cố ý lệch nhau giữa lúc gộp một PR tính năng và lúc phát hành: ghim một phiên bản chưa
+# publish thì `npm install -g` chết E404 và image không dựng được. Vì vậy dòng này chỉ đổi TRONG
+# commit phát hành, sau khi `npm publish` đã thành công. Đối chiếu bằng:
+#   npm view @hvgllc/hvgerp-mcp version
 ARG HVGERP_MCP_VERSION=3.0.3
 
 ENV NODE_ENV=production
