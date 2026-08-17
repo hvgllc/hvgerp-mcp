@@ -65,6 +65,34 @@ interface CalendarEvent {
  */
 const MAX_CALENDAR_SPAN_DAYS = 366;
 
+/**
+ * Assert that a string is a calendar date that actually exists.
+ *
+ * The shape check alone is not enough. `2026-02-31` matches `\d{4}-\d{2}-\d{2}`
+ * and `9999-99-99` does too, and the two fail in different, equally quiet ways:
+ * a rolled-over date shifts the whole window into another month, while an
+ * unparseable one turns every later comparison into `NaN`, which is false
+ * against both `<` and `>` - so the range guards wave it through and ERPNext
+ * answers with a database error instead of the validation message this tool
+ * promises. Round-tripping through UTC catches both.
+ */
+function assertRealDate(label: string, value: string): void {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new Error(
+      `[erpnext_calendar_events] '${label}' must be a date in YYYY-MM-DD form`,
+    );
+  }
+  const parsed = new Date(`${value}T00:00:00Z`);
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.toISOString().slice(0, 10) !== value
+  ) {
+    throw new Error(
+      `[erpnext_calendar_events] '${label}' (${value}) is not a real calendar date`,
+    );
+  }
+}
+
 /** Whole days from one YYYY-MM-DD date to another, in UTC. */
 function daysBetweenISO(from: string, to: string): number {
   const a = Date.parse(`${from}T00:00:00Z`);
@@ -818,17 +846,9 @@ export const operationsTools: ErpNextTool[] = [
     },
     handler: async (input, ctx) => {
       const start = (input.start as string).trim();
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) {
-        throw new Error(
-          "[erpnext_calendar_events] 'start' must be a date in YYYY-MM-DD form",
-        );
-      }
+      assertRealDate("start", start);
       const rawEnd = (input.end as string | undefined)?.trim();
-      if (rawEnd && !/^\d{4}-\d{2}-\d{2}$/.test(rawEnd)) {
-        throw new Error(
-          "[erpnext_calendar_events] 'end' must be a date in YYYY-MM-DD form",
-        );
-      }
+      if (rawEnd) assertRealDate("end", rawEnd);
       // Default the range from `start` rather than from the server clock: the MCP
       // process and the ERPNext site need not share a timezone, and "today" read
       // on the wrong side of midnight silently shifts the whole week.
@@ -863,7 +883,31 @@ export const operationsTools: ErpNextTool[] = [
         },
         { httpMethod: "GET" },
       );
-      const rows = Array.isArray(events) ? events : [];
+      // A non-array here is a broken contract, not an empty calendar. Coercing it
+      // to `[]` would hand back `count: 0` and let a model tell someone they have
+      // no meetings at the exact moment the endpoint stopped working as expected.
+      if (!Array.isArray(events)) {
+        throw new Error(
+          "[erpnext_calendar_events] frappe.desk.doctype.event.event.get_events " +
+            `returned ${
+              JSON.stringify(events)
+            } instead of an array of events. ` +
+            "Treat this as an ERPNext-side failure, not as an empty calendar.",
+        );
+      }
+      // ERPNext returns candidates ordered by `starts_on`, then appends every
+      // expanded occurrence of a repeating master in that master's own position -
+      // so the array arrives in per-master blocks, not globally chronological.
+      // Slicing it unsorted would spend the limit on late occurrences of an early
+      // recurring event while dropping an earlier one-off meeting from a later
+      // block, which is the opposite of what "the next N events" means.
+      const rows = [...events].sort((a, b) => {
+        const byStart = String(a.starts_on ?? "").localeCompare(
+          String(b.starts_on ?? ""),
+        );
+        if (byStart !== 0) return byStart;
+        return String(a.name ?? "").localeCompare(String(b.name ?? ""));
+      });
       const data = rows.slice(0, limit).map((event) => ({
         name: event.name,
         subject: event.subject,

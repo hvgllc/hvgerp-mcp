@@ -196,6 +196,14 @@ it holds on any ERPNext build) and, when ERPNext supplies it, `recurring_from`
 (the stored master's start). A plain `erpnext_doc_list` on `Event` cannot do
 this: it returns the single stored row.
 
+Rows are sorted by `starts_on` (ties broken by `name`) before `limit` cuts the
+page, so "the next N events" really is the next N. ERPNext does not sort its
+answer: it appends every expansion of a repeating master in that master's own
+position, so the raw array arrives in per-master blocks. `start` and `end` must
+be dates that exist - `2026-02-31` matches the `YYYY-MM-DD` shape but silently
+rolls into March, so it is rejected rather than sent. A non-array answer from
+ERPNext is an error, never an empty calendar.
+
 Both ends of the range are **inclusive** - ERPNext compares with
 `date(starts_on) BETWEEN date(start) AND date(end)` and expands occurrences
 while `target_date <= end` - so `end` defaults to `start` plus six days, which
@@ -254,10 +262,23 @@ a `_list`, `_get`, or `erpnext_doc_update` call has to guess. It takes
 `doctype`, optional `search` (substring on fieldname and label), and optional
 `include_hidden`. Each field comes back with `fieldname`, `label`, `fieldtype`,
 `options` (the target DocType for a Link, the choices for a Select), `reqd`,
-`read_only`, `in_list_view`, `permlevel`, and `description`; layout-only
-fieldtypes (Section Break, Column Break, Tab Break, Fold, Heading, HTML, Button)
-are dropped. The document header reports `module`, `is_single`,
+`read_only`, `in_list_view`, `permlevel`, `description`, and `is_standard`;
+layout-only fieldtypes (Section Break, Column Break, Tab Break, Fold, Heading,
+HTML, Button) are dropped. The document header reports `module`, `is_single`,
 `is_child_table`, `is_submittable`, `is_tree`, and `title_field`.
+
+The answer opens with the seven columns Frappe stores on every DocType - `name`,
+`owner`, `creation`, `modified`, `modified_by`, `docstatus`, `idx` - marked
+`is_standard: true`, plus `parent`, `parentfield`, and `parenttype` when the
+DocType is a child table. No form declares them, so the metadata endpoint does
+not list them, yet they are real columns and they are the ones a caller reaches
+for first: `owner` to ask "mine", `modified` to ask "recent", `docstatus` to
+tell a draft from a submitted document. Omitting them made the tool answer "no
+such field" for a field that exists. `include_hidden` does not apply to them
+(they are not hidden form fields; they are columns no form declared), but
+`search` does. `doctype` is deliberately absent: it is in Frappe's
+`default_fields` tuple but is attached in memory rather than stored, so
+filtering or sorting on it fails at the database.
 
 Reading a sample document is not a substitute: it shows only the fields that
 happen to be filled in, without labels, types, or link targets.

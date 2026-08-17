@@ -36,6 +36,110 @@ const LAYOUT_FIELDTYPES = new Set([
   "Button",
 ]);
 
+/** A field every DocType stores, described the way a `fields` row would be. */
+interface StandardField {
+  fieldname: string;
+  label: string;
+  fieldtype: string;
+  options: string | null;
+  description: string;
+}
+
+/**
+ * The columns Frappe adds to every table, which `getdoctype` never lists.
+ *
+ * They are absent from the `fields` child table because nobody defined them in
+ * the DocType form, yet they are real columns and they are exactly the ones a
+ * model reaches for first: `owner` to ask "mine", `modified` to ask "recent",
+ * `docstatus` to tell a draft from a submitted document. Leaving them out of
+ * this tool's answer means the tool says a field does not exist when it does,
+ * and the caller then writes a filter that ERPNext rejects.
+ *
+ * Mirrors `frappe/model/__init__.py::default_fields` minus `doctype`, which is
+ * in that tuple but is NOT a column - it is attached in memory when a document
+ * is loaded, so filtering or sorting on it fails at the database.
+ */
+const STANDARD_FIELDS: readonly StandardField[] = [
+  {
+    fieldname: "name",
+    label: "ID",
+    fieldtype: "Data",
+    options: null,
+    description: "Primary key of the document.",
+  },
+  {
+    fieldname: "owner",
+    label: "Created By",
+    fieldtype: "Link",
+    options: "User",
+    description: "User who created the document.",
+  },
+  {
+    fieldname: "creation",
+    label: "Created On",
+    fieldtype: "Datetime",
+    options: null,
+    description: "When the document was created.",
+  },
+  {
+    fieldname: "modified",
+    label: "Last Updated On",
+    fieldtype: "Datetime",
+    options: null,
+    description: "When the document was last written.",
+  },
+  {
+    fieldname: "modified_by",
+    label: "Last Updated By",
+    fieldtype: "Link",
+    options: "User",
+    description: "User who last wrote the document.",
+  },
+  {
+    fieldname: "docstatus",
+    label: "Document Status",
+    fieldtype: "Int",
+    options: null,
+    description: "0 = draft, 1 = submitted, 2 = cancelled.",
+  },
+  {
+    fieldname: "idx",
+    label: "Index",
+    fieldtype: "Int",
+    options: null,
+    description: "Position of the row inside its parent, or 0.",
+  },
+] as const;
+
+/**
+ * The three extra columns a child table carries, from
+ * `frappe/model/__init__.py::child_table_fields`. Only meaningful when
+ * `istable` is set, so they are merged in only then.
+ */
+const CHILD_TABLE_FIELDS: readonly StandardField[] = [
+  {
+    fieldname: "parent",
+    label: "Parent",
+    fieldtype: "Data",
+    options: null,
+    description: "Name of the document this row belongs to.",
+  },
+  {
+    fieldname: "parentfield",
+    label: "Parent Field",
+    fieldtype: "Data",
+    options: null,
+    description: "Fieldname of the table this row sits in.",
+  },
+  {
+    fieldname: "parenttype",
+    label: "Parent Type",
+    fieldtype: "Link",
+    options: "DocType",
+    description: "DocType of the parent document.",
+  },
+] as const;
+
 /** One row of the `fields` child table of a DocType, as `getdoctype` returns it. */
 interface RawDocField {
   fieldname?: string;
@@ -91,8 +195,10 @@ export const discoveryTools: ErpNextTool[] = [
       "whether it is mandatory or read-only, and its permission level. Use this before " +
       "erpnext_doc_list / erpnext_doc_get when you need to filter, sort or select a field and " +
       "are not certain it exists — reading a sample document only reveals the fields that " +
-      "happen to be filled in. Fails with a permission error if the caller cannot read the " +
-      "DocType, so the answer is always inside the caller's own scope.",
+      "happen to be filled in. The answer also lists the standard columns every DocType stores " +
+      "(name, owner, creation, modified, modified_by, docstatus, idx) marked is_standard, because " +
+      "they are filterable and sortable but appear in no form. Fails with a permission error if " +
+      "the caller cannot read the DocType, so the answer is always inside the caller's own scope.",
     category: "discovery",
     inputSchema: {
       type: "object",
@@ -140,14 +246,38 @@ export const discoveryTools: ErpNextTool[] = [
       }
 
       const needle = (input.search as string | undefined)?.toLowerCase().trim();
-      const fields = (meta.fields ?? [])
+      const matches = (fieldname: string, label: string | null | undefined) =>
+        !needle ||
+        `${fieldname} ${label ?? ""}`.toLowerCase().includes(needle);
+
+      // Standard columns come first, and they are never subject to
+      // `include_hidden`: they are not hidden form fields, they are columns that
+      // no form ever declared. They are all read-only from a writer's point of
+      // view, and all filterable and sortable from a reader's.
+      const standard = [
+        ...STANDARD_FIELDS,
+        ...(meta.istable ? CHILD_TABLE_FIELDS : []),
+      ]
+        .filter((field) => matches(field.fieldname, field.label))
+        .map((field) => ({
+          fieldname: field.fieldname,
+          label: field.label,
+          fieldtype: field.fieldtype,
+          options: field.options,
+          reqd: false,
+          read_only: true,
+          in_list_view: false,
+          permlevel: 0,
+          description: field.description,
+          is_standard: true,
+        }));
+
+      const declared = (meta.fields ?? [])
         .filter((field) => {
           if (!field.fieldname) return false;
           if (LAYOUT_FIELDTYPES.has(field.fieldtype ?? "")) return false;
           if (!input.include_hidden && field.hidden) return false;
-          if (!needle) return true;
-          return `${field.fieldname} ${field.label ?? ""}`.toLowerCase()
-            .includes(needle);
+          return matches(field.fieldname, field.label);
         })
         .map((field) => ({
           fieldname: field.fieldname,
@@ -162,7 +292,10 @@ export const discoveryTools: ErpNextTool[] = [
           // it can be absent from documents even when the DocType is readable.
           permlevel: field.permlevel ?? 0,
           description: field.description ?? null,
+          is_standard: false,
         }));
+
+      const fields = [...standard, ...declared];
 
       return {
         doctype: meta.name ?? doctype,

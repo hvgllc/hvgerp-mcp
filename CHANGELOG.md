@@ -22,7 +22,14 @@ requests and tags actually live.
   targets. The Frappe metadata endpoint behind it performs no permission check
   of its own, so the tool asks ERPNext first through
   `frappe.client.has_permission` and refuses when the caller cannot read the
-  doctype.
+  doctype. The answer also lists the seven columns Frappe stores on every
+  DocType (`name`, `owner`, `creation`, `modified`, `modified_by`, `docstatus`,
+  `idx`, plus `parent`/`parentfield`/`parenttype` on a child table) marked
+  `is_standard`: no form declares them so the metadata endpoint omits them, yet
+  they are real, filterable columns and they are the ones a caller reaches for
+  first. `doctype` is deliberately not among them - it is in Frappe's
+  `default_fields` tuple but is attached in memory rather than stored, so
+  filtering or sorting on it fails at the database.
 - **`erpnext_calendar_events`.** Lists Events over a date range through the same
   call the ERPNext calendar uses, so a repeating event is expanded into one row
   per occurrence, each tagged `is_recurring` (read from the stored
@@ -36,7 +43,14 @@ requests and tags actually live.
   expansion walks day by day server-side. The tool description states the scope
   it actually covers - open events that are Public, owned by the caller, or
   shared with them - so an answer is not presented as a complete personal
-  schedule.
+  schedule. Rows are ordered by `starts_on` before `limit` applies, because
+  ERPNext appends each master's expanded occurrences in that master's own
+  position rather than in chronological order, so an unsorted page could spend
+  its whole limit on late occurrences of one recurring event and drop the
+  earliest meeting of the week. A `start` or `end` that has the right shape but
+  is not a real date (`2026-02-31`) is refused instead of silently rolling into
+  the next month, and a non-array answer from ERPNext raises an error rather
+  than being reported as an empty calendar.
 - **`erpnext_account_list` filters on `disabled`** and returns the field, so
   "how many accounts are active" is a direct question rather than an inference.
 
@@ -54,7 +68,9 @@ requests and tags actually live.
   cannot be a total, `count` is `null` and `count_error` explains why, and
   `has_more` stays `true`; the page length is never substituted, because doing
   so would restore the same lie in the one case where the list is most likely to
-  really be truncated.
+  really be truncated. The doclist viewer prints "N of an unknown number of
+  records" in that case and says why in its status line, rather than falling
+  back to the page length.
 
 ## [3.2.0] - 2026-08-17
 

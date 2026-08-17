@@ -90,7 +90,10 @@ export function DoclistViewer() {
       const parsed = JSON.parse(text);
       if (!parsed) return false;
       if (!Array.isArray(parsed.data)) {
-        if (parsed._title || parsed._rowAction || parsed.count != null) {
+        // `"count" in parsed` rather than `parsed.count != null`: an explicit
+        // null count is a doclist payload whose total could not be resolved,
+        // not a payload of some other shape.
+        if (parsed._title || parsed._rowAction || "count" in parsed) {
           parsed.data = [];
         } else {
           return false;
@@ -429,7 +432,16 @@ function DoclistContent({ data, error, refreshing, onRefresh, onError }: {
             {title}
           </div>
           <div style={{ fontSize: 12, color: colors.text.muted }}>
-            {sorted.length} of {data.count ?? rows.length} records
+            {
+              /* `?? rows.length` would be wrong here: a null total means the
+                server could not count, and the page length is not a total. It
+                would read as complete exactly when the list is most likely
+                truncated. */
+            }
+            {sorted.length} of{" "}
+            {typeof data.count === "number"
+              ? data.count
+              : "an unknown number of"} records
           </div>
           <div
             aria-live="polite"
@@ -439,7 +451,12 @@ function DoclistContent({ data, error, refreshing, onRefresh, onError }: {
               marginTop: 4,
             }}
           >
-            {error ?? (refreshing ? "Refreshing…" : "Auto-refresh on focus")}
+            {error ??
+              (refreshing
+                ? "Refreshing…"
+                : data.count === null && data.count_error
+                ? `Total unavailable: ${data.count_error}`
+                : "Auto-refresh on focus")}
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
