@@ -31,7 +31,8 @@ import type {
 import { env } from "../runtime.ts";
 import type { Cache } from "../cache/types.ts";
 import { MemoryCache } from "../cache/memory.ts";
-import { getCache, getCacheTtlMs } from "../cache/cache.ts";
+import { createCache, getCache, getCacheTtlMs } from "../cache/cache.ts";
+import { currentCaller } from "./caller-context.ts";
 
 /** Deterministic JSON.stringify — sorts object keys so equivalent options produce the same cache key. */
 function stableStringify(value: unknown): string {
@@ -56,10 +57,18 @@ function stableStringify(value: unknown): string {
 export interface FrappeClientConfig {
   /** ERPNext base URL, e.g. http://localhost:8000 */
   baseUrl: string;
-  /** API Key from ERPNext user settings */
-  apiKey: string;
-  /** API Secret from ERPNext user settings */
-  apiSecret: string;
+  /** API Key from ERPNext user settings. Omit when passing `authHeader`. */
+  apiKey?: string;
+  /** API Secret from ERPNext user settings. Omit when passing `authHeader`. */
+  apiSecret?: string;
+  /**
+   * Produces the `Authorization` header value for each request, overriding `apiKey`/`apiSecret`.
+   *
+   * Called per request rather than once in the constructor because the value it returns is the
+   * *calling user's* short-lived access token: a header captured at construction time would be
+   * stale by the next refresh, and a client instance is reused across a caller's requests.
+   */
+  authHeader?: () => string;
   /** Request timeout in ms. Default: 30000 */
   timeoutMs?: number;
   /** Maximum decoded file upload size in bytes. Default: 10 MiB. */
@@ -95,6 +104,24 @@ export interface FrappeClientConfig {
    * app-wide cache (see getFrappeClient()).
    */
   cache?: Cache;
+  /**
+   * Other caches in this process holding the same ERPNext rows, to be invalidated together with
+   * `cache`.
+   *
+   * Needed since each caller got a cache of their own: a mutation clears the writer's cache, but
+   * every OTHER caller keeps serving the document they cached before the write until their TTL
+   * runs out. The old single shared cache was invalidated process-wide for free; caller isolation
+   * has to buy that back explicitly.
+   *
+   * Deliberately a function rather than an array: the set of live caller caches changes on every
+   * request (created on first use, dropped when idle or evicted), so a snapshot taken at
+   * construction time would go stale immediately.
+   *
+   * Deliberately invalidation ONLY. Values are never read across the boundary, so a peer learns
+   * that some row changed - never what it says. Peers that are not this client's `cache` are
+   * skipped by identity, so nothing is cleared twice.
+   */
+  cachePeers?: () => Iterable<Cache>;
 }
 
 const DEFAULT_RETRY_STATUSES = [408, 429, 502, 503, 504];
@@ -229,7 +256,7 @@ function extractServerMessages(raw: unknown): string | undefined {
  */
 export class FrappeClient {
   private baseUrl: string;
-  private authHeader: string;
+  private resolveAuthHeader: () => string;
   private timeoutMs: number;
   private maxUploadBytes: number;
   private retries: number;
@@ -237,10 +264,22 @@ export class FrappeClient {
   private retryBackoffMs: number;
   private retryMethods: string[];
   private cache: Cache;
+  private cachePeers?: () => Iterable<Cache>;
 
   constructor(config: FrappeClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, "");
-    this.authHeader = `token ${config.apiKey}:${config.apiSecret}`;
+    if (config.authHeader) {
+      this.resolveAuthHeader = config.authHeader;
+    } else if (config.apiKey && config.apiSecret) {
+      const staticHeader = `token ${config.apiKey}:${config.apiSecret}`;
+      this.resolveAuthHeader = () => staticHeader;
+    } else {
+      // No silent fallback: a client with no credentials would issue unauthenticated requests and
+      // Frappe would answer as Guest, which reads as "empty result" rather than as an error.
+      throw new Error(
+        "[FrappeClient] either apiKey + apiSecret or authHeader is required",
+      );
+    }
     this.timeoutMs = config.timeoutMs ?? 30_000;
     this.maxUploadBytes = config.maxUploadBytes ?? DEFAULT_MAX_UPLOAD_BYTES;
     if (!Number.isInteger(this.maxUploadBytes) || this.maxUploadBytes <= 0) {
@@ -253,13 +292,14 @@ export class FrappeClient {
     this.retryBackoffMs = config.retryBackoffMs ?? 200;
     this.retryMethods = config.retryMethods ?? DEFAULT_RETRY_METHODS;
     this.cache = config.cache ?? new MemoryCache();
+    this.cachePeers = config.cachePeers;
   }
 
   // ── Private HTTP helpers ────────────────────────────────────────────────────
 
   private buildHeaders(includeJsonContentType = true): HeadersInit {
     const headers: Record<string, string> = {
-      "Authorization": this.authHeader,
+      "Authorization": this.resolveAuthHeader(),
       "Accept": "application/json",
     };
     if (includeJsonContentType) {
@@ -500,9 +540,18 @@ export class FrappeClient {
    * acceptable for a given call site.
    */
   invalidate(doctype: string, name?: string): void {
-    this.cache.deleteByPrefix(`list:${doctype}:`);
-    this.cache.deleteByPrefix(`resolve:miss:${doctype}:`);
-    if (name) this.cache.delete(`get:${doctype}:${name}`);
+    const clear = (cache: Cache): void => {
+      cache.deleteByPrefix(`list:${doctype}:`);
+      cache.deleteByPrefix(`resolve:miss:${doctype}:`);
+      if (name) cache.delete(`get:${doctype}:${name}`);
+    };
+
+    clear(this.cache);
+    if (!this.cachePeers) return;
+    for (const peer of this.cachePeers()) {
+      // Identity check, not equality: `cachePeers()` normally includes this client's own cache.
+      if (peer !== this.cache) clear(peer);
+    }
   }
 
   /**
@@ -653,51 +702,211 @@ export class FrappeClient {
   }
 }
 
-// ── Singleton ──────────────────────────────────────────────────────────────
-
-let _client: FrappeClient | null = null;
+// ── Client resolution ──────────────────────────────────────────────────────
 
 /**
- * Get (or lazily create) the singleton FrappeClient.
- * Reads config from environment variables.
+ * Authorization scheme used when forwarding the caller's own Keycloak access token.
  *
- * Follows no-silent-fallbacks: throws if ERPNEXT_URL / ERPNEXT_API_KEY / ERPNEXT_API_SECRET
- * are not set.
+ * Deliberately not `Bearer`: Frappe's native handlers ignore an unknown scheme, so accepting a
+ * realm token becomes an explicit decision made by `hvg_workspace.mcp_auth` rather than something
+ * every Frappe endpoint does implicitly. Same shape as `HVGToken` in `hvg_vault/auth.py`.
  */
-export function getFrappeClient(): FrappeClient {
-  if (_client) return _client;
+const CALLER_AUTH_SCHEME = "HVGKeycloak";
 
+/**
+ * How many per-caller clients to keep. Each holds only a small cache, so the cap exists to
+ * bound memory on a long-lived process, not because clients are expensive.
+ */
+const MAX_CALLER_CLIENTS = 64;
+
+/** Drop a caller's client (and therefore its cached reads) after this long without a request. */
+const CALLER_CLIENT_IDLE_MS = 15 * 60 * 1000;
+
+interface CallerClientEntry {
+  client: FrappeClient;
+  cache: Cache;
+  lastUsedAt: number;
+}
+
+/**
+ * A client handed in from outside (`setFrappeClient`) - tests and dependency injection.
+ *
+ * Kept apart from `_staticClient` on purpose. When both roles shared one variable, the process-wide
+ * service-account client got parked in the same slot an injected client uses, and from then on it
+ * was returned BEFORE `currentCaller()` was ever consulted: every OAuth call after the first
+ * anonymous call (or after a startup cache warm) silently ran under the shared API key instead of
+ * the caller's forwarded identity. The bug was invisible in `required` mode and only appeared in
+ * `optional` mode, where both kinds of call reach the same process.
+ */
+let _injectedClient: FrappeClient | null = null;
+
+/** The process-wide service-account client, built lazily from ERPNEXT_API_KEY / ERPNEXT_API_SECRET. */
+let _staticClient: FrappeClient | null = null;
+
+const _callerClients = new Map<string, CallerClientEntry>();
+
+/**
+ * Every cache this module handed to a client, so a mutation through any one of them can clear the
+ * matching entries in all the others (`cachePeers`).
+ *
+ * Membership is managed here rather than inside the caches because this module is what creates and
+ * drops them: a caller cache joins when its client is built and leaves when the client is evicted
+ * (idle sweep, LRU cap, or `setFrappeClient`). A cache that stayed registered after eviction would
+ * be a slow leak on a long-lived process.
+ */
+const _managedCaches = new Set<Cache>();
+
+/**
+ * Caches to invalidate alongside the one doing the writing. Read fresh on every mutation.
+ *
+ * `getCache()` luôn có mặt trong tập này, kể cả khi chưa client tĩnh nào được dựng. Lý do:
+ * `resolveLink()` ghi các mục phủ định `resolve:miss:{doctype}:{identifier}` vào đúng cache cấp
+ * ứng dụng đó, bất kể client nào đi dò. Ở chế độ caller-identity thì không còn chỗ nào khác ghi
+ * danh nó, nên nếu bỏ ra thì một bản ghi vừa được tạo vẫn bị báo "không khớp gì cả" suốt 15 giây.
+ */
+function managedCaches(): Iterable<Cache> {
+  return new Set([..._managedCaches, getCache()]);
+}
+
+function requireBaseUrl(): string {
   const url = env("ERPNEXT_URL");
-  const apiKey = env("ERPNEXT_API_KEY");
-  const apiSecret = env("ERPNEXT_API_SECRET");
-  const maxUploadBytesRaw = env("ERPNEXT_MAX_UPLOAD_BYTES");
-
   if (!url) {
     throw new Error(
       "[lib/erpnext] ERPNEXT_URL is required. " +
         "Set it to your ERPNext instance URL, e.g. http://localhost:8000",
     );
   }
+  return url;
+}
+
+function configuredUploadLimit(): number | undefined {
+  const raw = env("ERPNEXT_MAX_UPLOAD_BYTES");
+  return raw?.trim() ? Number(raw) : undefined;
+}
+
+/**
+ * The client for the caller currently being served.
+ *
+ * Each principal gets its OWN cache. Sharing the app-wide cache here would be a cross-user data
+ * leak rather than a performance win: two callers with different ERPNext permissions issue
+ * identical cache keys for the same list query, so whoever asked first would decide what the second
+ * one sees.
+ *
+ * Isolated in what they HOLD, joined in what they DROP: every cache this module builds is
+ * registered in `_managedCaches` and passed as `cachePeers`, so a write by one caller clears the
+ * matching keys everywhere. Without that, the other callers would keep serving the pre-write
+ * document until their TTL ran out - a regression against the old single shared cache, which one
+ * `invalidate()` reached in full.
+ *
+ * The `Authorization` value is resolved per request, not captured here, because access tokens are
+ * short-lived: a header frozen at construction time would keep presenting the token the caller
+ * happened to hold on their first call.
+ */
+function callerClient(principal: string): FrappeClient {
+  const now = Date.now();
+  for (const [key, entry] of _callerClients) {
+    if (now - entry.lastUsedAt > CALLER_CLIENT_IDLE_MS) {
+      _callerClients.delete(key);
+      _managedCaches.delete(entry.cache);
+    }
+  }
+
+  const existing = _callerClients.get(principal);
+  if (existing) {
+    existing.lastUsedAt = now;
+    // Re-insert so Map iteration order stays least-recently-used first.
+    _callerClients.delete(principal);
+    _callerClients.set(principal, existing);
+    return existing.client;
+  }
+
+  // `createCache()`, not `new MemoryCache()`: a per-caller cache is still a cache, so
+  // MCP_CACHE_ENABLED=false has to switch it off too. Hard-coding the memory backend here meant an
+  // operator who disabled caching kept getting cached caller-scoped reads.
+  const cache = createCache();
+  const client = new FrappeClient({
+    baseUrl: requireBaseUrl(),
+    authHeader: () => {
+      const caller = currentCaller();
+      if (!caller) {
+        throw new Error(
+          "[lib/erpnext] no caller identity in scope while building a request. " +
+            "This client only exists inside a request served for a specific user.",
+        );
+      }
+      return `${CALLER_AUTH_SCHEME} ${caller.accessToken}`;
+    },
+    cache,
+    cachePeers: managedCaches,
+    maxUploadBytes: configuredUploadLimit(),
+  });
+
+  while (_callerClients.size >= MAX_CALLER_CLIENTS) {
+    const oldest = _callerClients.entries().next();
+    if (oldest.done) break;
+    const [oldestKey, oldestEntry] = oldest.value;
+    _callerClients.delete(oldestKey);
+    _managedCaches.delete(oldestEntry.cache);
+  }
+  _callerClients.set(principal, { client, cache, lastUsedAt: now });
+  _managedCaches.add(cache);
+  return client;
+}
+
+/**
+ * Get the FrappeClient to use for the work in progress.
+ *
+ * Three modes, in precedence order:
+ *
+ *  1. an explicitly injected client (`setFrappeClient`) — tests and dependency injection;
+ *  2. a per-caller client, when the request carries an end-user identity (HTTP transport with the
+ *     caller-identity middleware). The server then acts *as that user*, so ERPNext applies that
+ *     user's own roles and row-level permissions;
+ *  3. a process-wide client built from `ERPNEXT_API_KEY` / `ERPNEXT_API_SECRET` — the stdio
+ *     transport, where the operator running the process IS the identity.
+ *
+ * Follows no-silent-fallbacks: with neither an identity nor static credentials it throws instead of
+ * issuing an unauthenticated request, which Frappe would answer as Guest — an empty result that
+ * reads like "no data" rather than like a failure.
+ */
+export function getFrappeClient(): FrappeClient {
+  if (_injectedClient) return _injectedClient;
+
+  const caller = currentCaller();
+  if (caller) return callerClient(caller.principal);
+
+  if (_staticClient) return _staticClient;
+
+  const apiKey = env("ERPNEXT_API_KEY");
+  const apiSecret = env("ERPNEXT_API_SECRET");
   if (!apiKey || !apiSecret) {
     throw new Error(
-      "[lib/erpnext] ERPNEXT_API_KEY and ERPNEXT_API_SECRET are required. " +
-        "Generate them in ERPNext: User Settings → API Access.",
+      "[lib/erpnext] no caller identity and no static credentials. " +
+        "Over HTTP this server acts as the calling user, so the request must carry a user access " +
+        "token. For stdio, set ERPNEXT_API_KEY and ERPNEXT_API_SECRET " +
+        "(ERPNext: User Settings \u2192 API Access).",
     );
   }
 
-  _client = new FrappeClient({
-    baseUrl: url,
+  const cache = getCache();
+  _staticClient = new FrappeClient({
+    baseUrl: requireBaseUrl(),
     apiKey,
     apiSecret,
-    cache: getCache(),
-    maxUploadBytes: maxUploadBytesRaw?.trim()
-      ? Number(maxUploadBytesRaw)
-      : undefined,
+    cache,
+    cachePeers: managedCaches,
+    maxUploadBytes: configuredUploadLimit(),
   });
-  return _client;
+  _managedCaches.add(cache);
+  return _staticClient;
 }
 
 /** Override the singleton (useful for tests or dependency injection) */
 export function setFrappeClient(client: FrappeClient | null): void {
-  _client = client;
+  _injectedClient = client;
+  // Per-caller and service-account clients would otherwise outlive the override and keep serving a
+  // previous test's cached reads. `setFrappeClient(null)` is the reset, so it must drop both.
+  _callerClients.clear();
+  _managedCaches.clear();
+  _staticClient = null;
 }

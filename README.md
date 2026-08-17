@@ -258,11 +258,32 @@ Full per-tool reference with parameters: [`docs/tools.md`](docs/tools.md).
 | Variable                   | Required | Description                                                                                                                                                              |
 | -------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `ERPNEXT_URL`              | Yes      | ERPNext base URL — self-hosted (e.g. `http://localhost:8000`) or cloud (e.g. `https://mycompany.erpnext.com`)                                                            |
-| `ERPNEXT_API_KEY`          | Yes      | API Key from User Settings                                                                                                                                               |
-| `ERPNEXT_API_SECRET`       | Yes      | API Secret from User Settings                                                                                                                                            |
+| `ERPNEXT_API_KEY`          | stdio    | API Key from User Settings. Over HTTP, leave it unset and let each caller's own token decide who the server acts as (see _Caller identity_)                              |
+| `ERPNEXT_API_SECRET`       | stdio    | API Secret from User Settings                                                                                                                                            |
+| `MCP_CALLER_IDENTITY`      | No       | `required` \| `optional` \| `off`. HTTP only. Defaults to `required` when no API key/secret is set, `off` when they are                                                  |
 | `ERPNEXT_MAX_UPLOAD_BYTES` | No       | Maximum decoded file-upload size in bytes (positive integer; default: 10 MiB)                                                                                            |
 | `ERPNEXT_METHOD_ALLOWLIST` | No       | Comma-separated dotted paths or `prefix.*` patterns that `erpnext_method_call` may invoke. Unset means no extra restriction beyond the API key's own ERPNext permissions |
 | `MCP_MRTR_SIGNING_KEY`     | No       | Exactly 64 lowercase hex characters; enables signed ambiguous-link elicitation. **Single-instance deployments only** — see below                                         |
+
+### Caller identity (HTTP)
+
+Over HTTP the server can act **as the user who made the call** instead of under
+one shared ERPNext account. Each tool call forwards that user's own verified
+access token to Frappe as `Authorization: HVGKeycloak <token>`; Frappe resolves
+it to a `User` and applies that user's roles and row-level permissions. Two
+people calling the same tool therefore get different rows, and every write is
+attributed to the person who asked for it.
+
+This needs an OAuth/OIDC auth provider (`MCP_OAUTH_JWKS_URL`) whose tokens carry
+an `email` claim, and an ERPNext side that accepts the scheme. `sub` is not
+accepted as a fallback identity: it maps to no ERPNext user, so a deployment
+with the wrong claims fails loudly instead of quietly serving the wrong data.
+
+`MCP_CALLER_IDENTITY=required` refuses any call that carries no usable identity.
+`optional` binds the identity when present and otherwise falls back to the
+static API key. `off` is the pre-3.1 behaviour. Under `required` the read cache
+is per caller and the startup cache warm is skipped — there is no user to warm
+it as.
 
 MRTR is opt-in. Without this key, or when the client does not advertise
 elicitation, ambiguous links keep returning the existing actionable ambiguity

@@ -11,6 +11,8 @@
 
 import { readdirSync, statSync as fsStatSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { AsyncLocalStorage } from "node:async_hooks";
+import type { ContextStore } from "./runtime-types.ts";
 
 // ─── Environment ─────────────────────────────────────────
 
@@ -55,4 +57,19 @@ export function exit(code: number): never {
 
 export function onSignal(signal: string, handler: () => void): void {
   process.on(signal, handler);
+}
+
+// ─── Async context ───────────────────────────────────────
+
+/**
+ * `AsyncLocalStorage` is Node's own async-context API. The import sits in the adapter, not in
+ * shared source, so `src/api/caller-context.ts` stays platform-agnostic (AGENTS.md,
+ * "Dual-runtime design").
+ */
+export function createContextStore<T>(): ContextStore<T> {
+  const storage = new AsyncLocalStorage<T>();
+  return {
+    run: <R>(value: T, fn: () => R): R => storage.run(value, fn),
+    current: (): T | undefined => storage.getStore(),
+  };
 }

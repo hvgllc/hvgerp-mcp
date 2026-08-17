@@ -8,6 +8,42 @@ This package is a fork of
 deliberately still point at the upstream repository, where those commits, pull
 requests and tags actually live.
 
+## [3.1.0] - 2026-08-16
+
+### Added
+
+- **Per-caller identity over HTTP.** A tool call can now act as the user who
+  made it instead of under one shared ERPNext service account. The caller's
+  verified access token is forwarded to Frappe as
+  `Authorization: HVGKeycloak <token>`, so Frappe resolves the identity itself
+  and applies that user's roles and row-level permissions.
+  - `MCP_CALLER_IDENTITY` = `required` | `optional` | `off`. The default is
+    conditional: `required` when no `ERPNEXT_API_KEY`/`ERPNEXT_API_SECRET` are
+    set, `off` when they are, so existing HTTP deployments keep their behaviour
+    on upgrade.
+  - The identity comes from the verified token's `email` claim (falling back to
+    `preferred_username` only when it is an email). `sub` is deliberately not
+    accepted: it maps to no ERPNext user, and failing here is better than
+    failing silently at the ERPNext boundary.
+  - Each caller gets its own `FrappeClient` **and its own read cache**. Sharing
+    the process-wide cache would let whoever queried first decide what the next
+    caller sees, which is a data leak rather than a cache hit.
+  - `cache.scope` on the MCP app flips to `private`, and the startup cache warm
+    is skipped under `required` — it runs outside any request, so there is no
+    user to warm it as.
+  - New exports: `runWithCaller`, `currentCaller`, `callerPrincipal`,
+    `createCallerIdentityMiddleware`, `resolveCallerIdentityMode`.
+
+### Changed
+
+- `FrappeClientConfig.apiKey`/`apiSecret` are optional; a new
+  `authHeader?: () =>
+  string` takes precedence and is resolved **per
+  request**, so a refreshed access token reaches the wire instead of a value
+  frozen at construction time. A client built with neither now throws rather
+  than issuing an unauthenticated request, which Frappe answers as Guest — an
+  empty result that reads like "no data" instead of like a failure.
+
 ## [3.0.3] - 2026-08-16
 
 ### Fixed
