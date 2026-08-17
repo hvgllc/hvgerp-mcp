@@ -11,6 +11,11 @@
 
 import { FrappeAPIError, type FrappeClient } from "./frappe-client.ts";
 import { getCache } from "../cache/cache.ts";
+import {
+  isSelfReference,
+  resolveSelfEmployee,
+  resolveSelfUser,
+} from "./identity.ts";
 
 /** How long a confirmed "identifier is not a valid ID" result is remembered. */
 const NEGATIVE_CACHE_TTL_MS = 15_000;
@@ -108,6 +113,24 @@ async function resolveUnique(
 }
 
 /**
+ * Doctype nào hiểu được "chính người đang hỏi", và cách phân giải ra ID của họ.
+ *
+ * Bảng này nằm ở `resolveLink` chứ không ở từng wrapper vì wrapper KHÔNG phải cửa duy nhất:
+ * `erpnext_employee_get` và hai handler tạo Leave Application / Expense Claim gọi thẳng
+ * `resolveLink(..., "Employee", ...)`, còn `resolveDynamicLink` thì gọi lại chính hàm này.
+ * Ở những đường đó `me` từng bị tìm như một cái tên thật rồi hỏng với "No Employee found
+ * matching \"me\"" - trong khi server instructions hứa với model rằng `me` dùng được ở mọi
+ * ô nhận người. Đặt ở đây thì lời hứa đó thành đúng theo cấu trúc, không phải theo trí nhớ.
+ */
+const SELF_RESOLVERS: Record<
+  string,
+  (client: FrappeClient) => Promise<string>
+> = {
+  Employee: resolveSelfEmployee,
+  User: resolveSelfUser,
+};
+
+/**
  * Resolve `identifier` to a document name (ID) within `doctype`: fast-path
  * get(), then exact match on `searchField`, then partial match (unless
  * `allowPartialMatch` is false). Both the exact and partial rungs only
@@ -123,6 +146,10 @@ export async function resolveLink(
   options: ResolveLinkOptions = {},
 ): Promise<string> {
   const { allowPartialMatch = true, inputPath } = options;
+
+  const selfResolver = SELF_RESOLVERS[doctype];
+  if (selfResolver && isSelfReference(identifier)) return selfResolver(client);
+
   const cache = getCache();
   const missKey = `resolve:miss:${doctype}:${identifier}`;
 
@@ -167,12 +194,32 @@ export async function resolveLink(
   throw new Error(`[resolveLink] No ${doctype} found matching "${identifier}"`);
 }
 
+/**
+ * Resolve an employee-typed input, accepting `me` for the caller themselves.
+ *
+ * `me` is handled by `resolveLink` through {@link SELF_RESOLVERS}, not here: a guard on this
+ * wrapper only covers the call sites that remember to use the wrapper, and three of them did not.
+ */
 export function resolveEmployee(
   client: FrappeClient,
   identifier: string,
   options: ResolveLinkOptions = {},
 ): Promise<string> {
   return resolveLink(client, "Employee", identifier, "employee_name", options);
+}
+
+/**
+ * Resolve a `User`-typed input (assignee, owner, approver), accepting `me`.
+ *
+ * Users are matched on `full_name` because that is what a person typing a name has; the ID is an
+ * email address, which `resolveLink`'s fast path already handles.
+ */
+export function resolveUser(
+  client: FrappeClient,
+  identifier: string,
+  options: ResolveLinkOptions = {},
+): Promise<string> {
+  return resolveLink(client, "User", identifier, "full_name", options);
 }
 
 export function resolveCustomer(
@@ -222,4 +269,51 @@ export async function resolveDynamicLink(
   const searchField = DYNAMIC_LINK_SEARCH_FIELDS[targetDoctype];
   if (!searchField) return identifier;
   return resolveLink(client, targetDoctype, identifier, searchField, options);
+}
+
+/**
+ * Phân giải một người nhận việc, nhưng chỉ tra cứu `User` khi thật sự cần.
+ *
+ * Một ID người dùng của Frappe CHÍNH LÀ địa chỉ thư, nên đưa nó qua `resolveUser` là bỏ tiền mua
+ * một lượt `GET User/{email}` không đổi lấy gì. Tệ hơn: `User` là doctype có phân quyền riêng, nên
+ * người có quyền sửa tài liệu mà không có quyền đọc hồ sơ người khác sẽ nhận 403 ở đúng lượt đọc
+ * thừa đó - `resolveLink` chỉ nuốt 404, mọi mã khác đều ném tiếp. Kết quả là mất luôn thao tác gỡ
+ * giao việc mà lẽ ra họ được phép làm.
+ *
+ * Tự tham chiếu phải xét TRƯỚC lối tắt địa chỉ thư: `@me` và `@self` đều chứa dấu at-sign nên lối
+ * tắt sẽ tưởng chúng là ID có sẵn và không dịch.
+ *
+ * `allowPartialMatch` mặc định `false` cho đường GHI, nơi một khớp mờ gắn nhầm người vào tài liệu
+ * thật. Đường ĐỌC (ô lọc `assigned_to` / `owner`) truyền `true` để giữ nguyên hành vi vốn có: ở đó
+ * khớp mờ chỉ làm hẹp một danh sách, và chính `resolveLink` đã ném lỗi liệt kê ứng viên khi nhập
+ * nhằng.
+ */
+export function resolveAssigneeUser(
+  client: FrappeClient,
+  identifier: string,
+  options: ResolveLinkOptions = {},
+): Promise<string> {
+  const needsLookup = isSelfReference(identifier) || !identifier.includes("@");
+  if (!needsLookup) return Promise.resolve(identifier);
+  return resolveUser(client, identifier, {
+    allowPartialMatch: options.allowPartialMatch ?? false,
+    inputPath: options.inputPath,
+  });
+}
+
+/**
+ * Dịch `me` thành ID người gọi trong một giá trị lọc, và chỉ có vậy.
+ *
+ * Dùng cho các ô lọc kiểu `lead_owner` / `opportunity_owner`: chỉ dạng tự tham chiếu mới được
+ * dịch, còn mọi giá trị khác đi thẳng xuống Frappe như cũ. Cố ý KHÔNG tra cứu theo họ tên: một ô
+ * lọc không khớp ai vốn trả danh sách rỗng, biến nó thành lỗi là đổi hành vi của một đường đọc
+ * chứ không phải sửa lỗi.
+ */
+export function resolveUserFilter(
+  client: FrappeClient,
+  value: string,
+): Promise<string> {
+  return isSelfReference(value)
+    ? resolveSelfUser(client)
+    : Promise.resolve(value);
 }

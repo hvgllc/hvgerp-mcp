@@ -10,6 +10,8 @@ import type {
 } from "../kanban/types.ts";
 import type { ErpNextTool } from "./types.ts";
 import { KANBAN_META } from "./viewer-meta.ts";
+import { resolveUserFilter } from "../api/resolve.ts";
+import type { FrappeClient } from "../api/frappe-client.ts";
 
 const ADAPTERS: Record<string, KanbanAdapter> = {
   task: taskKanbanAdapter,
@@ -46,6 +48,29 @@ function withColumnCounts(
     ...column,
     count: counts.get(column.id) ?? 0,
   }));
+}
+
+/**
+ * Các ô lọc mang một ID `User`, nơi `me` phải được dịch trước khi adapter dựng bộ lọc.
+ *
+ * `buildListFilters` là hàm đồng bộ và cố ý đồng bộ - nó chỉ sắp xếp lại đầu vào chứ không đọc
+ * ERPNext. Vì vậy việc dịch tự tham chiếu nằm ở đây, một lượt duy nhất trước khi gọi adapter,
+ * thay vì bắt mọi adapter phải thành hàm bất đồng bộ.
+ */
+const USER_FILTER_KEYS = ["opportunity_owner", "raised_by"] as const;
+
+async function resolveUserInputs(
+  input: Record<string, unknown>,
+  client: FrappeClient,
+): Promise<Record<string, unknown>> {
+  const resolved = { ...input };
+  for (const key of USER_FILTER_KEYS) {
+    const value = resolved[key];
+    if (typeof value === "string" && value.length > 0) {
+      resolved[key] = await resolveUserFilter(client, value);
+    }
+  }
+  return resolved;
 }
 
 export const kanbanTools: ErpNextTool[] = [
@@ -111,7 +136,9 @@ export const kanbanTools: ErpNextTool[] = [
 
       const rows = await ctx.client.list(doctype, {
         fields: adapter.getListFields(),
-        filters: adapter.buildListFilters(input),
+        filters: adapter.buildListFilters(
+          await resolveUserInputs(input, ctx.client),
+        ),
         limit: limit + 1,
         limit_start: offset,
         order_by: "modified desc",
@@ -148,6 +175,11 @@ export const kanbanTools: ErpNextTool[] = [
   },
   {
     name: "erpnext_kanban_move_card",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+    },
     category: "kanban",
     description: "Move a kanban card for a supported ERPNext DocType. " +
       "Returns structured success or business error details for MCP App reconciliation.",

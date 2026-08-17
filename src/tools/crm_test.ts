@@ -91,3 +91,101 @@ Deno.test("erpnext_opportunity_list - resolves party_name against the opportunit
 
   assertEquals(resolvedDoctype, "Lead");
 });
+Deno.test("erpnext_lead_list - resolves `me` into the caller's User id before filtering", async () => {
+  let capturedFilters: unknown[][] = [];
+  const client = makeMockClient({
+    callMethod: async (method: string) => {
+      assertEquals(method, "frappe.auth.get_logged_user");
+      return "khoa.do@havigroup.com";
+    },
+    list: async (_doctype: string, opts: { filters?: unknown[][] }) => {
+      capturedFilters = opts?.filters ?? [];
+      return [];
+    },
+  });
+
+  await getTool("erpnext_lead_list").handler(
+    { lead_owner: "me" },
+    makeCtx(client),
+  );
+
+  // Chỉ dẫn của máy chủ bảo mô hình viết "me" cho mọi yêu cầu ngôi thứ nhất. Gửi thẳng chuỗi đó
+  // xuống Frappe thì bộ lọc khớp một `User` không tồn tại và tool trả danh sách rỗng - một câu trả
+  // lời SAI trông y hệt câu trả lời đúng, vì "bạn không có lead nào" cũng là danh sách rỗng.
+  assertEquals(capturedFilters.filter((f) => f[0] === "lead_owner"), [[
+    "lead_owner",
+    "=",
+    "khoa.do@havigroup.com",
+  ]]);
+});
+
+Deno.test("erpnext_lead_list - a concrete owner is not looked up at all", async () => {
+  let identityCalls = 0;
+  let capturedFilters: unknown[][] = [];
+  const client = makeMockClient({
+    callMethod: async () => {
+      identityCalls++;
+      return "khoa.do@havigroup.com";
+    },
+    list: async (_doctype: string, opts: { filters?: unknown[][] }) => {
+      capturedFilters = opts?.filters ?? [];
+      return [];
+    },
+  });
+
+  await getTool("erpnext_lead_list").handler(
+    { lead_owner: "alice@example.com" },
+    makeCtx(client),
+  );
+
+  // Đối chứng: chỉ dạng tự tham chiếu mới được dịch. Mọi giá trị khác đi thẳng xuống Frappe như cũ,
+  // và không tốn lượt hỏi danh tính nào.
+  assertEquals(identityCalls, 0);
+  assertEquals(capturedFilters.filter((f) => f[0] === "lead_owner"), [[
+    "lead_owner",
+    "=",
+    "alice@example.com",
+  ]]);
+});
+
+Deno.test("erpnext_lead_create - resolves `me` into the caller's User id", async () => {
+  let capturedDoc: Record<string, unknown> = {};
+  const client = makeMockClient({
+    callMethod: async () => "khoa.do@havigroup.com",
+    create: async (_doctype: string, data: Record<string, unknown>) => {
+      capturedDoc = data;
+      return { name: "CRM-LEAD-2026-00001" };
+    },
+  });
+
+  await getTool("erpnext_lead_create").handler(
+    { lead_name: "Acme Corp", lead_owner: "me" },
+    makeCtx(client),
+  );
+
+  // Trên đường GHI thì hậu quả nặng hơn đường đọc: `lead_owner` là một Link tới `User`, nên ghi
+  // nguyên chuỗi "me" vào đó tạo ra một bản ghi trỏ tới người không tồn tại.
+  assertEquals(capturedDoc.lead_owner, "khoa.do@havigroup.com");
+});
+
+Deno.test("erpnext_opportunity_list - resolves `me` into the caller's User id before filtering", async () => {
+  let capturedFilters: unknown[][] = [];
+  const client = makeMockClient({
+    callMethod: async () => "khoa.do@havigroup.com",
+    list: async (_doctype: string, opts: { filters?: unknown[][] }) => {
+      capturedFilters = opts?.filters ?? [];
+      return [];
+    },
+  });
+
+  await getTool("erpnext_opportunity_list").handler(
+    { opportunity_owner: "me" },
+    makeCtx(client),
+  );
+
+  assertEquals(capturedFilters.filter((f) => f[0] === "opportunity_owner"), [[
+    "opportunity_owner",
+    "=",
+    "khoa.do@havigroup.com",
+  ]]);
+});

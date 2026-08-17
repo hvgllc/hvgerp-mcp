@@ -123,6 +123,50 @@ function selectedRecordId(
 }
 
 /**
+ * Write the chosen record ID back into the arguments the retry will run.
+ *
+ * A scalar field is a plain overwrite. An ARRAY field is not: replacing the whole array with the
+ * selected scalar silently discards every other entry, so `assign_to: ["Anh Le", "khoa.do@..."]`
+ * with an ambiguous "Anh Le" used to write a task assigned to one person instead of two - no error,
+ * no warning, just a missing assignee.
+ *
+ * The replacement matches by VALUE rather than by position. The assignment path normalises this
+ * array (trim, then de-duplicate) before it resolves anything, so the index of the ambiguous name
+ * in the normalised list does not line up with its index in the array the caller actually sent.
+ * The identifier carried by the error is the trimmed string that was ambiguous, which does line up.
+ *
+ * Known limit, deliberate: only ONE ambiguity is resolved per retry. Two ambiguous names in the
+ * same array surface the second as an ordinary `AmbiguousLinkError` from the retry, because a
+ * second elicitation round would arrive without the first round's answer in `inputResponses` and
+ * would fail on a missing response instead. An honest error beats a wrong write.
+ */
+function withResolvedLink(
+  args: Record<string, unknown>,
+  inputPath: string,
+  ambiguity: AmbiguousLinkError,
+  recordId: string,
+): Record<string, unknown> {
+  const current = args[inputPath];
+  if (!Array.isArray(current)) return { ...args, [inputPath]: recordId };
+
+  let replaced = false;
+  const next = current.map((entry) => {
+    if (typeof entry !== "string" || entry.trim() !== ambiguity.identifier) {
+      return entry;
+    }
+    replaced = true;
+    return recordId;
+  });
+  if (!replaced) {
+    throw new Error(
+      `[link-disambiguation] "${ambiguity.identifier}" is not present in "${inputPath}", ` +
+        "so the selected record ID has nowhere to go.",
+    );
+  }
+  return { ...args, [inputPath]: next };
+}
+
+/**
  * Executes a tool and turns an eligible ambiguous Link field into an MRTR form.
  * On retry, it deliberately re-runs the original arguments first so candidates
  * are reconstructed from the same request context before an ID is trusted.
@@ -148,7 +192,12 @@ export async function runWithLinkDisambiguation(
       };
     }
 
-    const resolvedArgs = { ...options.args, [error.inputPath]: recordId };
+    const resolvedArgs = withResolvedLink(
+      options.args,
+      error.inputPath,
+      error,
+      recordId,
+    );
     return {
       result: await options.execute(resolvedArgs),
       args: resolvedArgs,

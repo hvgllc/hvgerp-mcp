@@ -8,7 +8,7 @@ Repository guidelines for AI coding agents working on this codebase.
 
 ## Project Overview
 
-MCP server for ERPNext/Frappe ERP — 125 tools across 14 categories with 7
+MCP server for ERPNext/Frappe ERP — 127 tools across 15 categories with 7
 interactive UI viewers. Connects MCP-compatible AI agents to ERPNext via the
 Model Context Protocol. Published as `@hvgllc/hvgerp-mcp` on npm (Node bundle)
 and JSR (Deno).
@@ -68,11 +68,12 @@ deno task inspect
 # Compile to standalone binary
 deno task compile
 
-# Build UI viewers
-deno task ui:build                 # or: cd src/ui && npm ci && node build-all.mjs
+# Build UI viewers (src/ui/node_modules is gitignored, so install first)
+deno task ui:install               # = cd src/ui && npm ci
+deno task ui:build                 # = cd src/ui && node build-all.mjs
 
 # Build Node.js npm bundle
-deno task ui:build && ./scripts/build-node.sh
+deno task ui:install && deno task ui:build && ./scripts/build-node.sh
 
 # Full local release preflight (does not publish)
 deno task release:check
@@ -83,8 +84,9 @@ cd src/ui && npm run dev:kanban    # also: dev:invoice, dev:stock, dev:doclist
 
 - Runtime baseline: **Deno 2.x** (development), **Node 20+** (npm bundle target
   — CI uses Node 22).
-- If UI deps are missing, run `cd src/ui && npm ci` (prefer `npm ci` over
-  `npm install` for reproducibility).
+- If UI deps are missing, run `deno task ui:install` (`npm ci`, not
+  `npm install`, for reproducibility). `deno task ui:build` fails fast with that
+  instruction rather than letting `npx` fetch a stray Vite.
 - Run `deno test --allow-all src/` before pushing when you touch logic.
 - Run `deno check mod.ts server.ts` to verify type safety after changes.
 - Hard gate: if the change affects the build pipeline or published surfaces,

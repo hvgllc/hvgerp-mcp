@@ -58,7 +58,7 @@ need HTTP mode.
 
 ## Tool categories and the escape hatch
 
-The server organises its 125 tools across 14 typed categories — sales,
+The server organises its 127 tools across 15 typed categories — identity, sales,
 purchasing, accounting, HR, inventory, and so on. Each category wraps the
 doctypes its domain most commonly needs, with typed schemas, validated fields,
 and predictable behaviour.

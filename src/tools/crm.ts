@@ -10,7 +10,7 @@
 import type { FrappeFilter } from "../api/types.ts";
 import type { ErpNextTool } from "./types.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
-import { resolveDynamicLink } from "../api/resolve.ts";
+import { resolveDynamicLink, resolveUserFilter } from "../api/resolve.ts";
 
 export const crmTools: ErpNextTool[] = [
   // ── Leads ─────────────────────────────────────────────────────────────────
@@ -44,7 +44,11 @@ export const crmTools: ErpNextTool[] = [
         filters.push(["status", "=", input.status as string]);
       }
       if (input.lead_owner) {
-        filters.push(["lead_owner", "=", input.lead_owner as string]);
+        filters.push([
+          "lead_owner",
+          "=",
+          await resolveUserFilter(ctx.client, input.lead_owner as string),
+        ]);
       }
 
       const docs = await ctx.client.list("Lead", {
@@ -95,6 +99,11 @@ export const crmTools: ErpNextTool[] = [
 
   {
     name: "erpnext_lead_create",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
     description:
       "Create a new CRM Lead. Requires lead_name. Optionally set company_name, email_id, mobile_no, source.",
     category: "crm",
@@ -131,7 +140,9 @@ export const crmTools: ErpNextTool[] = [
         email_id: (input.email_id as string) ?? undefined,
         mobile_no: (input.mobile_no as string) ?? undefined,
         source: (input.source as string) ?? undefined,
-        lead_owner: (input.lead_owner as string) ?? undefined,
+        lead_owner: input.lead_owner
+          ? await resolveUserFilter(ctx.client, input.lead_owner as string)
+          : undefined,
       });
 
       return {
@@ -188,7 +199,10 @@ export const crmTools: ErpNextTool[] = [
         filters.push([
           "opportunity_owner",
           "=",
-          input.opportunity_owner as string,
+          await resolveUserFilter(
+            ctx.client,
+            input.opportunity_owner as string,
+          ),
         ]);
       }
       if (input.party_name) {

@@ -77,6 +77,9 @@ export interface MCPToolWireFormat {
 // ErpNextToolsClient Class
 // ============================================================================
 
+/** Tool phân giải "me", nạp kèm mọi bộ lọc category. Xem hàm dựng bên dưới. */
+const WHOAMI_TOOL_NAME = "erpnext_whoami";
+
 /** Configuration options for {@link ErpNextToolsClient}. */
 export interface ErpNextToolsClientOptions {
   /** Restrict tools to specific categories (e.g. `["selling", "stock"]`). Omit to load all. */
@@ -96,7 +99,24 @@ export class ErpNextToolsClient {
   constructor(options?: ErpNextToolsClientOptions) {
     this.enableLinkDisambiguation = options?.enableLinkDisambiguation ?? false;
     if (options?.categories) {
-      this.tools = options.categories.flatMap((cat) => getToolsByCategory(cat));
+      // `erpnext_whoami` được nạp kể cả khi người gọi không xin category `identity`. Nó không
+      // phải một mảng nghiệp vụ như `sales` hay `hr`: nó là tool DUY NHẤT dịch "my"/"me" thành
+      // một ID `User`, và chỉ dẫn của máy chủ bảo mô hình gọi nó trước mọi yêu cầu ngôi thứ nhất.
+      // Tôn trọng `--categories=project` theo nghĩa đen sẽ để chỉ dẫn đó trỏ vào một tool vắng
+      // mặt trong `tools/list`, nên `erpnext_task_list({assigned_to: "me"})` - lời gọi mà chính
+      // category được chọn có hỗ trợ - không có cách nào phân giải chủ ngữ của nó.
+      //
+      // Thêm ĐÚNG một tool, không phải cả category: `erpnext_my_work` cũng nằm trong `identity`
+      // và nó đọc ToDo, Leave Application, Expense Claim, Timesheet. Kéo cả category vào thì
+      // `--categories=project` lặng lẽ mở ra bốn doctype ngoài phạm vi vừa xin, và bộ lọc
+      // category thôi không còn là cái chặn bề mặt nghiệp vụ nữa.
+      const selected = options.categories.flatMap((cat) =>
+        getToolsByCategory(cat)
+      );
+      const whoami = getToolByName(WHOAMI_TOOL_NAME);
+      this.tools = whoami && !selected.some((t) => t.name === WHOAMI_TOOL_NAME)
+        ? [whoami, ...selected]
+        : selected;
     } else {
       this.tools = allTools;
     }

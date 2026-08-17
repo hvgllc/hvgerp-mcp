@@ -8,6 +8,86 @@ This package is a fork of
 deliberately still point at the upstream repository, where those commits, pull
 requests and tags actually live.
 
+## [3.2.0] - 2026-08-17
+
+### Added
+
+- **Identity tools.** `erpnext_whoami` reports who the server believes the
+  caller is (User id, full name, roles, matching `Employee`, and
+  `identity_mode`), and `erpnext_my_work` rolls up that person's open ToDos,
+  tasks, leave applications, expense claims and timesheets. Without them a
+  first-person question had no subject: the model had no way to turn "my tasks"
+  into a User id, and answered for whoever the connection happened to
+  authenticate as.
+- **`me` is understood by user-typed inputs.** `me`, `@me`, `self` and `@self`
+  resolve to the caller's own `User` (or `Employee`, where the field is
+  employee-typed) across the task, timesheet, leave, expense, CRM and kanban
+  tools, instead of reaching Frappe as a literal string that matches nobody.
+- **`erpnext_whoami` is loaded under every category filter.** The server
+  instructions tell the model to call it before any first-person request, so
+  `--categories=project` used to leave that instruction pointing at a tool
+  absent from `tools/list`. Exactly that one tool is added - not the rest of the
+  `identity` category, whose `erpnext_my_work` reads four doctypes outside the
+  requested surface.
+
+### Fixed
+
+- **`erpnext_whoami` no longer reports withheld roles as no roles.**
+  `User.roles` is a permlevel-1 field on stock ERPNext, readable only by
+  `System Manager`, so every ordinary employee asking about themselves was told
+  `roles: []` - a fabricated answer about the majority of real callers.
+  - Frappe does not omit a withheld permlevel-1 field, it **empties** it:
+    measured on production against a caller holding three roles, `roles` came
+    back as `[]` with the key present. So the list alone cannot distinguish "you
+    hold none" from "I will not say", and an earlier attempt to read an absent
+    key was inert.
+  - The discriminator is `user_type`, which sits at the same permlevel and is
+    never legitimately empty (it defaults to `System User`; no `User` row on
+    this deployment has it unset). A null `user_type` beside an empty `roles`
+    means permlevel 1 was withheld wholesale, and `roles` is reported as `null`
+    with a `roles_note` explaining it. `[]` now means the user genuinely holds
+    none.
+  - Their real ceiling is unaffected either way - ERPNext enforces it per call,
+    not from this list.
+- **`erpnext_whoami` no longer fails for a caller who may not read `Employee`.**
+  The profile lookup treated the HR record as part of the identity, so a `403`
+  on that side query took the whole call down - and the server instructions tell
+  every client to call `erpnext_whoami` _first_, which is precisely where there
+  is nothing to fall back on. A permission refusal is now recorded instead of
+  raised. Measured on production against a System User holding read on exactly
+  one doctype.
+  - New `employee_lookup` field on the profile and on both identity tools:
+    `found` | `none` | `forbidden`. `none` and `forbidden` both leave `employee`
+    null, and collapsing them would have the server state a fact it never
+    established - telling someone "you have no HR record" when the truth is "I
+    was not allowed to look" sends them after the wrong problem.
+  - `erpnext_my_work` reports the same distinction in `skipped_sections.reason`,
+    and `resolveSelfEmployee` (the `me` → employee hop) raises two different
+    messages, because "ask HR to create a record" and "ask an administrator for
+    the permission" are opposite next moves.
+  - Only `403` is absorbed. A `5xx`, a timeout or a network error still
+    propagates: those mean the reply would be unreliable rather than incomplete,
+    and answering "no HR record" for one of them would be a guess dressed as a
+    finding.
+- **`identity_mode` is read off the client that serves the request**, not off
+  the presence of a caller context. An embedding application can install a
+  static client with `setFrappeClient()` and still run inside `runWithCaller()`;
+  the old check labelled that `per-caller` and `erpnext_whoami` swallowed the
+  one warning it exists to raise.
+- **`erpnext_my_work` only absorbs a permission refusal.** A section that fails
+  with `5xx`, a timeout or a network error now propagates instead of being
+  reported as an inaccessible doctype. Those mean the roll-up is untrustworthy
+  rather than incomplete, and burying them left the client no signal to retry
+  while the model read "no work" for "could not read".
+- **Unassigning by email no longer costs a `User` read.** A Frappe `User` id is
+  the email, so the lookup could not change the outcome - but ordinary employees
+  may not read `User`, so it turned into a `403` on an operation they were
+  allowed to perform. `erpnext_doc_assign` already worked this way;
+  `erpnext_doc_unassign` now matches it.
+- **The caller profile cache is partitioned per `FrappeClient`.** Two callers
+  sharing a cache entry meant whoever asked first decided what the next one was
+  told about themselves.
+
 ## [3.1.0] - 2026-08-16
 
 ### Added

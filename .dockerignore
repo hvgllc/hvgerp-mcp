@@ -7,4 +7,8 @@ node_modules/
 src/ui/node_modules/
 src/ui/dist/
 dist-node/
+# Ngoại lệ: `Dockerfile.bundle` COPY chính bản bundle đã build ở đây. Chỉ mở đúng thư mục
+# `bin/` (bundle esbuild + ui-dist); phần còn lại của `dist-node/` - node_modules và bản sao
+# mã nguồn .ts - vẫn bị loại khỏi build context.
+!dist-node/bin/
 .DS_Store

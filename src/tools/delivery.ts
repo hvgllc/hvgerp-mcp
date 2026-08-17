@@ -115,6 +115,11 @@ export const deliveryTools: ErpNextTool[] = [
 
   {
     name: "erpnext_delivery_note_create",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
     description:
       "Create a new Delivery Note. Requires customer and at least one item with item_code, qty. " +
       "Typically created against a Sales Order.",

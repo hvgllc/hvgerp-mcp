@@ -122,7 +122,22 @@ export interface FrappeClientConfig {
    * skipped by identity, so nothing is cleared twice.
    */
   cachePeers?: () => Iterable<Cache>;
+  /**
+   * Danh tính mà client này gửi đi: `"caller"` khi mỗi request mang token của chính người gọi,
+   * `"service"` khi nó mang một credential dùng chung. Mặc định `"service"`.
+   *
+   * Cần khai ở đây vì chỉ tầng dựng client mới biết sự thật đó. Sự có mặt của một caller context
+   * KHÔNG đủ để kết luận: một ứng dụng nhúng có thể cài client tĩnh qua `setFrappeClient()` rồi
+   * vẫn chạy trong `runWithCaller()`, và khi ấy lời gọi đi bằng tài khoản dịch vụ trong khi
+   * `currentCaller()` vẫn trả về người thật. Đọc theo caller context sẽ dán nhãn `per-caller` cho
+   * một hồ sơ của tài khoản dịch vụ, và `erpnext_whoami` bỏ mất đúng cảnh báo mà nó tồn tại để
+   * phát ra.
+   */
+  actsAs?: FrappeClientIdentity;
 }
+
+/** Danh tính mà một `FrappeClient` gửi đi cùng mỗi request. */
+export type FrappeClientIdentity = "caller" | "service";
 
 const DEFAULT_RETRY_STATUSES = [408, 429, 502, 503, 504];
 const DEFAULT_RETRY_METHODS = ["GET"];
@@ -265,6 +280,8 @@ export class FrappeClient {
   private retryMethods: string[];
   private cache: Cache;
   private cachePeers?: () => Iterable<Cache>;
+  /** Xem {@link FrappeClientConfig.actsAs}. Chỉ đọc: không đường nào đổi danh tính giữa chừng. */
+  readonly actsAs: FrappeClientIdentity;
 
   constructor(config: FrappeClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, "");
@@ -293,6 +310,7 @@ export class FrappeClient {
     this.retryMethods = config.retryMethods ?? DEFAULT_RETRY_METHODS;
     this.cache = config.cache ?? new MemoryCache();
     this.cachePeers = config.cachePeers;
+    this.actsAs = config.actsAs ?? "service";
   }
 
   // ── Private HTTP helpers ────────────────────────────────────────────────────
@@ -839,6 +857,7 @@ function callerClient(principal: string): FrappeClient {
     cache,
     cachePeers: managedCaches,
     maxUploadBytes: configuredUploadLimit(),
+    actsAs: "caller",
   });
 
   while (_callerClients.size >= MAX_CALLER_CLIENTS) {

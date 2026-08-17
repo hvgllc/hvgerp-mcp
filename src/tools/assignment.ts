@@ -10,7 +10,9 @@
  * @module lib/erpnext/tools/assignment
  */
 
+import type { FrappeFilter } from "../api/types.ts";
 import type { ErpNextToolContext, JSONSchema } from "./types.ts";
+import { resolveAssigneeUser } from "../api/resolve.ts";
 
 const ASSIGNMENT_METHOD = "frappe.desk.form.assign_to.add";
 const UNASSIGNMENT_METHOD = "frappe.desk.form.assign_to.remove";
@@ -140,6 +142,61 @@ export function prepareAssignment(
   }
 
   return { assignees, args };
+}
+
+/**
+ * Filter matching documents assigned to `userId` through Frappe's native assignment.
+ *
+ * `_assign` is a JSON array serialized into a text column, so a substring match is the only filter
+ * the query builder offers. Quoting the id inside the pattern keeps the match anchored to a whole
+ * array element: without the quotes, a short id would also match every longer id that ends with it.
+ */
+export function assignedToFilter(userId: string): FrappeFilter {
+  return ["_assign", "like", `%"${escapeLikeWildcards(userId)}"%`];
+}
+
+/**
+ * Neutralise the characters MariaDB's `LIKE` reads as wildcards.
+ *
+ * A `User` id here is an email address, and `_` is legal in one. Interpolated raw,
+ * `john_doe@example.com` becomes a pattern whose `_` matches ANY single character, so the filter
+ * also matches `john-doe@example.com` and `johnXdoe@example.com`. That is not a merely wider
+ * result set: it hands one person another person's assigned work, silently, in every tool that
+ * filters by assignee. `%` is the same failure with a wider blast radius.
+ *
+ * The backslash must be escaped FIRST, or the escapes added for `%` and `_` would themselves be
+ * escaped a second time and stop working. One pass over a character class does that for free.
+ */
+function escapeLikeWildcards(value: string): string {
+  return value.replace(/[\\%_]/g, "\\$&");
+}
+
+/**
+ * Turn the assignee strings a model wrote into real `User` ids.
+ *
+ * Only entries that cannot already be ids are resolved: on this deployment a `User` id is an email
+ * address, so anything containing an at-sign is passed through untouched and the common case costs
+ * no extra request. What is left is `me` (the caller) or a person's name - both of which used to
+ * fail validation with "User 'me' does not exist", which reads like the person is missing rather
+ * than like the input needed translating.
+ *
+ * Partial matching stays off: this feeds a write, and a fuzzy name match would assign live work to
+ * the wrong colleague.
+ */
+export async function resolveAssignees(
+  assignment: PreparedAssignment,
+  ctx: ErpNextToolContext,
+): Promise<PreparedAssignment> {
+  const resolved: string[] = [];
+  for (const assignee of assignment.assignees) {
+    resolved.push(
+      await resolveAssigneeUser(ctx.client, assignee, {
+        inputPath: "assign_to",
+      }),
+    );
+  }
+  const assignees = [...new Set(resolved)];
+  return { assignees, args: { ...assignment.args, assign_to: assignees } };
 }
 
 /** Reject nonexistent or disabled assignees before any mutation. */

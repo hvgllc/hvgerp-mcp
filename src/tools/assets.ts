@@ -131,6 +131,11 @@ export const assetsTools: ErpNextTool[] = [
 
   {
     name: "erpnext_asset_create",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
     description:
       "Create a new Asset record. Requires asset_name, asset_category, company, purchase_date, " +
       "gross_purchase_amount. Optionally set location, custodian, item_code.",
@@ -195,6 +200,16 @@ export const assetsTools: ErpNextTool[] = [
         );
       }
 
+      // Ô lọc custodian của `erpnext_asset_list` đã đi qua `resolveEmployee` từ đầu; đường TẠO
+      // thì chưa, nên `me` xuống thẳng Frappe làm giá trị Link và chết ở kiểm tra liên kết.
+      // `allowPartialMatch: false` vì đây là đường ghi: một khớp mờ gắn nhầm người vào tài sản thật.
+      const custodian = input.custodian
+        ? await resolveEmployee(ctx.client, input.custodian as string, {
+          allowPartialMatch: false,
+          inputPath: "custodian",
+        })
+        : undefined;
+
       const doc = await ctx.client.create("Asset", {
         asset_name: input.asset_name as string,
         asset_category: input.asset_category as string,
@@ -203,7 +218,7 @@ export const assetsTools: ErpNextTool[] = [
         gross_purchase_amount: input.gross_purchase_amount as number,
         item_code: (input.item_code as string) ?? undefined,
         location: (input.location as string) ?? undefined,
-        custodian: (input.custodian as string) ?? undefined,
+        custodian,
       });
 
       return {

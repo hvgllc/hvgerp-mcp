@@ -219,6 +219,11 @@ export const manufacturingTools: ErpNextTool[] = [
 
   {
     name: "erpnext_work_order_create",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
     description:
       "Create a new Work Order for manufacturing. Requires production_item, bom_no, and qty. " +
       "Optionally set planned_start_date and wip_warehouse.",

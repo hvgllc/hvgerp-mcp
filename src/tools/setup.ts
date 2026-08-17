@@ -107,6 +107,11 @@ export const setupTools: ErpNextTool[] = [
 
   {
     name: "erpnext_company_create",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
     description:
       "Create an ERPNext Company. Requires company_name, abbr, default_currency, country. " +
       "Prerequisites: Warehouse Type 'Transit' and 'Default' must exist. " +

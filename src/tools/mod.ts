@@ -7,6 +7,7 @@
  * @module lib/erpnext/tools/mod
  */
 
+import { identityTools } from "./identity.ts";
 import { salesTools } from "./sales.ts";
 import { inventoryTools } from "./inventory.ts";
 import { accountingTools } from "./accounting.ts";
@@ -30,6 +31,7 @@ export {
   crmTools,
   deliveryTools,
   hrTools,
+  identityTools,
   inventoryTools,
   kanbanTools,
   manufacturingTools,
@@ -43,6 +45,7 @@ export type { ErpNextTool, ErpNextToolCategory };
 
 /** All tools grouped by category */
 export const toolsByCategory: Record<string, ErpNextTool[]> = {
+  identity: identityTools,
   sales: salesTools,
   inventory: inventoryTools,
   accounting: accountingTools,
@@ -61,6 +64,7 @@ export const toolsByCategory: Record<string, ErpNextTool[]> = {
 
 /** Flat array of all tools */
 export const allTools: ErpNextTool[] = [
+  ...identityTools,
   ...salesTools,
   ...inventoryTools,
   ...accountingTools,

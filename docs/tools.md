@@ -1,7 +1,18 @@
-# Tools Reference (125)
+# Tools Reference (127)
 
 Full reference for all ERPNext MCP tools. See [README](../README.md) for
 overview.
+
+## Identity (2) → doclist-viewer
+
+| Tool              | DocType       | Operations                                                                                |
+| ----------------- | ------------- | ----------------------------------------------------------------------------------------- |
+| `erpnext_whoami`  | User/Employee | Caller's User id, full name, roles, linked Employee, and `identity_mode`                  |
+| `erpnext_my_work` | six doctypes  | Open ToDos, tasks, projects, leave applications, expense claims, timesheets (per section) |
+
+`erpnext_whoami` takes no arguments and resolves the caller itself. Its `roles`,
+`employee` and `employee_lookup` fields distinguish "empty" from "withheld", so
+read them before telling anyone they hold no roles or have no HR record.
 
 ## Setup (3)
 

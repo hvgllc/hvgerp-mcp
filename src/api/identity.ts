@@ -1,0 +1,332 @@
+/**
+ * "Who is asking?" — the caller's own ERPNext identity.
+ *
+ * Every tool in this server answers a question *about* ERPNext data. None of them could answer a
+ * question about the person asking, so a request like "what are my open tasks" had no starting
+ * point: the model has no way to turn "my" into a `User` id, and guessing one would silently answer
+ * for the wrong person. This module supplies that missing first hop.
+ *
+ * The identity is read from Frappe with `frappe.auth.get_logged_user` rather than from the access
+ * token's claims. That is deliberate: the token says who Keycloak authenticated, but the only
+ * identity that governs what the reply will contain is the one Frappe attributed the request to.
+ * When those two disagree — an email claim with no matching ERPNext user, a disabled account, a
+ * deployment still running under a shared API key — reporting the claim would describe a person
+ * whose permissions had nothing to do with the rows returned.
+ *
+ * @module lib/erpnext/src/api/identity
+ */
+
+import { FrappeAPIError, type FrappeClient } from "./frappe-client.ts";
+import { currentCaller } from "./caller-context.ts";
+
+/** How long a resolved profile is reused for one principal. */
+const PROFILE_TTL_MS = 60_000;
+
+/** Bound on remembered profiles, so a long-lived process cannot grow without limit. */
+const MAX_CACHED_PROFILES = 200;
+
+/**
+ * Whether the reply describes the end user or the deployment's own service account.
+ *
+ * `shared-service-account` is not a detail to hide: under it every caller sees the same rows, so a
+ * profile presented as "you" would be a fabrication. Tools surface this verbatim.
+ */
+export type IdentityMode = "per-caller" | "shared-service-account";
+
+/**
+ * What happened when this server looked for the caller's `Employee` record.
+ *
+ * `"none"` and `"forbidden"` both leave `employee` null, and collapsing them would make the server
+ * state a fact it never established: telling someone "you have no HR record" when the truth is
+ * "I was not allowed to look" sends the model — and the person — after the wrong problem.
+ */
+export type EmployeeLookup = "found" | "none" | "forbidden";
+
+export interface CallerEmployee {
+  /** Employee ID, e.g. `HR-EMP-00044`. */
+  name: string;
+  employee_name: string;
+  designation: string | null;
+  department: string | null;
+  company: string | null;
+  /** Employee ID of this person's manager, when the HR records set one. */
+  reports_to: string | null;
+  status: string | null;
+  date_of_joining: string | null;
+}
+
+export interface CallerProfile {
+  user: {
+    /** Frappe `User` id — an email address on this deployment. */
+    name: string;
+    email: string | null;
+    full_name: string | null;
+    user_type: string | null;
+    enabled: boolean;
+    time_zone: string | null;
+    language: string | null;
+  };
+  /**
+   * The caller's roles, or `null` when this deployment does not let them read their own.
+   *
+   * `User.roles` sits at permlevel 1 on stock ERPNext and only `System Manager` holds read there,
+   * so an ordinary employee asking about themselves gets it back as `[]` — withheld, not empty.
+   * Reporting that verbatim would tell the overwhelming majority of real callers they hold no roles
+   * at all: a fabricated answer, and a confident one. `null` says the server does not know. See
+   * `loadCallerProfile` for how the two are told apart.
+   */
+  roles: string[] | null;
+  /**
+   * The HR record linked to this user, or `null` when none exists or none could be read.
+   *
+   * `null` is a normal state, not an error: administrators and integration accounts have a `User`
+   * without an `Employee`. It is reported rather than thrown because it changes which questions can
+   * be answered (leave, attendance, expense claims are all keyed on Employee) and the model needs
+   * to know that before it asks. Read `employee_lookup` to tell the two null cases apart.
+   */
+  employee: CallerEmployee | null;
+  /** Why `employee` holds what it holds. See {@link EmployeeLookup}. */
+  employee_lookup: EmployeeLookup;
+  identity_mode: IdentityMode;
+}
+
+interface CachedProfile {
+  profile: CallerProfile;
+  expiresAt: number;
+}
+
+const profileCache = new Map<string, CachedProfile>();
+
+/**
+ * Số hiệu ổn định của từng `FrappeClient`, chỉ dùng để dựng khoá cache.
+ *
+ * `WeakMap` chứ không phải một trường trên chính client: bảng này không được giữ client sống thêm,
+ * và `FrappeClient` là kiểu công khai qua `mod.ts` nên không gắn thuộc tính nội bộ vào nó.
+ */
+const clientIds = new WeakMap<FrappeClient, number>();
+let nextClientId = 0;
+
+function clientId(client: FrappeClient): number {
+  const known = clientIds.get(client);
+  if (known !== undefined) return known;
+  const assigned = ++nextClientId;
+  clientIds.set(client, assigned);
+  return assigned;
+}
+
+/**
+ * Cache key for the current request.
+ *
+ * The principal, never a fixed string: two callers served by the same process must not share a
+ * cached profile, or one would be told they are the other.
+ *
+ * Kèm cả client, vì principal một mình không đủ khi tiến trình cầm nhiều `FrappeClient`. `mod.ts`
+ * xuất `setFrappeClient`, nên một ứng dụng nhúng có thể đổi client sang một site ERPNext khác trong
+ * khi `currentCaller()` vẫn là `undefined` ở cả hai lượt - mọi client không có caller khi đó rơi
+ * vào cùng một entry, và `resolveEmployee(client, "me")` trên site thứ hai nhận về Employee ID của
+ * site thứ nhất suốt 60 giây, im lặng. Chính bộ test cũng đi đúng đường đó, đó là lý do
+ * `clearCallerProfileCache()` tồn tại; khoá theo client biến quy ước phải nhớ ấy thành cấu trúc.
+ *
+ * Số hiệu client đứng trước và chỉ gồm chữ số, nên dấu hai chấm đầu tiên tách khoá không nhập nhằng
+ * kể cả khi principal có chứa dấu hai chấm.
+ */
+function cacheKey(client: FrappeClient): string {
+  const principal = currentCaller()?.principal ?? "\u0000service-account";
+  return `${clientId(client)}:${principal}`;
+}
+
+/** Reset memoized profiles. Exported for tests, which swap the client between cases. */
+export function clearCallerProfileCache(): void {
+  profileCache.clear();
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+/**
+ * The ERPNext user Frappe attributes the current request to.
+ *
+ * `Guest` is rejected rather than returned. Frappe answers an unauthenticated read as Guest with an
+ * empty list, which reads like "you have no tasks" instead of like "you are not signed in" — the
+ * one failure mode this whole module exists to prevent.
+ */
+export async function currentUserId(client: FrappeClient): Promise<string> {
+  const user = await client.callMethod<string>(
+    "frappe.auth.get_logged_user",
+    {},
+    { httpMethod: "GET" },
+  );
+  const resolved = asString(user);
+  if (!resolved || resolved === "Guest") {
+    throw new Error(
+      "[identity] ERPNext did not attribute this request to a signed-in user " +
+        `(got ${
+          JSON.stringify(user)
+        }). The access token must be a Keycloak user token whose ` +
+        "`email` claim matches an enabled ERPNext System User.",
+    );
+  }
+  return resolved;
+}
+
+/** Load the caller's profile, reusing a recent one for the same principal. */
+export async function loadCallerProfile(
+  client: FrappeClient,
+): Promise<CallerProfile> {
+  const key = cacheKey(client);
+  const now = Date.now();
+
+  for (const [cached, entry] of profileCache) {
+    if (entry.expiresAt <= now) profileCache.delete(cached);
+  }
+
+  const hit = profileCache.get(key);
+  if (hit && hit.expiresAt > now) return hit.profile;
+
+  const userId = await currentUserId(client);
+  const doc = await client.get("User", userId) as Record<string, unknown>;
+
+  // Frappe does not DROP a withheld permlevel-1 field, it EMPTIES it. Measured on this deployment
+  // against a caller holding three roles: `roles` came back as `[]` with the key present, and
+  // `user_type` came back `null`. So an empty role list on its own says nothing - it is the same
+  // shape for "you hold no roles" and for "I will not tell you".
+  //
+  // `user_type` is the discriminator, because it sits at the SAME permlevel and is never
+  // legitimately empty: it carries a default of "System User", and 0 of the User rows on this
+  // deployment have it unset. A null `user_type` therefore means permlevel 1 was withheld wholesale,
+  // and the empty `roles` beside it is silence rather than an answer.
+  const roleRows = Array.isArray(doc.roles)
+    ? doc.roles
+      .map((row) => asString((row as Record<string, unknown>)?.role))
+      .filter((role): role is string => role !== null)
+      .sort()
+    : [];
+  const permlevelWithheld = asString(doc.user_type) === null;
+  const roles = permlevelWithheld && roleRows.length === 0 ? null : roleRows;
+
+  // The Employee read is a side lookup, and it is the one call here that a perfectly valid caller
+  // may be refused: `Employee` is a separate doctype with its own permissions, so an integration
+  // account, a narrow admin, or anyone whose roles stop at the doctypes they actually use gets a
+  // 403 on it. Letting that 403 escape would take the whole profile down — and `erpnext_whoami` is
+  // the call the server instructions tell every client to make FIRST, so the failure would land
+  // exactly where the model has nothing else to fall back on. Refusal is recorded, not raised.
+  let row: Record<string, unknown> | undefined;
+  let employeeLookup: EmployeeLookup;
+  try {
+    const employees = await client.list("Employee", {
+      fields: [
+        "name",
+        "employee_name",
+        "designation",
+        "department",
+        "company",
+        "reports_to",
+        "status",
+        "date_of_joining",
+      ],
+      filters: [["user_id", "=", userId]],
+      limit: 1,
+    }) as Record<string, unknown>[];
+    row = employees[0];
+    employeeLookup = row ? "found" : "none";
+  } catch (error) {
+    // Only a permission refusal is absorbed. A 5xx, a timeout or a network error says the reply
+    // would be unreliable rather than incomplete, and reporting "no HR record" for one of those
+    // would be a guess dressed as a finding.
+    if (!(error instanceof FrappeAPIError) || error.status !== 403) throw error;
+    employeeLookup = "forbidden";
+  }
+  const profile: CallerProfile = {
+    user: {
+      name: userId,
+      email: asString(doc.email) ?? userId,
+      full_name: asString(doc.full_name),
+      user_type: asString(doc.user_type),
+      enabled: doc.enabled === 1 || doc.enabled === true,
+      time_zone: asString(doc.time_zone),
+      language: asString(doc.language),
+    },
+    roles,
+    employee: row
+      ? {
+        name: String(row.name),
+        employee_name: asString(row.employee_name) ?? String(row.name),
+        designation: asString(row.designation),
+        department: asString(row.department),
+        company: asString(row.company),
+        reports_to: asString(row.reports_to),
+        status: asString(row.status),
+        date_of_joining: asString(row.date_of_joining),
+      }
+      : null,
+    employee_lookup: employeeLookup,
+    identity_mode: client.actsAs === "caller"
+      ? "per-caller"
+      : "shared-service-account",
+  };
+
+  while (profileCache.size >= MAX_CACHED_PROFILES) {
+    const oldest = profileCache.keys().next();
+    if (oldest.done) break;
+    profileCache.delete(oldest.value);
+  }
+  profileCache.set(key, { profile, expiresAt: now + PROFILE_TTL_MS });
+  return profile;
+}
+
+/**
+ * Values a model may write when it means "the person asking".
+ *
+ * Kept to a short, unambiguous list. A looser match (any string containing "my", say) would capture
+ * real record names — ERPNext has customers called "Myanmar Trading" — and silently rewrite the
+ * filter to someone else.
+ */
+const SELF_REFERENCES: ReadonlySet<string> = new Set([
+  "me",
+  "@me",
+  "self",
+  "@self",
+  "myself",
+  "current user",
+  "current_user",
+]);
+
+/** Whether `value` asks for the caller rather than naming a record. */
+export function isSelfReference(value: string): boolean {
+  return SELF_REFERENCES.has(value.trim().toLowerCase());
+}
+
+/** The caller's own `User` id, for user-typed inputs written as `me`. */
+export function resolveSelfUser(client: FrappeClient): Promise<string> {
+  return currentUserId(client);
+}
+
+/**
+ * The caller's own `Employee` id, for employee-typed inputs written as `me`.
+ *
+ * Throws when the user has no HR record instead of falling back to an unfiltered query: dropping
+ * the filter would answer an employee-scoped question with everyone's rows, which is both a wrong
+ * answer and, on a payroll or expense query, a disclosure.
+ *
+ * The two ways of having no record get two different messages. "You have no HR record" and "I was
+ * not allowed to read HR records" call for opposite next moves — ask HR to create one, versus ask
+ * an administrator for the permission — and one message for both would send half the callers to
+ * the wrong door.
+ */
+export async function resolveSelfEmployee(
+  client: FrappeClient,
+): Promise<string> {
+  const profile = await loadCallerProfile(client);
+  if (!profile.employee) {
+    throw new Error(
+      profile.employee_lookup === "forbidden"
+        ? `[identity] "${profile.user.name}" may not read the Employee doctype, so this server ` +
+          "cannot resolve `me` to an employee ID. Ask an administrator for read access to " +
+          "Employee, or pass an explicit employee ID or name."
+        : `[identity] "${profile.user.name}" has no Employee record, so there is no ` +
+          "employee-scoped data to return. Pass an explicit employee ID or name instead of `me`.",
+    );
+  }
+  return profile.employee.name;
+}

@@ -1,0 +1,49 @@
+# Bản đóng gói Node cho chế độ HTTP, dựng từ bundle TẠI CHỖ thay vì từ npm registry.
+#
+# Khác `Dockerfile.node` đúng một điểm: `Dockerfile.node` chạy `npm install -g @hvgllc/hvgerp-mcp`
+# nên chỉ triển khai được phiên bản ĐÃ publish. Image này COPY thẳng kết quả của
+# `scripts/build-node.sh` - một bundle esbuild tự chứa (`hvgerp-mcp.mjs` + `ui-dist`, mọi dependency
+# runtime đã nằm trong đó) - nên triển khai được code chưa release. Nó cũng không đụng jsr.io, cùng
+# lý do đã ghi ở `Dockerfile.node`.
+#
+# Đổi lại hai ràng buộc: phải chạy build TRƯỚC khi `docker build`, và `dist-node/` nằm trong
+# `.gitignore` nên một lần clone sạch KHÔNG có sẵn thứ để COPY (`.dockerignore` đã mở ngoại lệ cho
+# riêng `dist-node/bin/`).
+#
+# Cách dùng (context là gốc repo). Cả hai bước UI đều bắt buộc chứ không phải tuỳ chọn:
+# `src/ui/node_modules/` lẫn `src/ui/dist/` đều nằm trong `.gitignore`, nên một lần clone sạch
+# không có sẵn thứ nào. Thiếu `node_modules` thì `ui:build` không chạy được; thiếu `dist` thì
+# `scripts/build-node.sh` copy thư mục đó vô điều kiện dưới `set -e` và chết trước khi sinh ra
+# `dist-node/`.
+#   deno task ui:install
+#   deno task ui:build
+#   ./scripts/build-node.sh
+#   docker build -f Dockerfile.bundle -t ghcr.io/hvgllc/hvgerp-mcp:3.2.0-bundle .
+FROM node:22-slim
+
+ENV NODE_ENV=production
+WORKDIR /app
+
+# `--chmod` là bắt buộc, không phải cho gọn: COPY giữ nguyên mode của tệp trên máy build, mà
+# `scripts/build-node.sh` chạy `chmod +x` dưới umask của người build nên bundle thường ra mode 711.
+# User `node` không phải chủ sở hữu sẽ chỉ có quyền `--x`, và Node chết `EACCES: permission denied`
+# ngay khi đọc module - lỗi trông như hỏng image chứ không như lỗi quyền tệp.
+COPY --chmod=0644 dist-node/bin/hvgerp-mcp.mjs /app/hvgerp-mcp.mjs
+
+# `ui-dist` là một CÂY THƯ MỤC, nên `--chmod=0644` không dùng được ở đây: COPY áp cùng một mode cho
+# cả thư mục lẫn tệp, thư mục mất bit `x` và `node` không đi qua nổi. Đo trên chính image này:
+# `drw-r--r-- /app/ui-dist` và `ls /app/ui-dist/doclist-viewer` trả `Permission denied`, nên
+# `resolveViewerDistPath()` không thấy viewer nào và server khởi động với `Resources: 0` - trông như
+# thiếu hiện vật build chứ không như lỗi quyền tệp.
+#
+# Vì vậy COPY nguyên mode rồi chuẩn hoá bằng `find`: thư mục cần bit `x` để đi qua, tệp HTML chỉ cần
+# đọc. `find` chứ không phải `chmod -R a=rX` vì `X` giữ lại bit `x` sẵn có của tệp, tức vẫn phụ thuộc
+# umask của máy build - đúng thứ mà lớp này phải cắt đứt.
+COPY dist-node/bin/ui-dist /app/ui-dist
+RUN find /app/ui-dist -type d -exec chmod 0755 {} + \
+ && find /app/ui-dist -type f -exec chmod 0644 {} +
+
+USER node
+EXPOSE 7654
+
+CMD ["node", "/app/hvgerp-mcp.mjs", "--http", "--port=7654", "--hostname=0.0.0.0"]
