@@ -791,3 +791,149 @@ Deno.test("erpnext_doctype_fields - a single owner is named in the singular", as
 
   assertStringIncludes(error.message, "its parent DocType (Sales Invoice)");
 });
+
+Deno.test("erpnext_doctype_fields - a non-boolean permission answer is an error, not a denial", async () => {
+  // `Boolean(res?.has_permission)` was wrong in both directions. A missing
+  // field became a denial, hiding a broken endpoint behind a permission
+  // message; and any truthy junk became a grant - the string `"false"` being
+  // the cruel case, because the metadata behind this gate comes from
+  // `getdoctype`, which checks nothing itself.
+  for (const broken of [undefined, null, "false", "true", 1, 0, {}]) {
+    const client = makeMockClient({
+      callMethod: async () => ({ has_permission: broken }),
+    });
+
+    const error = await assertRejects(
+      () =>
+        getTool("erpnext_doctype_fields").handler(
+          { doctype: "Account" },
+          makeCtx(client),
+        ),
+      Error,
+      "broken response",
+    );
+    // Never the permission wording: a malformed answer is not a verdict, and
+    // sending the caller off to ask for a role would be a lie.
+    assertEquals(error.message.includes("read permission"), false);
+  }
+});
+
+/**
+ * Route the owner enumeration per source.
+ *
+ * A `Table` field can be declared in `DocField` or, when it was added through
+ * Customize Form or an app's installer, in `Custom Field` - where the owner is
+ * named by `dt` rather than `parent`. Each source answers independently here,
+ * including with its own 403.
+ */
+function makeOwnerSourceClient(
+  docFieldOwners: string[] | Error,
+  customFieldOwners: string[] | Error,
+  readable: string[],
+  asked: string[] = [],
+): FrappeClient {
+  return makeChildClient({
+    callMethod: async (method: string, args: Record<string, unknown>) => {
+      if (method === "frappe.client.get_list") {
+        const source = args.doctype === "Custom Field"
+          ? customFieldOwners
+          : docFieldOwners;
+        if (source instanceof Error) throw source;
+        return args.doctype === "Custom Field"
+          ? source.map((dt) => ({ dt }))
+          : source.map((parent) => ({ parent }));
+      }
+      asked.push(args.doctype as string);
+      return { has_permission: readable.includes(args.doctype as string) };
+    },
+  });
+}
+
+Deno.test("erpnext_doctype_fields - finds an owner declared only as a Custom Field", async () => {
+  // Measured on the live instance: 559 `DocField` Table rows against 4 `Custom
+  // Field` ones, and those 4 are the ONLY owner of their child. `Department
+  // Approver` (owned by `Department`) and `Designation Skill` (owned by
+  // `Designation`) resolved to zero owners from `DocField` alone, so both were
+  // refused for every caller including Administrator, with a message claiming
+  // no owner exists.
+  const asked: string[] = [];
+  const client = makeOwnerSourceClient(
+    [],
+    ["Department"],
+    ["Department"],
+    asked,
+  );
+
+  const result = await getTool("erpnext_doctype_fields").handler(
+    { doctype: "Department Approver" },
+    makeCtx(client),
+  ) as any;
+
+  assertEquals(asked, ["Department"]);
+  assertEquals(result.is_child_table, true);
+});
+
+Deno.test("erpnext_doctype_fields - names the owner source that was actually denied", async () => {
+  // A caller may hold `DocField` and not `Custom Field`. Naming `DocField`
+  // regardless sends them to fix a permission they already have.
+  const denial = new FrappeAPIError("Not permitted for Custom Field", 403, {});
+  const client = makeOwnerSourceClient([], denial, []);
+
+  const error = await assertRejects(
+    () =>
+      getTool("erpnext_doctype_fields").handler(
+        { doctype: "Department Approver" },
+        makeCtx(client),
+      ),
+    Error,
+  );
+
+  assertStringIncludes(error.message, "read access to Custom Field");
+  assertEquals(error.message.includes("DocField"), false);
+});
+
+Deno.test("erpnext_doctype_fields - one readable source is not degraded by the other being denied", async () => {
+  // `DocField` answered, so the single arbitrary name from `getdoctype` must
+  // NOT be reached for: adding it would put a DocType on the list that the
+  // caller is then gated against, on top of a list that is already real.
+  const denial = new FrappeAPIError("Not permitted for Custom Field", 403, {});
+  const asked: string[] = [];
+  const client = makeOwnerSourceClient(
+    ["Quotation"],
+    denial,
+    ["Quotation"],
+    asked,
+  );
+
+  const result = await getTool("erpnext_doctype_fields").handler(
+    { doctype: "Sales Invoice Item" },
+    makeCtx(client),
+  ) as any;
+
+  // `Sales Invoice` is what `getdoctype(with_parent=1)` would have added.
+  assertEquals(asked, ["Quotation"]);
+  assertEquals(result.is_child_table, true);
+});
+
+Deno.test("erpnext_doctype_fields - both sources denied names both and falls back", async () => {
+  const denial = new FrappeAPIError("Not permitted", 403, {});
+  const asked: string[] = [];
+  const client = makeOwnerSourceClient(denial, denial, [], asked);
+
+  const error = await assertRejects(
+    () =>
+      getTool("erpnext_doctype_fields").handler(
+        { doctype: "Sales Invoice Item" },
+        makeCtx(client),
+      ),
+    Error,
+  );
+
+  assertStringIncludes(
+    error.message,
+    "read access to DocField and Custom Field",
+  );
+  // Only when no source could be read at all is the single arbitrary owner
+  // from `getdoctype` worth having.
+  assertEquals(asked, ["Sales Invoice"]);
+});

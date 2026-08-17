@@ -291,17 +291,40 @@ interface RawDocTypeMeta {
   fields?: RawDocField[];
 }
 
-/** Ask ERPNext whether the caller may read this DocType at all. */
+/**
+ * Ask ERPNext whether the caller may read this DocType at all.
+ *
+ * The answer is required to be a real boolean, and anything else is an error
+ * rather than a verdict. `Boolean(res?.has_permission)` looked harmless and was
+ * wrong in both directions: a missing field became a denial, hiding a broken
+ * endpoint behind a permission message, and any truthy junk - the string
+ * `"false"` being the cruel case - became a grant. That second one matters
+ * because the metadata behind this gate comes from `getdoctype`, which performs
+ * no permission check of its own, so this function is the only thing standing
+ * between a caller and a schema they may not read. A gate that fails open on a
+ * malformed response is not a gate.
+ */
 async function canRead(
   ctx: Parameters<ErpNextTool["handler"]>[1],
   doctype: string,
 ): Promise<boolean> {
-  const res = await ctx.client.callMethod<{ has_permission?: boolean }>(
+  const res = await ctx.client.callMethod<{ has_permission?: unknown }>(
     "frappe.client.has_permission",
     { doctype, docname: "", perm_type: "read" },
     { httpMethod: "GET" },
   );
-  return Boolean(res?.has_permission);
+  const granted = res?.has_permission;
+  if (typeof granted !== "boolean") {
+    throw new Error(
+      `[erpnext_doctype_fields] The permission check for '${doctype}' answered ` +
+        `with ${
+          granted === undefined ? "no has_permission field" : typeof granted
+        } ` +
+        "instead of a boolean. This is a broken response, not a denial; retry, " +
+        "and report it if it persists.",
+    );
+  }
+  return granted;
 }
 
 /** Ask ERPNext whether the caller may read this DocType at all. */
@@ -318,7 +341,8 @@ async function assertReadable(
 }
 
 /**
- * Ceiling on the `DocField` rows read while enumerating owners of a child table.
+ * Ceiling on the rows read from ONE owner source while enumerating the DocTypes
+ * that own a child table.
  *
  * This is a runaway guard, not a policy: measured on the live instance, the
  * busiest child table is `Has Role` with 10 owning DocTypes and 10 `DocField`
@@ -329,14 +353,43 @@ async function assertReadable(
 const MAX_PARENT_ROWS = 100;
 
 /**
+ * Where a `Table` field that owns a child DocType can be declared.
+ *
+ * `DocField` alone is not the whole answer. A Table field added through
+ * Customize Form - or by an app's `install.py`, which is how ERPNext itself
+ * ships several of them - is stored as a `Custom Field` row whose `dt` names
+ * the owning DocType, and no `DocField` row exists for it at all. Measured on
+ * the live instance: 559 `DocField` Table rows against 4 `Custom Field` Table
+ * rows, and those 4 are the ONLY owner of their child - `Department Approver`
+ * (owned by `Department`) and `Designation Skill` (owned by `Designation`) both
+ * resolve to zero owners from `DocField`, so before this both were refused for
+ * every caller including Administrator, with a message claiming no owner
+ * exists. Two child tables out of 435 is small; answering "this table has no
+ * owner" about a table that plainly has one is not.
+ *
+ * The owner name lives in a different column per source, hence `ownerField`:
+ * `DocField` rows are children of the `DocType` document (`parent`), while
+ * `Custom Field` is a DocType in its own right and points at its target with
+ * `dt`.
+ */
+const OWNER_SOURCES = [
+  { doctype: "DocField", args: { parent: "DocType" }, ownerField: "parent" },
+  { doctype: "Custom Field", args: {}, ownerField: "dt" },
+] as const;
+
+/**
  * Why an owner list may be short.
  *
  * The two incomplete cases must stay apart because the refusal text explains
- * itself to the caller: `denied` is about the caller's own access to `DocField`
- * and is something an administrator can grant, while `truncated` is about this
- * server hitting its own ceiling and says nothing about the caller's roles.
- * Folding them together made the refusal blame a permission the caller may well
- * have.
+ * itself to the caller: `denied` is about the caller's own access to an owner
+ * source and is something an administrator can grant, while `truncated` is
+ * about this server hitting its own ceiling and says nothing about the caller's
+ * roles. Folding them together made the refusal blame a permission the caller
+ * may well have.
+ *
+ * When both happen at once `truncated` wins, because it is the rarer and more
+ * alarming of the two: a ceiling reached at 100 rows means the enumeration
+ * itself is unusable, which no permission grant would fix.
  */
 type ParentListGap = "none" | "denied" | "truncated";
 
@@ -348,6 +401,13 @@ interface ParentResolution {
    * not on the list, so a refusal built on it has to say so.
    */
   gap: ParentListGap;
+  /**
+   * The owner sources that refused this caller, named so the refusal points at
+   * the permission actually missing. A caller may hold `DocField` and not
+   * `Custom Field`, and telling them to go ask for `DocField` sends them to the
+   * wrong administrator.
+   */
+  deniedSources: string[];
 }
 
 /**
@@ -361,14 +421,15 @@ interface ParentResolution {
  * Template) and the endpoint names only `Quotation`. Gating on that single name
  * denies a caller who can read `Sales Invoice` but not `Quotation`.
  *
- * Enumerating `DocField` gives the real list, and it is not a permission hole:
- * `frappe.client.get_list` applies DocType permissions like any other list, so
- * an account that cannot read `DocField` gets a `PermissionError` here -
- * measured for `khoa.do@havigroup.com`, whose `has_permission('DocField',
- * 'read')` is false. That case falls back to the single name, flagged
- * incomplete.
+ * Enumerating the owner sources gives the real list, and it is not a permission
+ * hole: `frappe.client.get_list` applies DocType permissions like any other
+ * list, so an account that cannot read `DocField` gets a `PermissionError`
+ * here - measured for `khoa.do@havigroup.com`, whose
+ * `has_permission('DocField', 'read')` is false. A source that refuses is
+ * skipped and named, and only when EVERY source refuses does this fall back to
+ * the single arbitrary name.
  *
- * Every other outcome of that call is an error, not a short list. A response
+ * Every other outcome of those calls is an error, not a short list. A response
  * that is not an array means the endpoint broke its contract - a compatibility
  * break, a custom app shadowing `frappe.client.get_list`, a proxy rewriting the
  * body - and none of those says anything about who owns this child table.
@@ -379,73 +440,84 @@ async function resolveChildParents(
   ctx: Parameters<ErpNextTool["handler"]>[1],
   doctype: string,
 ): Promise<ParentResolution> {
-  try {
-    const rows = await ctx.client.callMethod<{ parent?: string }[]>(
-      "frappe.client.get_list",
-      {
-        doctype: "DocField",
-        parent: "DocType",
-        filters: [
-          ["fieldtype", "in", ["Table", "Table MultiSelect"]],
-          ["options", "=", doctype],
-        ],
-        fields: ["parent"],
-        limit_page_length: MAX_PARENT_ROWS,
-      },
-      { httpMethod: "GET" },
-    );
-    if (!Array.isArray(rows)) {
-      throw new Error(
-        `[erpnext_doctype_fields] Listing the DocTypes that own '${doctype}' ` +
-          "returned something other than a row list. This is a broken response, " +
-          "not an empty one; retry, and report it if it persists.",
+  const parents = new Set<string>();
+  const deniedSources: string[] = [];
+  let truncated = false;
+
+  for (const source of OWNER_SOURCES) {
+    try {
+      const rows = await ctx.client.callMethod<Record<string, unknown>[]>(
+        "frappe.client.get_list",
+        {
+          doctype: source.doctype,
+          ...source.args,
+          filters: [
+            ["fieldtype", "in", ["Table", "Table MultiSelect"]],
+            ["options", "=", doctype],
+          ],
+          fields: [source.ownerField],
+          limit_page_length: MAX_PARENT_ROWS,
+        },
+        { httpMethod: "GET" },
       );
+      if (!Array.isArray(rows)) {
+        throw new Error(
+          `[erpnext_doctype_fields] Listing the ${source.doctype} rows that own ` +
+            `'${doctype}' returned something other than a row list. This is a ` +
+            "broken response, not an empty one; retry, and report it if it persists.",
+        );
+      }
+      for (const row of rows) {
+        const name = row?.[source.ownerField];
+        if (typeof name === "string" && name && name !== doctype) {
+          parents.add(name);
+        }
+      }
+      if (rows.length >= MAX_PARENT_ROWS) truncated = true;
+    } catch (error) {
+      // Only a permission denial earns the degraded answer. A timeout or a 5xx
+      // says nothing about who owns this child table, so it stays an error
+      // rather than quietly shrinking the owner list. `identity.ts` draws the
+      // same line for the same reason.
+      if (!(error instanceof FrappeAPIError) || error.status !== 403) {
+        throw error;
+      }
+      deniedSources.push(source.doctype);
     }
-    const names = [
-      ...new Set(
-        rows
-          .map((row) => row?.parent)
-          .filter((name): name is string => !!name && name !== doctype),
-      ),
-    ];
-    return {
-      parents: names,
-      gap: rows.length < MAX_PARENT_ROWS ? "none" : "truncated",
-    };
-  } catch (error) {
-    // Only a permission denial earns the degraded answer. The fallback below
-    // names ONE arbitrary owner, and the caller is then gated against that one
-    // name - so a caller who can read a different owner is refused metadata
-    // they are entitled to. That is an acceptable price for an account that
-    // genuinely cannot read `DocField`, and a wrong answer for a timeout or a
-    // 5xx, which say nothing about who owns this child table. `identity.ts`
-    // draws the same line for the same reason.
-    if (!(error instanceof FrappeAPIError) || error.status !== 403) throw error;
   }
 
-  // `with_parent: 1` makes `getdoctype` attach the owning DocType alongside the
-  // child. One name only, but it is the one answer a caller with no `DocField`
-  // access can still get.
-  const envelope = await ctx.client.callMethodRaw<
-    { docs?: RawDocTypeMeta[] }
-  >(
-    "frappe.desk.form.load.getdoctype",
-    { doctype, with_parent: 1 },
-    { httpMethod: "GET" },
-  );
-  const parents: string[] = [];
-  for (const candidate of envelope?.docs ?? []) {
-    const name = candidate.name;
-    if (!name || name === doctype || parents.includes(name)) continue;
-    const ownsIt = (candidate.fields ?? []).some(
-      (field) =>
-        (field.fieldtype === "Table" ||
-          field.fieldtype === "Table MultiSelect") &&
-        field.options === doctype,
+  // Only when NO source could be read at all is the single arbitrary name worth
+  // having. Reaching for it while one source answered would add a name the
+  // caller is then gated against, on top of a list that is already real.
+  if (deniedSources.length === OWNER_SOURCES.length) {
+    // `with_parent: 1` makes `getdoctype` attach the owning DocType alongside
+    // the child. One name only, but it is the one answer a caller with no
+    // access to any owner source can still get.
+    const envelope = await ctx.client.callMethodRaw<
+      { docs?: RawDocTypeMeta[] }
+    >(
+      "frappe.desk.form.load.getdoctype",
+      { doctype, with_parent: 1 },
+      { httpMethod: "GET" },
     );
-    if (ownsIt) parents.push(name);
+    for (const candidate of envelope?.docs ?? []) {
+      const name = candidate.name;
+      if (!name || name === doctype) continue;
+      const ownsIt = (candidate.fields ?? []).some(
+        (field) =>
+          (field.fieldtype === "Table" ||
+            field.fieldtype === "Table MultiSelect") &&
+          field.options === doctype,
+      );
+      if (ownsIt) parents.add(name);
+    }
   }
-  return { parents, gap: "denied" };
+
+  return {
+    parents: [...parents],
+    gap: truncated ? "truncated" : deniedSources.length > 0 ? "denied" : "none",
+    deniedSources,
+  };
 }
 
 /**
@@ -464,7 +536,10 @@ async function assertChildReadable(
   ctx: Parameters<ErpNextTool["handler"]>[1],
   doctype: string,
 ): Promise<void> {
-  const { parents, gap } = await resolveChildParents(ctx, doctype);
+  const { parents, gap, deniedSources } = await resolveChildParents(
+    ctx,
+    doctype,
+  );
 
   // Every resolved parent is probed. There is no cap on THIS loop: the list is
   // already bounded by how many DocTypes really declare this child, and cutting
@@ -479,9 +554,11 @@ async function assertChildReadable(
   // single "the list may be partial" that blamed DocField access told an
   // administrator-level caller to go ask for a permission they already hold.
   const gapNote = gap === "denied"
-    ? " That list may be partial: enumerating the owners requires read access " +
-      "to DocField, which this account does not have, so another DocType you " +
-      "can read may own this table."
+    ? ` That list may be partial: enumerating the owners requires read access ` +
+      `to ${
+        deniedSources.join(" and ")
+      }, which this account does not have, so ` +
+      "another DocType you can read may own this table."
     : gap === "truncated"
     ? ` That list may be partial for a reason unrelated to your permissions: ` +
       `the owner lookup stopped at ${MAX_PARENT_ROWS} rows, which is far above ` +
@@ -514,8 +591,9 @@ export const discoveryTools: ErpNextTool[] = [
       "erpnext_doc_list / erpnext_doc_get when you need to filter, sort or select a field and " +
       "are not certain it exists — reading a sample document only reveals the fields that " +
       "happen to be filled in. The answer also lists the standard columns every DocType stores " +
-      "(name, owner, creation, modified, modified_by, docstatus, idx, plus _assign on any DocType " +
-      "with a table of its own) marked is_standard, because " +
+      "(name, owner, creation, modified, modified_by, docstatus, idx, plus _assign, _user_tags, " +
+      "_comments and _liked_by on any DocType with a table of its own, and _seen on the few that " +
+      "track it) marked is_standard, because " +
       "they appear in no form. _assign is the JSON array of User ids assigned to a document, so it " +
       "is how you answer 'assigned to me': filter it with a quoted substring match. " +
       "Every field carries queryable: false means the value can be read " +
