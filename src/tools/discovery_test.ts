@@ -10,7 +10,7 @@
 
 // deno-lint-ignore-file no-explicit-any
 
-import { assertEquals, assertRejects } from "@std/assert";
+import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { discoveryTools } from "./discovery.ts";
 import { FrappeAPIError, type FrappeClient } from "../api/frappe-client.ts";
 import type { ErpNextToolContext } from "./types.ts";
@@ -144,8 +144,10 @@ Deno.test("erpnext_doctype_fields - drops layout and hidden fields by default", 
     declaredNames(result),
     ["account_name", "parent_account", "disabled"],
   );
-  // 7 standard columns, `_assign`, and the 3 declared fields that survived the filter.
-  assertEquals(result.count, 11);
+  // 7 standard columns, the 4 unconditional `optional_fields`, and the 3
+  // declared fields that survived the filter. `_seen` is not among them because
+  // this DocType does not set `track_seen`.
+  assertEquals(result.count, 14);
   const declared = result.fields.filter((f: any) => !f.is_standard);
   assertEquals(declared[0].reqd, true);
   // A Link field must carry its target, or the model cannot follow the reference.
@@ -170,10 +172,17 @@ Deno.test("erpnext_doctype_fields - lists the standard columns no form declares"
     "modified_by",
     "docstatus",
     "idx",
-    // Not one of Frappe's `default_fields`, but a real column on every DocType
-    // with a table - and the one this server's own assignment filter queries.
+    // Not in Frappe's `default_fields` but in its `optional_fields`, and real
+    // columns on every DocType with a table of its own - `_assign` is the one
+    // this server's own assignment filter queries.
     "_assign",
+    "_user_tags",
+    "_comments",
+    "_liked_by",
   ]);
+  // The fifth `optional_fields` name is conditional, and this DocType does not
+  // set `track_seen`. See the dedicated test below.
+  assertEquals(standard.some((f: any) => f.fieldname === "_seen"), false);
   // `doctype` is in Frappe's default_fields tuple but is NOT a column: it is
   // attached in memory, so filtering or sorting on it fails at the database.
   assertEquals(standard.some((f: any) => f.fieldname === "doctype"), false);
@@ -209,6 +218,13 @@ function makeChildClient(overrides: Record<string, AnyFn> = {}): FrappeClient {
       args.with_parent
         ? { docs: [PARENT_META, CHILD_META] }
         : { docs: [CHILD_META] },
+    // The owner enumeration has to answer with a row list. The blanket
+    // `{ has_permission: true }` of the base mock is not one, and the tool now
+    // treats a non-list as the broken contract it is - see the dedicated test.
+    callMethod: async (method: string) =>
+      method === "frappe.client.get_list"
+        ? [{ parent: "Sales Invoice" }]
+        : { has_permission: true },
     ...overrides,
   });
 }
@@ -496,25 +512,28 @@ Deno.test("erpnext_doctype_fields - a virtual field is not queryable on an ordin
   );
 });
 
-Deno.test("erpnext_doctype_fields - offers _assign only where the column exists", async () => {
+Deno.test("erpnext_doctype_fields - offers the optional columns only where they exist", async () => {
   // Measured on the live instance: all 625 DocTypes with `istable = 0,
-  // issingle = 0, is_virtual = 0` carry the `_assign` column and not one of the
-  // 447 child tables does. A Single and a virtual DocType have no table at all.
-  const assignOf = (result: any) =>
-    result.fields.find((f: any) => f.fieldname === "_assign");
+  // issingle = 0, is_virtual = 0` carry all four of these columns and not one of
+  // the 435 readable child tables carries any. A Single and a virtual DocType
+  // have no table at all.
+  const OPTIONAL = ["_assign", "_user_tags", "_comments", "_liked_by"];
+  const optionalOf = (result: any) =>
+    result.fields.filter((f: any) => OPTIONAL.includes(f.fieldname));
 
   const ordinary = await getTool("erpnext_doctype_fields").handler(
     { doctype: "Account" },
     makeCtx(makeMockClient()),
   ) as any;
-  assertEquals(assignOf(ordinary).is_standard, true);
-  assertEquals(assignOf(ordinary).queryable, true);
+  assertEquals(optionalOf(ordinary).map((f: any) => f.fieldname), OPTIONAL);
+  assertEquals(optionalOf(ordinary).every((f: any) => f.is_standard), true);
+  assertEquals(optionalOf(ordinary).every((f: any) => f.queryable), true);
 
   const child = await getTool("erpnext_doctype_fields").handler(
     { doctype: "Sales Invoice Item" },
     makeCtx(makeChildClient()),
   ) as any;
-  assertEquals(assignOf(child), undefined);
+  assertEquals(optionalOf(child), []);
 
   const single = await getTool("erpnext_doctype_fields").handler(
     { doctype: "System Settings" },
@@ -524,7 +543,62 @@ Deno.test("erpnext_doctype_fields - offers _assign only where the column exists"
       }),
     })),
   ) as any;
-  assertEquals(assignOf(single), undefined);
+  assertEquals(optionalOf(single), []);
+});
+
+Deno.test("erpnext_doctype_fields - offers _seen only where track_seen is on", async () => {
+  // The fifth `optional_fields` name is the one that is NOT unconditional:
+  // measured across all 625 ordinary DocTypes, the column is present on exactly
+  // the 21 that set `track_seen` and absent on the other 604. Announcing it
+  // everywhere would invent a column on 604 DocTypes.
+  const seenOf = (result: any) =>
+    result.fields.find((f: any) => f.fieldname === "_seen");
+
+  const tracked = await getTool("erpnext_doctype_fields").handler(
+    { doctype: "Sales Invoice" },
+    makeCtx(makeMockClient({
+      callMethodRaw: async () => ({
+        docs: [{ ...META, name: "Sales Invoice", track_seen: 1 }],
+      }),
+    })),
+  ) as any;
+  assertEquals(seenOf(tracked).is_standard, true);
+  assertEquals(seenOf(tracked).queryable, true);
+  // It comes after the four unconditional ones, so the ordering stays stable.
+  assertEquals(tracked.fields.at(-1).fieldname !== "_seen", true);
+  assertEquals(
+    tracked.fields.filter((f: any) => f.is_standard).at(-1).fieldname,
+    "_seen",
+  );
+
+  // `track_seen` absent from the metadata is the same answer as 0: the column
+  // is not there.
+  const untracked = await getTool("erpnext_doctype_fields").handler(
+    { doctype: "Account" },
+    makeCtx(makeMockClient()),
+  ) as any;
+  assertEquals(seenOf(untracked), undefined);
+
+  const off = await getTool("erpnext_doctype_fields").handler(
+    { doctype: "Account" },
+    makeCtx(makeMockClient({
+      callMethodRaw: async () => ({ docs: [{ ...META, track_seen: 0 }] }),
+    })),
+  ) as any;
+  assertEquals(seenOf(off), undefined);
+
+  // A child table does not get it even when the flag is set, for the same
+  // reason it gets none of the other four.
+  const child = await getTool("erpnext_doctype_fields").handler(
+    { doctype: "Sales Invoice Item" },
+    makeCtx(makeChildClient({
+      callMethodRaw: async (_method: string, args: Record<string, unknown>) =>
+        args.with_parent
+          ? { docs: [PARENT_META, { ...CHILD_META, track_seen: 1 }] }
+          : { docs: [{ ...CHILD_META, track_seen: 1 }] },
+    })),
+  ) as any;
+  assertEquals(seenOf(child), undefined);
 });
 
 Deno.test("erpnext_doctype_fields - refuses metadata that carries no field list", async () => {
@@ -636,4 +710,84 @@ Deno.test("erpnext_doctype_fields - a 403 on parent enumeration still falls back
   // The single name `getdoctype` attaches, not an enumerated list - and it is
   // the only DocType the gate gets to ask about.
   assertEquals(asked, ["Sales Invoice"]);
+});
+
+Deno.test("erpnext_doctype_fields - a non-array owner enumeration is an error, not an empty list", async () => {
+  // A response of some other shape means the endpoint broke its contract - a
+  // custom app shadowing `frappe.client.get_list`, a proxy rewriting the body.
+  // Reading it as "no owners" would answer a broken contract with a permission
+  // verdict, and reading it as "all owners" would hand out schema unchecked.
+  for (const broken of [null, {}, "nope", 7]) {
+    const client = makeChildClient({
+      callMethod: async (method: string) => {
+        if (method === "frappe.client.get_list") return broken;
+        return { has_permission: true };
+      },
+    });
+
+    await assertRejects(
+      () =>
+        getTool("erpnext_doctype_fields").handler(
+          { doctype: "Sales Invoice Item" },
+          makeCtx(client),
+        ),
+      Error,
+      "broken response",
+    );
+  }
+});
+
+Deno.test("erpnext_doctype_fields - a truncated owner list does not blame the caller's permissions", async () => {
+  // Hitting the row ceiling says nothing about the caller's roles - measured on
+  // the live instance, the busiest child table has 10 owners against a ceiling
+  // of 100 - so the refusal must not send an administrator off to ask for a
+  // DocField permission they already hold.
+  const owners = Array.from({ length: 100 }, (_, index) => `Owner ${index}`);
+  const client = makeChildPermissionClient(owners, []);
+
+  const error = await assertRejects(
+    () =>
+      getTool("erpnext_doctype_fields").handler(
+        { doctype: "Sales Invoice Item" },
+        makeCtx(client),
+      ),
+    Error,
+  );
+
+  assertStringIncludes(error.message, "unrelated to your permissions");
+  assertStringIncludes(error.message, "stopped at 100 rows");
+  assertEquals(error.message.includes("DocField"), false);
+});
+
+Deno.test("erpnext_doctype_fields - a full-but-short owner list claims no gap at all", async () => {
+  // The ordinary case: fewer rows than the ceiling means the list is the whole
+  // truth, and the refusal must not hedge about a partiality that is not there.
+  const client = makeChildPermissionClient(["Sales Invoice", "Quotation"], []);
+
+  const error = await assertRejects(
+    () =>
+      getTool("erpnext_doctype_fields").handler(
+        { doctype: "Sales Invoice Item" },
+        makeCtx(client),
+      ),
+    Error,
+  );
+
+  assertEquals(error.message.includes("may be partial"), false);
+  assertStringIncludes(error.message, "any of its parent DocTypes");
+});
+
+Deno.test("erpnext_doctype_fields - a single owner is named in the singular", async () => {
+  const client = makeChildPermissionClient(["Sales Invoice"], []);
+
+  const error = await assertRejects(
+    () =>
+      getTool("erpnext_doctype_fields").handler(
+        { doctype: "Sales Invoice Item" },
+        makeCtx(client),
+      ),
+    Error,
+  );
+
+  assertStringIncludes(error.message, "its parent DocType (Sales Invoice)");
 });

@@ -470,14 +470,21 @@ function StockContent(
                 as unknown rather than borrowing the page length, which would
                 claim completeness exactly when the page is truncated. A total
                 larger than the page is named as such, because the entries
-                behind it were never fetched and nothing here can reach them. */
+                behind it were never fetched and nothing here can reach them.
+
+                The total counts Bin ROWS - not stocked units, and not items in
+                stock: `erpnext_stock_balance` lists `Bin` with no `actual_qty`
+                filter, so bins holding zero or a negative quantity are inside
+                it. "in stock overall" therefore claimed something the number
+                does not support, and disagreed with the two sibling branches
+                here, which have always called the same number "entries". */
             }
             {sorted.length < data.data.length
               ? (
                 <>
                   {sorted.length} of {data.data.length} loaded entries ·{" "}
                   {typeof data.count === "number"
-                    ? `${data.count} in stock overall`
+                    ? `${data.count} matching entries overall`
                     : "total unknown"}
                 </>
               )

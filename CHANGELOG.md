@@ -170,17 +170,56 @@ requests and tags actually live.
   the tool, since that is the document ERPNext can actually fetch. The viewer
   hides every underscore-prefixed key from its columns, so the extra field is
   invisible to the reader.
-- **`_assign` is listed among the standard columns.** It is not one of Frappe's
-  `default_fields`, so no form declares it and the metadata endpoint never
-  mentions it - yet it is a real, queryable column on every DocType that has a
-  table (measured: all 625 DocTypes with
-  `istable = 0, issingle = 0,
-  is_virtual = 0` carry it, and not one of the 447
-  child tables does), and it is the column this server's own assignment filter
-  queries. A caller asking the schema for the field behind "assigned to me" was
-  told no such field exists. The description says how to filter it - a substring
-  match that keeps the quotes around the User id, since an unquoted pattern also
-  matches every longer id ending in the same characters.
+- **All five of Frappe's `optional_fields` are listed among the standard
+  columns.** None of them is in `default_fields`, so no form declares them and
+  the metadata endpoint never mentions them - yet they are real, queryable
+  columns, and `_assign` is the one this server's own assignment filter queries.
+  A caller asking the schema for the field behind "assigned to me", "tagged
+  how", or "liked by whom" was told no such field exists. They do not all behave
+  alike, and the difference is measured rather than assumed: `_assign`,
+  `_user_tags`, `_comments` and `_liked_by` are present on all 625 DocTypes with
+  `istable = 0, issingle = 0, is_virtual = 0` and on none of the 435 readable
+  child tables, so they are listed unconditionally; `_seen` exists only where
+  the DocType sets `track_seen`, present on exactly the 21 that set the flag and
+  absent on the other 604 with zero mismatches in either direction, so it is
+  listed only when `getdoctype` reports that flag. Announcing `_seen`
+  unconditionally would have invented a column on 604 DocTypes - the failure
+  this tool exists to prevent. Each description says how to filter the column: a
+  substring match that keeps the quotes around a User id for the JSON-array ones
+  (an unquoted pattern also matches every longer id ending in the same
+  characters) and one that keeps the commas for `_user_tags`. `_comments` is
+  named as the sidebar cache it is, pointing at the `Comment` DocType as the
+  record of truth.
+- **A truncated owner list no longer blames the caller's permissions.** The
+  `DocField` enumeration behind a child table's owners is capped, and reaching
+  that cap was reported with the same sentence as a `DocField` permission
+  denial - so an administrator who holds that permission was told to go ask for
+  it. The two gaps are now separate: a denial still names the missing `DocField`
+  access, while a truncated list says the cap is a fault on this server,
+  unrelated to the caller's roles, and asks for it to be reported. The cap
+  itself stays as a runaway guard rather than becoming pagination: measured on
+  the live instance the busiest child table is `Has Role` with 10 owning
+  DocTypes, an order of magnitude below the ceiling, so reaching it means the
+  enumeration is broken rather than long.
+- **An owner enumeration that answers with something other than a row list is an
+  error.** A non-array response means the endpoint broke its contract - a custom
+  app shadowing `frappe.client.get_list`, a proxy rewriting the body - and none
+  of those says anything about who owns the child table. It used to fall through
+  to the degraded single-owner path, which answers a broken contract with a
+  permission verdict.
+- **The doclist viewer no longer turns a broken payload into an empty result.**
+  A payload whose `data` was not an array was rendered as a successful list of
+  zero rows, which reads as "there are none" for a response that carried no rows
+  array at all. Every producer of this payload sets `data` unconditionally, so
+  the shape is a fault: when the payload carries doclist markers (`_title`,
+  `_rowAction`, or a `count` key, including an explicit null count) the viewer
+  now says the response is broken and asks the reader to ask again.
+- **The stock viewer counts entries, not stock.** Its footer read "N in stock
+  overall", but `erpnext_stock_balance` lists `Bin` rows with no `actual_qty`
+  filter, so the total includes zero-quantity and negative bins and is a row
+  count rather than a quantity. It now reads "N matching entries overall",
+  matching the two sibling branches of the same counter, which already said
+  "entries".
 - **Metadata with no field list is refused instead of being answered.** When
   `getdoctype` returned a document without a `fields` array - a broken response,
   not a DocType that declares nothing - the tool fell through to a successful

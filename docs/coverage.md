@@ -1,6 +1,6 @@
 # ERPNext MCP Library - Coverage
 
-## Covered (127 tools, 15 categories)
+## Covered (129 tools, 16 categories)
 
 ### Identity (2 tools)
 
@@ -99,20 +99,28 @@ is not: it reads four doctypes outside whatever surface was requested.
 | `erpnext_company_list`   | Company | List companies (name, abbr, currency, country)         | doclist-viewer |
 | `erpnext_company_create` | Company | Create company (name, abbr, currency, country, domain) | -              |
 
-### Generic Operations (11 tools)
+### Generic Operations (12 tools)
 
-| Tool                   | DocType | Operations                                            | UI Viewer      |
-| ---------------------- | ------- | ----------------------------------------------------- | -------------- |
-| `erpnext_doc_create`   | Any     | Create any document (doctype + data object)           | -              |
-| `erpnext_doc_update`   | Any     | Update any document (partial patch)                   | -              |
-| `erpnext_doc_delete`   | Any     | Delete any document (Draft only)                      | -              |
-| `erpnext_doc_submit`   | Any     | Submit any submittable document                       | -              |
-| `erpnext_doc_cancel`   | Any     | Cancel any submitted document                         | -              |
-| `erpnext_doc_get`      | Any     | Get any document by DocType + name                    | -              |
-| `erpnext_doc_list`     | Any     | List any DocType with field/filter/limit control      | doclist-viewer |
-| `erpnext_doc_assign`   | Any     | Native assignment (ToDo + notification) to users      | -              |
-| `erpnext_doc_unassign` | Any     | Remove one user's native assignment                   | -              |
-| `erpnext_method_call`  | Any     | Call an allowlisted whitelisted method by dotted path | -              |
+| Tool                      | DocType | Operations                                                         | UI Viewer      |
+| ------------------------- | ------- | ------------------------------------------------------------------ | -------------- |
+| `erpnext_file_upload`     | File    | Attach a file to any document                                      | -              |
+| `erpnext_calendar_events` | Event   | Read the caller's calendar over a date range, recurrences expanded | doclist-viewer |
+| `erpnext_doc_create`      | Any     | Create any document (doctype + data object)                        | -              |
+| `erpnext_doc_update`      | Any     | Update any document (partial patch)                                | -              |
+| `erpnext_doc_delete`      | Any     | Delete any document (Draft only)                                   | -              |
+| `erpnext_doc_submit`      | Any     | Submit any submittable document                                    | -              |
+| `erpnext_doc_cancel`      | Any     | Cancel any submitted document                                      | -              |
+| `erpnext_doc_get`         | Any     | Get any document by DocType + name                                 | -              |
+| `erpnext_doc_list`        | Any     | List any DocType with field/filter/limit control                   | doclist-viewer |
+| `erpnext_doc_assign`      | Any     | Native assignment (ToDo + notification) to users                   | -              |
+| `erpnext_doc_unassign`    | Any     | Remove one user's native assignment                                | -              |
+| `erpnext_method_call`     | Any     | Call an allowlisted whitelisted method by dotted path              | -              |
+
+### Discovery (1 tool)
+
+| Tool                     | DocType | Operations                                                                                                                                                | UI Viewer |
+| ------------------------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `erpnext_doctype_fields` | Any     | Read a DocType's field list (fieldname, label, type, link target, standard fields) before writing filters or field lists for the generic operations tools | -         |
 
 ### Kanban (2 tools)
 

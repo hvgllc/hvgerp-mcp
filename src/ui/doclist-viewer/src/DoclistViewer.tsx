@@ -90,14 +90,27 @@ export function DoclistViewer() {
       const parsed = JSON.parse(text);
       if (!parsed) return false;
       if (!Array.isArray(parsed.data)) {
+        // Two different failures used to share one branch. A payload with no
+        // doclist marker at all belongs to some other viewer and is simply not
+        // ours - return false and let it pass. A payload that DOES carry a
+        // doclist marker but no row array is a broken contract: every producer
+        // sets `data` (`listResult` and `erpnext_my_work` both assign it
+        // unconditionally), so its absence means the response was mangled in
+        // transit. Synthesising `data: []` there rendered "0 records" - telling
+        // the reader their query found nothing at the exact moment nothing was
+        // known. AGENTS.md:450-451 forbids that swap.
+        //
         // `"count" in parsed` rather than `parsed.count != null`: an explicit
         // null count is a doclist payload whose total could not be resolved,
         // not a payload of some other shape.
         if (parsed._title || parsed._rowAction || "count" in parsed) {
-          parsed.data = [];
-        } else {
-          return false;
+          setError(
+            "The tool returned a doclist payload with no rows array. This is a " +
+              "broken response, not an empty result - ask again.",
+          );
+          setLoading(false);
         }
+        return false;
       }
       hydrateData(parsed as DoclistData);
       setError(null);

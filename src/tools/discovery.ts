@@ -172,23 +172,29 @@ const CHILD_TABLE_FIELDS: readonly StandardField[] = [
 ] as const;
 
 /**
- * The assignment column every ordinary DocType carries and no child table does.
+ * The unconditional half of Frappe's `optional_fields`.
  *
- * `_assign` is one of Frappe's `optional_fields`, created on the table of every
- * DocType that has one: measured on the live instance, all 625 DocTypes with
- * `istable = 0, issingle = 0, is_virtual = 0` have the column and not one of
- * the 447 child tables does. It is also the column this server's own
- * `assignedToFilter` (`src/tools/assignment.ts`) queries, so leaving it out of
- * the schema told a caller "no such field" about the one column that answers
- * "assigned to me" - and the caller then had no way to build that filter for
- * itself.
+ * `frappe.model.optional_fields` holds five names - `_user_tags`, `_comments`,
+ * `_assign`, `_liked_by`, `_seen` - and they do not all behave alike. The four
+ * here are created on the table of every DocType that has one: measured on the
+ * live instance, all 625 DocTypes with `istable = 0, issingle = 0,
+ * is_virtual = 0` carry all four, and not one of the 435 readable child tables
+ * carries any. `_seen` is the exception and is handled by `SEEN_FIELD` below.
+ *
+ * None of the five is declared as a `DocField`, so the metadata endpoint never
+ * names them - yet they are real columns that `erpnext_doc_list` can select,
+ * filter and sort on. Leaving them out told a caller "no such field" about the
+ * columns that answer "assigned to me", "tagged how", "liked by whom". For
+ * `_assign` that was the sharpest, because this server's own `assignedToFilter`
+ * (`src/tools/assignment.ts`) queries it, so discovery contradicted a filter the
+ * server itself builds.
  *
  * Merged in only when the DocType has a table of its own - which is exactly
  * what `doctypeQueryable` already answers for a Single and a virtual DocType -
- * and is not a child table. A child table is assigned through the document
- * that owns it.
+ * and is not a child table. A child table is tagged, assigned and liked through
+ * the document that owns it.
  */
-const ASSIGNMENT_FIELD: readonly StandardField[] = [
+const OPTIONAL_FIELDS: readonly StandardField[] = [
   {
     fieldname: "_assign",
     label: "Assigned To",
@@ -196,6 +202,54 @@ const ASSIGNMENT_FIELD: readonly StandardField[] = [
     options: null,
     description:
       'JSON array of User ids assigned to the document, stored as text. Filter it with a substring match that keeps the quotes, e.g. ["_assign", "like", "%\\"user@example.com\\"%"]; an unquoted pattern also matches every longer id ending in the same characters.',
+  },
+  {
+    fieldname: "_user_tags",
+    label: "Tags",
+    fieldtype: "Text",
+    options: null,
+    description:
+      'Comma-separated tags applied to the document, stored as text with a leading comma (",urgent,vip"). Filter it with a substring match that keeps the commas, e.g. ["_user_tags", "like", "%,urgent,%"]; a bare pattern also matches every longer tag containing the same characters.',
+  },
+  {
+    fieldname: "_comments",
+    label: "Comments",
+    fieldtype: "Text",
+    options: null,
+    description:
+      "JSON array of the comment objects shown in the document sidebar, stored as text. It is a cache written by Frappe; the Comment DocType is the record of truth, so read comments there rather than parsing this.",
+  },
+  {
+    fieldname: "_liked_by",
+    label: "Liked By",
+    fieldtype: "Text",
+    options: null,
+    description:
+      'JSON array of User ids who liked the document, stored as text. Filter it the same way as _assign, keeping the quotes: ["_liked_by", "like", "%\\"user@example.com\\"%"].',
+  },
+] as const;
+
+/**
+ * The one `optional_fields` column that is not unconditional.
+ *
+ * `_seen` exists only where the DocType sets `track_seen`, and the correlation
+ * is exact rather than approximate: measured across all 625 ordinary DocTypes on
+ * the live instance, the column is present on exactly the 21 that set the flag
+ * and absent on the other 604, with zero mismatches in either direction.
+ * Announcing it unconditionally would therefore invent a column on 604 DocTypes
+ * - the very failure this tool exists to prevent.
+ *
+ * `getdoctype` returns `track_seen` in the DocType meta (measured: 1 for
+ * `Sales Invoice`, 0 for `HVG API Token`), so the condition costs no extra call.
+ */
+const SEEN_FIELD: readonly StandardField[] = [
+  {
+    fieldname: "_seen",
+    label: "Seen By",
+    fieldtype: "Text",
+    options: null,
+    description:
+      'JSON array of User ids who have opened the document, stored as text. Only DocTypes with track_seen enabled have this column. Filter it like _assign, keeping the quotes: ["_seen", "like", "%\\"user@example.com\\"%"].',
   },
 ] as const;
 
@@ -230,6 +284,8 @@ interface RawDocTypeMeta {
   is_virtual?: number;
   is_submittable?: number;
   is_tree?: number;
+  /** Whether the DocType keeps a `_seen` column. See `SEEN_FIELD`. */
+  track_seen?: number;
   title_field?: string | null;
   description?: string | null;
   fields?: RawDocField[];
@@ -264,24 +320,34 @@ async function assertReadable(
 /**
  * Ceiling on the `DocField` rows read while enumerating owners of a child table.
  *
- * This is a runaway guard, not a policy: the busiest child table on the live
- * instance is `Has Role` with 10 owning DocTypes, so a real answer never comes
- * close. Reaching the ceiling therefore means the enumeration is unusable
- * rather than long, and it is reported as incomplete instead of being passed
- * off as the full list.
+ * This is a runaway guard, not a policy: measured on the live instance, the
+ * busiest child table is `Has Role` with 10 owning DocTypes and 10 `DocField`
+ * rows, so the ceiling sits an order of magnitude above any real answer.
+ * Reaching it therefore means the enumeration is unusable rather than long, and
+ * it is reported as truncated instead of being passed off as the full list.
  */
 const MAX_PARENT_ROWS = 100;
+
+/**
+ * Why an owner list may be short.
+ *
+ * The two incomplete cases must stay apart because the refusal text explains
+ * itself to the caller: `denied` is about the caller's own access to `DocField`
+ * and is something an administrator can grant, while `truncated` is about this
+ * server hitting its own ceiling and says nothing about the caller's roles.
+ * Folding them together made the refusal blame a permission the caller may well
+ * have.
+ */
+type ParentListGap = "none" | "denied" | "truncated";
 
 /** Who owns a child table, and whether that list is the whole truth. */
 interface ParentResolution {
   parents: string[];
   /**
-   * False when the caller could not enumerate `DocField` and only the single
-   * parent `getdoctype` names is known. A refusal built on an incomplete list
-   * has to say so: the caller may well be able to read an owner that is not on
-   * it.
+   * Anything but `"none"` means the caller may be able to read an owner that is
+   * not on the list, so a refusal built on it has to say so.
    */
-  complete: boolean;
+  gap: ParentListGap;
 }
 
 /**
@@ -301,6 +367,13 @@ interface ParentResolution {
  * measured for `khoa.do@havigroup.com`, whose `has_permission('DocField',
  * 'read')` is false. That case falls back to the single name, flagged
  * incomplete.
+ *
+ * Every other outcome of that call is an error, not a short list. A response
+ * that is not an array means the endpoint broke its contract - a compatibility
+ * break, a custom app shadowing `frappe.client.get_list`, a proxy rewriting the
+ * body - and none of those says anything about who owns this child table.
+ * Falling through to the single arbitrary name would answer a broken contract
+ * with a permission verdict, which is exactly the swap AGENTS.md forbids.
  */
 async function resolveChildParents(
   ctx: Parameters<ErpNextTool["handler"]>[1],
@@ -321,16 +394,24 @@ async function resolveChildParents(
       },
       { httpMethod: "GET" },
     );
-    if (Array.isArray(rows)) {
-      const names = [
-        ...new Set(
-          rows
-            .map((row) => row?.parent)
-            .filter((name): name is string => !!name && name !== doctype),
-        ),
-      ];
-      return { parents: names, complete: rows.length < MAX_PARENT_ROWS };
+    if (!Array.isArray(rows)) {
+      throw new Error(
+        `[erpnext_doctype_fields] Listing the DocTypes that own '${doctype}' ` +
+          "returned something other than a row list. This is a broken response, " +
+          "not an empty one; retry, and report it if it persists.",
+      );
     }
+    const names = [
+      ...new Set(
+        rows
+          .map((row) => row?.parent)
+          .filter((name): name is string => !!name && name !== doctype),
+      ),
+    ];
+    return {
+      parents: names,
+      gap: rows.length < MAX_PARENT_ROWS ? "none" : "truncated",
+    };
   } catch (error) {
     // Only a permission denial earns the degraded answer. The fallback below
     // names ONE arbitrary owner, and the caller is then gated against that one
@@ -364,7 +445,7 @@ async function resolveChildParents(
     );
     if (ownsIt) parents.push(name);
   }
-  return { parents, complete: false };
+  return { parents, gap: "denied" };
 }
 
 /**
@@ -383,29 +464,42 @@ async function assertChildReadable(
   ctx: Parameters<ErpNextTool["handler"]>[1],
   doctype: string,
 ): Promise<void> {
-  const { parents, complete } = await resolveChildParents(ctx, doctype);
+  const { parents, gap } = await resolveChildParents(ctx, doctype);
 
-  // Every resolved parent is probed. There is no cap: the list is already
-  // bounded by how many DocTypes really declare this child, and cutting it
-  // short would deny a caller over an owner that was never checked.
+  // Every resolved parent is probed. There is no cap on THIS loop: the list is
+  // already bounded by how many DocTypes really declare this child, and cutting
+  // it short would deny a caller over an owner that was never checked. The
+  // ceiling upstream is on the enumeration query, and reaching it is reported
+  // through `gap` rather than swallowed here.
   for (const parent of parents) {
     if (await canRead(ctx, parent)) return;
   }
+
+  // Each gap has its own sentence because they point at different remedies. A
+  // single "the list may be partial" that blamed DocField access told an
+  // administrator-level caller to go ask for a permission they already hold.
+  const gapNote = gap === "denied"
+    ? " That list may be partial: enumerating the owners requires read access " +
+      "to DocField, which this account does not have, so another DocType you " +
+      "can read may own this table."
+    : gap === "truncated"
+    ? ` That list may be partial for a reason unrelated to your permissions: ` +
+      `the owner lookup stopped at ${MAX_PARENT_ROWS} rows, which is far above ` +
+      "any real answer, so treat it as a fault on this server and report it."
+    : "";
 
   throw new Error(
     `[erpnext_doctype_fields] '${doctype}' is a child table, so it has no ` +
       "permissions of its own; access comes from the document that owns it. " +
       (parents.length > 0
         ? `You cannot read ${
-          complete ? "any of its parent DocTypes" : "the parent DocType"
+          parents.length > 1
+            ? "any of its parent DocTypes"
+            : "its parent DocType"
         } (${parents.join(", ")}), so its schema stays out of scope.`
         : "No parent DocType could be resolved for it, so there is nothing to " +
           "check the permission against.") +
-      (complete
-        ? ""
-        : " That list may be partial: enumerating the owners requires read " +
-          "access to DocField, which this account does not have, so another " +
-          "DocType you can read may own this table.") +
+      gapNote +
       " Ask an ERPNext administrator for the role that grants the parent.",
   );
 }
@@ -563,7 +657,10 @@ export const discoveryTools: ErpNextTool[] = [
       const standard = [
         ...STANDARD_FIELDS,
         ...(meta.istable ? CHILD_TABLE_FIELDS : []),
-        ...(doctypeQueryable && !meta.istable ? ASSIGNMENT_FIELD : []),
+        ...(doctypeQueryable && !meta.istable ? OPTIONAL_FIELDS : []),
+        ...(doctypeQueryable && !meta.istable && meta.track_seen
+          ? SEEN_FIELD
+          : []),
       ]
         .filter((field) => matches(field.fieldname, field.label))
         .map((field) => ({
