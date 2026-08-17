@@ -128,14 +128,14 @@ Deno.test("callerPrincipal() - never falls back to sub", () => {
 Deno.test("middleware - refuses a call with no identity when identity is required", async () => {
   const middleware = createCallerIdentityMiddleware({ required: true });
   let handlerRan = false;
+  // Goi thang, khong boc `Promise.resolve`: lop boc do khong bat duoc cu nem dong bo (bieu thuc
+  // ben trong chay TRUOC `Promise.resolve`), nen no chi giau mat loi chu khong xu ly duoc gi.
   await assertRejects(
     () =>
-      Promise.resolve(
-        middleware(makeCtx("Bearer opaque-token"), () => {
-          handlerRan = true;
-          return Promise.resolve("ok");
-        }),
-      ),
+      middleware(makeCtx("Bearer opaque-token"), () => {
+        handlerRan = true;
+        return Promise.resolve("ok");
+      }),
     Error,
     "carries no user identity",
   );

@@ -65,7 +65,11 @@ export interface CallerIdentityMiddlewareOptions {
 export function createCallerIdentityMiddleware(
   options: CallerIdentityMiddlewareOptions,
 ): Middleware {
-  return (ctx, next) => {
+  // `async` khong phai de trang tri: kieu `Middleware` khai bao tra ve `Promise<MiddlewareResult>`,
+  // nen nhanh tu choi ben duoi phai la mot promise BI TU CHOI chu khong phai mot cu nem dong bo.
+  // Ham dong bo nem loi thi moi ben goi lam `mw(ctx, next).catch(...)` deu vo, va chinh test cua
+  // module nay da do vi dieu do.
+  return async (ctx, next) => {
     const token = bearerToken(ctx);
     const principal = callerPrincipal(ctx.authInfo as VerifiedAuth | undefined);
 

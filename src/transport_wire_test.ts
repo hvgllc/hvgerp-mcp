@@ -597,9 +597,14 @@ Deno.test("server.ts configures the stateless transport", async () => {
     "server.ts must not configure the stateful transport",
   );
   assert(
-    /cache:\s*\{\s*ttlMs:\s*3_600_000,\s*scope:\s*"public",\s*\}/s
-      .test(source),
-    "server.ts must advertise public one-hour protocol cache hints",
+    /ttlMs:\s*3_600_000/.test(source),
+    "server.ts must advertise one-hour protocol cache hints",
+  );
+  assert(
+    /scope:\s*callerIdentity === "off" \? "public" : "private"/.test(source),
+    'server.ts must scope the protocol cache to "private" whenever per-caller identity is on: ' +
+      "with per-user identity the same tool call returns different rows to different people, so a " +
+      "shared public cache would hand one caller another caller's data",
   );
   assert(
     /mrtr:\s*mrtrConfig/.test(source) &&
