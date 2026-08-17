@@ -154,6 +154,34 @@ const CHILD_TABLE_FIELDS: readonly StandardField[] = [
   },
 ] as const;
 
+/**
+ * The assignment column every ordinary DocType carries and no child table does.
+ *
+ * `_assign` is one of Frappe's `optional_fields`, created on the table of every
+ * DocType that has one: measured on the live instance, all 625 DocTypes with
+ * `istable = 0, issingle = 0, is_virtual = 0` have the column and not one of
+ * the 447 child tables does. It is also the column this server's own
+ * `assignedToFilter` (`src/tools/assignment.ts`) queries, so leaving it out of
+ * the schema told a caller "no such field" about the one column that answers
+ * "assigned to me" - and the caller then had no way to build that filter for
+ * itself.
+ *
+ * Merged in only when the DocType has a table of its own - which is exactly
+ * what `doctypeQueryable` already answers for a Single and a virtual DocType -
+ * and is not a child table. A child table is assigned through the document
+ * that owns it.
+ */
+const ASSIGNMENT_FIELD: readonly StandardField[] = [
+  {
+    fieldname: "_assign",
+    label: "Assigned To",
+    fieldtype: "Text",
+    options: null,
+    description:
+      'JSON array of User ids assigned to the document, stored as text. Filter it with a substring match that keeps the quotes, e.g. ["_assign", "like", "%\\"user@example.com\\"%"]; an unquoted pattern also matches every longer id ending in the same characters.',
+  },
+] as const;
+
 /** One row of the `fields` child table of a DocType, as `getdoctype` returns it. */
 interface RawDocField {
   fieldname?: string;
@@ -368,8 +396,11 @@ export const discoveryTools: ErpNextTool[] = [
       "erpnext_doc_list / erpnext_doc_get when you need to filter, sort or select a field and " +
       "are not certain it exists — reading a sample document only reveals the fields that " +
       "happen to be filled in. The answer also lists the standard columns every DocType stores " +
-      "(name, owner, creation, modified, modified_by, docstatus, idx) marked is_standard, because " +
-      "they appear in no form. Every field carries queryable: false means the value can be read " +
+      "(name, owner, creation, modified, modified_by, docstatus, idx, plus _assign on any DocType " +
+      "with a table of its own) marked is_standard, because " +
+      "they appear in no form. _assign is the JSON array of User ids assigned to a document, so it " +
+      "is how you answer 'assigned to me': filter it with a quoted substring match. " +
+      "Every field carries queryable: false means the value can be read " +
       "but cannot be relied on in a filter or order_by. That is the case for every field of a " +
       "Single DocType (no table of its own) and of a virtual DocType (rows come from a Python " +
       "controller, so only that controller decides what it will filter on), and for individual " +
@@ -439,6 +470,18 @@ export const discoveryTools: ErpNextTool[] = [
             "Check the spelling; DocType names are case- and space-sensitive.",
         );
       }
+      // A metadata document with no `fields` array is a broken response, not a
+      // DocType that declares nothing: every DocType worth asking about
+      // declares at least one field, and the seven standard columns below are
+      // synthesised here rather than read from ERPNext. Falling through would
+      // hand back a schema listing only those columns, and a model reading it
+      // would conclude that every real field of the DocType does not exist.
+      if (!Array.isArray(meta.fields)) {
+        throw new Error(
+          `[erpnext_doctype_fields] ERPNext returned metadata for '${doctype}' with no field list. ` +
+            "This is a broken response, not an empty schema; retry, and report it if it persists.",
+        );
+      }
 
       if (meta.istable) {
         await assertChildReadable(ctx, doctype);
@@ -492,6 +535,7 @@ export const discoveryTools: ErpNextTool[] = [
       const standard = [
         ...STANDARD_FIELDS,
         ...(meta.istable ? CHILD_TABLE_FIELDS : []),
+        ...(doctypeQueryable && !meta.istable ? ASSIGNMENT_FIELD : []),
       ]
         .filter((field) => matches(field.fieldname, field.label))
         .map((field) => ({
@@ -510,7 +554,7 @@ export const discoveryTools: ErpNextTool[] = [
           queryable: doctypeQueryable,
         }));
 
-      const declared = (meta.fields ?? [])
+      const declared = meta.fields
         .filter((field) => {
           if (!field.fieldname) return false;
           if (LAYOUT_FIELDTYPES.has(field.fieldtype ?? "")) return false;

@@ -170,6 +170,23 @@ requests and tags actually live.
   the tool, since that is the document ERPNext can actually fetch. The viewer
   hides every underscore-prefixed key from its columns, so the extra field is
   invisible to the reader.
+- **`_assign` is listed among the standard columns.** It is not one of Frappe's
+  `default_fields`, so no form declares it and the metadata endpoint never
+  mentions it - yet it is a real, queryable column on every DocType that has a
+  table (measured: all 625 DocTypes with
+  `istable = 0, issingle = 0,
+  is_virtual = 0` carry it, and not one of the 447
+  child tables does), and it is the column this server's own assignment filter
+  queries. A caller asking the schema for the field behind "assigned to me" was
+  told no such field exists. The description says how to filter it - a substring
+  match that keeps the quotes around the User id, since an unquoted pattern also
+  matches every longer id ending in the same characters.
+- **Metadata with no field list is refused instead of being answered.** When
+  `getdoctype` returned a document without a `fields` array - a broken response,
+  not a DocType that declares nothing - the tool fell through to a successful
+  schema containing only the synthetic standard columns, and a model reading it
+  would conclude that every real field of the DocType does not exist. It now
+  says the response is broken and asks for a retry.
 
 ## [3.2.0] - 2026-08-17
 

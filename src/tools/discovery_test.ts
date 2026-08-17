@@ -144,8 +144,8 @@ Deno.test("erpnext_doctype_fields - drops layout and hidden fields by default", 
     declaredNames(result),
     ["account_name", "parent_account", "disabled"],
   );
-  // 7 standard columns plus the 3 declared fields that survived the filter.
-  assertEquals(result.count, 10);
+  // 7 standard columns, `_assign`, and the 3 declared fields that survived the filter.
+  assertEquals(result.count, 11);
   const declared = result.fields.filter((f: any) => !f.is_standard);
   assertEquals(declared[0].reqd, true);
   // A Link field must carry its target, or the model cannot follow the reference.
@@ -170,6 +170,9 @@ Deno.test("erpnext_doctype_fields - lists the standard columns no form declares"
     "modified_by",
     "docstatus",
     "idx",
+    // Not one of Frappe's `default_fields`, but a real column on every DocType
+    // with a table - and the one this server's own assignment filter queries.
+    "_assign",
   ]);
   // `doctype` is in Frappe's default_fields tuple but is NOT a column: it is
   // attached in memory, so filtering or sorting on it fails at the database.
@@ -483,6 +486,58 @@ Deno.test("erpnext_doctype_fields - a virtual field is not queryable on an ordin
   assertEquals(
     result.fields.find((f: any) => f.fieldname === "account_name").queryable,
     true,
+  );
+});
+
+Deno.test("erpnext_doctype_fields - offers _assign only where the column exists", async () => {
+  // Measured on the live instance: all 625 DocTypes with `istable = 0,
+  // issingle = 0, is_virtual = 0` carry the `_assign` column and not one of the
+  // 447 child tables does. A Single and a virtual DocType have no table at all.
+  const assignOf = (result: any) =>
+    result.fields.find((f: any) => f.fieldname === "_assign");
+
+  const ordinary = await getTool("erpnext_doctype_fields").handler(
+    { doctype: "Account" },
+    makeCtx(makeMockClient()),
+  ) as any;
+  assertEquals(assignOf(ordinary).is_standard, true);
+  assertEquals(assignOf(ordinary).queryable, true);
+
+  const child = await getTool("erpnext_doctype_fields").handler(
+    { doctype: "Sales Invoice Item" },
+    makeCtx(makeChildClient()),
+  ) as any;
+  assertEquals(assignOf(child), undefined);
+
+  const single = await getTool("erpnext_doctype_fields").handler(
+    { doctype: "System Settings" },
+    makeCtx(makeMockClient({
+      callMethodRaw: async () => ({
+        docs: [{ ...META, name: "System Settings", issingle: 1 }],
+      }),
+    })),
+  ) as any;
+  assertEquals(assignOf(single), undefined);
+});
+
+Deno.test("erpnext_doctype_fields - refuses metadata that carries no field list", async () => {
+  // A response with no `fields` array is broken, not a DocType that declares
+  // nothing. Returning the synthetic standard columns alone would tell a model
+  // that every real field of the DocType does not exist.
+  const client = makeMockClient({
+    callMethodRaw: async () => ({
+      docs: [{ name: "Account", module: "Accounts" }],
+    }),
+  });
+
+  await assertRejects(
+    () =>
+      getTool("erpnext_doctype_fields").handler(
+        { doctype: "Account" },
+        makeCtx(client),
+      ),
+    Error,
+    "no field list",
   );
 });
 
