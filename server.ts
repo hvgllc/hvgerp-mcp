@@ -31,7 +31,12 @@
  * @module lib/erpnext/server
  */
 
-import { launchInspector, MCP_APP_MIME_TYPE, McpApp } from "@casys/mcp-server";
+import {
+  launchInspector,
+  MCP_APP_MIME_TYPE,
+  MCP_APPS_EXTENSION_ID,
+  McpApp,
+} from "@casys/mcp-server";
 import { ErpNextToolsClient } from "./src/client.ts";
 import { FrappeAPIError } from "./src/api/frappe-client.ts";
 import { UI_VIEWERS } from "./src/ui/viewers.ts";
@@ -112,6 +117,18 @@ async function main() {
     },
   );
 
+  // Resolve the viewer bundles up front. They are registered further down, after the constructor,
+  // but the MCP Apps declaration below has to know whether any of them exist: declaring the
+  // extension with no viewer on disk invites a host to request a resource this process cannot
+  // serve, which reads worse to the user than no widget at all.
+  const viewerBundles = UI_VIEWERS.map((viewerName) => ({
+    viewerName,
+    distPath: resolveViewerDistPath(import.meta.url, viewerName, statSync),
+  }));
+  const servesUiViewers = viewerBundles.some((bundle) =>
+    bundle.distPath !== null
+  );
+
   // Build MCP server
   const server = new McpApp({
     name: "hvgerp-mcp",
@@ -133,6 +150,17 @@ async function main() {
       scope: callerIdentity === "off" ? "public" : "private",
       ttlMs: 3_600_000,
     },
+    // Declare MCP Apps support at `initialize` instead of leaving hosts to infer it from the
+    // presence of `ui://` resources. Inference is what several hosts do NOT do: they negotiate the
+    // extension first and render a tool result as plain JSON when the server never named it, no
+    // matter how correct the per-tool `_meta.ui` binding is.
+    ...(servesUiViewers
+      ? {
+        extensions: {
+          [MCP_APPS_EXTENSION_ID]: { mimeTypes: [MCP_APP_MIME_TYPE] },
+        },
+      }
+      : {}),
     mrtr: mrtrConfig,
     maxConcurrent: 10,
     backpressureStrategy: "queue",
@@ -165,13 +193,7 @@ async function main() {
 
   // Register UI resources (MCP Apps viewers)
   // Built by: cd lib/erpnext/src/ui && node build-all.mjs
-  for (const viewerName of UI_VIEWERS) {
-    const distPath = resolveViewerDistPath(
-      import.meta.url,
-      viewerName,
-      statSync,
-    );
-
+  for (const { viewerName, distPath } of viewerBundles) {
     const resourceUri = `ui://hvgerp-mcp/${viewerName}`;
     const humanName = viewerName
       .split("-")
