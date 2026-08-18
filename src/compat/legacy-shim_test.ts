@@ -1694,3 +1694,127 @@ Deno.test("translateEventStream giu nguyen khoi khong phai JSON", async () => {
     ": heartbeat\n\nevent: ping\ndata: not-json\n\n",
   );
 });
+
+Deno.test("params sai kieu bi tu choi thay vi bi thay bang object rong", async () => {
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      legacyPost({ jsonrpc: "2.0", id: 7, method: "tools/list", params: [] }),
+      { upstream: upstream.url },
+    );
+
+    const body = await res.json() as Record<string, unknown>;
+    assertEquals(
+      (body["error"] as Record<string, unknown>)["code"],
+      -32602,
+    );
+    // Đúng một lượt lên upstream: phép hỏi quyền. Lời gọi sai định dạng không
+    // được nâng thành một request hợp lệ rồi nhận về danh sách tool.
+    assertEquals(upstream.captured.length, 1);
+    assertEquals(
+      (upstream.captured[0].body as Record<string, unknown>)["method"],
+      "ping",
+    );
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("batch khong thuong luong SSE nen khong entry nao bi bo roi", async () => {
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      legacyPost([
+        { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "a" } },
+        { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "b" } },
+      ]),
+      { upstream: upstream.url },
+    );
+
+    const body = await res.json() as Array<Record<string, unknown>>;
+    assertEquals(body.length, 2);
+    assertEquals(upstream.captured.length, 2);
+    // Một response SSE là dòng chảy không đối chiếu được với từng entry, nên
+    // nhận nó cho entry đầu nghĩa là entry sau không bao giờ được gửi.
+    for (const entry of upstream.captured) {
+      assertEquals(entry.headers["accept"], "application/json");
+    }
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("stream da dich khai dung revision cua client o header", async () => {
+  const upstream = await startUpstream((req, body) => {
+    if (req.method !== "POST") return undefined;
+    const message = body as Record<string, unknown>;
+    if (message?.["method"] !== "initialize") return undefined;
+    return new Response(
+      `event: message\ndata: ${
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: message["id"],
+          result: { protocolVersion: "2026-07-28", resultType: "complete" },
+        })
+      }\n\n`,
+      {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "MCP-Protocol-Version": "2026-07-28",
+        },
+      },
+    );
+  });
+  try {
+    const res = await handleShimRequest(
+      legacyPost({
+        jsonrpc: "2.0",
+        id: 8,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25", capabilities: {} },
+      }),
+      { upstream: upstream.url },
+    );
+
+    // Thân bên trong đã hạ về revision của client; header còn khai 2026-07-28
+    // là một response tự mâu thuẫn.
+    assertEquals(res.headers.get("MCP-Protocol-Version"), "2025-11-25");
+    await res.body?.cancel();
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("than JSON khai sai media type di thang, khong duoc nang cap", async () => {
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/plain",
+          "Authorization": "Bearer test-token",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 9,
+          method: "tools/list",
+        }),
+      }),
+      { upstream: upstream.url },
+    );
+
+    // Chuyển tiếp nguyên trạng: không `_meta`, không header MCP nào do shim
+    // dựng, để tầng vận chuyển của server từ chối đúng như với mọi client khác.
+    assertEquals(upstream.captured.length, 1);
+    assertEquals(upstream.captured[0].headers["content-type"], "text/plain");
+    const params = (upstream.captured[0].body as Record<string, unknown>)[
+      "params"
+    ];
+    assertEquals(params, undefined);
+    assertEquals(upstream.captured[0].headers["mcp-method"], undefined);
+    await res.body?.cancel();
+  } finally {
+    await upstream.close();
+  }
+});

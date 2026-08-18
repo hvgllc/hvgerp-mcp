@@ -25,13 +25,15 @@ const ADAPTERS = new Set([
  * `import`, so a gate keyed on that one keyword stays green while the module it guards grows a
  * hard dependency on a Node builtin.
  *
- * Every pattern is anchored to the start of a line so that prose mentioning a builtin inside a
- * block comment (every line of which begins with `*`) is not mistaken for an import - which is
- * exactly what this gate did to its own docstring on the first run.
+ * The specifier does not have to sit on the same line as the keyword: `deno fmt` breaks a longer
+ * list across lines, so a line-bounded matcher misses `export {\n  readFile,\n} from "node:fs"`.
+ * The patterns therefore span up to the statement's semicolon, and every source is run through
+ * {@link stripComments} first - prose naming a builtin is not an import, and the gate's own
+ * docstring was its first false positive.
  */
 const NODE_IMPORTS = [
-  /^\s*import[^\n]*["']node:/m,
-  /^\s*export[^\n]*\bfrom\s*["']node:/m,
+  /^\s*(?:import|export)\b[^;]*?\bfrom\s*["']node:/m,
+  /^\s*import\s*["']node:/m,
   /^\s*(?:const|let|var|return|await)[^\n]*\bimport\s*\(\s*["']node:/m,
 ];
 
@@ -99,7 +101,7 @@ Deno.test("only the runtime adapters import Node APIs directly", async () => {
   for await (const path of scannedFiles(root)) {
     const relative = path.slice(root.length + 1);
     if (ADAPTERS.has(relative)) continue;
-    const source = await Deno.readTextFile(path);
+    const source = stripComments(await Deno.readTextFile(path));
     if (NODE_IMPORTS.some((pattern) => pattern.test(source))) {
       offenders.push(relative);
     }
@@ -185,19 +187,28 @@ Deno.test("phan thu vien cua shim khong duoc mien tru", async () => {
 
 Deno.test("the gate sees a Node builtin reached through a re-export", () => {
   const matches = (source: string) =>
-    NODE_IMPORTS.some((pattern) => pattern.test(source));
+    NODE_IMPORTS.some((pattern) => pattern.test(stripComments(source)));
 
-  // Đây là hai câu lệnh import không hề chứa từ `import`. Gate khoá vào đúng
+  // Đây là những câu lệnh import không hề chứa từ `import`. Gate khoá vào đúng
   // từ khoá đó thì một module mọc thêm phụ thuộc cứng vào builtin của Node mà
   // bộ test vẫn xanh, tức là cái nó gác không còn là ranh giới nữa.
   assert(matches('export * from "node:fs";'));
   assert(matches('export { readFile } from "node:fs";'));
   assert(matches('export type { Stats } from "node:fs";'));
   assert(matches('import { readFile } from "node:fs";'));
+  assert(matches('import "node:fs";'));
   assert(matches('const fs = await import("node:fs");'));
 
-  // Văn xuôi nhắc tên builtin thì không: mọi dòng của block comment mở đầu
-  // bằng `*`, và tên module chỉ nằm trong câu chữ.
-  assert(!matches(' * Adapter này là chỗ duy nhất được nhập "node:fs".'));
+  // `deno fmt` bẻ danh sách dài xuống nhiều dòng, nên một matcher bó trong một
+  // dòng bỏ lọt đúng hình dạng mà chính bộ format của repo sinh ra.
+  assert(matches('export {\n  readFile,\n  writeFile,\n} from "node:fs";'));
+  assert(matches('import {\n  readFile,\n} from "node:fs";'));
+
+  // Văn xuôi nhắc tên builtin thì không: comment bị gỡ trước khi dò, nên tên
+  // module nằm trong câu chữ không bao giờ bị đọc thành một lời khai phụ thuộc.
+  assert(
+    !matches('/**\n * Adapter này là chỗ duy nhất được nhập "node:fs".\n */'),
+  );
+  assert(!matches('export const specifier = "node:fs";'));
   assert(!matches('// export the reader instead of touching "node:fs" here'));
 });

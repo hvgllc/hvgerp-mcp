@@ -349,6 +349,20 @@ export function readPositiveInteger(
  * khớp. Cái sai thứ nhất mở một kết nối sống lâu không ai muốn, cái thứ hai
  * đẩy client cũ về đúng 405 mà shim sinh ra để tránh.
  */
+/**
+ * Thân request có tự khai là JSON hay không.
+ *
+ * Shim đọc và phân tích thân TRƯỚC khi dựng lại request, rồi dán
+ * `Content-Type: application/json` lên bản gửi đi. Không kiểm ở đây thì một
+ * request khai `text/plain` (hay không khai gì) mà bên trong là JSON vẫn được
+ * nâng thành một request MCP hợp lệ, đúng thứ mà tầng vận chuyển phải từ chối.
+ */
+export function isJsonMediaType(contentType: string | null): boolean {
+  if (contentType === null) return false;
+  const media = contentType.split(";", 1)[0].trim().toLowerCase();
+  return media === "application/json";
+}
+
 export function acceptsEventStream(accept: string): boolean {
   for (const range of accept.split(",")) {
     const [media, ...params] = range.split(";");
@@ -704,6 +718,7 @@ async function forwardOne(
   identity: ClientIdentity,
   clientVersion: string,
   rememberedCapabilities?: Record<string, unknown>,
+  allowEventStream = true,
 ): Promise<ForwardOutcome> {
   const { message: outbound, headers: mcpHeaders } = rewriteOutbound(
     message,
@@ -715,7 +730,15 @@ async function forwardOne(
     headers.set(key, value);
   }
   headers.set("Content-Type", "application/json");
-  headers.set("Accept", "application/json, text/event-stream");
+  // Shim tách batch thành N lượt gọi, mà một response SSE là một dòng chảy
+  // không đối chiếu được với từng entry: nhận nó cho entry đầu nghĩa là các
+  // entry sau không bao giờ được gửi. Với batch thì chỉ nhận JSON.
+  headers.set(
+    "Accept",
+    allowEventStream
+      ? "application/json, text/event-stream"
+      : "application/json",
+  );
 
   // Client rời đi thì lượt gọi upstream cũng phải dừng: không nối tín hiệu
   // huỷ, shim giữ nguyên request, thân response và socket cho tới khi upstream
@@ -740,6 +763,10 @@ async function forwardOne(
     // là lỗi khung tin chứ không phải sai lệch nhỏ.
     const streamHeaders = new Headers(res.headers);
     for (const name of BODY_OWNED_HEADERS) streamHeaders.delete(name);
+    // Thân bên trong đã được hạ về revision của client, nên header khai
+    // revision cũng phải theo: giữ `2026-07-28` ở đây là gửi đi một response
+    // tự mâu thuẫn với chính nó.
+    streamHeaders.set("MCP-Protocol-Version", clientVersion);
     return {
       status: res.status,
       response: new Response(
@@ -1154,7 +1181,10 @@ export async function handleShimRequest(
     return new Response(null, { status: 204, headers });
   }
 
-  if (req.method !== "POST" || !isTranslatableRequest(req.headers)) {
+  if (
+    req.method !== "POST" || !isTranslatableRequest(req.headers) ||
+    !isJsonMediaType(req.headers.get("Content-Type"))
+  ) {
     return await proxyPassThrough(req, target);
   }
 
@@ -1285,6 +1315,27 @@ export async function handleShimRequest(
       continue;
     }
 
+    // `rewriteOutbound` thay `params` sai kiểu bằng `{}` để có chỗ đặt `_meta`,
+    // nên `{"method":"tools/list","params":[]}` tới server dưới hình dạng một
+    // request hợp lệ và nhận về danh sách tool thay vì `-32602`. Bộ kiểm của
+    // server không bao giờ nhìn thấy giá trị thật, nên shim phải tự từ chối.
+    if (message.params !== undefined && !isRecord(message.params)) {
+      const auth = await authorize();
+      if (auth.blocked !== undefined) return auth.blocked;
+      upstreamHeaders ??= auth.upstream;
+      // Notification sai định dạng không có câu trả lời nào theo JSON-RPC,
+      // nhưng vẫn phải đi qua cổng quyền: bỏ qua nó mà không hỏi là để một
+      // caller không token nhận 202 thay vì 401.
+      if (id !== undefined) {
+        replies.push(jsonRpcError(
+          normalizeId(id),
+          -32602,
+          "Invalid params: 'params' must be an object",
+        ));
+      }
+      continue;
+    }
+
     if (
       sessionKey !== undefined && message.method === "initialize" &&
       isRecord(message.params)
@@ -1299,6 +1350,7 @@ export async function handleShimRequest(
       identity,
       clientVersion,
       sessionKey === undefined ? undefined : CAPABILITY_CACHE.get(sessionKey),
+      !Array.isArray(parsed),
     );
     upstreamHeaders = outcome.response.headers;
 
