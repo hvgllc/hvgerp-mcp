@@ -70,11 +70,14 @@ Deno.serve({ port, hostname }, async (req) => {
     });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    // Chi tiết chỉ đi vào log của người vận hành. Thông điệp của `fetch` mang
+    // nguyên URL upstream, tức tên service và cổng nội bộ; người gọi chưa xác
+    // thực nào cũng chạm được nhánh này nên không trả nó ra ngoài dây.
     console.error(`[shim] upstream failure: ${detail}`);
     return Response.json({
       jsonrpc: "2.0",
       id: null,
-      error: { code: -32603, message: `Shim upstream failure: ${detail}` },
+      error: { code: -32603, message: "Shim upstream failure" },
     }, { status: 502 });
   }
 });
