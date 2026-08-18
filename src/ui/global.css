@@ -1,15 +1,24 @@
 /**
- * ERPNext MCP Apps UI — Global Styles
+ * Havi Group ERP — MCP Apps UI Global Styles
  *
  * Light/dark dual theme with CSS custom properties.
  * No Tailwind — plain CSS variables + utility classes.
+ *
+ * The light palette is NOT invented here: every value is copied from the Havi
+ * Group Workspace SPA design tokens so a viewer rendered inside Claude reads as
+ * part of the same product as `/hvg`. Source of truth (HaviGroupERP repo):
+ *   apps/hvg_workspace/frontend/src/index.css:9-45  `:root` tokens
+ *   apps/hvg_workspace/frontend/src/components/Sidebar.vue:117-133  brand block
+ * The dark palette has no SPA counterpart (the SPA is light-only), so it stays a
+ * neutral warm-grey scale — only the accent is pulled up for contrast on dark.
  */
 
 /* ── Shared tokens ──────────────────────────────────────────────── */
 :root {
-  --accent: #0089ff;
-  --accent-dim: rgba(0, 137, 255, 0.15);
-  --accent-border: rgba(0, 137, 255, 0.3);
+  /* Havi Group accent (`--hv-accent` / `--hv-accent-tint` / `--hv-accent-mid`) */
+  --accent: #e85d1f;
+  --accent-dim: #fdeee3;
+  --accent-border: #f6cfb6;
 
   --success: #16a34a;
   --success-dim: rgba(22, 163, 74, 0.10);
@@ -17,38 +26,53 @@
   --error-dim: rgba(220, 38, 38, 0.10);
   --warning: #d97706;
   --warning-dim: rgba(217, 119, 6, 0.10);
+  /* `--hv-mention-ink` / `--hv-mention-bg` */
   --info: #2563eb;
-  --info-dim: rgba(37, 99, 235, 0.10);
+  --info-dim: #eaf0fe;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
+  /* SPA rounding: 9px for controls, 14px for cards (`.hv-card`) */
+  --radius-sm: 5px;
+  --radius-md: 9px;
+  --radius-lg: 14px;
 
-  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: "SF Mono", "Cascadia Code", "Fira Code", monospace;
+  /* Be Vietnam Pro / IBM Plex Mono are the SPA families. They are NOT bundled
+     here: each viewer ships as one self-contained HTML resource, so embedding
+     the eight woff2 faces would add ~90 KB of base64 to all seven bundles, and
+     an @import to a font CDN is blocked by the MCP UI sandbox CSP. The names
+     stay first in the stack so a host that already has them uses them. */
+  --font-sans: "Be Vietnam Pro", system-ui, -apple-system, "Segoe UI", Roboto,
+    sans-serif;
+  --font-mono: "IBM Plex Mono", "SF Mono", "Cascadia Code", "Fira Code",
+    monospace;
 
-  /* ── Light mode (default) ──────────────────────────────────── */
+  /* ── Light mode (default) — Havi Group Workspace palette ───── */
   --bg-root: #ffffff;
-  --bg-surface: #f9fafb;
-  --bg-elevated: #f3f4f6;
-  --bg-hover: #e5e7eb;
-  --bg-active: #d1d5db;
+  --bg-surface: #f6f7f9; /* --hv-bg */
+  --bg-elevated: #f7f8fa;
+  --bg-hover: #eef0f3; /* Sidebar.vue nav hover */
+  --bg-active: #e6e8ec; /* --hv-line-2 */
 
-  --text-primary: #111827;
-  --text-secondary: #4b5563;
-  --text-muted: #6b7280;
-  --text-faint: #9ca3af;
+  --text-primary: #18202b; /* --hv-ink */
+  --text-secondary: #5c6472; /* --hv-muted-strong */
+  --text-muted: #7a828f; /* --hv-muted-mid */
+  --text-faint: #9aa1ab; /* --hv-muted-2 */
 
-  --border: #e5e7eb;
-  --border-subtle: #f3f4f6;
+  --border: #e6e8ec; /* --hv-line-2 */
+  --border-subtle: #ecedf0; /* --hv-line */
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --shadow-sm: 0 1px 2px rgba(24, 32, 43, 0.05);
+  --shadow-md: 0 2px 8px rgba(24, 32, 43, 0.08);
 }
 
 /* ── Dark mode ─────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
   :root {
+    /* #E85D1F on a near-black surface fails contrast for small text, so the
+       accent is lifted one step. The hue is unchanged — same brand colour. */
+    --accent: #ff7a3d;
+    --accent-dim: rgba(255, 122, 61, 0.16);
+    --accent-border: rgba(255, 122, 61, 0.34);
+
     --bg-root: #08080a;
     --bg-surface: #111113;
     --bg-elevated: #18181b;
