@@ -8,6 +8,33 @@ This package is a fork of
 deliberately still point at the upstream repository, where those commits, pull
 requests and tags actually live.
 
+## [3.3.2] - 2026-08-18
+
+### Fixed
+
+- **Viewers now render on hosts that read the deprecated binding key.** Each
+  tool → viewer binding is emitted under both keys the MCP Apps SDK defines: the
+  spec-current nested `_meta.ui.resourceUri` and the deprecated flat
+  `_meta["ui/resourceUri"]`. The SDK deprecates the flat key for authors but
+  still instructs hosts to read
+  `meta?.ui?.resourceUri ?? meta?.["ui/resourceUri"]`, and its own
+  `registerAppTool` helper writes both. This server hand-builds `_meta`, so it
+  had been emitting the nested key alone, and a host reading only the flat one
+  rendered raw JSON instead of the viewer.
+- **The server declares the MCP Apps extension at `initialize`.** The
+  `io.modelcontextprotocol/ui` entry now appears in `capabilities.extensions`,
+  so a host that gates viewer rendering on that declaration can see the server
+  supports it instead of inferring it from tool metadata.
+- **A binding is never advertised for a viewer bundle that is not on disk.**
+  Viewer bundles are built separately from the server and can be missing or
+  partial. When a bundle is absent, its binding is stripped from both surfaces
+  that carry one - the tool definition in `tools/list` and the `_meta` envelope
+  of the tool result, where a list tool's payload binding wins over the tool
+  definition's. Dropping the binding degrades to plain JSON, which is what every
+  host did before viewers existed; keeping it makes the host commit to an app
+  frame and then fail to load it. Bindings whose bundles did build are
+  untouched.
+
 ## [3.3.1] - 2026-08-18
 
 ### Changed
