@@ -32,9 +32,9 @@ const ADAPTERS = new Set([
  * docstring was its first false positive.
  */
 const NODE_IMPORTS = [
-  /^\s*(?:import|export)\b[^;]*?\bfrom\s*["']node:/m,
-  /^\s*import\s*["']node:/m,
-  /\bimport\s*\(\s*["']node:/,
+  /^\s*(?:import|export)\b[^;]*?\bfrom\s*["'`]node:/m,
+  /^\s*import\s*["'`]node:/m,
+  /\bimport\s*\(\s*["'`]node:/,
 ];
 
 /**
@@ -58,8 +58,15 @@ const ROOT_ENTRYPOINTS = ["mod.ts", "server.ts", "shim.ts"];
  */
 const DENO_ONLY_ENTRYPOINTS = new Set(["shim.ts"]);
 
-/** Lời gọi `Deno.*` thật, sau khi đã bỏ comment. */
-const DENO_GLOBAL = /\bDeno\s*\./;
+/**
+ * Một tham chiếu thật tới global `Deno`, sau khi đã bỏ phần không phải mã.
+ *
+ * Khoá vào `Deno.` là chỉ thấy truy cập có dấu chấm: `const { env } = Deno;`
+ * hay `const platform = Deno;` vẫn kéo nguyên global vào module mà không có
+ * ký tự nào khớp. Tên `Deno` chỉ có một nghĩa duy nhất trong mã, nên bắt chính
+ * cái tên đó là đúng phạm vi chứ không phải rộng tay.
+ */
+const DENO_GLOBAL = /\bDeno\b/;
 
 /**
  * Chuỗi được giữ nguyên đúng khi nó đứng ở vị trí định danh module.
@@ -138,10 +145,16 @@ function stripNonCode(source: string): string {
       // Chỉ cần đuôi của phần đã phát: `$` neo ở cuối nên phần đầu không đổi
       // kết quả, mà cắt ngắn thì phép thử không phải quét lại cả tệp.
       const keep = SPECIFIER_CONTEXT.test(out.slice(-32));
+      const start = index;
       let literal = char;
+      let closed = false;
       index += 1;
       while (index < source.length) {
         const inner = source[index];
+        // Chuỗi nháy đơn và nháy kép không bắc qua dòng (trừ khi có dấu gạch
+        // chéo nối dòng, và nhánh dưới đã nuốt cặp ký tự đó). Gặp xuống dòng
+        // nghĩa là dấu nháy này không mở một chuỗi.
+        if (inner === "\n") break;
         if (inner === "\\") {
           literal += source.slice(index, index + 2);
           index += 2;
@@ -149,7 +162,19 @@ function stripNonCode(source: string): string {
         }
         literal += inner;
         index += 1;
-        if (inner === char) break;
+        if (inner === char) {
+          closed = true;
+          break;
+        }
+      }
+      if (!closed) {
+        // Thường là một dấu nháy nằm trong regex mà bộ quét không nhận ra -
+        // `if (ready) /["']/.test(x)` là mã hợp lệ mà `/` thì đứng sau `)`.
+        // Đọc nó như ký tự thường để thiệt hại dừng trong một dòng, thay vì
+        // nuốt cả phần còn lại của tệp cho tới dấu nháy kế tiếp.
+        index = start + 1;
+        out += char;
+        continue;
       }
       out += keep ? literal : `${char}${char}`;
       continue;
@@ -503,4 +528,49 @@ Deno.test("regex literal khong lam bo quet lech pha", () => {
     stripNonCode("const half = total / 2;"),
     "const half = total / 2;",
   );
+});
+
+Deno.test("dinh danh module viet bang template van la mot phu thuoc", () => {
+  const matches = (source: string) =>
+    NODE_IMPORTS.some((pattern) => pattern.test(stripNonCode(source)));
+
+  // `import(`node:fs`)` là mã hợp lệ; bộ mẫu chỉ nhận nháy đơn và nháy kép thì
+  // một module kéo builtin của Node về mà gate vẫn xanh.
+  const templateSpecifier = `${BACKTICK}node:fs${BACKTICK}`;
+  assert(matches(`await import(${templateSpecifier});`));
+  assert(matches(`import { readFile } from ${templateSpecifier};`));
+});
+
+Deno.test("dau nhay le khong nuot phan con lai cua tep", () => {
+  const matches = (source: string) =>
+    NODE_IMPORTS.some((pattern) => pattern.test(stripNonCode(source)));
+
+  // `/` đứng sau `)` vẫn mở được một regex, mà phân biệt nó với phép chia thì
+  // cần đúng một bộ phân tích cú pháp. Nên chặn thiệt hại thay vì đoán: dấu
+  // nháy không đóng trong cùng dòng thì không phải dấu mở chuỗi, và một import
+  // ở dòng sau vẫn bị nhìn thấy.
+  assert(
+    matches(`if (ready) /["']/.test(value);\nawait import(${NODE_MODULE});`),
+  );
+  assert(
+    DENO_GLOBAL.test(
+      stripNonCode(`if (ready) /["']/.test(value);\nDeno.exit(1);`),
+    ),
+  );
+
+  // Và chuỗi bình thường vẫn phải được đọc là chuỗi.
+  assertEquals(stripNonCode(`const name = "havi";`), `const name = "";`);
+});
+
+Deno.test("global Deno bi bat ca khi khong co dau cham", () => {
+  // Kéo nguyên global ra một tên khác rồi gọi qua tên đó thì bản npm vẫn vỡ y
+  // như gọi thẳng; chỉ có gate là không thấy.
+  assert(DENO_GLOBAL.test(stripNonCode(`const { env } = Deno;`)));
+  assert(DENO_GLOBAL.test(stripNonCode(`const platform = Deno;`)));
+  assert(DENO_GLOBAL.test(stripNonCode(`export default Deno;`)));
+
+  // Nhưng tên khác thì vẫn là tên khác: gate rộng tay tới mức bắt cả
+  // `denoland` hay `DENO_ENV` thì người ta sẽ gỡ chính cái gate.
+  assert(!DENO_GLOBAL.test(stripNonCode(`const url = denoland;`)));
+  assert(!DENO_GLOBAL.test(stripNonCode(`const flag = DENO_ONLY;`)));
 });

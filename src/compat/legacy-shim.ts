@@ -515,6 +515,17 @@ export function readClientIdentity(
 const CAPABILITY_CACHE = new Map<string, Record<string, unknown>>();
 const CAPABILITY_CACHE_MAX = 512;
 
+/**
+ * Trần kích thước cho một bản ghi capabilities.
+ *
+ * Đếm số bản ghi là chưa đủ khi chạy không xác thực: mỗi `initialize` ẩn danh
+ * được cấp một phiên mới, mà `experimental` thì chở được gần trọn trần thân
+ * request, nên 512 bản ghi vẫn giữ được hàng GB. Những capability có nghĩa với
+ * shim - `elicitation`, `sampling`, `roots` - chỉ vài trăm byte; thứ vượt trần
+ * này không phải khai báo mà là tải trọng, và quên nó vẫn đúng hơn giữ nó.
+ */
+const CAPABILITY_MAX_BYTES = 8 * 1024;
+
 /** Băm chứng danh thành khoá: bộ nhớ này sống lâu, token thì không nên. */
 async function digestKey(source: string): Promise<string> {
   const digest = await crypto.subtle.digest(
@@ -555,7 +566,10 @@ function attachSession(headers: Headers, session: string): void {
   if (headers.get("Access-Control-Allow-Origin") === null) return;
   const exposed = headers.get("Access-Control-Expose-Headers") ?? "";
   const names = exposed.split(",").map((name) => name.trim().toLowerCase());
-  if (names.includes("*") || names.includes("mcp-session-id")) return;
+  // `*` không phải ký tự đại diện với request mang chứng danh: trình duyệt đọc
+  // nó thành tên header đúng nghĩa đen, nên chỉ dựa vào nó là để một client
+  // cross-origin dùng cookie không bao giờ thấy phiên vừa được cấp.
+  if (names.includes("mcp-session-id")) return;
   headers.set(
     "Access-Control-Expose-Headers",
     exposed.length > 0 ? `${exposed}, Mcp-Session-Id` : "Mcp-Session-Id",
@@ -576,10 +590,12 @@ function bridgeableCapabilities(
 
 function rememberCapabilities(key: string, capabilities: unknown): void {
   if (!isRecord(capabilities)) return;
+  const bridged = bridgeableCapabilities(capabilities);
+  if (JSON.stringify(bridged).length > CAPABILITY_MAX_BYTES) return;
   // Xoá rồi đặt lại để bản ghi vừa dùng về cuối hàng, nên phép đuổi bên dưới
   // bỏ đúng bản ghi lâu không đụng tới nhất.
   CAPABILITY_CACHE.delete(key);
-  CAPABILITY_CACHE.set(key, bridgeableCapabilities(capabilities));
+  CAPABILITY_CACHE.set(key, bridged);
   while (CAPABILITY_CACHE.size > CAPABILITY_CACHE_MAX) {
     const oldest = CAPABILITY_CACHE.keys().next().value;
     if (oldest === undefined) break;
@@ -623,6 +639,12 @@ function rememberRevision(key: string, version: string): void {
     if (oldest === undefined) break;
     REVISION_CACHE.delete(oldest);
   }
+}
+
+/** Quên sạch trạng thái của một phiên: dùng khi client đóng phiên bằng DELETE. */
+function forgetSession(key: string): void {
+  CAPABILITY_CACHE.delete(key);
+  REVISION_CACHE.delete(key);
 }
 
 /** Xoá bộ nhớ capabilities. Dành cho test, để hai bài không dẫm lên nhau. */
@@ -1197,6 +1219,10 @@ async function authorizeSynthetic(
     method: "POST",
     headers,
     signal: req.signal,
+    // Một tầng xác thực đẩy request chưa đăng nhập sang trang login trả 302;
+    // đi theo nó thì mã cuối cùng là 200 của trang login, và shim đọc thành
+    // "đã qua cổng". Redirect phải là câu trả lời, không phải một bước.
+    redirect: "manual",
     body: JSON.stringify({
       jsonrpc: "2.0",
       id: "shim-authorization-probe",
@@ -1210,12 +1236,16 @@ async function authorizeSynthetic(
     }),
   });
 
-  // Chặn khi câu trả lời KHÔNG phải "đã qua cổng". 401/403/407 là thiếu quyền,
-  // 429 là lệnh lùi nhịp, 5xx là upstream đang hỏng - đọc bất kỳ mã nào trong
-  // số đó thành "cho qua" là tự tổng hợp một câu trả lời thành công đè lên một
-  // sự cố thật, và với 5xx thì đó đúng nghĩa là mở cổng khi tầng xác thực gãy.
-  // Những mã còn lại (2xx, và 404 của `ping`) đều nghĩa là đã lọt cổng.
-  if (AUTH_STATUSES.has(probe.status) || probe.status >= 500) {
+  // Chỉ hai câu trả lời nghĩa là "đã qua cổng": 2xx, và 404 của `ping` (bản
+  // 2026-07-28 bỏ method này). Mọi mã khác đều phải chặn, và danh sách phải
+  // viết theo chiều cho phép chứ không theo chiều cấm: liệt kê 401/403/407/429
+  // rồi cho qua phần còn lại là mở cổng cho mọi mã chưa ai nghĩ tới - 3xx của
+  // một trang login, 400 của một tầng chặn, 405 của một endpoint sai - và
+  // đường đi sau đó là shim tự tổng hợp `ping`, GET stream hay DELETE thành
+  // công cho một caller chưa từng qua xác thực.
+  const passed = (probe.status >= 200 && probe.status < 300) ||
+    probe.status === 404;
+  if (!passed) {
     return { blocked: probe, upstream: probe.headers };
   }
   await probe.body?.cancel();
@@ -1339,6 +1369,11 @@ export async function handleShimRequest(
   if (req.method === "DELETE" && isTranslatableRequest(req.headers)) {
     const auth = await authorizeSynthetic(req, target);
     if (auth.blocked !== undefined) return auth.blocked;
+    // Phiên do shim cấp thì cũng do shim thu hồi: báo "đã đóng" mà vẫn giữ
+    // capabilities và revision của nó nghĩa là một `Mcp-Session-Id` đã đóng
+    // vẫn dịch được lời gọi bằng đúng trạng thái cũ.
+    const closing = await capabilityKey(req);
+    if (closing !== undefined) forgetSession(closing);
     const headers = new Headers();
     copyCorsHeaders(auth.upstream, headers);
     return new Response(null, { status: 204, headers });
@@ -1495,6 +1530,8 @@ export async function handleShimRequest(
   const replies: unknown[] = [];
   let status = 200;
   let upstreamHeaders: Headers | undefined;
+  // Phiên chỉ được trao đi khi đã có gì đó để nó trỏ tới.
+  let issuedSession: string | undefined;
 
   for (const entry of messages) {
     if (!isRecord(entry) || typeof entry["method"] !== "string") {
@@ -1555,22 +1592,6 @@ export async function handleShimRequest(
       continue;
     }
 
-    if (
-      sessionKey !== undefined && message.method === "initialize" &&
-      isRecord(message.params)
-    ) {
-      rememberCapabilities(sessionKey, message.params["capabilities"]);
-      // Thoả thuận revision xảy ra đúng một lần, ở đây. Chỉ nhớ bản đời cũ đã
-      // biết: một lời khai `2026-07-28` được phát lại cho lượt sau là dựng
-      // ngược chính thứ shim sinh ra để dịch.
-      if (
-        declaredVersion !== undefined &&
-        KNOWN_LEGACY_VERSIONS.has(declaredVersion)
-      ) {
-        rememberRevision(sessionKey, declaredVersion);
-      }
-    }
-
     const outcome = await forwardOne(
       message,
       req,
@@ -1588,19 +1609,36 @@ export async function handleShimRequest(
     // của upstream, thân còn nguyên chưa đọc. Đây là đường của 401 kèm
     // `WWW-Authenticate` (thứ khởi động lại luồng OAuth), của 5xx, và của mọi
     // thân không phải JSON.
+    // Response không có JSON để đọc - stream SSE, thân lạ, 5xx - thì shim không
+    // biết cuộc thoả thuận có thành hay không, nên không cấp phiên ở đây: quên
+    // vẫn đúng hơn nhớ một trạng thái chưa chắc có thật.
     if (outcome.payload === undefined && outcome.status !== 202) {
-      if (mintedSession === undefined) return outcome.response;
-      // Header của một response do `fetch` trả về là bất biến, nên phiên vừa
-      // cấp chỉ gắn được vào một response dựng lại.
-      const passthrough = new Headers(outcome.response.headers);
-      attachSession(passthrough, mintedSession);
-      return new Response(outcome.response.body, {
-        status: outcome.response.status,
-        headers: passthrough,
-      });
+      return outcome.response;
     }
     if (outcome.status >= 400) status = outcome.status;
     if (outcome.payload !== undefined) replies.push(outcome.payload);
+
+    // Chỉ nhớ sau khi thoả thuận THÀNH CÔNG. Ghi trước lúc gọi nghĩa là một
+    // `initialize` bị upstream từ chối vẫn để lại capabilities, revision và
+    // một phiên gắn trên chính response lỗi: client mang phiên đó quay lại và
+    // được dịch bằng một trạng thái chưa bao giờ được thoả thuận.
+    if (
+      message.method === "initialize" && sessionKey !== undefined &&
+      isRecord(message.params) && outcome.status < 400 &&
+      outcome.payload !== undefined && !hasJsonRpcError(outcome.payload)
+    ) {
+      rememberCapabilities(sessionKey, message.params["capabilities"]);
+      // Thoả thuận revision xảy ra đúng một lần, ở đây. Chỉ nhớ bản đời cũ đã
+      // biết: một lời khai `2026-07-28` được phát lại cho lượt sau là dựng
+      // ngược chính thứ shim sinh ra để dịch.
+      if (
+        declaredVersion !== undefined &&
+        KNOWN_LEGACY_VERSIONS.has(declaredVersion)
+      ) {
+        rememberRevision(sessionKey, declaredVersion);
+      }
+      issuedSession = mintedSession;
+    }
 
     // Cả batch dùng chung một bộ chứng danh, nên khi một message đã nhận câu
     // trả lời về quyền hoặc về nhịp thì mọi message còn lại chắc chắn nhận
@@ -1617,7 +1655,7 @@ export async function handleShimRequest(
     // response vốn đã thành công.
     accepted.set("MCP-Protocol-Version", clientVersion);
     copyCorsHeaders(upstreamHeaders, accepted);
-    if (mintedSession !== undefined) attachSession(accepted, mintedSession);
+    if (issuedSession !== undefined) attachSession(accepted, issuedSession);
     return new Response(null, { status: 202, headers: accepted });
   }
 
@@ -1634,7 +1672,7 @@ export async function handleShimRequest(
     if (value !== null && value !== undefined) headers.set(name, value);
   }
   copyCorsHeaders(upstreamHeaders, headers);
-  if (mintedSession !== undefined) attachSession(headers, mintedSession);
+  if (issuedSession !== undefined) attachSession(headers, issuedSession);
 
   const body = Array.isArray(parsed) ? replies : replies[0];
   return new Response(JSON.stringify(body), { status, headers });

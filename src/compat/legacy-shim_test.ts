@@ -2262,3 +2262,172 @@ Deno.test("CRLF bi cat doi giua hai chunk khong sinh ra su kien gia", async () =
     "2025-11-25",
   );
 });
+
+Deno.test("pho do quyen khong di theo redirect cua trang login", async () => {
+  const upstream = await startUpstream(() =>
+    new Response(null, {
+      status: 302,
+      headers: { "Location": "https://sso.example/login" },
+    })
+  );
+  try {
+    const res = await handleShimRequest(
+      legacyPost({ jsonrpc: "2.0", id: 1, method: "ping" }),
+      { upstream: upstream.url },
+    );
+
+    // `ping` được trả lời tại chỗ, nên phép dò quyền là thứ duy nhất đứng giữa
+    // một caller chưa đăng nhập và một câu `result: {}` thành công.
+    assertEquals(res.status, 302);
+    await res.body?.cancel();
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("initialize that bai khong de lai phien hay trang thai", async () => {
+  clearCapabilityCache();
+  const upstream = await startUpstream((_req, body) => {
+    const message = body as Record<string, unknown>;
+    if (message?.["method"] !== "initialize") return undefined;
+    return Response.json({
+      jsonrpc: "2.0",
+      id: message["id"],
+      error: { code: -32602, message: "Invalid params" },
+    }, { status: 400 });
+  });
+  const headers = {
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+  };
+  try {
+    const init = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: { protocolVersion: "2025-03-26" },
+        }),
+      }),
+      { upstream: upstream.url },
+    );
+
+    // Thoả thuận hỏng thì không có gì để nhớ, và cũng không có phiên nào để
+    // trao: client mang phiên đó quay lại sẽ được dịch bằng một trạng thái
+    // chưa bao giờ tồn tại.
+    assertEquals(init.headers.get("Mcp-Session-Id"), null);
+    await init.body?.cancel();
+  } finally {
+    clearCapabilityCache();
+    await upstream.close();
+  }
+});
+
+Deno.test("DELETE thu hoi trang thai cua phien do shim cap", async () => {
+  clearCapabilityCache();
+  const upstream = await startUpstream();
+  const headers = {
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+  };
+  try {
+    const init = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: { protocolVersion: "2025-03-26" },
+        }),
+      }),
+      { upstream: upstream.url },
+    );
+    const session = init.headers.get("Mcp-Session-Id") ?? "";
+    assertExists(init.headers.get("Mcp-Session-Id"));
+    await init.body?.cancel();
+
+    const closed = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "DELETE",
+        headers: { "Mcp-Session-Id": session },
+      }),
+      { upstream: upstream.url },
+    );
+    assertEquals(closed.status, 204);
+
+    const after = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers: { ...headers, "Mcp-Session-Id": session },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
+      }),
+      { upstream: upstream.url },
+    );
+    // Phiên đã đóng thì không còn revision nào để phát lại: câu trả lời rơi về
+    // bản mặc định, chứ không phải bản đã thoả thuận trước khi đóng.
+    assertEquals(after.headers.get("MCP-Protocol-Version"), "2025-11-25");
+    await after.body?.cancel();
+  } finally {
+    clearCapabilityCache();
+    await upstream.close();
+  }
+});
+
+Deno.test("capabilities qua kho khong duoc giu lai", async () => {
+  clearCapabilityCache();
+  const upstream = await startUpstream();
+  const headers = {
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Authorization": "Bearer test-token-heavy",
+  };
+  try {
+    const init = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-11-25",
+            capabilities: {
+              elicitation: {},
+              experimental: { blob: "x".repeat(64 * 1024) },
+            },
+          },
+        }),
+      }),
+      { upstream: upstream.url },
+    );
+    await init.body?.cancel();
+
+    const next = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
+      }),
+      { upstream: upstream.url },
+    );
+    await next.body?.cancel();
+
+    // Đếm số bản ghi là chưa đủ khi mỗi client ẩn danh được cấp một phiên
+    // riêng: thứ vượt trần byte không phải khai báo mà là tải trọng, nên nó
+    // không được giữ - kể cả khi giữ nó sẽ tiện hơn cho lượt sau.
+    const params = (upstream.captured[1].body as Record<string, unknown>)[
+      "params"
+    ] as Record<string, unknown>;
+    const meta = params["_meta"] as Record<string, unknown>;
+    assertEquals(meta[META_CAPABILITIES], {});
+  } finally {
+    clearCapabilityCache();
+    await upstream.close();
+  }
+});
