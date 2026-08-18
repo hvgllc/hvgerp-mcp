@@ -2128,3 +2128,137 @@ Deno.test("revision cua phien khong de len loi khai cua luot sau", async () => {
     await upstream.close();
   }
 });
+
+Deno.test("header va than khai hai revision khac nhau bi tu choi", async () => {
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "Authorization": "Bearer test-token",
+          "MCP-Protocol-Version": "2025-06-18",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/list",
+          params: { _meta: { [META_PROTOCOL]: "2025-03-26" } },
+        }),
+      }),
+      { upstream: upstream.url },
+    );
+
+    // Header cũng là một lời khai. Bỏ nó ra khỏi phép so nghĩa là thân bị
+    // `rewriteOutbound` ghi đè bằng 2026-07-28 và lời khai mâu thuẫn đi lọt.
+    assertEquals(res.status, 400);
+    const body = await res.json() as Record<string, unknown>;
+    assertEquals((body["error"] as Record<string, unknown>)["code"], -32600);
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("client khong chung danh duoc cap phien de nho revision", async () => {
+  clearCapabilityCache();
+  const upstream = await startUpstream();
+  const headers = {
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+  };
+  try {
+    // Chạy HTTP không xác thực: không token, không phiên, và revision thì
+    // client 2025-03-26 khai đúng một lần ở đây.
+    const init = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: { protocolVersion: "2025-03-26" },
+        }),
+      }),
+      { upstream: upstream.url },
+    );
+    const session = init.headers.get("Mcp-Session-Id") ?? "";
+    assertExists(init.headers.get("Mcp-Session-Id"));
+    assertEquals(init.headers.get("MCP-Protocol-Version"), "2025-03-26");
+    await init.body?.cancel();
+
+    const next = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers: { ...headers, "Mcp-Session-Id": session },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
+      }),
+      { upstream: upstream.url },
+    );
+    assertEquals(next.headers.get("MCP-Protocol-Version"), "2025-03-26");
+    // Phiên là của shim, không phải của upstream: server 2026-07-28 không có
+    // khái niệm phiên nên không bao giờ được thấy header này.
+    assertEquals(upstream.captured[1].headers["mcp-session-id"], undefined);
+    await next.body?.cancel();
+  } finally {
+    clearCapabilityCache();
+    await upstream.close();
+  }
+});
+
+Deno.test("phien chi duoc cap khi client thuc su khong co gi de nhan dien", async () => {
+  clearCapabilityCache();
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      legacyPost({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25" },
+      }),
+      { upstream: upstream.url },
+    );
+    // Có `Authorization` là đã phân biệt được caller; cấp thêm một phiên chỉ
+    // là thêm một thứ để client phải mang theo.
+    assertEquals(res.headers.get("Mcp-Session-Id"), null);
+    await res.body?.cancel();
+  } finally {
+    clearCapabilityCache();
+    await upstream.close();
+  }
+});
+
+Deno.test("CRLF bi cat doi giua hai chunk khong sinh ra su kien gia", async () => {
+  const chunks = [
+    'data: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2026-07-28"}}\r',
+    "\n\r\n",
+  ];
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const encoder = new TextEncoder();
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+      controller.close();
+    },
+  });
+
+  const text = await new Response(
+    translateEventStream(source, "2025-11-25"),
+  ).text();
+
+  // Chuẩn hoá riêng từng chunk biến `\r` cuối chunk thành `\n`, rồi `\n` đầu
+  // chunk sau ghép vào thành một dòng trống không có thật: sự kiện bị cắt đôi
+  // ngay giữa, và nửa đầu không còn là JSON để dịch.
+  const blocks = text.split("\n\n").filter((block) => block.length > 0);
+  assertEquals(blocks.length, 1);
+  const payload = JSON.parse(blocks[0].slice("data: ".length)) as Record<
+    string,
+    unknown
+  >;
+  assertEquals(
+    (payload["result"] as Record<string, unknown>)["protocolVersion"],
+    "2025-11-25",
+  );
+});

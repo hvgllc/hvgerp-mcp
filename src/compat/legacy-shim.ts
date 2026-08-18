@@ -515,6 +515,17 @@ export function readClientIdentity(
 const CAPABILITY_CACHE = new Map<string, Record<string, unknown>>();
 const CAPABILITY_CACHE_MAX = 512;
 
+/** Băm chứng danh thành khoá: bộ nhớ này sống lâu, token thì không nên. */
+async function digestKey(source: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(source),
+  );
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 async function capabilityKey(req: Request): Promise<string | undefined> {
   const session = req.headers.get("Mcp-Session-Id");
   const authorization = req.headers.get("Authorization");
@@ -529,13 +540,26 @@ async function capabilityKey(req: Request): Promise<string | undefined> {
     req.headers.get("X-Anthropic-Client") ?? "",
     req.headers.get("User-Agent") ?? "",
   ].join("\n");
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(source),
+  return await digestKey(source);
+}
+
+/**
+ * Gắn phiên do shim cấp vào một response.
+ *
+ * Client chạy trong trình duyệt chỉ đọc được những header mà CORS cho phép lộ,
+ * nên cấp một phiên rồi không khai nó ở `Access-Control-Expose-Headers` là cấp
+ * một thứ người nhận không nhìn thấy.
+ */
+function attachSession(headers: Headers, session: string): void {
+  headers.set("Mcp-Session-Id", session);
+  if (headers.get("Access-Control-Allow-Origin") === null) return;
+  const exposed = headers.get("Access-Control-Expose-Headers") ?? "";
+  const names = exposed.split(",").map((name) => name.trim().toLowerCase());
+  if (names.includes("*") || names.includes("mcp-session-id")) return;
+  headers.set(
+    "Access-Control-Expose-Headers",
+    exposed.length > 0 ? `${exposed}, Mcp-Session-Id` : "Mcp-Session-Id",
   );
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
 }
 
 /** Bỏ những capability mà transport này không chở nổi tới cùng. */
@@ -572,6 +596,22 @@ function rememberCapabilities(key: string, capabilities: unknown): void {
  * response echo một revision nó chưa từng xin.
  */
 const REVISION_CACHE = new Map<string, string>();
+
+/**
+ * Đọc một bản ghi và đẩy nó về cuối hàng.
+ *
+ * `Map` giữ thứ tự chèn, nên phép đuổi bên dưới lấy đúng bản ghi vào sớm nhất
+ * chứ không phải bản ghi lâu không dùng nhất - trừ khi mỗi lượt đọc cũng đặt
+ * lại. Không làm thì một client cũ vẫn đang chạy bị đuổi vì nó khai
+ * `initialize` từ lâu, dù mọi lời gọi của nó đều vừa chạm bộ nhớ này.
+ */
+function touch<T>(cache: Map<string, T>, key: string): T | undefined {
+  const value = cache.get(key);
+  if (value === undefined) return undefined;
+  cache.delete(key);
+  cache.set(key, value);
+  return value;
+}
 
 function rememberRevision(key: string, version: string): void {
   // Cùng phép đuổi với CAPABILITY_CACHE: đặt lại để bản ghi vừa dùng về cuối
@@ -910,6 +950,7 @@ export function translateEventStream(
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   let buffer = "";
+  let pendingCr = false;
 
   const rewriteBlock = (block: string): string => {
     const lines = block.split("\n");
@@ -938,9 +979,22 @@ export function translateEventStream(
 
   const transform = new TransformStream<string, Uint8Array>({
     transform(chunk, controller) {
+      // Một `\r\n` bị mạng cắt đôi giữa hai chunk: chuẩn hoá riêng từng chunk
+      // biến `\r` cuối chunk thành `\n`, rồi `\n` đầu chunk sau ghép vào thành
+      // một dòng trống không có thật, tức một sự kiện bị cắt đôi rồi dịch nhầm.
+      // Giữ lại `\r` treo đến khi biết ký tự sau nó là gì.
+      let text = chunk;
+      if (pendingCr) {
+        text = `\r${text}`;
+        pendingCr = false;
+      }
+      if (text.endsWith("\r")) {
+        pendingCr = true;
+        text = text.slice(0, -1);
+      }
       // SSE cho phép cả ba kiểu xuống dòng; chuẩn hoá về `\n` để chỉ phải tìm
       // một dạng ranh giới, và phát lại bằng `\n` cũng vẫn đúng spec.
-      buffer += chunk.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      buffer += text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
       let boundary = buffer.indexOf("\n\n");
       while (boundary >= 0) {
         const block = buffer.slice(0, boundary);
@@ -950,6 +1004,12 @@ export function translateEventStream(
       }
     },
     flush(controller) {
+      // Stream kết thúc ngay sau một `\r`: nó là một dấu xuống dòng trọn vẹn,
+      // không phải một byte để bỏ đi.
+      if (pendingCr) {
+        buffer += "\n";
+        pendingCr = false;
+      }
       if (buffer.length === 0) return;
       controller.enqueue(encoder.encode(rewriteBlock(buffer)));
     },
@@ -1373,16 +1433,26 @@ export async function handleShimRequest(
     return await proxyPassThrough(req, target, raw);
   }
 
-  // Một batch khai hai revision khác nhau không có câu trả lời đúng: response
+  // Một request khai hai revision khác nhau không có câu trả lời đúng: response
   // dựng lại chỉ mang được một `MCP-Protocol-Version`, nên chọn bừa một bản là
-  // echo cho phân nửa số entry một revision chúng không hề xin.
-  if (new Set(readDeclaredRevisions(parsed as JsonRpcMessage[])).size > 1) {
+  // echo cho phân nửa số entry một revision chúng không hề xin. Header nằm
+  // trong phép so cùng với thân: nó cũng là một lời khai, và một request khai
+  // `2025-06-18` ở header rồi `2025-03-26` ở thân thì mâu thuẫn y như hai entry
+  // đá nhau.
+  const declaredRevisions = new Set(
+    readDeclaredRevisions(parsed as JsonRpcMessage[]),
+  );
+  const headerRevision = req.headers.get("MCP-Protocol-Version");
+  if (headerRevision !== null && headerRevision.length > 0) {
+    declaredRevisions.add(headerRevision);
+  }
+  if (declaredRevisions.size > 1) {
     return await localFailure(
       400,
       jsonRpcError(
         null,
         -32600,
-        "Invalid Request: batch declares more than one protocol revision",
+        "Invalid Request: request declares more than one protocol revision",
       ),
     );
   }
@@ -1391,14 +1461,34 @@ export async function handleShimRequest(
 
   // Vắng khoá nghĩa là không phân biệt được caller, và khi đó shim không nhớ
   // và cũng không phát lại gì.
-  const sessionKey = await capabilityKey(req);
+  const credentialKey = await capabilityKey(req);
+
+  // Chạy HTTP không xác thực là một chế độ được hỗ trợ (AGENTS.md, "HTTP mode
+  // starts unauthenticated with a startup warning"), và ở đó một client
+  // 2025-03-26 không mang theo thứ gì để nhận diện: không token, không phiên,
+  // và revision thì nó khai đúng một lần rồi im. Bịa một khoá từ User-Agent là
+  // gộp mọi caller vào một ô nhớ chung - đúng thứ mà chú thích của
+  // CAPABILITY_CACHE bác bỏ. Cấp cho nó một phiên là cách duy nhất vừa phân
+  // biệt được caller vừa không đoán mò: transport 2025-03-26 trở đi bắt client
+  // gửi lại `Mcp-Session-Id` ở mọi request sau, và upstream 2026-07-28 không
+  // bao giờ thấy header này vì nó nằm trong SHIM_OWNED_HEADERS.
+  const mintedSession = credentialKey === undefined &&
+      messages.some((entry) =>
+        isRecord(entry) && entry["method"] === "initialize"
+      )
+    ? crypto.randomUUID()
+    : undefined;
+  const sessionKey = credentialKey ??
+    (mintedSession === undefined ? undefined : await digestKey(mintedSession));
 
   const declaredVersion = readDeclaredProtocolVersion(
     req.headers,
     parsed as JsonRpcMessage | JsonRpcMessage[],
   );
   const clientVersion = declaredVersion ??
-    (sessionKey === undefined ? undefined : REVISION_CACHE.get(sessionKey)) ??
+    (sessionKey === undefined
+      ? undefined
+      : touch(REVISION_CACHE, sessionKey)) ??
     LEGACY_FALLBACK_VERSION;
   const identity = readClientIdentity(req.headers, clientVersion);
 
@@ -1487,7 +1577,9 @@ export async function handleShimRequest(
       target,
       identity,
       clientVersion,
-      sessionKey === undefined ? undefined : CAPABILITY_CACHE.get(sessionKey),
+      sessionKey === undefined
+        ? undefined
+        : touch(CAPABILITY_CACHE, sessionKey),
       !Array.isArray(parsed),
     );
     upstreamHeaders = outcome.response.headers;
@@ -1497,7 +1589,15 @@ export async function handleShimRequest(
     // `WWW-Authenticate` (thứ khởi động lại luồng OAuth), của 5xx, và của mọi
     // thân không phải JSON.
     if (outcome.payload === undefined && outcome.status !== 202) {
-      return outcome.response;
+      if (mintedSession === undefined) return outcome.response;
+      // Header của một response do `fetch` trả về là bất biến, nên phiên vừa
+      // cấp chỉ gắn được vào một response dựng lại.
+      const passthrough = new Headers(outcome.response.headers);
+      attachSession(passthrough, mintedSession);
+      return new Response(outcome.response.body, {
+        status: outcome.response.status,
+        headers: passthrough,
+      });
     }
     if (outcome.status >= 400) status = outcome.status;
     if (outcome.payload !== undefined) replies.push(outcome.payload);
@@ -1517,6 +1617,7 @@ export async function handleShimRequest(
     // response vốn đã thành công.
     accepted.set("MCP-Protocol-Version", clientVersion);
     copyCorsHeaders(upstreamHeaders, accepted);
+    if (mintedSession !== undefined) attachSession(accepted, mintedSession);
     return new Response(null, { status: 202, headers: accepted });
   }
 
@@ -1533,6 +1634,7 @@ export async function handleShimRequest(
     if (value !== null && value !== undefined) headers.set(name, value);
   }
   copyCorsHeaders(upstreamHeaders, headers);
+  if (mintedSession !== undefined) attachSession(headers, mintedSession);
 
   const body = Array.isArray(parsed) ? replies : replies[0];
   return new Response(JSON.stringify(body), { status, headers });

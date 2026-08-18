@@ -62,33 +62,79 @@ const DENO_ONLY_ENTRYPOINTS = new Set(["shim.ts"]);
 const DENO_GLOBAL = /\bDeno\s*\./;
 
 /**
- * Chỉ giữ lại phần thật sự là mã: bỏ comment, và làm rỗng chuỗi không phải
- * định danh module.
+ * Chuỗi được giữ nguyên đúng khi nó đứng ở vị trí định danh module.
  *
- * Cùng một lý do cho cả hai: văn xuôi nhắc tên API không phải một lời gọi API.
- * Gate đầu tiên ở đây tự bắt chính docstring của nó, còn gate thứ hai tự bắt
- * chính fixture của nó - và cả hai lần, cách chữa sai là miễn trừ tệp, tức là
- * bỏ gác đúng chỗ dễ sai nhất. Một câu báo lỗi `"đừng gọi Deno.readTextFile"`
- * hay `"tránh import(\"node:fs\")"` nằm trong bất kỳ tệp nào bị quét cũng làm
- * gate CI đỏ vì một chuỗi ký tự.
- *
- * Phải quét ký tự chứ không thay bằng regex, vì hai phía đều hỏng theo cách
- * riêng: chỉ gỡ comment chiếm trọn dòng thì `const x = 1; // import("node:fs")`
- * làm gate đỏ vì một câu văn, còn cắt mù mọi `//` thì `"https://example.com"`
- * bị xén mất một nửa. Trong chuỗi thì không có comment, ngoài chuỗi thì có.
- *
- * Chuỗi được giữ nguyên đúng khi nó đứng ở vị trí định danh module - ngay sau
- * `from`, sau `import`, hoặc trong `import(` - vì chỉ ở đó nội dung của nó mới
- * là một phụ thuộc. Mọi chuỗi khác chỉ còn lại cặp nháy.
+ * Chỉ ở đó nội dung của nó mới là một phụ thuộc; mọi chuỗi khác là văn xuôi.
  */
 const SPECIFIER_CONTEXT = /(?:\bfrom|\bimport)\s*\(?\s*$/;
 
+/**
+ * Ký tự trước một `/` khi `/` mở đầu một regex chứ không phải phép chia.
+ *
+ * Cần phân biệt vì regex chứa dấu nháy - `["']` trong chính tệp này - và đọc
+ * nó như một chuỗi làm bộ quét lệch pha suốt phần còn lại của tệp.
+ */
+const REGEX_POSITION =
+  /(?:[=(,:[!&|?{};+\-*%~^<>]|\b(?:return|typeof|case|in|of|do|else|yield|await))\s*$/;
+
+/** Từ khoá mở đầu một khối template: `${`. */
+type ScanFrame =
+  | { kind: "template"; keep: boolean }
+  | { kind: "substitution"; braces: number };
+
+/**
+ * Chỉ giữ lại phần thật sự là mã: bỏ comment, làm rỗng chuỗi không phải định
+ * danh module, giữ nguyên biểu thức bên trong `${...}` của template.
+ *
+ * Cùng một lý do cho hai vế đầu: văn xuôi nhắc tên API không phải một lời gọi
+ * API. Gate đầu tiên ở đây tự bắt chính docstring của nó, gate thứ hai tự bắt
+ * chính fixture của nó, và cả hai lần cách chữa sai là miễn trừ tệp - tức bỏ
+ * gác đúng chỗ dễ sai nhất. Một câu báo lỗi nhắc `Deno.readTextFile` nằm trong
+ * bất kỳ tệp nào bị quét cũng làm gate CI đỏ vì một chuỗi ký tự.
+ *
+ * Vế thứ ba là chiều ngược lại: `${...}` là mã chạy được nằm trong một chuỗi,
+ * nên làm rỗng cả template là giấu đi đúng thứ gate phải bắt.
+ *
+ * Phải quét ký tự chứ không thay bằng regex, vì mọi lối tắt đều hỏng theo cách
+ * riêng: chỉ gỡ comment chiếm trọn dòng thì `const x = 1; // import("node:fs")`
+ * làm gate đỏ vì một câu văn, còn cắt mù mọi `//` thì `"https://example.com"`
+ * bị xén mất một nửa.
+ */
 function stripNonCode(source: string): string {
   let out = "";
   let index = 0;
+  const stack: ScanFrame[] = [];
+
   while (index < source.length) {
     const char = source[index];
-    if (char === '"' || char === "'" || char === "`") {
+    const frame = stack.at(-1);
+
+    // Phần văn bản của một template: ở đây không có comment, và nội dung chỉ
+    // được giữ khi cả template đứng ở vị trí định danh module.
+    if (frame?.kind === "template") {
+      if (char === "\\") {
+        if (frame.keep) out += source.slice(index, index + 2);
+        index += 2;
+        continue;
+      }
+      if (char === "`") {
+        stack.pop();
+        out += "`";
+        index += 1;
+        continue;
+      }
+      if (char === "$" && source[index + 1] === "{") {
+        stack.push({ kind: "substitution", braces: 0 });
+        out += "${";
+        index += 2;
+        continue;
+      }
+      if (frame.keep) out += char;
+      index += 1;
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
       // Chỉ cần đuôi của phần đã phát: `$` neo ở cuối nên phần đầu không đổi
       // kết quả, mà cắt ngắn thì phép thử không phải quét lại cả tệp.
       const keep = SPECIFIER_CONTEXT.test(out.slice(-32));
@@ -108,6 +154,31 @@ function stripNonCode(source: string): string {
       out += keep ? literal : `${char}${char}`;
       continue;
     }
+
+    if (char === "`") {
+      stack.push({
+        kind: "template",
+        keep: SPECIFIER_CONTEXT.test(out.slice(-32)),
+      });
+      out += "`";
+      index += 1;
+      continue;
+    }
+
+    if (char === "{" && frame?.kind === "substitution") {
+      frame.braces += 1;
+      out += char;
+      index += 1;
+      continue;
+    }
+    if (char === "}" && frame?.kind === "substitution") {
+      if (frame.braces === 0) stack.pop();
+      else frame.braces -= 1;
+      out += char;
+      index += 1;
+      continue;
+    }
+
     if (char === "/" && source[index + 1] === "/") {
       while (index < source.length && source[index] !== "\n") index += 1;
       out += "\n";
@@ -122,10 +193,48 @@ function stripNonCode(source: string): string {
       index += 2;
       continue;
     }
+    if (char === "/" && REGEX_POSITION.test(out.slice(-32))) {
+      const closed = skipRegexLiteral(source, index);
+      if (closed > 0) {
+        // Nội dung regex không bao giờ là một phụ thuộc, nên chỉ cần một chỗ
+        // giữ vị trí; điều quan trọng là bộ quét không đọc `["']` bên trong nó
+        // như một dấu mở chuỗi.
+        out += "/x/";
+        index = closed;
+        continue;
+      }
+    }
+
     out += char;
     index += 1;
   }
   return out;
+}
+
+/**
+ * Vị trí ngay sau một regex literal bắt đầu ở `start`, hoặc `-1` nếu `/` đó
+ * không mở một regex (không đóng trước khi hết dòng, tức nó là phép chia).
+ */
+function skipRegexLiteral(source: string, start: number): number {
+  let index = start + 1;
+  let inClass = false;
+  while (index < source.length) {
+    const char = source[index];
+    if (char === "\n") return -1;
+    if (char === "\\") {
+      index += 2;
+      continue;
+    }
+    if (char === "[") inClass = true;
+    else if (char === "]") inClass = false;
+    else if (char === "/" && !inClass) {
+      index += 1;
+      while (index < source.length && /[a-z]/.test(source[index])) index += 1;
+      return index;
+    }
+    index += 1;
+  }
+  return -1;
 }
 
 /** Walk `dir` for `.ts` files, skipping vendored trees. */
@@ -332,4 +441,66 @@ Deno.test("van xuoi trong chuoi thuong khong bi doc thanh phu thuoc", () => {
     !DENO_GLOBAL.test(stripNonCode(`fail("không được gọi Deno.env ở đây");`)),
   );
   assert(DENO_GLOBAL.test(stripNonCode(`const port = Deno.env.get("PORT");`)));
+});
+
+/**
+ * Hai mảnh cú pháp ghép lại thay vì viết thẳng.
+ *
+ * Cùng lý do với {@link NODE_MODULE}: fixture phải dựng đúng hình dạng mà gate
+ * cần bắt, mà gate thì quét chính tệp này.
+ */
+const SUBSTITUTION_OPEN = "${";
+const BACKTICK = "`";
+
+Deno.test("bieu thuc trong template van bi soi, van xuoi quanh no thi khong", () => {
+  const matches = (source: string) =>
+    NODE_IMPORTS.some((pattern) => pattern.test(stripNonCode(source)));
+
+  // `${...}` là mã chạy được nằm trong một chuỗi. Làm rỗng cả template là giấu
+  // đi đúng thứ gate phải bắt, và gate xanh trong khi phụ thuộc thì đã ở đó.
+  assert(
+    matches(
+      `${BACKTICK}${SUBSTITUTION_OPEN}await import(${NODE_MODULE})}${BACKTICK}`,
+    ),
+  );
+  assert(
+    DENO_GLOBAL.test(
+      stripNonCode(
+        `${BACKTICK}port=${SUBSTITUTION_OPEN}Deno.env.get("PORT")}${BACKTICK}`,
+      ),
+    ),
+  );
+
+  // Phần văn bản của template vẫn là văn xuôi: chỉ biểu thức mới là mã.
+  assert(
+    !matches(`${BACKTICK}đừng import(${NODE_MODULE}) ở đây${BACKTICK}`),
+  );
+  assert(
+    !DENO_GLOBAL.test(
+      stripNonCode(`${BACKTICK}tránh Deno.env ở đây${BACKTICK}`),
+    ),
+  );
+
+  // Template lồng trong chính substitution của nó phải về đúng lớp ngoài, nếu
+  // không phần còn lại của tệp bị đọc lệch pha.
+  const nested =
+    `${BACKTICK}${SUBSTITUTION_OPEN}f(${BACKTICK}x${BACKTICK})}${BACKTICK}; import(${NODE_MODULE});`;
+  assert(matches(nested));
+});
+
+Deno.test("regex literal khong lam bo quet lech pha", () => {
+  const matches = (source: string) =>
+    NODE_IMPORTS.some((pattern) => pattern.test(stripNonCode(source)));
+
+  // Một regex chứa dấu nháy - như chính NODE_IMPORTS ở trên - bị đọc thành dấu
+  // mở chuỗi thì mọi thứ sau nó lệch pha: chuỗi hoá thành mã, mã hoá thành
+  // chuỗi, và một import thật nằm sau đó không còn được nhìn thấy.
+  const afterRegex = `const quoted = /["']/;\nimport(${NODE_MODULE});`;
+  assert(matches(afterRegex));
+
+  // Và `/` của phép chia không được nuốt phần còn lại của dòng.
+  assertEquals(
+    stripNonCode("const half = total / 2;"),
+    "const half = total / 2;",
+  );
 });
