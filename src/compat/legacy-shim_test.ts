@@ -6,6 +6,7 @@
  */
 import { assertEquals, assertExists } from "@std/assert";
 import {
+  acceptsEventStream,
   encodeHeaderValue,
   handleShimRequest,
   isTranslatableBody,
@@ -748,6 +749,197 @@ Deno.test("202 cua notification van mang header CORS cua upstream", async () => 
       res.headers.get("Access-Control-Allow-Origin"),
       "https://claude.ai",
     );
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("Accept doc theo media range, khong phai chuoi con", () => {
+  assertEquals(acceptsEventStream("text/event-stream"), true);
+  assertEquals(acceptsEventStream("Text/Event-Stream"), true);
+  assertEquals(acceptsEventStream("application/json, text/event-stream"), true);
+  assertEquals(acceptsEventStream("text/event-stream;q=0.5"), true);
+  assertEquals(
+    acceptsEventStream("application/json, text/event-stream;q=0"),
+    false,
+  );
+  assertEquals(acceptsEventStream("application/json"), false);
+  assertEquals(acceptsEventStream("*/*"), false);
+  assertEquals(acceptsEventStream(""), false);
+});
+
+Deno.test("Accept tu choi SSE bang q=0 khong mo stream", async () => {
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        headers: { "Accept": "application/json, text/event-stream;q=0" },
+      }),
+      { upstream: upstream.url, heartbeatMs: 60_000 },
+    );
+
+    // Không phải stream: chuyển tiếp thẳng và nhận đúng 405 của server.
+    assertEquals(res.status, 405);
+    assertEquals(
+      (res.headers.get("Content-Type") ?? "").includes("text/event-stream"),
+      false,
+    );
+    await res.body?.cancel();
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("phep hoi quyen gap 5xx thi khong tong hop stream", async () => {
+  const upstream = await startUpstream((req) =>
+    req.method === "POST"
+      ? new Response("upstream down", { status: 503 })
+      : undefined
+  );
+  try {
+    const res = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        headers: { "Accept": "text/event-stream" },
+      }),
+      { upstream: upstream.url, heartbeatMs: 60_000 },
+    );
+
+    assertEquals(res.status, 503);
+    await res.body?.cancel();
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("phep hoi quyen gap 429 thi tra thang lenh lui nhip", async () => {
+  const upstream = await startUpstream((req) =>
+    req.method === "POST"
+      ? new Response("slow down", {
+        status: 429,
+        headers: { "Retry-After": "30" },
+      })
+      : undefined
+  );
+  try {
+    const res = await handleShimRequest(
+      new Request("https://erp.example/mcp", { method: "DELETE" }),
+      { upstream: upstream.url },
+    );
+
+    assertEquals(res.status, 429);
+    assertEquals(res.headers.get("Retry-After"), "30");
+    await res.body?.cancel();
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("revision la khai trong _meta cung chan viec dich", async () => {
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      legacyPost({
+        jsonrpc: "2.0",
+        id: 16,
+        method: "tools/list",
+        params: {
+          _meta: { "io.modelcontextprotocol/protocolVersion": "2027-03-01" },
+        },
+      }),
+      { upstream: upstream.url },
+    );
+
+    assertEquals(upstream.captured.length, 1);
+    const params = (upstream.captured[0].body as Record<string, unknown>)[
+      "params"
+    ] as Record<string, unknown>;
+    const meta = params["_meta"] as Record<string, unknown>;
+    // Không bị ghi đè xuống 2026-07-28: lời từ chối là của server thật.
+    assertEquals(meta["io.modelcontextprotocol/protocolVersion"], "2027-03-01");
+    assertEquals(res.status, 400);
+    await res.body?.cancel();
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("batch dung lai ngay khi cham 401, khong khuech dai", async () => {
+  const upstream = await startUpstream((req) =>
+    req.method === "POST" ? unauthorized() : undefined
+  );
+  try {
+    const res = await handleShimRequest(
+      legacyPost([
+        { jsonrpc: "2.0", id: 20, method: "tools/list" },
+        { jsonrpc: "2.0", id: 21, method: "tools/list" },
+        { jsonrpc: "2.0", id: 22, method: "tools/list" },
+        { jsonrpc: "2.0", id: 23, method: "tools/list" },
+      ]),
+      { upstream: upstream.url },
+    );
+
+    assertEquals(res.status, 401);
+    // Đúng một lượt lên upstream cho cả batch bốn message.
+    assertEquals(upstream.captured.length, 1);
+    assertExists(res.headers.get("WWW-Authenticate"));
+    const payload = await res.json();
+    assertEquals(payload.length, 1);
+    assertEquals(payload[0].error.code, -31401);
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("429 da dich van giu Retry-After", async () => {
+  const upstream = await startUpstream((req, body) => {
+    if (req.method !== "POST") return undefined;
+    const id = (body as Record<string, unknown>)["id"];
+    return Response.json({
+      jsonrpc: "2.0",
+      id,
+      error: { code: -32000, message: "Rate limit exceeded" },
+    }, { status: 429, headers: { "Retry-After": "42" } });
+  });
+  try {
+    const res = await handleShimRequest(
+      legacyPost({ jsonrpc: "2.0", id: 24, method: "tools/list" }),
+      { upstream: upstream.url },
+    );
+
+    // 429 không bị hạ xuống 200, và lệnh lùi nhịp đi kèm đủ nhịp.
+    assertEquals(res.status, 429);
+    assertEquals(res.headers.get("Retry-After"), "42");
+    await res.body?.cancel();
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("header do Connection goi ten khong duoc chuyen tiep", async () => {
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer test-token",
+          "Connection": "X-Internal-Auth, keep-alive",
+          "X-Internal-Auth": "proxy-local-secret",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 25, method: "tools/list" }),
+      }),
+      { upstream: upstream.url },
+    );
+
+    assertEquals(upstream.captured.length, 1);
+    assertEquals(upstream.captured[0].headers["x-internal-auth"], undefined);
+    assertEquals(upstream.captured[0].headers["connection"], undefined);
+    assertEquals(
+      upstream.captured[0].headers["authorization"],
+      "Bearer test-token",
+    );
+    await res.body?.cancel();
   } finally {
     await upstream.close();
   }

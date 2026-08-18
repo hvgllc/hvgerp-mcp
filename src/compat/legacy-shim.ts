@@ -194,19 +194,32 @@ export function isTranslatableRequest(headers: Headers): boolean {
  * 2026-07-28 rồi nhận lại đúng revision nó xin, tức là vẫn đúng cái bắt tay
  * giả mà {@link KNOWN_LEGACY_VERSIONS} sinh ra để chặn.
  *
+ * `initialize` không phải chỗ duy nhất: mọi message đều có thể khai revision
+ * trong `params._meta`, và `rewriteOutbound` ghi đè đúng khoá đó, nên bỏ sót
+ * nó là để một lời gọi thuộc revision lạ chạy thật thay vì bị server từ chối.
+ *
  * Bản 2026-07-28 khai trong thân thì vẫn dịch được: dịch nó là phép đồng nhất
  * cộng thêm bộ header còn thiếu, không có gì bị bịa ra.
  */
 export function isTranslatableBody(parsed: unknown): boolean {
   const messages = Array.isArray(parsed) ? parsed : [parsed];
   for (const entry of messages) {
-    if (!isRecord(entry) || entry["method"] !== "initialize") continue;
+    if (!isRecord(entry)) continue;
     const params = entry["params"];
     if (!isRecord(params)) continue;
-    const declared = params["protocolVersion"];
-    if (typeof declared !== "string" || declared.length === 0) continue;
-    if (declared === SPEC_2026_07_28) continue;
-    if (!KNOWN_LEGACY_VERSIONS.has(declared)) return false;
+
+    const declared: unknown[] = [];
+    if (entry["method"] === "initialize") {
+      declared.push(params["protocolVersion"]);
+    }
+    const meta = params["_meta"];
+    if (isRecord(meta)) declared.push(meta[META_PROTOCOL_VERSION]);
+
+    for (const value of declared) {
+      if (typeof value !== "string" || value.length === 0) continue;
+      if (value === SPEC_2026_07_28) continue;
+      if (!KNOWN_LEGACY_VERSIONS.has(value)) return false;
+    }
   }
   return true;
 }
@@ -237,6 +250,28 @@ export function readPositiveInteger(
     );
   }
   return parsed;
+}
+
+/**
+ * Client có thật sự xin stream SSE hay không.
+ *
+ * Phép thử chuỗi con sai ở hai chiều: `text/event-stream;q=0` là lời từ chối
+ * tường minh mà vẫn khớp, còn `Text/Event-Stream` là lời xin hợp lệ mà không
+ * khớp. Cái sai thứ nhất mở một kết nối sống lâu không ai muốn, cái thứ hai
+ * đẩy client cũ về đúng 405 mà shim sinh ra để tránh.
+ */
+export function acceptsEventStream(accept: string): boolean {
+  for (const range of accept.split(",")) {
+    const [media, ...params] = range.split(";");
+    if (media.trim().toLowerCase() !== "text/event-stream") continue;
+    const quality = params
+      .map((param) => param.trim().toLowerCase())
+      .find((param) => param.startsWith("q="));
+    if (quality === undefined) return true;
+    const value = Number(quality.slice(2));
+    if (!Number.isFinite(value) || value > 0) return true;
+  }
+  return false;
 }
 
 /** Revision mà client cũ tự nhận, để trả lại đúng thứ nó chờ đợi. */
@@ -347,11 +382,33 @@ export function rewriteInbound(
   return { ...payload, result };
 }
 
+/**
+ * Tập hop-by-hop của riêng một request.
+ *
+ * RFC 9110 §7.6.1: ngoài danh sách cố định, mọi tên mà chính header
+ * `Connection` gọi ra cũng là hop-by-hop. Bỏ qua vế thứ hai nghĩa là một
+ * request mang `Connection: X-Internal-Auth` bị gỡ mất `Connection` nhưng
+ * `X-Internal-Auth` vẫn được chuyển tiếp, tức là shim rò một header vốn chỉ
+ * có nghĩa giữa hai chặng sang một upstream có thể đang tin nó.
+ */
+function hopByHopFor(source: Headers): Set<string> {
+  const hops = new Set(HOP_BY_HOP);
+  const connection = source.get("Connection");
+  if (connection !== null) {
+    for (const token of connection.split(",")) {
+      const name = token.trim().toLowerCase();
+      if (name.length > 0) hops.add(name);
+    }
+  }
+  return hops;
+}
+
 function filterHeaders(source: Headers): Headers {
+  const hops = hopByHopFor(source);
   const out = new Headers();
   for (const [key, value] of source) {
     const lower = key.toLowerCase();
-    if (HOP_BY_HOP.has(lower) || SHIM_OWNED_HEADERS.has(lower)) continue;
+    if (hops.has(lower) || SHIM_OWNED_HEADERS.has(lower)) continue;
     out.set(key, value);
   }
   return out;
@@ -498,9 +555,10 @@ async function proxyPassThrough(
   target: URL,
   body?: string,
 ): Promise<Response> {
+  const hops = hopByHopFor(req.headers);
   const headers = new Headers();
   for (const [key, value] of req.headers) {
-    if (HOP_BY_HOP.has(key.toLowerCase())) continue;
+    if (hops.has(key.toLowerCase())) continue;
     headers.set(key, value);
   }
   const init: RequestInit & { duplex?: string } = {
@@ -577,8 +635,8 @@ async function readBoundedText(
  * Kết quả hỏi upstream xem caller có quyền hay không.
  */
 interface AuthorizationProbe {
-  /** Response phải trả thẳng cho client khi upstream từ chối. */
-  denied?: Response;
+  /** Response phải trả thẳng cho client khi phép hỏi không cho phép tổng hợp. */
+  blocked?: Response;
   /** Header của lượt hỏi, để chép CORS sang response shim tự dựng. */
   upstream: Headers;
 }
@@ -624,11 +682,13 @@ async function authorizeSynthetic(
     }),
   });
 
-  // Chỉ 401 và 403 mới là "không có quyền". Mọi mã khác, kể cả 404 của `ping`
-  // và cả 5xx, đều không phải câu trả lời về quyền nên không được đọc thành
-  // một lệnh chặn.
-  if (probe.status === 401 || probe.status === 403) {
-    return { denied: probe, upstream: probe.headers };
+  // Chặn khi câu trả lời KHÔNG phải "đã qua cổng". 401/403/407 là thiếu quyền,
+  // 429 là lệnh lùi nhịp, 5xx là upstream đang hỏng - đọc bất kỳ mã nào trong
+  // số đó thành "cho qua" là tự tổng hợp một câu trả lời thành công đè lên một
+  // sự cố thật, và với 5xx thì đó đúng nghĩa là mở cổng khi tầng xác thực gãy.
+  // Những mã còn lại (2xx, và 404 của `ping`) đều nghĩa là đã lọt cổng.
+  if (AUTH_STATUSES.has(probe.status) || probe.status >= 500) {
+    return { blocked: probe, upstream: probe.headers };
   }
   await probe.body?.cancel();
   return { upstream: probe.headers };
@@ -659,9 +719,9 @@ export async function handleShimRequest(
     const accept = req.headers.get("Accept") ?? "";
     // Client hiện đại không mở stream ở đây, nên chỉ nhận SSE mới đổi hành vi;
     // còn lại vẫn để server trả 405 của chính nó.
-    if (accept.includes("text/event-stream")) {
+    if (acceptsEventStream(accept)) {
       const auth = await authorizeSynthetic(req, target);
-      if (auth.denied !== undefined) return auth.denied;
+      if (auth.blocked !== undefined) return auth.blocked;
       return openLegacyStream(opts.heartbeatMs ?? 15_000, auth.upstream);
     }
     return await proxyPassThrough(req, target);
@@ -671,7 +731,7 @@ export async function handleShimRequest(
   // đóng, nên câu trả lời đúng là "đã xong", không phải "verb không hợp lệ".
   if (req.method === "DELETE") {
     const auth = await authorizeSynthetic(req, target);
-    if (auth.denied !== undefined) return auth.denied;
+    if (auth.blocked !== undefined) return auth.blocked;
     const headers = new Headers();
     copyCorsHeaders(auth.upstream, headers);
     return new Response(null, { status: 204, headers });
@@ -740,7 +800,7 @@ export async function handleShimRequest(
       // 200 cho keepalive và báo "phiên còn sống", trong khi mọi lời gọi thật
       // của nó đều bị từ chối.
       authorization ??= await authorizeSynthetic(req, target);
-      if (authorization.denied !== undefined) return authorization.denied;
+      if (authorization.blocked !== undefined) return authorization.blocked;
       upstreamHeaders ??= authorization.upstream;
       replies.push({ jsonrpc: "2.0", id, result: {} });
       continue;
@@ -764,6 +824,13 @@ export async function handleShimRequest(
     }
     if (outcome.status >= 400) status = outcome.status;
     if (outcome.payload !== undefined) replies.push(outcome.payload);
+
+    // Cả batch dùng chung một bộ chứng danh, nên khi một message đã nhận câu
+    // trả lời về quyền hoặc về nhịp thì mọi message còn lại chắc chắn nhận
+    // đúng câu đó. Đi tiếp không đổi được kết quả mà biến một request bên
+    // ngoài thành N lượt gọi lên tầng xác thực: một thân vừa đủ dưới trần
+    // kích thước cũng chứa được hàng nghìn message nhỏ.
+    if (AUTH_STATUSES.has(outcome.status)) break;
   }
 
   if (replies.length === 0) {
@@ -777,6 +844,12 @@ export async function handleShimRequest(
   const wwwAuthenticate = upstreamHeaders?.get("WWW-Authenticate");
   if (wwwAuthenticate !== null && wwwAuthenticate !== undefined) {
     headers.set("WWW-Authenticate", wwwAuthenticate);
+  }
+  // 429 mà mất `Retry-After` là một lệnh lùi nhịp không có nhịp: client cũ
+  // đọc được "hãy chờ" nhưng không đọc được "chờ bao lâu" nên thử lại ngay.
+  const retryAfter = upstreamHeaders?.get("Retry-After");
+  if (retryAfter !== null && retryAfter !== undefined) {
+    headers.set("Retry-After", retryAfter);
   }
   copyCorsHeaders(upstreamHeaders, headers);
 
