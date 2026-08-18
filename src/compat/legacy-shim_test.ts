@@ -1818,3 +1818,151 @@ Deno.test("than JSON khai sai media type di thang, khong duoc nang cap", async (
     await upstream.close();
   }
 });
+
+Deno.test("_meta sai kieu khong duoc dung lai thanh metadata hop le", async () => {
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      legacyPost({
+        jsonrpc: "2.0",
+        id: 10,
+        method: "tools/list",
+        params: { _meta: ["not", "an", "object"] },
+      }),
+      { upstream: upstream.url },
+    );
+
+    const body = await res.json() as Record<string, unknown>;
+    const error = body["error"] as Record<string, unknown>;
+    assertEquals(error["code"], -32602);
+    assertEquals(String(error["message"]).includes("_meta"), true);
+    // Chỉ phép hỏi quyền chạm upstream; request sai định dạng không được dựng
+    // lại thành một request hợp lệ.
+    assertEquals(upstream.captured.length, 1);
+    assertEquals(
+      (upstream.captured[0].body as Record<string, unknown>)["method"],
+      "ping",
+    );
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("batch khai hai revision khac nhau bi tu choi", async () => {
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      legacyPost([
+        {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/list",
+          params: { _meta: { [META_PROTOCOL]: "2025-03-26" } },
+        },
+        {
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/list",
+          params: { _meta: { [META_PROTOCOL]: "2025-06-18" } },
+        },
+      ]),
+      { upstream: upstream.url },
+    );
+
+    assertEquals(res.status, 400);
+    const body = await res.json() as Record<string, unknown>;
+    assertEquals(
+      (body["error"] as Record<string, unknown>)["code"],
+      -32600,
+    );
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("revision cua batch doc tu moi entry, khong chi entry dau", async () => {
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      legacyPost([
+        { jsonrpc: "2.0", id: 1, method: "ping" },
+        {
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/call",
+          params: {
+            name: "a",
+            _meta: { [META_PROTOCOL]: "2025-03-26" },
+          },
+        },
+      ]),
+      { upstream: upstream.url },
+    );
+
+    // Entry đầu không mang metadata; đọc mỗi nó là đẩy cả batch về bản mặc
+    // định và echo cho entry sau một revision nó không hề xin.
+    assertEquals(res.headers.get("MCP-Protocol-Version"), "2025-03-26");
+    await res.body?.cancel();
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("loi do shim tu sinh van echo revision client khai", async () => {
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer test-token",
+          "MCP-Protocol-Version": "2025-06-18",
+        },
+        body: "{ khong phai JSON",
+      }),
+      { upstream: upstream.url },
+    );
+
+    assertEquals(res.status, 400);
+    assertEquals(res.headers.get("MCP-Protocol-Version"), "2025-06-18");
+    const body = await res.json() as Record<string, unknown>;
+    assertEquals(
+      (body["error"] as Record<string, unknown>)["code"],
+      -32700,
+    );
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("client tu choi SSE thi luot goi upstream cung khong xin SSE", async () => {
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "Authorization": "Bearer test-token",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 11,
+          method: "tools/call",
+          params: { name: "a" },
+        }),
+      }),
+      { upstream: upstream.url },
+    );
+
+    assertEquals(res.status, 200);
+    // Dịch thân bên trong không làm media type đó đọc được với một client vừa
+    // nói rõ nó không đọc SSE.
+    assertEquals(upstream.captured[0].headers["accept"], "application/json");
+    await res.body?.cancel();
+  } finally {
+    await upstream.close();
+  }
+});

@@ -377,6 +377,72 @@ export function acceptsEventStream(accept: string): boolean {
   return false;
 }
 
+/**
+ * Trường nào của request sai kiểu tới mức shim không được phép vá, hoặc
+ * `undefined` nếu không có.
+ *
+ * `rewriteOutbound` chỉ biết "có phải object không": không phải thì nó dựng một
+ * object rỗng để có chỗ đặt `_meta`. Với một trường vắng mặt thì đó là phép
+ * nâng cấp đúng; với một trường CÓ mặt mà sai kiểu thì đó là sửa hộ client một
+ * request mà bộ kiểm của server phải từ chối - và server không bao giờ nhìn
+ * thấy giá trị thật để từ chối.
+ */
+export function describeInvalidFields(
+  message: JsonRpcMessage,
+): string | undefined {
+  const params = message.params;
+  if (params === undefined) return undefined;
+  if (!isRecord(params)) return "'params' must be an object";
+
+  if ("_meta" in params && !isRecord(params["_meta"])) {
+    return "'params._meta' must be an object";
+  }
+  const meta = params["_meta"];
+  if (
+    isRecord(meta) && META_CLIENT_CAPABILITIES in meta &&
+    !isRecord(meta[META_CLIENT_CAPABILITIES])
+  ) {
+    return `'params._meta.${META_CLIENT_CAPABILITIES}' must be an object`;
+  }
+  if (
+    message.method === "initialize" && "capabilities" in params &&
+    !isRecord(params["capabilities"])
+  ) {
+    return "'params.capabilities' must be an object";
+  }
+  return undefined;
+}
+
+/**
+ * Mọi revision mà thân request tự khai, theo thứ tự gặp và không lặp.
+ *
+ * Đọc mỗi `message[0]` là đủ sai trong đúng trường hợp batch trộn: một `ping`
+ * đời cũ không mang metadata đứng đầu sẽ đẩy cả batch về bản mặc định, và câu
+ * trả lời cho entry sau echo một revision nó không hề xin.
+ */
+export function readDeclaredRevisions(
+  message: JsonRpcMessage | JsonRpcMessage[] | undefined,
+): string[] {
+  const entries = Array.isArray(message)
+    ? message
+    : message === undefined
+    ? []
+    : [message];
+  const found: string[] = [];
+  for (const entry of entries) {
+    const params = entry?.params;
+    if (!isRecord(params)) continue;
+    let declared: unknown = params["protocolVersion"];
+    if (typeof declared !== "string") {
+      const meta = params["_meta"];
+      declared = isRecord(meta) ? meta[META_PROTOCOL_VERSION] : undefined;
+    }
+    if (typeof declared !== "string" || declared.length === 0) continue;
+    if (!found.includes(declared)) found.push(declared);
+  }
+  return found;
+}
+
 /** Revision mà client cũ tự nhận, để trả lại đúng thứ nó chờ đợi. */
 export function readClientProtocolVersion(
   headers: Headers,
@@ -386,21 +452,10 @@ export function readClientProtocolVersion(
   if (typeof fromHeader === "string" && fromHeader.length > 0) {
     return fromHeader;
   }
-  const first = Array.isArray(message) ? message[0] : message;
-  const params = first?.params;
-  if (isRecord(params)) {
-    if (typeof params["protocolVersion"] === "string") {
-      return params["protocolVersion"];
-    }
-    // Message không phải `initialize` khai revision ở `_meta`, và đó là chỗ
-    // {@link isTranslatableBody} đã chấp nhận, nên bỏ qua nó ở đây là dịch
-    // đúng nhưng trả lời sai: response echo một revision client không hề xin.
-    const meta = params["_meta"];
-    if (isRecord(meta) && typeof meta[META_PROTOCOL_VERSION] === "string") {
-      return meta[META_PROTOCOL_VERSION];
-    }
-  }
-  return LEGACY_FALLBACK_VERSION;
+  // Message không phải `initialize` khai revision ở `_meta`, và đó là chỗ
+  // {@link isTranslatableBody} đã chấp nhận, nên bỏ qua nó ở đây là dịch đúng
+  // nhưng trả lời sai: response echo một revision client không hề xin.
+  return readDeclaredRevisions(message)[0] ?? LEGACY_FALLBACK_VERSION;
 }
 
 /** Suy ra danh tính client từ header Anthropic gửi kèm, để log server có nghĩa. */
@@ -730,14 +785,17 @@ async function forwardOne(
     headers.set(key, value);
   }
   headers.set("Content-Type", "application/json");
-  // Shim tách batch thành N lượt gọi, mà một response SSE là một dòng chảy
-  // không đối chiếu được với từng entry: nhận nó cho entry đầu nghĩa là các
-  // entry sau không bao giờ được gửi. Với batch thì chỉ nhận JSON.
+  // Hai lý do để KHÔNG xin SSE, và cả hai đều là lời của client. Một: shim
+  // tách batch thành N lượt gọi, mà một stream không đối chiếu được với từng
+  // entry, nên nhận nó cho entry đầu nghĩa là các entry sau không bao giờ được
+  // gửi. Hai: client tự khai không đọc được SSE - `Accept: application/json`
+  // hay `text/event-stream;q=0` - và dịch thân bên trong không làm media type
+  // đó trở nên đọc được với nó.
+  const wantsStream = allowEventStream &&
+    acceptsEventStream(req.headers.get("Accept") ?? "");
   headers.set(
     "Accept",
-    allowEventStream
-      ? "application/json, text/event-stream"
-      : "application/json",
+    wantsStream ? "application/json, text/event-stream" : "application/json",
   );
 
   // Client rời đi thì lượt gọi upstream cũng phải dừng: không nối tín hiệu
@@ -1207,6 +1265,13 @@ export async function handleShimRequest(
     const auth = await authorize();
     if (auth.blocked !== undefined) return auth.blocked;
     const headers = new Headers({ "Content-Type": "application/json" });
+    // Response đã dịch nào cũng echo revision client xin, nên một lỗi do shim
+    // tự sinh mà thiếu header đó là một response lệch chuẩn: client chặt đọc
+    // metadata trước rồi vứt luôn cả câu giải thích bên trong.
+    const declared = req.headers.get("MCP-Protocol-Version");
+    if (declared !== null && KNOWN_LEGACY_VERSIONS.has(declared)) {
+      headers.set("MCP-Protocol-Version", declared);
+    }
     copyCorsHeaders(auth.upstream, headers);
     return new Response(JSON.stringify(payload), { status, headers });
   };
@@ -1263,6 +1328,20 @@ export async function handleShimRequest(
     return await proxyPassThrough(req, target, raw);
   }
 
+  // Một batch khai hai revision khác nhau không có câu trả lời đúng: response
+  // dựng lại chỉ mang được một `MCP-Protocol-Version`, nên chọn bừa một bản là
+  // echo cho phân nửa số entry một revision chúng không hề xin.
+  if (new Set(readDeclaredRevisions(parsed as JsonRpcMessage[])).size > 1) {
+    return await localFailure(
+      400,
+      jsonRpcError(
+        null,
+        -32600,
+        "Invalid Request: batch declares more than one protocol revision",
+      ),
+    );
+  }
+
   const messages = Array.isArray(parsed) ? parsed : [parsed];
   const clientVersion = readClientProtocolVersion(
     req.headers,
@@ -1315,11 +1394,12 @@ export async function handleShimRequest(
       continue;
     }
 
-    // `rewriteOutbound` thay `params` sai kiểu bằng `{}` để có chỗ đặt `_meta`,
+    // `rewriteOutbound` thay trường sai kiểu bằng `{}` để có chỗ đặt `_meta`,
     // nên `{"method":"tools/list","params":[]}` tới server dưới hình dạng một
     // request hợp lệ và nhận về danh sách tool thay vì `-32602`. Bộ kiểm của
     // server không bao giờ nhìn thấy giá trị thật, nên shim phải tự từ chối.
-    if (message.params !== undefined && !isRecord(message.params)) {
+    const invalidField = describeInvalidFields(message);
+    if (invalidField !== undefined) {
       const auth = await authorize();
       if (auth.blocked !== undefined) return auth.blocked;
       upstreamHeaders ??= auth.upstream;
@@ -1330,7 +1410,7 @@ export async function handleShimRequest(
         replies.push(jsonRpcError(
           normalizeId(id),
           -32602,
-          "Invalid params: 'params' must be an object",
+          `Invalid params: ${invalidField}`,
         ));
       }
       continue;

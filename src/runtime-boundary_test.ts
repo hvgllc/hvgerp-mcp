@@ -34,7 +34,7 @@ const ADAPTERS = new Set([
 const NODE_IMPORTS = [
   /^\s*(?:import|export)\b[^;]*?\bfrom\s*["']node:/m,
   /^\s*import\s*["']node:/m,
-  /^\s*(?:const|let|var|return|await)[^\n]*\bimport\s*\(\s*["']node:/m,
+  /\bimport\s*\(\s*["']node:/,
 ];
 
 /**
@@ -62,15 +62,53 @@ const DENO_ONLY_ENTRYPOINTS = new Set(["shim.ts"]);
 const DENO_GLOBAL = /\bDeno\s*\./;
 
 /**
- * Bỏ comment trước khi dò.
+ * Bỏ comment trước khi dò, có nhận biết chuỗi.
  *
  * Cùng lý do với {@link NODE_IMPORTS}: một dòng văn xuôi nhắc tên API không
  * phải một lời gọi, và gate đầu tiên ở đây đã tự bắt chính docstring của nó.
+ *
+ * Phải quét ký tự chứ không thay bằng regex, vì hai phía đều hỏng theo cách
+ * riêng: chỉ gỡ comment chiếm trọn dòng thì `const x = 1; // import("node:fs")`
+ * làm gate đỏ vì một câu văn, còn cắt mù mọi `//` thì `"https://example.com"`
+ * bị xén mất một nửa. Trong chuỗi thì không có comment, ngoài chuỗi thì có.
  */
 function stripComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/^\s*\/\/.*$/gm, "");
+  let out = "";
+  let quote: string | undefined;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (quote !== undefined) {
+      out += char;
+      if (char === "\\") {
+        out += source[index + 1] ?? "";
+        index += 1;
+      } else if (char === quote) {
+        quote = undefined;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      quote = char;
+      out += char;
+      continue;
+    }
+    if (char === "/" && source[index + 1] === "/") {
+      while (index < source.length && source[index] !== "\n") index += 1;
+      out += "\n";
+      continue;
+    }
+    if (char === "/" && source[index + 1] === "*") {
+      index += 2;
+      while (
+        index < source.length &&
+        !(source[index] === "*" && source[index + 1] === "/")
+      ) index += 1;
+      index += 1;
+      continue;
+    }
+    out += char;
+  }
+  return out;
 }
 
 /** Walk `dir` for `.ts` files, skipping vendored trees. */
@@ -185,6 +223,16 @@ Deno.test("phan thu vien cua shim khong duoc mien tru", async () => {
   assertEquals([...DENO_ONLY_ENTRYPOINTS], ["shim.ts"]);
 });
 
+/**
+ * Chuỗi định danh module, ghép lại thay vì viết thẳng.
+ *
+ * Bài test bên dưới phải dựng đúng những câu lệnh mà gate cần bắt, mà gate thì
+ * quét chính tệp này. Viết thẳng lời gọi `import()` kèm định danh vào một chuỗi
+ * mẫu là làm gate đỏ vì một fixture chứ không phải vì một phụ thuộc, và cách
+ * chữa sai là miễn trừ tệp này - tức là bỏ gác đúng chỗ dễ sai nhất.
+ */
+const NODE_MODULE = '"node:fs"';
+
 Deno.test("the gate sees a Node builtin reached through a re-export", () => {
   const matches = (source: string) =>
     NODE_IMPORTS.some((pattern) => pattern.test(stripComments(source)));
@@ -192,23 +240,50 @@ Deno.test("the gate sees a Node builtin reached through a re-export", () => {
   // Đây là những câu lệnh import không hề chứa từ `import`. Gate khoá vào đúng
   // từ khoá đó thì một module mọc thêm phụ thuộc cứng vào builtin của Node mà
   // bộ test vẫn xanh, tức là cái nó gác không còn là ranh giới nữa.
-  assert(matches('export * from "node:fs";'));
-  assert(matches('export { readFile } from "node:fs";'));
-  assert(matches('export type { Stats } from "node:fs";'));
-  assert(matches('import { readFile } from "node:fs";'));
-  assert(matches('import "node:fs";'));
-  assert(matches('const fs = await import("node:fs");'));
+  assert(matches(`export * from ${NODE_MODULE};`));
+  assert(matches(`export { readFile } from ${NODE_MODULE};`));
+  assert(matches(`export type { Stats } from ${NODE_MODULE};`));
+  assert(matches(`import { readFile } from ${NODE_MODULE};`));
+  assert(matches(`import ${NODE_MODULE};`));
+  assert(matches(`const fs = await import(${NODE_MODULE});`));
 
   // `deno fmt` bẻ danh sách dài xuống nhiều dòng, nên một matcher bó trong một
   // dòng bỏ lọt đúng hình dạng mà chính bộ format của repo sinh ra.
-  assert(matches('export {\n  readFile,\n  writeFile,\n} from "node:fs";'));
-  assert(matches('import {\n  readFile,\n} from "node:fs";'));
+  assert(
+    matches(`export {\n  readFile,\n  writeFile,\n} from ${NODE_MODULE};`),
+  );
+  assert(matches(`import {\n  readFile,\n} from ${NODE_MODULE};`));
 
   // Văn xuôi nhắc tên builtin thì không: comment bị gỡ trước khi dò, nên tên
   // module nằm trong câu chữ không bao giờ bị đọc thành một lời khai phụ thuộc.
   assert(
-    !matches('/**\n * Adapter này là chỗ duy nhất được nhập "node:fs".\n */'),
+    !matches(
+      `/**\n * Adapter này là chỗ duy nhất được nhập ${NODE_MODULE}.\n */`,
+    ),
   );
-  assert(!matches('export const specifier = "node:fs";'));
-  assert(!matches('// export the reader instead of touching "node:fs" here'));
+  assert(!matches(`export const specifier = ${NODE_MODULE};`));
+  assert(
+    !matches(`// export the reader instead of touching ${NODE_MODULE} here`),
+  );
+});
+
+Deno.test("dynamic import bi bat o moi vi tri, va comment khong lam gate do", () => {
+  const matches = (source: string) =>
+    NODE_IMPORTS.some((pattern) => pattern.test(stripComments(source)));
+
+  // `import()` là biểu thức: nó đứng được ở bất kỳ đâu một biểu thức đứng
+  // được, nên khoá vào vài tiền tố câu lệnh là để lọt phần còn lại.
+  assert(matches(`modulePromise = import(${NODE_MODULE});`));
+  assert(matches(`export default import(${NODE_MODULE});`));
+  assert(matches(`register(() => import(${NODE_MODULE}));`));
+
+  // Chiều ngược lại: một câu văn nhắc tới import không phải một phụ thuộc, và
+  // gate cứng mà đỏ vì văn xuôi thì người ta sẽ gỡ chính cái gate.
+  assert(!matches(`const mode = "portable"; // tránh import(${NODE_MODULE})`));
+
+  // Và cắt comment không được đụng vào chuỗi: `//` trong một URL vẫn là URL.
+  assertEquals(
+    stripComments('const site = "https://example.com"; // ghi chú'),
+    'const site = "https://example.com"; \n',
+  );
 });

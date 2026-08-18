@@ -32,6 +32,21 @@ if (upstream === undefined || upstream.length === 0) {
   Deno.exit(1);
 }
 
+// Cùng lý do với ba giá trị số bên dưới: một URL hỏng chỉ vỡ ở request đầu
+// tiên, nơi nó thành một 502 chung chung, trong khi log khởi động đã báo shim
+// đang lắng nghe. Một triển khai không dùng được phải chết ngay lúc dựng, chứ
+// không phải trông như đã lên.
+try {
+  const parsed = new URL(upstream);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`unsupported scheme ${parsed.protocol}`);
+  }
+} catch (error) {
+  const detail = error instanceof Error ? error.message : String(error);
+  console.error(`[shim] SHIM_UPSTREAM must be an http(s) URL: ${detail}`);
+  Deno.exit(1);
+}
+
 let port: number;
 let heartbeatMs: number;
 let maxBodyBytes: number;
