@@ -6,7 +6,9 @@
  *
  * The light palette is NOT invented here: every value is copied from the Havi
  * Group Workspace SPA design tokens so a viewer rendered inside Claude reads as
- * part of the same product as `/hvg`. Source of truth (HaviGroupERP repo):
+ * part of the same product as `/hvg`. The single exception is `--text-muted`,
+ * which is darkened for contrast - the reason is written at the token itself.
+ * Source of truth (HaviGroupERP repo):
  *   apps/hvg_workspace/frontend/src/index.css:9-45  `:root` tokens
  *   apps/hvg_workspace/frontend/src/components/Sidebar.vue:117-133  brand block
  * The dark palette has no SPA counterpart (the SPA is light-only), so it stays a
@@ -54,7 +56,15 @@
 
   --text-primary: #18202b; /* --hv-ink */
   --text-secondary: #5c6472; /* --hv-muted-strong */
-  --text-muted: #7a828f; /* --hv-muted-mid */
+  /* The one value here that is NOT a straight copy. The SPA's next step down is
+     `--hv-muted-mid` (#7A828F), which is 3.88:1 on white and 3.7:1 on
+     `--bg-elevated` - below the 4.5:1 AA threshold for normal text. In the SPA
+     that level carries meta lines beside a bolder label; in these viewers it
+     carries content read on its own at 10-12px (table headers, pagination, the
+     invoice Date/Due labels, the Draft status badge). Darkened to 5.06:1 on
+     white and 4.76:1 on elevated, staying on the same 218° hue and a visible
+     step below `--hv-muted-strong`. */
+  --text-muted: #676f7d;
   --text-faint: #9aa1ab; /* --hv-muted-2 */
 
   --border: #e6e8ec; /* --hv-line-2 */
