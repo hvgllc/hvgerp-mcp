@@ -15,7 +15,11 @@
  */
 
 import { assert, assertEquals } from "@std/assert";
-import { McpApp } from "@casys/mcp-server";
+import {
+  MCP_APP_MIME_TYPE,
+  MCP_APPS_EXTENSION_ID,
+  McpApp,
+} from "@casys/mcp-server";
 import type { FetchHandler } from "@casys/mcp-server";
 import { FrappeAPIError, setFrappeClient } from "./api/frappe-client.ts";
 import type { FrappeClient } from "./api/frappe-client.ts";
@@ -86,6 +90,23 @@ async function tasksHandler(): Promise<FetchHandler> {
     }).getFetchHandler({ cors: false });
   }
   return _tasksHandler;
+}
+
+let _appsHandler: FetchHandler | null = null;
+
+/** A server that declares MCP Apps, exactly as server.ts does once a viewer bundle exists. */
+async function appsHandler(): Promise<FetchHandler> {
+  if (!_appsHandler) {
+    _appsHandler = await new McpApp({
+      name: "hvgerp-mcp-wire-apps-test",
+      version: "0.0.0",
+      transport: "stateless",
+      extensions: {
+        [MCP_APPS_EXTENSION_ID]: { mimeTypes: [MCP_APP_MIME_TYPE] },
+      },
+    }).getFetchHandler({ cors: false });
+  }
+  return _appsHandler;
 }
 
 let _mrtrHandler: FetchHandler | null = null;
@@ -358,6 +379,50 @@ Deno.test(
 );
 
 Deno.test(
+  "stateless wire: a declared MCP Apps extension reaches initialize capabilities",
+  async () => {
+    const h = await appsHandler();
+    const res = await h(request("initialize"));
+
+    assertEquals(res.status, 200);
+    const body = await res.json() as Record<string, unknown>;
+    const result = body.result as Record<string, unknown>;
+    const capabilities = result.capabilities as Record<string, unknown>;
+    const extensions = capabilities.extensions as Record<string, unknown>;
+
+    assertEquals(
+      extensions?.[MCP_APPS_EXTENSION_ID],
+      { mimeTypes: [MCP_APP_MIME_TYPE] },
+      "A host negotiates the UI extension from this field. Without it, several " +
+        "hosts render tool results as plain JSON no matter how correct the " +
+        "per-tool _meta.ui binding is",
+    );
+  },
+);
+
+Deno.test(
+  "stateless wire: a server declaring no extension advertises none",
+  async () => {
+    // The negative half of the test above. Without it, that assertion could pass
+    // against a framework that advertises MCP Apps unconditionally, and would
+    // then prove nothing about server.ts declaring anything.
+    const h = await handler();
+    const res = await h(request("initialize"));
+
+    const body = await res.json() as Record<string, unknown>;
+    const result = body.result as Record<string, unknown>;
+    const capabilities = result.capabilities as Record<string, unknown>;
+
+    assertEquals(
+      capabilities.extensions,
+      undefined,
+      "An empty extensions object asserts 'no extensions supported', which is a " +
+        "stronger claim than a server with nothing declared can make",
+    );
+  },
+);
+
+Deno.test(
   "stateless wire: unsupported protocol version returns -32022 with recovery data",
   async () => {
     const h = await handler();
@@ -614,5 +679,17 @@ Deno.test("server.ts configures the stateless transport", async () => {
   assert(
     !source.includes("io.modelcontextprotocol/tasks"),
     "server.ts must not advertise process-local Tasks",
+  );
+  assert(
+    /extensions:\s*\{\s*\[MCP_APPS_EXTENSION_ID\]/.test(source),
+    "server.ts must declare the MCP Apps extension on McpApp — hosts negotiate " +
+      "UI support from capabilities.extensions and do not infer it from the " +
+      "presence of ui:// resources",
+  );
+  assert(
+    /servesUiViewers\s*\?/.test(source),
+    "the MCP Apps declaration must be conditional on a viewer bundle existing: " +
+      "declaring it with nothing on disk makes a host request a resource this " +
+      "process cannot serve",
   );
 });
