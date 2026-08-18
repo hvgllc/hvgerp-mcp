@@ -160,11 +160,9 @@ export class ErpNextToolsClient {
    */
   private servableMeta<T extends MCPToolMeta>(meta: T): T | undefined {
     if (!this.servableViewerUris) return meta;
-    const uri = readViewerResourceUri(meta as Record<string, unknown>);
+    const uri = readViewerResourceUri(meta);
     if (uri === null || this.servableViewerUris.has(uri)) return meta;
-    return withoutViewerBinding(meta as Record<string, unknown>) as
-      | T
-      | undefined;
+    return withoutViewerBinding(meta) as T | undefined;
   }
 
   /** Convert tools to MCP wire format (for server registration) */

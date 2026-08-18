@@ -65,13 +65,18 @@ const viewer = (name: string): ViewerToolMeta => {
  * binding is servable cannot miss the half it forgot about.
  */
 export function readViewerResourceUri(
-  meta: Record<string, unknown> | undefined | null,
+  meta: object | undefined | null,
 ): string | null {
   if (!meta) return null;
-  const ui = meta.ui as { resourceUri?: unknown } | undefined | null;
+  // `object`, not `Record<string, unknown>`: the two shapes that reach here are
+  // `ViewerToolMeta` (no index signature) and a bag read off the wire, and a
+  // parameter narrow enough to reject the first forces a cast at every call
+  // site — where a wrong one stops being a type error.
+  const bag = meta as Record<string, unknown>;
+  const ui = bag.ui as { resourceUri?: unknown } | undefined | null;
   const nested = ui?.resourceUri;
   if (typeof nested === "string" && nested.length > 0) return nested;
-  const flat = meta[LEGACY_RESOURCE_URI_KEY];
+  const flat = bag[LEGACY_RESOURCE_URI_KEY];
   return typeof flat === "string" && flat.length > 0 ? flat : null;
 }
 
@@ -89,9 +94,9 @@ export function readViewerResourceUri(
  * same missing resource.
  */
 export function withoutViewerBinding(
-  meta: Record<string, unknown>,
+  meta: object,
 ): Record<string, unknown> | undefined {
-  const rest = { ...meta };
+  const rest = { ...meta } as Record<string, unknown>;
   delete rest.ui;
   delete rest[LEGACY_RESOURCE_URI_KEY];
   return Object.keys(rest).length > 0 ? rest : undefined;
