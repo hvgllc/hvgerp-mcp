@@ -33,6 +33,40 @@ export const SPEC_2026_07_28 = "2026-07-28";
 /** Revision giả định cho client cũ khi không tự khai báo. */
 export const LEGACY_FALLBACK_VERSION = "2025-11-25";
 
+/**
+ * Revision đời cũ mà shim biết cách dịch. Danh sách đóng, có lý do.
+ *
+ * "Mọi thứ khác 2026-07-28 đều là đồ cũ" là một phép đoán sai ở chiều tương
+ * lai: một client khai revision mới hơn sẽ bị hạ xuống 2026-07-28 rồi nhận
+ * lại chính revision nó xin trong `result`, tức là một cuộc thương lượng
+ * trông như thành công với một server không hiểu ngữ nghĩa đó. Không nhận ra
+ * thì chuyển tiếp nguyên trạng và để server thật từ chối, vì từ chối rõ ràng
+ * bao giờ cũng lành hơn một cái bắt tay giả.
+ */
+const KNOWN_LEGACY_VERSIONS: ReadonlySet<string> = new Set([
+  "2024-11-05",
+  "2025-03-26",
+  "2025-06-18",
+  LEGACY_FALLBACK_VERSION,
+]);
+
+/**
+ * Header CORS phải mang từ upstream sang mọi response do shim tự dựng.
+ *
+ * Server bật `cors: true`, nên với client chạy trong trình duyệt, mất
+ * `Access-Control-Allow-Origin` nghĩa là request thành công nhưng trình duyệt
+ * chặn không cho đọc kết quả.
+ */
+const CORS_HEADERS = [
+  "Access-Control-Allow-Origin",
+  "Access-Control-Allow-Credentials",
+  "Access-Control-Allow-Methods",
+  "Access-Control-Allow-Headers",
+  "Access-Control-Expose-Headers",
+  "Access-Control-Max-Age",
+  "Vary",
+];
+
 const META_PROTOCOL_VERSION = "io.modelcontextprotocol/protocolVersion";
 const META_CLIENT_INFO = "io.modelcontextprotocol/clientInfo";
 const META_CLIENT_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities";
@@ -142,6 +176,48 @@ export function encodeHeaderValue(value: string): string {
  */
 export function isModernRequest(headers: Headers): boolean {
   return headers.get("MCP-Protocol-Version") === SPEC_2026_07_28;
+}
+
+/**
+ * Shim có được phép dịch request này hay không.
+ *
+ * Ba trường hợp, và chỉ hai trong số đó được dịch: không khai revision (đúng
+ * hình dạng của Cowork, và là lý do shim tồn tại), khai một revision cũ nằm
+ * trong {@link KNOWN_LEGACY_VERSIONS}, hoặc khai một revision lạ. Trường hợp
+ * thứ ba đi thẳng lên server thật, kể cả khi nó mới hơn 2026-07-28.
+ */
+export function isTranslatableRequest(headers: Headers): boolean {
+  const declared = headers.get("MCP-Protocol-Version");
+  if (declared === null || declared.length === 0) return true;
+  return KNOWN_LEGACY_VERSIONS.has(declared);
+}
+
+/**
+ * Đọc một số nguyên dương từ biến môi trường, hoặc ném lỗi.
+ *
+ * `Number()` trần biến "abc" thành `NaN` và "" thành `0`, mà `setInterval`
+ * nhận cả hai rồi chạy như chu kỳ 0: một kết nối SSE duy nhất đủ để bơm
+ * keepalive liên tục. Cấu hình sai phải làm tiến trình chết lúc khởi động,
+ * chứ không phải sống dở lúc có tải.
+ */
+export function readPositiveInteger(
+  name: string,
+  raw: string | undefined,
+  fallback: number,
+  bounds: { min: number; max: number },
+): number {
+  if (raw === undefined || raw.trim().length === 0) return fallback;
+  const parsed = Number(raw);
+  if (
+    !Number.isInteger(parsed) || parsed < bounds.min || parsed > bounds.max
+  ) {
+    throw new RangeError(
+      `${name} must be an integer between ${bounds.min} and ${bounds.max}, got ${
+        JSON.stringify(raw)
+      }`,
+    );
+  }
+  return parsed;
 }
 
 /** Revision mà client cũ tự nhận, để trả lại đúng thứ nó chờ đợi. */
@@ -262,6 +338,15 @@ function filterHeaders(source: Headers): Headers {
   return out;
 }
 
+/** Mang header CORS của upstream sang response do shim dựng. */
+function copyCorsHeaders(from: Headers | undefined, to: Headers): void {
+  if (from === undefined) return;
+  for (const name of CORS_HEADERS) {
+    const value = from.get(name);
+    if (value !== null) to.set(name, value);
+  }
+}
+
 function jsonRpcError(
   id: unknown,
   code: number,
@@ -324,7 +409,10 @@ async function forwardOne(
 }
 
 /** Stream SSE rỗng thay cho 405, đúng vai `GET /mcp` của transport cũ. */
-function openLegacyStream(heartbeatMs: number): Response {
+function openLegacyStream(
+  heartbeatMs: number,
+  upstreamHeaders?: Headers,
+): Response {
   let timer: number | undefined;
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -346,16 +434,15 @@ function openLegacyStream(heartbeatMs: number): Response {
     },
   });
 
-  return new Response(stream, {
-    status: 200,
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      "Connection": "keep-alive",
-      // Tắt buffering của proxy ngược, nếu không stream sẽ nằm im trong bộ đệm.
-      "X-Accel-Buffering": "no",
-    },
+  const headers = new Headers({
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    // Tắt buffering của proxy ngược, nếu không stream sẽ nằm im trong bộ đệm.
+    "X-Accel-Buffering": "no",
   });
+  copyCorsHeaders(upstreamHeaders, headers);
+  return new Response(stream, { status: 200, headers });
 }
 
 async function proxyPassThrough(req: Request, target: URL): Promise<Response> {
@@ -378,6 +465,67 @@ async function proxyPassThrough(req: Request, target: URL): Promise<Response> {
 }
 
 /**
+ * Kết quả hỏi upstream xem caller có quyền hay không.
+ */
+interface AuthorizationProbe {
+  /** Response phải trả thẳng cho client khi upstream từ chối. */
+  denied?: Response;
+  /** Header của lượt hỏi, để chép CORS sang response shim tự dựng. */
+  upstream: Headers;
+}
+
+/**
+ * Hỏi upstream xem caller có quyền không, TRƯỚC khi shim tự trả lời `GET` hay
+ * `DELETE`.
+ *
+ * Không có phép hỏi này thì hai verb đó là hai lỗ thủng: bất kỳ ai cũng mở
+ * được một stream SSE sống lâu kèm timer keepalive mà không cần token, tức là
+ * đi vòng qua đúng cái cổng xác thực mà server dựng lên, và giữ được tài
+ * nguyên của tiến trình.
+ *
+ * Phép hỏi phải là `POST`: đo trên server thật, `GET` và `DELETE` trả 405
+ * bất kể có token hay không, nên chúng vô dụng làm phép thử quyền. `ping` là
+ * lời gọi đúng ở đây vì nó không có tác dụng phụ và đã bị gỡ khỏi 2026-07-28,
+ * nên câu trả lời phân biệt sạch: 401 khi thiếu quyền, 404 (`-32601`) khi đã
+ * qua cổng.
+ */
+async function authorizeSynthetic(
+  req: Request,
+  target: URL,
+): Promise<AuthorizationProbe> {
+  const headers = filterHeaders(req.headers);
+  headers.set("Content-Type", "application/json");
+  headers.set("Accept", "application/json");
+  headers.set("MCP-Protocol-Version", SPEC_2026_07_28);
+  headers.set("Mcp-Method", "ping");
+
+  const probe = await fetch(target, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: "shim-authorization-probe",
+      method: "ping",
+      params: {
+        _meta: {
+          [META_PROTOCOL_VERSION]: SPEC_2026_07_28,
+          [META_CLIENT_CAPABILITIES]: {},
+        },
+      },
+    }),
+  });
+
+  // Chỉ 401 và 403 mới là "không có quyền". Mọi mã khác, kể cả 404 của `ping`
+  // và cả 5xx, đều không phải câu trả lời về quyền nên không được đọc thành
+  // một lệnh chặn.
+  if (probe.status === 401 || probe.status === 403) {
+    return { denied: probe, upstream: probe.headers };
+  }
+  await probe.body?.cancel();
+  return { upstream: probe.headers };
+}
+
+/**
  * Điểm vào duy nhất của shim.
  *
  * Thứ tự nhánh là cố ý: luồng hiện đại được nhận ra trước hết và đi thẳng, nên
@@ -388,8 +536,13 @@ export async function handleShimRequest(
   opts: ShimOptions,
 ): Promise<Response> {
   const url = new URL(req.url);
-  const target = new URL(url.pathname + url.search, opts.upstream);
-  const isMcpPath = url.pathname === "/mcp" || url.pathname === "/";
+  // Client cấu hình endpoint là `/mcp/` không phải chuyện hiếm, và một proxy
+  // đứng trước giữ nguyên dấu gạch chéo đó. Chuẩn hoá về `/mcp` ngay tại đây,
+  // nếu không cả nhánh dịch lẫn hai verb tổng hợp đều không chạy và client cũ
+  // nhận lại đúng lời từ chối mà shim sinh ra để tránh.
+  const path = url.pathname === "/mcp/" ? "/mcp" : url.pathname;
+  const target = new URL(path + url.search, opts.upstream);
+  const isMcpPath = path === "/mcp" || path === "/";
 
   if (!isMcpPath) return await proxyPassThrough(req, target);
 
@@ -398,16 +551,24 @@ export async function handleShimRequest(
     // Client hiện đại không mở stream ở đây, nên chỉ nhận SSE mới đổi hành vi;
     // còn lại vẫn để server trả 405 của chính nó.
     if (accept.includes("text/event-stream")) {
-      return openLegacyStream(opts.heartbeatMs ?? 15_000);
+      const auth = await authorizeSynthetic(req, target);
+      if (auth.denied !== undefined) return auth.denied;
+      return openLegacyStream(opts.heartbeatMs ?? 15_000, auth.upstream);
     }
     return await proxyPassThrough(req, target);
   }
 
   // Transport cũ đóng phiên bằng DELETE. Server stateless không có phiên để
   // đóng, nên câu trả lời đúng là "đã xong", không phải "verb không hợp lệ".
-  if (req.method === "DELETE") return new Response(null, { status: 204 });
+  if (req.method === "DELETE") {
+    const auth = await authorizeSynthetic(req, target);
+    if (auth.denied !== undefined) return auth.denied;
+    const headers = new Headers();
+    copyCorsHeaders(auth.upstream, headers);
+    return new Response(null, { status: 204, headers });
+  }
 
-  if (req.method !== "POST" || isModernRequest(req.headers)) {
+  if (req.method !== "POST" || !isTranslatableRequest(req.headers)) {
     return await proxyPassThrough(req, target);
   }
 
@@ -478,6 +639,7 @@ export async function handleShimRequest(
   if (wwwAuthenticate !== null && wwwAuthenticate !== undefined) {
     headers.set("WWW-Authenticate", wwwAuthenticate);
   }
+  copyCorsHeaders(upstreamHeaders, headers);
 
   const body = Array.isArray(parsed) ? replies : replies[0];
   return new Response(JSON.stringify(body), { status, headers });
