@@ -68,11 +68,14 @@ export function ErpNextBrandHeader() {
     flexShrink: 0,
   };
 
+  // `text.faint` is for decoration only (the separator dot above). This eyebrow
+  // is read, and at 9.5px it falls under the 4.5:1 AA threshold for normal text,
+  // so it stays on `text.muted` (#676F7D — 4.72:1 on the header's `bg.surface`).
   const taglineStyle: CSSProperties = {
     fontFamily: fonts.sans,
     fontSize: 9.5,
     fontWeight: 600,
-    color: colors.text.faint,
+    color: colors.text.muted,
     letterSpacing: "0.13em",
   };
 
