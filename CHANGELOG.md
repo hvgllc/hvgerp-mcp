@@ -8,6 +8,45 @@ This package is a fork of
 deliberately still point at the upstream repository, where those commits, pull
 requests and tags actually live.
 
+## [3.3.1] - 2026-08-18
+
+### Changed
+
+- **The seven viewers now carry Havi Group branding.** The light palette in
+  `src/ui/global.css` is no longer invented here: apart from the one contrast
+  exception below, every value is copied from the Havi Group Workspace SPA
+  design tokens (accent `#E85D1F`, surface `#F6F7F9`, ink `#18202B`, rules
+  `#E6E8EC`, 9px/14px rounding), each annotated with the SPA token it came from,
+  so a viewer rendered inside an MCP host reads as part of the same product as
+  the workspace itself. Because `src/ui/shared/theme.ts` funnels every colour
+  through a CSS custom property, that one file re-skins all seven viewers.
+  - The dark palette has no SPA counterpart - the SPA is light-only - so it
+    keeps its existing neutral warm-grey scale. Only the accent is lifted to
+    `#FF7A3D`, because `#E85D1F` on a near-black surface fails contrast for
+    small text. Same hue, same brand colour.
+  - The brand block in `src/ui/shared/ErpNextBrand.tsx` mirrors the SPA sidebar:
+    an accent-filled rounded square holding a white "H", the "Havi Group"
+    wordmark, and an "ERP · OPERATIONS" eyebrow. The footer watermark reads
+    "Havi Group ERP". The exported names are unchanged, so no viewer import
+    moves.
+  - The chart palette leads with the Havi Group accent, so a single-series chart
+    carries the brand colour, and drops the two generic oranges that used to sit
+    at positions 6 and 10 - beside `#E85D1F` they read as the same series. These
+    stay literal hex: a CSS variable does not resolve in an SVG `fill`.
+  - One token deviates from the SPA on purpose. `--text-muted` is `#676F7D`
+    rather than the SPA's `--hv-muted-mid` (`#7A828F`), which is 3.88:1 on white
+    and below the 4.5:1 AA threshold for normal text. In the SPA that level
+    carries meta lines beside a bolder label; in these viewers it carries
+    content read on its own at 10-12px - table headers, pagination, the invoice
+    Date/Due labels, the Draft status badge - so it is darkened to 5.06:1 on
+    white and 4.76:1 on `--bg-elevated`, on the same hue.
+  - Be Vietnam Pro and IBM Plex Mono lead the font stacks but are deliberately
+    **not** bundled. Each viewer ships as one self-contained HTML resource, so
+    embedding the eight woff2 faces would add roughly 90 KB of base64 to all
+    seven bundles, and an `@import` to a font CDN is blocked by the MCP UI
+    sandbox CSP. A host that already has the families uses them; everyone else
+    falls back to the system stack.
+
 ## [3.3.0] - 2026-08-17
 
 ### Added

@@ -149,17 +149,19 @@ interface ChartData {
 // Color palette — real hex (CSS vars don't work in SVG fill)
 // ============================================================================
 
+// Series 1 is the Havi Group accent (`--hv-accent`), so a single-series chart
+// carries the brand colour. The two generic oranges that used to sit at
+// positions 6 and 10 are gone: next to #e85d1f they read as the same series.
 const PALETTE = [
+  "#e85d1f", // Havi Group accent
   "#60a5fa", // blue
   "#4ade80", // green
   "#fbbf24", // amber
   "#818cf8", // indigo
   "#c084fc", // purple
-  "#fb923c", // orange
   "#34d399", // emerald
   "#f472b6", // pink
   "#a78bfa", // violet
-  "#f97316", // deep orange
   "#22d3ee", // cyan
   "#e879f9", // fuchsia
 ];
