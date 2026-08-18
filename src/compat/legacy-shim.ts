@@ -42,9 +42,14 @@ export const LEGACY_FALLBACK_VERSION = "2025-11-25";
  * trông như thành công với một server không hiểu ngữ nghĩa đó. Không nhận ra
  * thì chuyển tiếp nguyên trạng và để server thật từ chối, vì từ chối rõ ràng
  * bao giờ cũng lành hơn một cái bắt tay giả.
+ *
+ * 2024-11-05 cố ý KHÔNG có trong danh sách. Transport HTTP+SSE của bản đó bắt
+ * stream mở đầu phải phát một sự kiện `endpoint` báo URI để POST tiếp, mà
+ * {@link openLegacyStream} chỉ phát comment giữ nhịp. Nhận dịch bản ấy là hứa
+ * một thứ shim không làm: client sẽ chờ `endpoint` mãi mãi và không bao giờ
+ * gửi nổi `initialize`. Chuyển tiếp thẳng thì nó nhận lời từ chối ngay.
  */
 const KNOWN_LEGACY_VERSIONS: ReadonlySet<string> = new Set([
-  "2024-11-05",
   "2025-03-26",
   "2025-06-18",
   LEGACY_FALLBACK_VERSION,
@@ -285,8 +290,17 @@ export function readClientProtocolVersion(
   }
   const first = Array.isArray(message) ? message[0] : message;
   const params = first?.params;
-  if (isRecord(params) && typeof params["protocolVersion"] === "string") {
-    return params["protocolVersion"];
+  if (isRecord(params)) {
+    if (typeof params["protocolVersion"] === "string") {
+      return params["protocolVersion"];
+    }
+    // Message không phải `initialize` khai revision ở `_meta`, và đó là chỗ
+    // {@link isTranslatableBody} đã chấp nhận, nên bỏ qua nó ở đây là dịch
+    // đúng nhưng trả lời sai: response echo một revision client không hề xin.
+    const meta = params["_meta"];
+    if (isRecord(meta) && typeof meta[META_PROTOCOL_VERSION] === "string") {
+      return meta[META_PROTOCOL_VERSION];
+    }
   }
   return LEGACY_FALLBACK_VERSION;
 }
@@ -299,6 +313,54 @@ export function readClientIdentity(
   const vendor = headers.get("X-Anthropic-Client") ??
     headers.get("User-Agent") ?? "legacy-mcp-client";
   return { name: `${vendor} (via compat shim)`, version: clientVersion };
+}
+
+/**
+ * Capabilities client khai lúc `initialize`, giữ lại cho những lời gọi sau.
+ *
+ * Ở transport cũ, client khai capabilities đúng một lần rồi thôi, còn server
+ * 2026-07-28 đọc `_meta.clientCapabilities` của TỪNG request. Điền `{}` cho
+ * mọi lời gọi sau `initialize` nghĩa là nói dối server rằng client không làm
+ * được gì: `src/mrtr/link-disambiguation.ts` đọc đúng trường đó để quyết định
+ * có hỏi lại người dùng hay không, nên một client có `elicitation` sẽ bị hạ
+ * xuống báo lỗi thay vì được hỏi.
+ *
+ * Khoá là băm SHA-256 của `Mcp-Session-Id` hoặc `Authorization`, không phải
+ * bản thân chứng danh: bộ nhớ này sống lâu, và một token nằm nguyên văn trong
+ * đó là một thứ không cần thiết phải giữ. Bảng có trần và đuổi bản ghi cũ
+ * nhất, vì một shim công khai không được để bộ nhớ lớn theo số client.
+ */
+const CAPABILITY_CACHE = new Map<string, Record<string, unknown>>();
+const CAPABILITY_CACHE_MAX = 512;
+
+async function capabilityKey(req: Request): Promise<string> {
+  const source = req.headers.get("Mcp-Session-Id") ??
+    req.headers.get("Authorization") ?? "anonymous";
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(source),
+  );
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function rememberCapabilities(key: string, capabilities: unknown): void {
+  if (!isRecord(capabilities)) return;
+  // Xoá rồi đặt lại để bản ghi vừa dùng về cuối hàng, nên phép đuổi bên dưới
+  // bỏ đúng bản ghi lâu không đụng tới nhất.
+  CAPABILITY_CACHE.delete(key);
+  CAPABILITY_CACHE.set(key, capabilities);
+  while (CAPABILITY_CACHE.size > CAPABILITY_CACHE_MAX) {
+    const oldest = CAPABILITY_CACHE.keys().next().value;
+    if (oldest === undefined) break;
+    CAPABILITY_CACHE.delete(oldest);
+  }
+}
+
+/** Xoá bộ nhớ capabilities. Dành cho test, để hai bài không dẫm lên nhau. */
+export function clearCapabilityCache(): void {
+  CAPABILITY_CACHE.clear();
 }
 
 export interface OutboundMessage {
@@ -315,6 +377,7 @@ export interface OutboundMessage {
 export function rewriteOutbound(
   message: JsonRpcMessage,
   identity: ClientIdentity,
+  rememberedCapabilities?: Record<string, unknown>,
 ): OutboundMessage {
   const method = typeof message.method === "string" ? message.method : "";
   const params = isRecord(message.params) ? { ...message.params } : {};
@@ -324,7 +387,7 @@ export function rewriteOutbound(
   if (!isRecord(meta[META_CLIENT_CAPABILITIES])) {
     meta[META_CLIENT_CAPABILITIES] = isRecord(params["capabilities"])
       ? params["capabilities"]
-      : {};
+      : rememberedCapabilities ?? {};
   }
   if (!isRecord(meta[META_CLIENT_INFO])) {
     meta[META_CLIENT_INFO] = isRecord(params["clientInfo"])
@@ -470,10 +533,12 @@ async function forwardOne(
   target: URL,
   identity: ClientIdentity,
   clientVersion: string,
+  rememberedCapabilities?: Record<string, unknown>,
 ): Promise<ForwardOutcome> {
   const { message: outbound, headers: mcpHeaders } = rewriteOutbound(
     message,
     identity,
+    rememberedCapabilities,
   );
   const headers = filterHeaders(req.headers);
   for (const [key, value] of Object.entries(mcpHeaders)) {
@@ -710,7 +775,28 @@ export async function handleShimRequest(
   // nếu không cả nhánh dịch lẫn hai verb tổng hợp đều không chạy và client cũ
   // nhận lại đúng lời từ chối mà shim sinh ra để tránh.
   const path = url.pathname === "/mcp/" ? "/mcp" : url.pathname;
-  const target = new URL(path + url.search, opts.upstream);
+
+  // `new URL(path, upstream)` KHÔNG an toàn ở đây: một path mở đầu bằng `//`
+  // là URL scheme-relative, nên `//169.254.169.254/latest/meta-data` thay luôn
+  // host và biến shim thành proxy mở tới mọi thứ mạng của nó với tới - đường
+  // không phải `/mcp` lại còn được chuyển tiếp trước cả phép hỏi quyền. Gán
+  // `pathname` thì bộ phân tích chỉ đọc phần path và origin không đổi; phép so
+  // origin bên dưới là chốt thứ hai, để một cách phá khác cũng không đi qua.
+  const upstream = new URL(opts.upstream);
+  const target = new URL(upstream);
+  target.pathname = path;
+  target.search = url.search;
+  if (target.origin !== upstream.origin) {
+    return Response.json(
+      jsonRpcError(
+        null,
+        -32600,
+        "Invalid Request: refusing to change upstream",
+      ),
+      { status: 400 },
+    );
+  }
+
   const isMcpPath = path === "/mcp" || path === "/";
 
   if (!isMcpPath) return await proxyPassThrough(req, target);
@@ -741,16 +827,39 @@ export async function handleShimRequest(
     return await proxyPassThrough(req, target);
   }
 
+  /** Hỏi một lần cho cả request, dùng lại cho mọi nhánh cần biết quyền. */
+  let authorization: AuthorizationProbe | undefined;
+  const authorize = async (): Promise<AuthorizationProbe> =>
+    authorization ??= await authorizeSynthetic(req, target);
+
+  /**
+   * Lỗi do chính shim sinh ra, không phải của upstream.
+   *
+   * Vẫn phải mang chính sách CORS của upstream: với client chạy trong trình
+   * duyệt, một 413 thiếu `Access-Control-Allow-Origin` hiện ra thành lỗi CORS
+   * chung chung, tức là giấu mất đúng câu giải thích mà shim vừa viết ra.
+   */
+  const localFailure = async (
+    status: number,
+    payload: Record<string, unknown>,
+  ): Promise<Response> => {
+    const auth = await authorize();
+    if (auth.blocked !== undefined) return auth.blocked;
+    const headers = new Headers({ "Content-Type": "application/json" });
+    copyCorsHeaders(auth.upstream, headers);
+    return new Response(JSON.stringify(payload), { status, headers });
+  };
+
   const maxBodyBytes = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
   const raw = await readBoundedText(req, maxBodyBytes);
   if (raw === null) {
-    return Response.json(
+    return await localFailure(
+      413,
       jsonRpcError(
         null,
         -32600,
         `Request body exceeds the ${maxBodyBytes} byte limit`,
       ),
-      { status: 413 },
     );
   }
 
@@ -758,9 +867,16 @@ export async function handleShimRequest(
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return Response.json(jsonRpcError(null, -32700, "Parse error"), {
-      status: 400,
-    });
+    return await localFailure(400, jsonRpcError(null, -32700, "Parse error"));
+  }
+
+  // JSON-RPC 2.0: batch rỗng là Invalid Request, không phải một batch chỉ toàn
+  // notification. Trả 202 cho nó là để client chờ một câu trả lời không bao giờ tới.
+  if (Array.isArray(parsed) && parsed.length === 0) {
+    return await localFailure(
+      400,
+      jsonRpcError(null, -32600, "Invalid Request: empty batch"),
+    );
   }
 
   // Thân đã bị đọc mất ở trên nên phải gửi lại bản `raw`, không phải `req.body`.
@@ -775,11 +891,11 @@ export async function handleShimRequest(
   );
   const identity = readClientIdentity(req.headers, clientVersion);
 
+  const sessionKey = await capabilityKey(req);
+
   const replies: unknown[] = [];
   let status = 200;
   let upstreamHeaders: Headers | undefined;
-  /** Hỏi một lần cho cả request, dùng lại cho mọi message trả lời tại chỗ. */
-  let authorization: AuthorizationProbe | undefined;
 
   for (const entry of messages) {
     if (!isRecord(entry) || typeof entry["method"] !== "string") {
@@ -799,11 +915,15 @@ export async function handleShimRequest(
       // server, nên phải tự hỏi. Không hỏi thì một caller không token vẫn nhận
       // 200 cho keepalive và báo "phiên còn sống", trong khi mọi lời gọi thật
       // của nó đều bị từ chối.
-      authorization ??= await authorizeSynthetic(req, target);
-      if (authorization.blocked !== undefined) return authorization.blocked;
-      upstreamHeaders ??= authorization.upstream;
+      const auth = await authorize();
+      if (auth.blocked !== undefined) return auth.blocked;
+      upstreamHeaders ??= auth.upstream;
       replies.push({ jsonrpc: "2.0", id, result: {} });
       continue;
+    }
+
+    if (message.method === "initialize" && isRecord(message.params)) {
+      rememberCapabilities(sessionKey, message.params["capabilities"]);
     }
 
     const outcome = await forwardOne(
@@ -812,6 +932,7 @@ export async function handleShimRequest(
       target,
       identity,
       clientVersion,
+      CAPABILITY_CACHE.get(sessionKey),
     );
     upstreamHeaders = outcome.response.headers;
 
@@ -841,15 +962,15 @@ export async function handleShimRequest(
 
   const headers = new Headers({ "Content-Type": "application/json" });
   headers.set("MCP-Protocol-Version", clientVersion);
-  const wwwAuthenticate = upstreamHeaders?.get("WWW-Authenticate");
-  if (wwwAuthenticate !== null && wwwAuthenticate !== undefined) {
-    headers.set("WWW-Authenticate", wwwAuthenticate);
-  }
-  // 429 mà mất `Retry-After` là một lệnh lùi nhịp không có nhịp: client cũ
-  // đọc được "hãy chờ" nhưng không đọc được "chờ bao lâu" nên thử lại ngay.
-  const retryAfter = upstreamHeaders?.get("Retry-After");
-  if (retryAfter !== null && retryAfter !== undefined) {
-    headers.set("Retry-After", retryAfter);
+  // Ba header điều khiển mà response dựng lại phải mang theo, nếu không client
+  // đọc được lệnh nhưng không đọc được cách thi hành: thiếu `Retry-After` thì
+  // 429 là "hãy chờ" mà không nói chờ bao lâu, thiếu `Proxy-Authenticate` thì
+  // 407 là "hãy xưng danh với proxy" mà không nói xưng theo cách nào.
+  for (
+    const name of ["WWW-Authenticate", "Proxy-Authenticate", "Retry-After"]
+  ) {
+    const value = upstreamHeaders?.get(name);
+    if (value !== null && value !== undefined) headers.set(name, value);
   }
   copyCorsHeaders(upstreamHeaders, headers);
 

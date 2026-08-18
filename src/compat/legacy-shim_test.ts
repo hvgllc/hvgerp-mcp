@@ -7,6 +7,7 @@
 import { assertEquals, assertExists } from "@std/assert";
 import {
   acceptsEventStream,
+  clearCapabilityCache,
   encodeHeaderValue,
   handleShimRequest,
   isTranslatableBody,
@@ -650,7 +651,7 @@ Deno.test("initialize khai ban tuong lai trong than: di thang, khong dich", asyn
   }
 });
 
-Deno.test("than POST vuot tran bi tu choi truoc khi upstream bi cham", async () => {
+Deno.test("than POST vuot tran bi tu choi, khong bao gio duoc chuyen tiep", async () => {
   const upstream = await startUpstream();
   try {
     const res = await handleShimRequest(
@@ -668,7 +669,13 @@ Deno.test("than POST vuot tran bi tu choi truoc khi upstream bi cham", async () 
 
     assertEquals(res.status, 413);
     assertEquals((await res.json()).error.code, -32600);
-    assertEquals(upstream.captured.length, 0);
+    // Upstream chỉ thấy đúng một request: mũi dò `ping` để lấy quyết định xác
+    // thực và header CORS. Thân 4 KiB không bao giờ được chuyển tiếp.
+    assertEquals(upstream.captured.length, 1);
+    assertEquals(
+      (upstream.captured[0].body as Record<string, unknown>)["method"],
+      "ping",
+    );
   } finally {
     await upstream.close();
   }
@@ -700,7 +707,11 @@ Deno.test("than chunked vuot tran cung bi tu choi", async () => {
     });
 
     assertEquals(res.status, 413);
-    assertEquals(upstream.captured.length, 0);
+    assertEquals(upstream.captured.length, 1);
+    assertEquals(
+      (upstream.captured[0].body as Record<string, unknown>)["method"],
+      "ping",
+    );
     await res.body?.cancel();
   } finally {
     await upstream.close();
@@ -941,6 +952,204 @@ Deno.test("header do Connection goi ten khong duoc chuyen tiep", async () => {
     );
     await res.body?.cancel();
   } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("path mo dau bang // khong doi duoc upstream", async () => {
+  const upstream = await startUpstream();
+  try {
+    // `new URL("//host/x", upstream)` là URL scheme-relative: nếu shim dựng
+    // target theo cách đó thì request này rời hẳn upstream đã cấu hình.
+    const res = await handleShimRequest(
+      new Request("https://erp.example//169.254.169.254/latest/meta-data"),
+      { upstream: upstream.url },
+    );
+
+    assertEquals(upstream.captured.length, 1);
+    assertEquals(
+      upstream.captured[0].url,
+      "//169.254.169.254/latest/meta-data",
+    );
+    await res.body?.cancel();
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("2024-11-05 khong duoc nhan dich vi thieu su kien endpoint", async () => {
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "MCP-Protocol-Version": "2024-11-05",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 30,
+          method: "initialize",
+          params: { protocolVersion: "2024-11-05" },
+        }),
+      }),
+      { upstream: upstream.url },
+    );
+
+    // Đi thẳng: không `_meta` bịa ra, nên client nhận lời từ chối thật thay vì
+    // treo mãi chờ một sự kiện `endpoint` shim không phát.
+    assertEquals(upstream.captured.length, 1);
+    const params = (upstream.captured[0].body as Record<string, unknown>)[
+      "params"
+    ] as Record<string, unknown>;
+    assertEquals(params["_meta"], undefined);
+    await res.body?.cancel();
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("revision doi cu khai trong _meta duoc echo dung", async () => {
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      legacyPost({
+        jsonrpc: "2.0",
+        id: 31,
+        method: "tools/call",
+        params: {
+          name: "erpnext_whoami",
+          _meta: { "io.modelcontextprotocol/protocolVersion": "2025-06-18" },
+        },
+      }),
+      { upstream: upstream.url },
+    );
+
+    assertEquals(res.status, 200);
+    // Không phải 2025-11-25 mặc định: client khai gì thì nhận lại đúng thứ đó.
+    assertEquals(res.headers.get("MCP-Protocol-Version"), "2025-06-18");
+    await res.body?.cancel();
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("407 giu Proxy-Authenticate khi dung lai response", async () => {
+  const upstream = await startUpstream((req, body) => {
+    if (req.method !== "POST") return undefined;
+    const id = (body as Record<string, unknown>)["id"];
+    return Response.json({
+      jsonrpc: "2.0",
+      id,
+      error: { code: -32000, message: "Proxy authentication required" },
+    }, {
+      status: 407,
+      headers: { "Proxy-Authenticate": 'Basic realm="corp-proxy"' },
+    });
+  });
+  try {
+    const res = await handleShimRequest(
+      legacyPost({ jsonrpc: "2.0", id: 32, method: "tools/list" }),
+      { upstream: upstream.url },
+    );
+
+    assertEquals(res.status, 407);
+    assertEquals(
+      res.headers.get("Proxy-Authenticate"),
+      'Basic realm="corp-proxy"',
+    );
+    await res.body?.cancel();
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("loi 413 do shim sinh ra van mang CORS cua upstream", async () => {
+  const upstream = await startUpstream((req) =>
+    req.method === "POST"
+      ? new Response(null, {
+        status: 404,
+        headers: { "Access-Control-Allow-Origin": "https://claude.ai" },
+      })
+      : undefined
+  );
+  try {
+    const res = await handleShimRequest(
+      legacyPost({
+        jsonrpc: "2.0",
+        id: 33,
+        method: "tools/call",
+        params: { name: "x", arguments: { blob: "y".repeat(4096) } },
+      }),
+      { upstream: upstream.url, maxBodyBytes: 1024 },
+    );
+
+    assertEquals(res.status, 413);
+    assertEquals(
+      res.headers.get("Access-Control-Allow-Origin"),
+      "https://claude.ai",
+    );
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("batch rong la Invalid Request, khong phai 202", async () => {
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      legacyPost([]),
+      { upstream: upstream.url },
+    );
+
+    assertEquals(res.status, 400);
+    assertEquals((await res.json()).error.code, -32600);
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("capabilities thuong luong o initialize duoc giu cho loi goi sau", async () => {
+  clearCapabilityCache();
+  const upstream = await startUpstream();
+  try {
+    await handleShimRequest(
+      legacyPost({
+        jsonrpc: "2.0",
+        id: 40,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-11-25",
+          capabilities: { elicitation: {}, roots: { listChanged: true } },
+        },
+      }),
+      { upstream: upstream.url },
+    ).then((res) => res.body?.cancel());
+
+    const res = await handleShimRequest(
+      legacyPost({
+        jsonrpc: "2.0",
+        id: 41,
+        method: "tools/call",
+        params: { name: "erpnext_whoami" },
+      }),
+      { upstream: upstream.url },
+    );
+    await res.body?.cancel();
+
+    // Client cũ chỉ khai capabilities một lần, còn server 2026-07-28 đọc chúng
+    // ở TỪNG request: gửi `{}` là nói dối rằng client không làm được elicitation.
+    const params = (upstream.captured[1].body as Record<string, unknown>)[
+      "params"
+    ] as Record<string, unknown>;
+    const meta = params["_meta"] as Record<string, unknown>;
+    assertEquals(meta[META_CAPABILITIES], {
+      elicitation: {},
+      roots: { listChanged: true },
+    });
+  } finally {
+    clearCapabilityCache();
     await upstream.close();
   }
 });

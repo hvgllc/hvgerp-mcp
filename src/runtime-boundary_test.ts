@@ -37,7 +37,34 @@ const NODE_IMPORTS = [
  * người ta với tay sang `node:process` để đọc argv hay bắt tín hiệu. Vòng đầu của gate này chỉ đi
  * `src/`, nên đúng hai tệp quan trọng nhất lại là hai tệp không ai gác.
  */
-const ROOT_ENTRYPOINTS = ["mod.ts", "server.ts"];
+const ROOT_ENTRYPOINTS = ["mod.ts", "server.ts", "shim.ts"];
+
+/**
+ * Entry point chỉ chạy trên Deno, được phép gọi thẳng `Deno.*`.
+ *
+ * `shim.ts` là một tiến trình phụ, không phải thư viện: `Dockerfile.shim` chép
+ * đúng hai tệp (chính nó và `src/compat/legacy-shim.ts`) vào ảnh
+ * `denoland/deno`, và bản npm không đóng gói nó. Kéo cổng runtime vào đây để
+ * đọc hai biến môi trường sẽ thêm bốn tệp cùng một bộ chọn adapter vào một ảnh
+ * vĩnh viễn không chạy Node. Ngoại lệ nằm ở ĐÚNG tệp entry point; phần thư
+ * viện của shim thì không được miễn, và bài test bên dưới canh đúng chỗ đó.
+ */
+const DENO_ONLY_ENTRYPOINTS = new Set(["shim.ts"]);
+
+/** Lời gọi `Deno.*` thật, sau khi đã bỏ comment. */
+const DENO_GLOBAL = /\bDeno\s*\./;
+
+/**
+ * Bỏ comment trước khi dò.
+ *
+ * Cùng lý do với {@link NODE_IMPORTS}: một dòng văn xuôi nhắc tên API không
+ * phải một lời gọi, và gate đầu tiên ở đây đã tự bắt chính docstring của nó.
+ */
+function stripComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+}
 
 /** Walk `dir` for `.ts` files, skipping vendored trees. */
 async function* sourceFiles(dir: string): AsyncGenerator<string> {
@@ -102,4 +129,51 @@ Deno.test("the gate's scope covers the root entry points, not just src/", async 
       `${entry} không còn là một tệp; cập nhật ROOT_ENTRYPOINTS`,
     );
   }
+});
+
+Deno.test("only the runtime adapters call Deno APIs directly", async () => {
+  const root = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+  // Bộ chọn runtime dò `globalThis.Deno` để biết mình đang chạy ở đâu, nên nó
+  // buộc phải nhắc tới nền tảng; nó là một phần của chính lớp adapter.
+  const exempt = new Set([...ADAPTERS, "src/runtime.ts"]);
+  const offenders: string[] = [];
+
+  for await (const path of scannedFiles(root)) {
+    const relative = path.slice(root.length + 1);
+    // Test chạy dưới `deno test` nên `Deno.test` ở đó không nói gì về bản npm.
+    if (exempt.has(relative) || relative.endsWith("_test.ts")) continue;
+    if (DENO_ONLY_ENTRYPOINTS.has(relative)) continue;
+    const source = stripComments(await Deno.readTextFile(path));
+    if (DENO_GLOBAL.test(source)) offenders.push(relative);
+  }
+
+  assertEquals(
+    offenders,
+    [],
+    "these modules call Deno.* directly and would break under Node; move the platform API " +
+      "behind a RuntimePort member and import it from ./runtime.ts instead",
+  );
+});
+
+Deno.test("phan thu vien cua shim khong duoc mien tru", async () => {
+  const root = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+
+  // `shim.ts` được miễn vì nó là tiến trình phụ chỉ chạy Deno. Phần nó gọi tới
+  // thì nằm trong `src/` và đi cùng bản npm, nên phải sạch nền tảng: chỉ dùng
+  // fetch, Request, Response, Headers, crypto - những thứ cả hai runtime đều có.
+  const library = stripComments(
+    await Deno.readTextFile(`${root}/src/compat/legacy-shim.ts`),
+  );
+  assert(
+    !DENO_GLOBAL.test(library),
+    "src/compat/legacy-shim.ts gọi thẳng Deno.*, nên bản npm sẽ vỡ; ngoại lệ chỉ dành cho shim.ts",
+  );
+  assert(
+    !NODE_IMPORTS.some((pattern) => pattern.test(library)),
+    "src/compat/legacy-shim.ts import một builtin `node:`, nên nó không còn chạy được trên Deno",
+  );
+
+  // Và ngoại lệ phải thật sự chỉ là một: nếu ai đó thêm entry point Deno-only
+  // thứ hai thì phải viết ra lý do ở đây, chứ không lặng lẽ nới danh sách.
+  assertEquals([...DENO_ONLY_ENTRYPOINTS], ["shim.ts"]);
 });
