@@ -19,14 +19,19 @@ const ADAPTERS = new Set([
 ]);
 
 /**
- * A real import of a `node:` builtin, static or dynamic.
+ * A real import of a `node:` builtin: static, re-exported, or dynamic.
  *
- * Both patterns are anchored to the start of a line so that prose mentioning a builtin inside a
+ * `export * from "node:fs"` and `export { readFile } from "node:fs"` are imports that never say
+ * `import`, so a gate keyed on that one keyword stays green while the module it guards grows a
+ * hard dependency on a Node builtin.
+ *
+ * Every pattern is anchored to the start of a line so that prose mentioning a builtin inside a
  * block comment (every line of which begins with `*`) is not mistaken for an import - which is
  * exactly what this gate did to its own docstring on the first run.
  */
 const NODE_IMPORTS = [
   /^\s*import[^\n]*["']node:/m,
+  /^\s*export[^\n]*\bfrom\s*["']node:/m,
   /^\s*(?:const|let|var|return|await)[^\n]*\bimport\s*\(\s*["']node:/m,
 ];
 
@@ -176,4 +181,23 @@ Deno.test("phan thu vien cua shim khong duoc mien tru", async () => {
   // Và ngoại lệ phải thật sự chỉ là một: nếu ai đó thêm entry point Deno-only
   // thứ hai thì phải viết ra lý do ở đây, chứ không lặng lẽ nới danh sách.
   assertEquals([...DENO_ONLY_ENTRYPOINTS], ["shim.ts"]);
+});
+
+Deno.test("the gate sees a Node builtin reached through a re-export", () => {
+  const matches = (source: string) =>
+    NODE_IMPORTS.some((pattern) => pattern.test(source));
+
+  // Đây là hai câu lệnh import không hề chứa từ `import`. Gate khoá vào đúng
+  // từ khoá đó thì một module mọc thêm phụ thuộc cứng vào builtin của Node mà
+  // bộ test vẫn xanh, tức là cái nó gác không còn là ranh giới nữa.
+  assert(matches('export * from "node:fs";'));
+  assert(matches('export { readFile } from "node:fs";'));
+  assert(matches('export type { Stats } from "node:fs";'));
+  assert(matches('import { readFile } from "node:fs";'));
+  assert(matches('const fs = await import("node:fs");'));
+
+  // Văn xuôi nhắc tên builtin thì không: mọi dòng của block comment mở đầu
+  // bằng `*`, và tên module chỉ nằm trong câu chữ.
+  assert(!matches(' * Adapter này là chỗ duy nhất được nhập "node:fs".'));
+  assert(!matches('// export the reader instead of touching "node:fs" here'));
 });

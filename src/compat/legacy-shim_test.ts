@@ -15,6 +15,7 @@ import {
   readPositiveInteger,
   rewriteInbound,
   rewriteOutbound,
+  translateEventStream,
 } from "./legacy-shim.ts";
 
 const META_PROTOCOL = "io.modelcontextprotocol/protocolVersion";
@@ -255,7 +256,10 @@ Deno.test("GET /mcp mo stream SSE thay vi 405", async () => {
   try {
     const res = await handleShimRequest(
       new Request("https://erp.example/mcp", {
-        headers: { "Accept": "text/event-stream" },
+        headers: {
+          "Accept": "text/event-stream",
+          "MCP-Protocol-Version": "2025-11-25",
+        },
       }),
       { upstream: upstream.url, heartbeatMs: 60_000 },
     );
@@ -397,7 +401,9 @@ Deno.test("cong tac dich doc ca revision khai trong than initialize", () => {
   assertEquals(init("2025-11-25"), true);
   assertEquals(init("2026-07-28"), true);
   assertEquals(init("2027-03-01"), false);
-  assertEquals(init(42), true);
+  // Khai sai kiểu là khai, không phải im lặng: dịch nó nghĩa là thay 42 bằng
+  // 2026-07-28 rồi để một request sai định dạng bắt tay thành công.
+  assertEquals(init(42), false);
   assertEquals(isTranslatableBody({ jsonrpc: "2.0", method: "ping" }), true);
   assertEquals(
     isTranslatableBody([
@@ -444,7 +450,10 @@ Deno.test("GET /mcp khong co quyen: 401 chu khong phai stream", async () => {
   try {
     const res = await handleShimRequest(
       new Request("https://erp.example/mcp", {
-        headers: { "Accept": "text/event-stream" },
+        headers: {
+          "Accept": "text/event-stream",
+          "MCP-Protocol-Version": "2025-11-25",
+        },
       }),
       { upstream: upstream.url, heartbeatMs: 60_000 },
     );
@@ -793,7 +802,10 @@ Deno.test("Accept tu choi SSE bang q=0 khong mo stream", async () => {
   try {
     const res = await handleShimRequest(
       new Request("https://erp.example/mcp", {
-        headers: { "Accept": "application/json, text/event-stream;q=0" },
+        headers: {
+          "Accept": "application/json, text/event-stream;q=0",
+          "MCP-Protocol-Version": "2025-11-25",
+        },
       }),
       { upstream: upstream.url, heartbeatMs: 60_000 },
     );
@@ -819,7 +831,10 @@ Deno.test("phep hoi quyen gap 5xx thi khong tong hop stream", async () => {
   try {
     const res = await handleShimRequest(
       new Request("https://erp.example/mcp", {
-        headers: { "Accept": "text/event-stream" },
+        headers: {
+          "Accept": "text/event-stream",
+          "MCP-Protocol-Version": "2025-11-25",
+        },
       }),
       { upstream: upstream.url, heartbeatMs: 60_000 },
     );
@@ -1495,4 +1510,187 @@ Deno.test("client roi di thi luot goi upstream cung bi huy", async () => {
   } finally {
     await upstream.close();
   }
+});
+
+Deno.test("GET SSE khong khai revision di thang, khong treo client cu", async () => {
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        headers: { "Accept": "text/event-stream" },
+      }),
+      { upstream: upstream.url, heartbeatMs: 60_000 },
+    );
+
+    // `GET` mở đầu của 2024-11-05 có trước header `MCP-Protocol-Version`, nên
+    // trên dây nó KHÔNG phân biệt được với một client Streamable HTTP không
+    // khai. Stream tổng hợp ở đây là lời hứa về sự kiện `endpoint` không bao
+    // giờ tới; 405 thì client nào cũng đọc được ngay.
+    assertEquals(res.status, 405);
+    assertEquals(
+      (res.headers.get("Content-Type") ?? "").includes("text/event-stream"),
+      false,
+    );
+    await res.body?.cancel();
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("protocolVersion sai kieu khong duoc coi nhu khong khai", async () => {
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      legacyPost({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: 7, capabilities: {} },
+      }),
+      { upstream: upstream.url },
+    );
+
+    // Không dịch: request đi thẳng nguyên trạng và nhận lỗi kiểm tra thật của
+    // server, thay vì được shim thay số 7 bằng 2026-07-28 rồi bắt tay thành
+    // công như một request đúng.
+    const captured = upstream.captured[0].body as Record<string, unknown>;
+    const params = captured["params"] as Record<string, unknown>;
+    assertEquals(params["protocolVersion"], 7);
+    assertEquals(res.status >= 400, true);
+    await res.body?.cancel();
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("entry co id sai kieu nhan loi mang id null", async () => {
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      legacyPost([{ jsonrpc: "2.0", id: {} }]),
+      { upstream: upstream.url },
+    );
+
+    const body = await res.json() as Array<Record<string, unknown>>;
+    assertEquals(body[0]["id"], null);
+    assertEquals(
+      (body[0]["error"] as Record<string, unknown>)["code"],
+      -32600,
+    );
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("ping voi params khong phai object tra -32602", async () => {
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      legacyPost({ jsonrpc: "2.0", id: 4, method: "ping", params: "invalid" }),
+      { upstream: upstream.url },
+    );
+
+    const body = await res.json() as Record<string, unknown>;
+    assertEquals(
+      (body["error"] as Record<string, unknown>)["code"],
+      -32602,
+    );
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("Content-Type viet hoa van duoc doc la JSON", async () => {
+  const upstream = await startUpstream((req, body) => {
+    if (req.method !== "POST") return undefined;
+    const message = body as Record<string, unknown>;
+    if (message?.["method"] !== "initialize") return undefined;
+    return new Response(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: message["id"],
+        result: {
+          protocolVersion: "2026-07-28",
+          capabilities: { tools: {} },
+          serverInfo: { name: "hvgerp-mcp", version: "3.3.2" },
+          resultType: "complete",
+        },
+      }),
+      { headers: { "Content-Type": "Application/JSON; charset=UTF-8" } },
+    );
+  });
+  try {
+    const res = await handleShimRequest(
+      legacyPost({
+        jsonrpc: "2.0",
+        id: 5,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25", capabilities: {} },
+      }),
+      { upstream: upstream.url },
+    );
+
+    const body = await res.json() as Record<string, unknown>;
+    const result = body["result"] as Record<string, unknown>;
+    assertEquals(result["protocolVersion"], "2025-11-25");
+    assertEquals(result["resultType"], undefined);
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("response SSE cua POST da dich cung duoc dich tung message", async () => {
+  const upstream = await startUpstream((req, body) => {
+    if (req.method !== "POST") return undefined;
+    const message = body as Record<string, unknown>;
+    if (message?.["method"] !== "initialize") return undefined;
+    const payload = JSON.stringify({
+      jsonrpc: "2.0",
+      id: message["id"],
+      result: {
+        protocolVersion: "2026-07-28",
+        capabilities: { tools: {} },
+        serverInfo: { name: "hvgerp-mcp", version: "3.3.2" },
+        resultType: "complete",
+      },
+    });
+    return new Response(
+      `: open\n\nevent: message\ndata: ${payload}\n\n`,
+      { headers: { "Content-Type": "text/event-stream" } },
+    );
+  });
+  try {
+    const res = await handleShimRequest(
+      legacyPost({
+        jsonrpc: "2.0",
+        id: 6,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25", capabilities: {} },
+      }),
+      { upstream: upstream.url },
+    );
+
+    const text = await res.text();
+    // Khung sự kiện giữ nguyên, chỉ thân JSON-RPC bên trong được dịch.
+    assertEquals(text.includes(": open"), true);
+    assertEquals(text.includes("event: message"), true);
+    const line = text.split("\n").find((entry) => entry.startsWith("data: "))!;
+    const payload = JSON.parse(line.slice(6)) as Record<string, unknown>;
+    const result = payload["result"] as Record<string, unknown>;
+    assertEquals(result["protocolVersion"], "2025-11-25");
+    assertEquals(result["resultType"], undefined);
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("translateEventStream giu nguyen khoi khong phai JSON", async () => {
+  const source = new Response(
+    ": heartbeat\n\nevent: ping\ndata: not-json\n\n",
+  ).body!;
+  const translated = new Response(translateEventStream(source, "2025-11-25"));
+  assertEquals(
+    await translated.text(),
+    ": heartbeat\n\nevent: ping\ndata: not-json\n\n",
+  );
 });

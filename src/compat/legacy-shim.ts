@@ -56,6 +56,25 @@ const KNOWN_LEGACY_VERSIONS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Revision được nhận stream GET tổng hợp, và chỉ khi khai TƯỜNG MINH.
+ *
+ * `GET` mở đầu của 2024-11-05 có trước cả header `MCP-Protocol-Version`, nên
+ * trên dây nó là một request không header mang mỗi `Accept: text/event-stream`
+ * - đúng hình dạng mà {@link isTranslatableRequest} coi là dịch được. Mở
+ * {@link openLegacyStream} cho nó là hứa một sự kiện `endpoint` không bao giờ
+ * tới: client treo vô hạn.
+ *
+ * Vì thế stream tổng hợp chỉ dành cho revision tự xưng tên trong header. Client
+ * Streamable HTTP không khai tên (2025-03-26 chưa có header này) nhận 405 của
+ * upstream, và 405 là câu trả lời spec cho phép ở đúng chỗ này, nên nó không
+ * mất gì: server stateless 2026-07-28 không bao giờ đẩy message qua `GET`.
+ */
+const SYNTHETIC_STREAM_VERSIONS: ReadonlySet<string> = new Set([
+  "2025-06-18",
+  LEGACY_FALLBACK_VERSION,
+]);
+
+/**
  * Header CORS phải mang từ upstream sang mọi response do shim tự dựng.
  *
  * Server bật `cors: true`, nên với client chạy trong trình duyệt, mất
@@ -236,6 +255,11 @@ export function encodeHeaderValue(value: string): string {
  * trong {@link KNOWN_LEGACY_VERSIONS}, hoặc khai một revision lạ. Trường hợp
  * thứ ba đi thẳng lên server thật, kể cả khi nó mới hơn 2026-07-28.
  */
+export function acceptsSyntheticStream(headers: Headers): boolean {
+  const declared = headers.get("MCP-Protocol-Version");
+  return declared !== null && SYNTHETIC_STREAM_VERSIONS.has(declared);
+}
+
 export function isTranslatableRequest(headers: Headers): boolean {
   const declared = headers.get("MCP-Protocol-Version");
   if (declared === null || declared.length === 0) return true;
@@ -267,14 +291,21 @@ export function isTranslatableBody(parsed: unknown): boolean {
     if (!isRecord(params)) continue;
 
     const declared: unknown[] = [];
-    if (entry["method"] === "initialize") {
+    if (entry["method"] === "initialize" && "protocolVersion" in params) {
       declared.push(params["protocolVersion"]);
     }
     const meta = params["_meta"];
-    if (isRecord(meta)) declared.push(meta[META_PROTOCOL_VERSION]);
+    if (isRecord(meta) && META_PROTOCOL_VERSION in meta) {
+      declared.push(meta[META_PROTOCOL_VERSION]);
+    }
 
     for (const value of declared) {
-      if (typeof value !== "string" || value.length === 0) continue;
+      if (value === undefined) continue;
+      // Khai một revision KHÔNG phải chuỗi - `protocolVersion: 7` - không giống
+      // với không khai gì. Coi hai thứ đó như nhau nghĩa là `rewriteOutbound`
+      // thay số 7 bằng 2026-07-28 và một request sai định dạng đi hết cuộc
+      // thương lượng như thể nó đúng. Để upstream trả lỗi kiểm tra thật.
+      if (typeof value !== "string" || value.length === 0) return false;
       if (value === SPEC_2026_07_28) continue;
       if (!KNOWN_LEGACY_VERSIONS.has(value)) return false;
     }
@@ -644,6 +675,17 @@ function jsonRpcError(
   };
 }
 
+/**
+ * `id` hợp lệ theo JSON-RPC 2.0, hoặc `null` khi không xác định được.
+ *
+ * Chép nguyên `id` sai kiểu vào error response là trả cho client một phong bì
+ * cũng sai kiểu: nó không đối chiếu được lỗi với lời gọi nào, và bộ đọc chặt
+ * còn vứt luôn cả response.
+ */
+function normalizeId(value: unknown): string | number | null {
+  return typeof value === "string" || typeof value === "number" ? value : null;
+}
+
 interface ForwardOutcome {
   /**
    * Thân JSON-RPC đã dịch, hoặc `undefined` khi upstream không trả JSON
@@ -685,7 +727,27 @@ async function forwardOne(
     signal: req.signal,
   });
 
-  const contentType = res.headers.get("Content-Type") ?? "";
+  // Media type không phân biệt hoa thường (RFC 9110), nên `Application/JSON`
+  // của một upstream hay một tầng trung gian vẫn là JSON. So chuỗi thô ở đây
+  // biến nó thành "không phải JSON" và cả bước dịch bị bỏ qua.
+  const contentType = (res.headers.get("Content-Type") ?? "").toLowerCase();
+  if (contentType.startsWith("text/event-stream") && res.body !== null) {
+    // Shim tự khai `Accept: text/event-stream`, nên upstream được quyền trả
+    // stream cho một POST đã dịch. Trả thẳng stream đó nghĩa là mọi message
+    // bên trong giữ nguyên hình dạng 2026-07-28 - nặng nhất là `initialize`
+    // báo về đúng revision mà client không nói được.
+    // Thân được viết lại nên độ dài cũ hết đúng, và một `Content-Length` sai
+    // là lỗi khung tin chứ không phải sai lệch nhỏ.
+    const streamHeaders = new Headers(res.headers);
+    for (const name of BODY_OWNED_HEADERS) streamHeaders.delete(name);
+    return {
+      status: res.status,
+      response: new Response(
+        translateEventStream(res.body, clientVersion),
+        { status: res.status, headers: streamHeaders },
+      ),
+    };
+  }
   if (res.status === 202 || !contentType.includes("application/json")) {
     return { status: res.status, response: res };
   }
@@ -702,6 +764,68 @@ async function forwardOne(
     ? 200
     : res.status;
   return { payload, status, response: res };
+}
+
+/**
+ * Dịch từng sự kiện SSE khi bay qua, giữ nguyên khung sự kiện.
+ *
+ * Sự kiện SSE kết thúc ở một dòng trống, mà ranh giới chunk của mạng thì rơi ở
+ * đâu cũng được, nên phải gom vào bộ đệm rồi mới cắt. Dòng không phải `data:`
+ * (`event:`, `id:`, `retry:`, comment) đi qua nguyên trạng; khối nào không
+ * phải JSON cũng vậy, vì đoán nghĩa một khối lạ còn tệ hơn chuyển tiếp nó.
+ */
+export function translateEventStream(
+  source: ReadableStream<Uint8Array>,
+  clientVersion: string,
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  let buffer = "";
+
+  const rewriteBlock = (block: string): string => {
+    const lines = block.split("\n");
+    const data: string[] = [];
+    let dataIndex = -1;
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      if (!line.startsWith("data:")) continue;
+      if (dataIndex < 0) dataIndex = index;
+      const value = line.slice(5);
+      data.push(value.startsWith(" ") ? value.slice(1) : value);
+    }
+    if (dataIndex < 0) return block;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(data.join("\n"));
+    } catch {
+      return block;
+    }
+    const rewritten = JSON.stringify(rewriteInbound(parsed, clientVersion));
+    const kept = lines.filter((line) => !line.startsWith("data:"));
+    kept.splice(dataIndex, 0, `data: ${rewritten}`);
+    return kept.join("\n");
+  };
+
+  const transform = new TransformStream<string, Uint8Array>({
+    transform(chunk, controller) {
+      // SSE cho phép cả ba kiểu xuống dòng; chuẩn hoá về `\n` để chỉ phải tìm
+      // một dạng ranh giới, và phát lại bằng `\n` cũng vẫn đúng spec.
+      buffer += chunk.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      let boundary = buffer.indexOf("\n\n");
+      while (boundary >= 0) {
+        const block = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        controller.enqueue(encoder.encode(`${rewriteBlock(block)}\n\n`));
+        boundary = buffer.indexOf("\n\n");
+      }
+    },
+    flush(controller) {
+      if (buffer.length === 0) return;
+      controller.enqueue(encoder.encode(rewriteBlock(buffer)));
+    },
+  });
+
+  return source.pipeThrough(new TextDecoderStream()).pipeThrough(transform);
 }
 
 /** Stream SSE rỗng thay cho 405, đúng vai `GET /mcp` của transport cũ. */
@@ -928,8 +1052,18 @@ function validateLocalRequest(
       "Invalid Request: 'id' must be a string or a number",
     );
   }
+  // JSON-RPC bắt `params` phải là kiểu có cấu trúc, còn MCP thu hẹp thêm về
+  // object. `ping` với `params: "invalid"` mà nhận `result` rỗng nghĩa là shim
+  // vừa nới lỏng bộ kiểm của server ở đúng hai method server không nhìn thấy.
+  const params = message.params;
+  if (params !== undefined && !isRecord(params)) {
+    return jsonRpcError(
+      id,
+      -32602,
+      "Invalid params: 'params' must be an object",
+    );
+  }
   if (message.method === "logging/setLevel") {
-    const params = message.params;
     const level = isRecord(params) ? params["level"] : undefined;
     if (typeof level !== "string" || !LOGGING_LEVELS.has(level)) {
       return jsonRpcError(
@@ -999,7 +1133,7 @@ export async function handleShimRequest(
     // nhận dịch mới được nhận stream tổng hợp: với một revision ngoài danh
     // sách - `2024-11-05` chờ sự kiện `endpoint`, hay một bản tương lai - stream
     // im lặng này là một lời hứa suông, client treo thay vì nhận lời từ chối.
-    if (acceptsEventStream(accept) && isTranslatableRequest(req.headers)) {
+    if (acceptsEventStream(accept) && acceptsSyntheticStream(req.headers)) {
       const auth = await authorizeSynthetic(req, target);
       if (auth.blocked !== undefined) return auth.blocked;
       return openLegacyStream(opts.heartbeatMs ?? 15_000, auth.upstream);
@@ -1123,7 +1257,7 @@ export async function handleShimRequest(
       if (auth.blocked !== undefined) return auth.blocked;
       upstreamHeaders ??= auth.upstream;
       replies.push(jsonRpcError(
-        isRecord(entry) ? entry["id"] : null,
+        normalizeId(isRecord(entry) ? entry["id"] : null),
         -32600,
         "Invalid Request: missing 'method' field",
       ));
