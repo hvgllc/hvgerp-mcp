@@ -8,7 +8,7 @@ import { assertEquals, assertExists } from "@std/assert";
 import {
   encodeHeaderValue,
   handleShimRequest,
-  isModernRequest,
+  isTranslatableBody,
   isTranslatableRequest,
   readPositiveInteger,
   rewriteInbound,
@@ -294,7 +294,12 @@ Deno.test("ping duoc tra loi tai cho", async () => {
     );
     assertEquals(res.status, 200);
     assertEquals(await res.json(), { jsonrpc: "2.0", id: 4, result: {} });
-    assertEquals(upstream.captured.length, 0);
+    // Đúng một lượt: phép hỏi quyền. Trả lời tại chỗ không được đi vòng qua cổng.
+    assertEquals(upstream.captured.length, 1);
+    assertEquals(
+      (upstream.captured[0].body as Record<string, unknown>)["method"],
+      "ping",
+    );
   } finally {
     await upstream.close();
   }
@@ -366,16 +371,35 @@ Deno.test("gia tri Mcp-Name ngoai ASCII duoc boc sentinel", () => {
   assertEquals(headers["Mcp-Name"].startsWith("=?base64?"), true);
 });
 
-Deno.test("cong tac hien dai chi bat khi header khop tuyet doi", () => {
+Deno.test("cong tac dich doc ca revision khai trong than initialize", () => {
+  const init = (version?: unknown) =>
+    isTranslatableBody({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      ...(version === undefined
+        ? {}
+        : { params: { protocolVersion: version } }),
+    });
+
+  assertEquals(init(), true);
+  assertEquals(init("2025-11-25"), true);
+  assertEquals(init("2026-07-28"), true);
+  assertEquals(init("2027-03-01"), false);
+  assertEquals(init(42), true);
+  assertEquals(isTranslatableBody({ jsonrpc: "2.0", method: "ping" }), true);
   assertEquals(
-    isModernRequest(new Headers({ "MCP-Protocol-Version": "2026-07-28" })),
-    true,
-  );
-  assertEquals(
-    isModernRequest(new Headers({ "MCP-Protocol-Version": "2025-11-25" })),
+    isTranslatableBody([
+      { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "initialize",
+        params: { protocolVersion: "2027-03-01" },
+      },
+    ]),
     false,
   );
-  assertEquals(isModernRequest(new Headers()), false);
 });
 
 Deno.test("rewriteInbound khong dung toi payload khong co result", () => {
@@ -576,5 +600,155 @@ Deno.test("readPositiveInteger tu choi cau hinh vo nghia", () => {
       threw = error instanceof RangeError;
     }
     assertEquals(threw, true, `phai nem loi voi gia tri ${bad}`);
+  }
+});
+
+Deno.test("ping khong co quyen: 401 chu khong phai result rong", async () => {
+  const upstream = await startUpstream((req) =>
+    req.method === "POST" ? unauthorized() : undefined
+  );
+  try {
+    const res = await handleShimRequest(
+      legacyPost({ jsonrpc: "2.0", id: 12, method: "ping" }),
+      { upstream: upstream.url },
+    );
+
+    assertEquals(res.status, 401);
+    assertExists(res.headers.get("WWW-Authenticate"));
+    await res.body?.cancel();
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("initialize khai ban tuong lai trong than: di thang, khong dich", async () => {
+  const upstream = await startUpstream();
+  try {
+    // Không header MCP - đúng hình dạng của Cowork - nhưng thân khai một
+    // revision shim không biết. Dịch nó là bịa ra một cuộc thương lượng.
+    const res = await handleShimRequest(
+      legacyPost({
+        jsonrpc: "2.0",
+        id: 13,
+        method: "initialize",
+        params: { protocolVersion: "2027-03-01" },
+      }),
+      { upstream: upstream.url },
+    );
+
+    assertEquals(upstream.captured.length, 1);
+    const params = (upstream.captured[0].body as Record<string, unknown>)[
+      "params"
+    ] as Record<string, unknown>;
+    assertEquals(params["_meta"], undefined);
+    assertEquals(params["protocolVersion"], "2027-03-01");
+    assertEquals(res.status, 400);
+    await res.body?.cancel();
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("than POST vuot tran bi tu choi truoc khi upstream bi cham", async () => {
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      legacyPost({
+        jsonrpc: "2.0",
+        id: 14,
+        method: "tools/call",
+        params: {
+          name: "erpnext_file_upload",
+          arguments: { blob: "x".repeat(4096) },
+        },
+      }),
+      { upstream: upstream.url, maxBodyBytes: 1024 },
+    );
+
+    assertEquals(res.status, 413);
+    assertEquals((await res.json()).error.code, -32600);
+    assertEquals(upstream.captured.length, 0);
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("than chunked vuot tran cung bi tu choi", async () => {
+  const upstream = await startUpstream();
+  try {
+    // Không `Content-Length` để khai: chỉ vòng đọc tự đếm mới chặn được.
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("x".repeat(4096)));
+        controller.close();
+      },
+    });
+    const req = new Request(
+      "https://erp.example/mcp",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: stream,
+        duplex: "half",
+      } as RequestInit & { duplex: string },
+    );
+
+    const res = await handleShimRequest(req, {
+      upstream: upstream.url,
+      maxBodyBytes: 1024,
+    });
+
+    assertEquals(res.status, 413);
+    assertEquals(upstream.captured.length, 0);
+    await res.body?.cancel();
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("400 kem loi JSON-RPC thanh 200, 401 thi khong", async () => {
+  const upstream = await startUpstream();
+  try {
+    // `name` không phải chuỗi nên shim không sinh `Mcp-Name`, và server thật
+    // trả 400 kèm -32020. Client cũ đọc 400 là "endpoint hỏng".
+    const res = await handleShimRequest(
+      legacyPost({
+        jsonrpc: "2.0",
+        id: 15,
+        method: "tools/call",
+        params: { name: 42 },
+      }),
+      { upstream: upstream.url },
+    );
+
+    assertEquals(res.status, 200);
+    assertEquals((await res.json()).error.code, -32020);
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("202 cua notification van mang header CORS cua upstream", async () => {
+  const upstream = await startUpstream((req, body) => {
+    if (req.method !== "POST") return undefined;
+    if ((body as Record<string, unknown>)["id"] !== undefined) return undefined;
+    return new Response(null, {
+      status: 202,
+      headers: { "Access-Control-Allow-Origin": "https://claude.ai" },
+    });
+  });
+  try {
+    const res = await handleShimRequest(
+      legacyPost({ jsonrpc: "2.0", method: "notifications/initialized" }),
+      { upstream: upstream.url },
+    );
+
+    assertEquals(res.status, 202);
+    assertEquals(
+      res.headers.get("Access-Control-Allow-Origin"),
+      "https://claude.ai",
+    );
+  } finally {
+    await upstream.close();
   }
 });

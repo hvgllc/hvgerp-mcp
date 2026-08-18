@@ -144,6 +144,8 @@ export interface ShimOptions {
   upstream: string;
   /** Nhịp heartbeat cho stream SSE giả, tính bằng mili giây. */
   heartbeatMs?: number;
+  /** Trần kích thước thân POST của nhánh dịch, tính bằng byte. */
+  maxBodyBytes?: number;
   log?: (message: string) => void;
 }
 
@@ -169,16 +171,6 @@ export function encodeHeaderValue(value: string): string {
 }
 
 /**
- * Request đã nói đúng revision hiện hành hay chưa.
- *
- * Đây là công tắc duy nhất quyết định shim có đụng vào request hay không, nên
- * nó cố tình hẹp: chỉ header khớp tuyệt đối mới được đi thẳng.
- */
-export function isModernRequest(headers: Headers): boolean {
-  return headers.get("MCP-Protocol-Version") === SPEC_2026_07_28;
-}
-
-/**
  * Shim có được phép dịch request này hay không.
  *
  * Ba trường hợp, và chỉ hai trong số đó được dịch: không khai revision (đúng
@@ -190,6 +182,33 @@ export function isTranslatableRequest(headers: Headers): boolean {
   const declared = headers.get("MCP-Protocol-Version");
   if (declared === null || declared.length === 0) return true;
   return KNOWN_LEGACY_VERSIONS.has(declared);
+}
+
+/**
+ * Thân request có cho phép dịch hay không, xét riêng `initialize`.
+ *
+ * Header không phải chỗ duy nhất client khai revision, và với client cũ thì nó
+ * còn là chỗ hay vắng nhất: chính hình dạng "không header, revision nằm trong
+ * `params.protocolVersion`" là lý do shim tồn tại. Nếu chỉ soi header thì một
+ * `initialize` không header khai một revision tương lai vẫn bị hạ xuống
+ * 2026-07-28 rồi nhận lại đúng revision nó xin, tức là vẫn đúng cái bắt tay
+ * giả mà {@link KNOWN_LEGACY_VERSIONS} sinh ra để chặn.
+ *
+ * Bản 2026-07-28 khai trong thân thì vẫn dịch được: dịch nó là phép đồng nhất
+ * cộng thêm bộ header còn thiếu, không có gì bị bịa ra.
+ */
+export function isTranslatableBody(parsed: unknown): boolean {
+  const messages = Array.isArray(parsed) ? parsed : [parsed];
+  for (const entry of messages) {
+    if (!isRecord(entry) || entry["method"] !== "initialize") continue;
+    const params = entry["params"];
+    if (!isRecord(params)) continue;
+    const declared = params["protocolVersion"];
+    if (typeof declared !== "string" || declared.length === 0) continue;
+    if (declared === SPEC_2026_07_28) continue;
+    if (!KNOWN_LEGACY_VERSIONS.has(declared)) return false;
+  }
+  return true;
 }
 
 /**
@@ -347,6 +366,24 @@ function copyCorsHeaders(from: Headers | undefined, to: Headers): void {
   }
 }
 
+/**
+ * Mã 4xx phải tới thẳng client, không được hạ xuống 200.
+ *
+ * Chúng không nói về lời gọi mà nói về quyền và nhịp: 401/407 khởi động lại
+ * luồng xác thực, 403 là từ chối dứt khoát, 429 là lệnh lùi nhịp. Bọc chúng
+ * trong một HTTP 200 là giấu đi đúng thứ client cần thấy.
+ */
+const AUTH_STATUSES = new Set([401, 403, 407, 429]);
+
+function isProtocolErrorStatus(status: number): boolean {
+  return status >= 400 && status < 500 && !AUTH_STATUSES.has(status);
+}
+
+function hasJsonRpcError(payload: unknown): boolean {
+  const entries = Array.isArray(payload) ? payload : [payload];
+  return entries.some((entry) => isRecord(entry) && isRecord(entry["error"]));
+}
+
 function jsonRpcError(
   id: unknown,
   code: number,
@@ -401,10 +438,15 @@ async function forwardOne(
 
   const payload = rewriteInbound(await res.json(), clientVersion);
 
-  // Spec 2026-07-28 bắt method lạ trả HTTP 404 để client phân biệt endpoint
-  // MCP đời mới với server HTTP+SSE cũ. Ở transport cũ, mọi lỗi JSON-RPC đi
-  // kèm HTTP 200; 404 làm client vứt cả endpoint thay vì báo lỗi một lời gọi.
-  const status = res.status === 404 ? 200 : res.status;
+  // Ở transport cũ, mọi lỗi JSON-RPC đều đi kèm HTTP 200; client cũ đọc một mã
+  // 4xx là "endpoint hỏng" rồi vứt cả endpoint thay vì báo lỗi một lời gọi.
+  // 2026-07-28 thì ngược lại: method lạ trả 404, header lệch trả 400 kèm
+  // -32020. Hạ mọi 4xx CÓ thân JSON-RPC error xuống 200 - trừ những mã nói về
+  // quyền, vì đó là câu trả lời client bắt buộc phải thấy nguyên trạng để khởi
+  // động lại luồng OAuth hoặc để lùi nhịp.
+  const status = isProtocolErrorStatus(res.status) && hasJsonRpcError(payload)
+    ? 200
+    : res.status;
   return { payload, status, response: res };
 }
 
@@ -445,7 +487,17 @@ function openLegacyStream(
   return new Response(stream, { status: 200, headers });
 }
 
-async function proxyPassThrough(req: Request, target: URL): Promise<Response> {
+/**
+ * Chuyển tiếp nguyên trạng.
+ *
+ * `body` chỉ được truyền khi thân đã bị đọc mất để quyết định có dịch hay
+ * không; khi ấy phải gửi lại bản đã đọc vì `req.body` không tua lại được.
+ */
+async function proxyPassThrough(
+  req: Request,
+  target: URL,
+  body?: string,
+): Promise<Response> {
   const headers = new Headers();
   for (const [key, value] of req.headers) {
     if (HOP_BY_HOP.has(key.toLowerCase())) continue;
@@ -456,12 +508,69 @@ async function proxyPassThrough(req: Request, target: URL): Promise<Response> {
     headers,
     redirect: "manual",
   };
-  if (req.method !== "GET" && req.method !== "HEAD") {
+  if (body !== undefined) {
+    init.body = body;
+  } else if (req.method !== "GET" && req.method !== "HEAD") {
     init.body = req.body;
     // Bắt buộc khi thân là stream chưa đọc hết, nếu không fetch từ chối gửi.
     init.duplex = "half";
   }
   return await fetch(target, init);
+}
+
+/**
+ * Trần mặc định cho thân một POST đời cũ, tính bằng byte.
+ *
+ * Nhánh dịch buộc phải giữ cả thân trong bộ nhớ để parse, nên không có trần
+ * thì một caller chưa qua cổng xác thực nào cũng bơm được một thân tuỳ ý và
+ * bắt tiến trình shim ôm nó. 32 MiB là chỗ đứng giữa: đủ cho lời gọi thật
+ * nặng nhất - `erpnext_file_upload` gửi nội dung tệp dạng base64, tức là gấp
+ * khoảng 4/3 kích thước tệp - và vẫn là một trần cứng thay vì không có gì.
+ */
+const DEFAULT_MAX_BODY_BYTES = 32 * 1024 * 1024;
+
+/**
+ * Đọc thân request, hoặc trả `null` khi nó vượt `limit` byte.
+ *
+ * `Content-Length` được soi trước để một thân khai sẵn là quá khổ bị chặn
+ * trước khi đọc byte nào; nhưng nó không phải bằng chứng nên vòng đọc vẫn tự
+ * đếm, vì thân chunked không khai độ dài và một thân có khai vẫn có thể nói
+ * dối.
+ */
+async function readBoundedText(
+  req: Request,
+  limit: number,
+): Promise<string | null> {
+  const declared = req.headers.get("Content-Length");
+  if (declared !== null) {
+    const size = Number(declared);
+    if (Number.isFinite(size) && size > limit) return null;
+  }
+
+  const body = req.body;
+  if (body === null) return "";
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > limit) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(merged);
 }
 
 /**
@@ -572,7 +681,19 @@ export async function handleShimRequest(
     return await proxyPassThrough(req, target);
   }
 
-  const raw = await req.text();
+  const maxBodyBytes = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+  const raw = await readBoundedText(req, maxBodyBytes);
+  if (raw === null) {
+    return Response.json(
+      jsonRpcError(
+        null,
+        -32600,
+        `Request body exceeds the ${maxBodyBytes} byte limit`,
+      ),
+      { status: 413 },
+    );
+  }
+
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -580,6 +701,11 @@ export async function handleShimRequest(
     return Response.json(jsonRpcError(null, -32700, "Parse error"), {
       status: 400,
     });
+  }
+
+  // Thân đã bị đọc mất ở trên nên phải gửi lại bản `raw`, không phải `req.body`.
+  if (!isTranslatableBody(parsed)) {
+    return await proxyPassThrough(req, target, raw);
   }
 
   const messages = Array.isArray(parsed) ? parsed : [parsed];
@@ -592,6 +718,8 @@ export async function handleShimRequest(
   const replies: unknown[] = [];
   let status = 200;
   let upstreamHeaders: Headers | undefined;
+  /** Hỏi một lần cho cả request, dùng lại cho mọi message trả lời tại chỗ. */
+  let authorization: AuthorizationProbe | undefined;
 
   for (const entry of messages) {
     if (!isRecord(entry) || typeof entry["method"] !== "string") {
@@ -607,6 +735,13 @@ export async function handleShimRequest(
     const id = message.id;
 
     if (id !== undefined && LOCALLY_ANSWERED.has(message.method as string)) {
+      // Trả lời tại chỗ nghĩa là không có lượt nào chạm cổng xác thực của
+      // server, nên phải tự hỏi. Không hỏi thì một caller không token vẫn nhận
+      // 200 cho keepalive và báo "phiên còn sống", trong khi mọi lời gọi thật
+      // của nó đều bị từ chối.
+      authorization ??= await authorizeSynthetic(req, target);
+      if (authorization.denied !== undefined) return authorization.denied;
+      upstreamHeaders ??= authorization.upstream;
       replies.push({ jsonrpc: "2.0", id, result: {} });
       continue;
     }
@@ -631,7 +766,11 @@ export async function handleShimRequest(
     if (outcome.payload !== undefined) replies.push(outcome.payload);
   }
 
-  if (replies.length === 0) return new Response(null, { status: 202 });
+  if (replies.length === 0) {
+    const accepted = new Headers();
+    copyCorsHeaders(upstreamHeaders, accepted);
+    return new Response(null, { status: 202, headers: accepted });
+  }
 
   const headers = new Headers({ "Content-Type": "application/json" });
   headers.set("MCP-Protocol-Version", clientVersion);
