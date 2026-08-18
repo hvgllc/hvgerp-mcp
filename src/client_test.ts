@@ -5,6 +5,11 @@ import { AmbiguousLinkError } from "./api/resolve.ts";
 import { linkDisambiguationRequestKey } from "./mrtr/link-disambiguation.ts";
 import type { ErpNextTool, ErpNextToolContext } from "./tools/types.ts";
 import type { ToolHandlerContext } from "@casys/mcp-server";
+import {
+  DOCLIST_META,
+  readViewerResourceUri,
+  viewerResourceUri,
+} from "./tools/viewer-meta.ts";
 
 // Note: Error handling previously tested here (isError wrapping) has been moved
 // to the server layer via toolErrorMapper in server.ts. Handlers now throw
@@ -306,4 +311,120 @@ Deno.test("ErpNextToolsClient does not widen a category filter to the whole iden
   // vừa xin. Kéo cả category vào thì bộ lọc thôi không còn chặn được bề mặt nghiệp vụ nào nữa.
   assert(names.includes("erpnext_whoami"));
   assert(!names.includes("erpnext_my_work"));
+});
+
+// ============================================================================
+// Viewer bindings vs. the bundles actually on disk
+//
+// Tool metadata binds viewers statically; the bundles are built separately and
+// can be absent (a skipped `deno task ui:build`) or partial (`build-all.mjs`
+// exits on the first failure with the earlier viewers already written). A
+// binding that survives into `tools/list` or a tool result without its bundle
+// tells the host to load a resource this process never registers, and the host
+// reports an app-load failure instead of falling back to plain JSON.
+// ============================================================================
+
+Deno.test("toMCPFormat - no viewer bundle means no viewer binding, under either key", () => {
+  const wire = new ErpNextToolsClient({ servableViewerUris: [] })
+    .toMCPFormat();
+
+  const bound = wire.filter((tool) =>
+    readViewerResourceUri(tool._meta as Record<string, unknown> | undefined) !==
+      null
+  );
+  assertEquals(
+    bound.map((tool) => tool.name),
+    [],
+    "with nothing on disk every binding must be dropped, including the " +
+      'deprecated flat "ui/resourceUri" a legacy host reads',
+  );
+});
+
+Deno.test("toMCPFormat - a partial build keeps the bindings that resolve and drops the rest", () => {
+  const kept = viewerResourceUri("doclist-viewer");
+  const wire = new ErpNextToolsClient({ servableViewerUris: [kept] })
+    .toMCPFormat();
+
+  const stillBound = new Set(
+    wire
+      .map((tool) =>
+        readViewerResourceUri(tool._meta as Record<string, unknown> | undefined)
+      )
+      .filter((uri): uri is string => uri !== null),
+  );
+
+  assertEquals(
+    [...stillBound],
+    [kept],
+    "only the viewer whose bundle exists may still be named",
+  );
+  assert(
+    stillBound.has(kept),
+    "the viewer that did build must keep its tools bound",
+  );
+});
+
+Deno.test("toMCPFormat - omitting servableViewerUris leaves every binding as authored", () => {
+  const authored = new ErpNextToolsClient().toMCPFormat();
+  const bound = authored.filter((tool) =>
+    readViewerResourceUri(tool._meta as Record<string, unknown> | undefined) !==
+      null
+  );
+
+  assert(
+    bound.length > 0,
+    "the default must not filter: a library consumer registers its own " +
+      "resources and is the only party that knows which ones exist",
+  );
+});
+
+Deno.test("buildHandlersMap - an unservable binding never reaches the result envelope", async () => {
+  // Tool danh sách đóng dấu `_meta` lên chính payload, và envelope ưu tiên dấu đó hơn `_meta` của
+  // định nghĩa tool. Lọc mỗi định nghĩa tool sẽ để nguyên binding trên đúng lời gọi mà host dùng
+  // để quyết định render.
+  const tool: ErpNextTool = {
+    name: "erpnext_unservable_viewer_probe",
+    description: "Test-only viewer binding probe",
+    category: "setup",
+    inputSchema: { type: "object" },
+    _meta: DOCLIST_META,
+    handler: () => Promise.resolve({ doctype: "Test", _meta: DOCLIST_META }),
+  };
+
+  const stripped = new ErpNextToolsClient({ servableViewerUris: [] });
+  (stripped as unknown as { tools: ErpNextTool[] }).tools = [tool];
+  const served = new ErpNextToolsClient({
+    servableViewerUris: [viewerResourceUri("doclist-viewer")],
+  });
+  (served as unknown as { tools: ErpNextTool[] }).tools = [tool];
+
+  setFrappeClient({} as FrappeClient);
+  let strippedResult: Record<string, unknown>;
+  let servedResult: Record<string, unknown>;
+  try {
+    strippedResult = await stripped.buildHandlersMap().get(tool.name)!(
+      {},
+    ) as Record<string, unknown>;
+    servedResult = await served.buildHandlersMap().get(tool.name)!(
+      {},
+    ) as Record<string, unknown>;
+  } finally {
+    setFrappeClient(null);
+  }
+
+  assertEquals(
+    readViewerResourceUri(
+      strippedResult._meta as Record<string, unknown> | undefined,
+    ),
+    null,
+    "no bundle on disk: the envelope must carry no viewer binding",
+  );
+  // Phép đo đối chứng - thiếu nó thì khẳng định trên vẫn xanh với một bộ lọc chặn sạch mọi thứ.
+  assertEquals(
+    readViewerResourceUri(
+      servedResult._meta as Record<string, unknown> | undefined,
+    ),
+    viewerResourceUri("doclist-viewer"),
+    "bundle on disk: the binding must survive untouched",
+  );
 });

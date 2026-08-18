@@ -27,6 +27,10 @@ import type {
 import { getFrappeClient } from "./api/frappe-client.ts";
 import { runWithLinkDisambiguation } from "./mrtr/link-disambiguation.ts";
 import { withUiRefreshRequest } from "./tools/ui-refresh.ts";
+import {
+  readViewerResourceUri,
+  withoutViewerBinding,
+} from "./tools/viewer-meta.ts";
 
 // Re-export from tools
 export {
@@ -86,6 +90,21 @@ export interface ErpNextToolsClientOptions {
   categories?: string[];
   /** Enable MRTR forms for ambiguous Link-field resolution. Default: false. */
   enableLinkDisambiguation?: boolean;
+  /**
+   * The `ui://` resource URIs the host process actually registers.
+   *
+   * Tool metadata binds viewers statically, but the viewer bundles are built
+   * separately and any of them can be missing — a skipped `deno task ui:build`
+   * leaves none, and `src/ui/build-all.mjs` exits on the first failure after
+   * writing the viewers it already finished, leaving some. Passing the real set
+   * lets every binding to an unregistered viewer be dropped instead of shipped,
+   * so a host is never told to load a resource this process cannot serve.
+   *
+   * Omit to keep every binding as authored. That is the right default for a
+   * library consumer, which registers its own resources and is the only party
+   * that knows which ones exist.
+   */
+  servableViewerUris?: readonly string[];
 }
 
 /**
@@ -95,9 +114,14 @@ export interface ErpNextToolsClientOptions {
 export class ErpNextToolsClient {
   private tools: ErpNextTool[];
   private readonly enableLinkDisambiguation: boolean;
+  /** `null` means the caller did not say, so every binding is kept as authored. */
+  private readonly servableViewerUris: ReadonlySet<string> | null;
 
   constructor(options?: ErpNextToolsClientOptions) {
     this.enableLinkDisambiguation = options?.enableLinkDisambiguation ?? false;
+    this.servableViewerUris = options?.servableViewerUris
+      ? new Set(options.servableViewerUris)
+      : null;
     if (options?.categories) {
       // `erpnext_whoami` được nạp kể cả khi người gọi không xin category `identity`. Nó không
       // phải một mảng nghiệp vụ như `sales` hay `hr`: nó là tool DUY NHẤT dịch "my"/"me" thành
@@ -127,6 +151,22 @@ export class ErpNextToolsClient {
     return this.tools;
   }
 
+  /**
+   * `meta`, minus any viewer binding the host cannot serve.
+   *
+   * Returns `meta` untouched when the caller passed no `servableViewerUris` (it
+   * did not tell us what it serves, so we do not overrule it) or when the
+   * binding resolves to a registered viewer.
+   */
+  private servableMeta<T extends MCPToolMeta>(meta: T): T | undefined {
+    if (!this.servableViewerUris) return meta;
+    const uri = readViewerResourceUri(meta as Record<string, unknown>);
+    if (uri === null || this.servableViewerUris.has(uri)) return meta;
+    return withoutViewerBinding(meta as Record<string, unknown>) as
+      | T
+      | undefined;
+  }
+
   /** Convert tools to MCP wire format (for server registration) */
   toMCPFormat(): MCPToolWireFormat[] {
     return this.tools.map((t) => {
@@ -136,7 +176,10 @@ export class ErpNextToolsClient {
         inputSchema: t.inputSchema as JSONSchema,
       };
       if (t.annotations) wire.annotations = t.annotations;
-      if (t._meta) wire._meta = t._meta;
+      if (t._meta) {
+        const meta = this.servableMeta(t._meta);
+        if (meta) wire._meta = meta;
+      }
       return wire;
     });
   }
@@ -154,7 +197,7 @@ export class ErpNextToolsClient {
   buildHandlersMap(): Map<string, ToolHandler> {
     const handlers = new Map<string, ToolHandler>();
     for (const tool of this.tools) {
-      const toolMeta = tool._meta;
+      const toolMeta = tool._meta ? this.servableMeta(tool._meta) : undefined;
       handlers.set(tool.name, async (
         args: Record<string, unknown>,
         mcpContext?: ToolHandlerContext,
@@ -211,10 +254,17 @@ export class ErpNextToolsClient {
         const hasViewer = resultUi || toolMeta?.ui;
 
         if (r && hasViewer) {
+          // Binding của payload (do `listResult()` đóng dấu) đi qua đúng bộ lọc mà binding của
+          // định nghĩa tool đã đi qua. Bỏ sót đường này là bỏ sót phần lớn tool có viewer: với
+          // tool danh sách, `_meta` của payload thắng `toolMeta`, nên lọc mỗi `toolMeta` sẽ để
+          // nguyên binding trên chính lời gọi mà host dùng để quyết định render.
+          const envelopeMeta = this.servableMeta(
+            (r._meta ?? toolMeta) as MCPToolMeta,
+          );
           return {
             content: [{ type: "text", text: JSON.stringify(result) }],
             structuredContent: r,
-            _meta: r._meta ?? toolMeta,
+            ...(envelopeMeta ? { _meta: envelopeMeta } : {}),
           };
         }
 

@@ -41,6 +41,7 @@ import { ErpNextToolsClient } from "./src/client.ts";
 import { FrappeAPIError } from "./src/api/frappe-client.ts";
 import { UI_VIEWERS } from "./src/ui/viewers.ts";
 import { resolveViewerDistPath } from "./src/ui/viewer-resource-paths.ts";
+import { viewerResourceUri } from "./src/tools/viewer-meta.ts";
 import {
   exit,
   getArgs,
@@ -109,24 +110,28 @@ async function main() {
     : "off";
   const mrtrConfig = loadMrtrConfig();
 
+  // Resolve the viewer bundles up front. They are registered further down, but two decisions above
+  // that point depend on which ones exist: which tools may keep their viewer binding, and whether
+  // to declare MCP Apps at all. Both answer the same question — never point a host at a resource
+  // this process cannot serve. A partial `src/ui/build-all.mjs` run leaves exactly that state:
+  // it exits on the first failure with the viewers it already wrote still on disk.
+  const viewerBundles = UI_VIEWERS.map((viewerName) => ({
+    viewerName,
+    resourceUri: viewerResourceUri(viewerName),
+    distPath: resolveViewerDistPath(import.meta.url, viewerName, statSync),
+  }));
+  const servableViewerUris = viewerBundles
+    .filter((bundle) => bundle.distPath !== null)
+    .map((bundle) => bundle.resourceUri);
+  const servesUiViewers = servableViewerUris.length > 0;
+
   // Initialize tools client
   const toolsClient = new ErpNextToolsClient(
     {
       ...(categories ? { categories } : {}),
       enableLinkDisambiguation: mrtrConfig !== undefined,
+      servableViewerUris,
     },
-  );
-
-  // Resolve the viewer bundles up front. They are registered further down, after the constructor,
-  // but the MCP Apps declaration below has to know whether any of them exist: declaring the
-  // extension with no viewer on disk invites a host to request a resource this process cannot
-  // serve, which reads worse to the user than no widget at all.
-  const viewerBundles = UI_VIEWERS.map((viewerName) => ({
-    viewerName,
-    distPath: resolveViewerDistPath(import.meta.url, viewerName, statSync),
-  }));
-  const servesUiViewers = viewerBundles.some((bundle) =>
-    bundle.distPath !== null
   );
 
   // Build MCP server
@@ -154,6 +159,10 @@ async function main() {
     // presence of `ui://` resources. Inference is what several hosts do NOT do: they negotiate the
     // extension first and render a tool result as plain JSON when the server never named it, no
     // matter how correct the per-tool `_meta.ui` binding is.
+    //
+    // Conditional on at least one bundle existing, and safe at exactly one bundle because the
+    // client above has already stripped the bindings for the others: every viewer still named in
+    // `_meta` is one this process registers below.
     ...(servesUiViewers
       ? {
         extensions: {
@@ -193,8 +202,7 @@ async function main() {
 
   // Register UI resources (MCP Apps viewers)
   // Built by: cd lib/erpnext/src/ui && node build-all.mjs
-  for (const { viewerName, distPath } of viewerBundles) {
-    const resourceUri = `ui://hvgerp-mcp/${viewerName}`;
+  for (const { viewerName, resourceUri, distPath } of viewerBundles) {
     const humanName = viewerName
       .split("-")
       .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
@@ -217,6 +225,7 @@ async function main() {
     } else {
       console.error(
         `[hvgerp-mcp] Warning: UI not built for ${resourceUri}. ` +
+          `Tools bound to it were stripped of their viewer binding and return plain JSON. ` +
           `Run 'cd lib/erpnext/src/ui && node build-all.mjs' first or package ui-dist with the npm bundle.`,
       );
     }

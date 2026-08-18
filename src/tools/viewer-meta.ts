@@ -10,10 +10,23 @@
  * Each binding is emitted twice, under both keys the MCP Apps SDK defines. See
  * {@link LEGACY_RESOURCE_URI_KEY} for why the deprecated one is not dead weight.
  *
+ * A binding is a promise that a resource exists. Nothing here can keep that
+ * promise on its own: the viewer bundles are built separately and may be
+ * missing, so {@link readViewerResourceUri} and {@link withoutViewerBinding}
+ * exist to let the caller that *does* know what it serves take a binding back.
+ *
  * @module lib/erpnext/tools/viewer-meta
  */
 
 import type { MCPToolMeta } from "@casys/mcp-server";
+
+/** Resource URI namespace for this server's viewers. */
+const VIEWER_URI_PREFIX = "ui://hvgerp-mcp/";
+
+/** The `ui://` resource URI a viewer is registered under. */
+export function viewerResourceUri(viewerName: string): string {
+  return `${VIEWER_URI_PREFIX}${viewerName}`;
+}
 
 /**
  * The deprecated flat binding key, `RESOURCE_URI_META_KEY` in the MCP Apps SDK.
@@ -38,12 +51,51 @@ export type ViewerToolMeta =
   & Record<typeof LEGACY_RESOURCE_URI_KEY, string>;
 
 const viewer = (name: string): ViewerToolMeta => {
-  const resourceUri = `ui://hvgerp-mcp/${name}`;
+  const resourceUri = viewerResourceUri(name);
   return {
     ui: { resourceUri },
     [LEGACY_RESOURCE_URI_KEY]: resourceUri,
   };
 };
+
+/**
+ * The viewer resource a `_meta` object binds to, or `null` if it binds none.
+ *
+ * Reads the same two keys {@link viewer} writes, so a caller checking whether a
+ * binding is servable cannot miss the half it forgot about.
+ */
+export function readViewerResourceUri(
+  meta: Record<string, unknown> | undefined | null,
+): string | null {
+  if (!meta) return null;
+  const ui = meta.ui as { resourceUri?: unknown } | undefined | null;
+  const nested = ui?.resourceUri;
+  if (typeof nested === "string" && nested.length > 0) return nested;
+  const flat = meta[LEGACY_RESOURCE_URI_KEY];
+  return typeof flat === "string" && flat.length > 0 ? flat : null;
+}
+
+/**
+ * `meta` with its viewer binding removed, or `undefined` if nothing else was in
+ * it.
+ *
+ * Used when the bound viewer bundle is not on disk. Dropping the binding is not
+ * a degradation: without it a host renders the tool result as plain JSON, which
+ * is what every host did before this server bound viewers at all. Keeping a
+ * binding to a resource the process cannot serve is the worse outcome, because
+ * the host commits to an app frame and then fails to load it.
+ *
+ * Both keys go, not just the flat one — a host reading the nested key hits the
+ * same missing resource.
+ */
+export function withoutViewerBinding(
+  meta: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const rest = { ...meta };
+  delete rest.ui;
+  delete rest[LEGACY_RESOURCE_URI_KEY];
+  return Object.keys(rest).length > 0 ? rest : undefined;
+}
 
 export const DOCLIST_META = viewer("doclist-viewer");
 export const INVOICE_META = viewer("invoice-viewer");
