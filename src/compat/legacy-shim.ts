@@ -130,6 +130,59 @@ const SHIM_OWNED_HEADERS = new Set([
   "mcp-session-id",
 ]);
 
+/**
+ * Header mô tả thân request mà shim vừa dựng lại.
+ *
+ * Nhánh dịch không bao giờ chuyển tiếp byte gốc: nó parse rồi `JSON.stringify`
+ * ra một thân mới, không nén. Giữ lại `Content-Encoding` của client nghĩa là
+ * bảo upstream giải nén một thân JSON thô, còn giữ `Content-Length` là khai
+ * sai độ dài. `fetch` tự đặt lại độ dài nhưng không đụng tới encoding, nên
+ * phải gỡ ở đây.
+ */
+const BODY_OWNED_HEADERS = new Set(["content-encoding", "content-length"]);
+
+/**
+ * Content-Encoding mà shim tự giải được, ánh xạ sang tên `DecompressionStream`.
+ *
+ * Encoding lạ (`br`, `zstd`) không bị đoán mò: request đó đi thẳng, vì đọc
+ * byte nén như UTF-8 chỉ sinh ra một lỗi parse sai chỗ.
+ */
+const DECODABLE_ENCODINGS = new Map<string, "gzip" | "deflate">([
+  ["gzip", "gzip"],
+  ["x-gzip", "gzip"],
+  ["deflate", "deflate"],
+]);
+
+/**
+ * Mức hợp lệ của `logging/setLevel`, theo RFC 5424 như đặc tả MCP dẫn lại.
+ */
+const LOGGING_LEVELS = new Set([
+  "debug",
+  "info",
+  "notice",
+  "warning",
+  "error",
+  "critical",
+  "alert",
+  "emergency",
+]);
+
+/**
+ * Capabilities mà shim KHÔNG được khai hộ, dù client cũ có khai lúc
+ * `initialize`.
+ *
+ * Cả ba đều mô tả một luồng mà transport này không chở nổi tới cùng.
+ * `elicitation` là ví dụ đã đo được: server 2026-07-28 đọc nó rồi trả về phong
+ * bì MRTR `resultType: "input_required"`, và client 2025-11-25 không biết phong
+ * bì đó là gì nên nó chỉ thấy một result rỗng - tệ hơn hẳn lời báo lỗi kèm danh
+ * sách ứng viên mà nó vẫn nhận được khi không khai `elicitation`.
+ * `sampling` và `roots` thì cần server hỏi ngược lại client, mà stream tổng hợp
+ * ở đây không chở request nào.
+ *
+ * Khai đúng những gì chở được, và im lặng về phần còn lại.
+ */
+const UNBRIDGED_CAPABILITIES = new Set(["elicitation", "sampling", "roots"]);
+
 export interface JsonRpcMessage {
   jsonrpc?: unknown;
   id?: unknown;
@@ -325,17 +378,35 @@ export function readClientIdentity(
  * có hỏi lại người dùng hay không, nên một client có `elicitation` sẽ bị hạ
  * xuống báo lỗi thay vì được hỏi.
  *
- * Khoá là băm SHA-256 của `Mcp-Session-Id` hoặc `Authorization`, không phải
- * bản thân chứng danh: bộ nhớ này sống lâu, và một token nằm nguyên văn trong
- * đó là một thứ không cần thiết phải giữ. Bảng có trần và đuổi bản ghi cũ
- * nhất, vì một shim công khai không được để bộ nhớ lớn theo số client.
+ * Khoá là băm SHA-256 của chứng danh, không phải bản thân chứng danh: bộ nhớ
+ * này sống lâu, và một token nằm nguyên văn trong đó là một thứ không cần
+ * thiết phải giữ. Bảng có trần và đuổi bản ghi cũ nhất, vì một shim công khai
+ * không được để bộ nhớ lớn theo số client.
+ *
+ * Không có chứng danh thì KHÔNG có khoá, và không có khoá thì không nhớ gì.
+ * Một khoá dùng chung - chẳng hạn băm của hằng "anonymous" khi chạy không xác
+ * thực - không phải bộ nhớ theo client mà là một ô nhớ toàn cục: `initialize`
+ * của người này ghi đè capabilities của người kia, nên một lời gọi có thể nhận
+ * `input_required` dù client của nó không làm được, hoặc mất đúng khả năng nó
+ * vừa khai. Nhớ sai còn tệ hơn không nhớ.
  */
 const CAPABILITY_CACHE = new Map<string, Record<string, unknown>>();
 const CAPABILITY_CACHE_MAX = 512;
 
-async function capabilityKey(req: Request): Promise<string> {
-  const source = req.headers.get("Mcp-Session-Id") ??
-    req.headers.get("Authorization") ?? "anonymous";
+async function capabilityKey(req: Request): Promise<string | undefined> {
+  const session = req.headers.get("Mcp-Session-Id");
+  const authorization = req.headers.get("Authorization");
+  if (session === null && authorization === null) return undefined;
+
+  // Một token tĩnh dùng chung cho nhiều client vẫn gộp chúng vào một khoá, nên
+  // trộn thêm dấu vết phần mềm gọi. Hai client cùng token VÀ cùng dấu vết thì
+  // là cùng một phần mềm, tức capabilities của chúng giống nhau và va nhau
+  // cũng không đổi kết quả.
+  const source = session ?? [
+    authorization,
+    req.headers.get("X-Anthropic-Client") ?? "",
+    req.headers.get("User-Agent") ?? "",
+  ].join("\n");
   const digest = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(source),
@@ -345,12 +416,24 @@ async function capabilityKey(req: Request): Promise<string> {
     .join("");
 }
 
+/** Bỏ những capability mà transport này không chở nổi tới cùng. */
+function bridgeableCapabilities(
+  capabilities: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(capabilities)) {
+    if (UNBRIDGED_CAPABILITIES.has(name)) continue;
+    out[name] = value;
+  }
+  return out;
+}
+
 function rememberCapabilities(key: string, capabilities: unknown): void {
   if (!isRecord(capabilities)) return;
   // Xoá rồi đặt lại để bản ghi vừa dùng về cuối hàng, nên phép đuổi bên dưới
   // bỏ đúng bản ghi lâu không đụng tới nhất.
   CAPABILITY_CACHE.delete(key);
-  CAPABILITY_CACHE.set(key, capabilities);
+  CAPABILITY_CACHE.set(key, bridgeableCapabilities(capabilities));
   while (CAPABILITY_CACHE.size > CAPABILITY_CACHE_MAX) {
     const oldest = CAPABILITY_CACHE.keys().next().value;
     if (oldest === undefined) break;
@@ -427,6 +510,12 @@ export function rewriteOutbound(
  * `resultType` là trường của phong bì mới, không tồn tại ở 2025-11-25;
  * `protocolVersion` trong result của `initialize` phải là bản mà client đã
  * đề nghị, nếu không client coi như thương lượng thất bại.
+ *
+ * Một phong bì `input_required` thì không được gỡ trường phân biệt rồi thả đi:
+ * làm thế client cũ nhận một result trông như bình thường nhưng rỗng nội dung,
+ * còn câu hỏi thì nằm trong `inputRequests` mà nó không biết đọc. Câu hỏi đó
+ * vốn đã là văn bản cho người đọc, nên hạ nó xuống một tool result báo lỗi:
+ * người dùng thấy đúng danh sách ứng viên và gọi lại với ID cụ thể.
  */
 export function rewriteInbound(
   payload: unknown,
@@ -438,11 +527,47 @@ export function rewriteInbound(
   if (!isRecord(payload) || !isRecord(payload["result"])) return payload;
 
   const result = { ...payload["result"] };
+  if (result["resultType"] === "input_required") {
+    return { ...payload, result: describeInputRequired(result) };
+  }
   delete result["resultType"];
   if (typeof result["protocolVersion"] === "string") {
     result["protocolVersion"] = clientVersion;
   }
   return { ...payload, result };
+}
+
+/**
+ * Hạ phong bì `input_required` xuống một tool result mà client cũ hiểu.
+ *
+ * Mỗi mục trong `inputRequests` là một `elicitation/create` với `params.message`
+ * đã viết sẵn cho người đọc. Gom chúng lại thành nội dung văn bản và đánh dấu
+ * `isError` để host hiển thị như một lời gọi chưa xong, thay vì như một kết quả
+ * thành công không có gì bên trong.
+ */
+function describeInputRequired(
+  result: Record<string, unknown>,
+): Record<string, unknown> {
+  const requests = result["inputRequests"];
+  const messages: string[] = [];
+  if (isRecord(requests)) {
+    for (const request of Object.values(requests)) {
+      if (!isRecord(request)) continue;
+      const params = request["params"];
+      if (isRecord(params) && typeof params["message"] === "string") {
+        messages.push(params["message"]);
+      }
+    }
+  }
+  if (messages.length === 0) {
+    messages.push(
+      "This call needs more input than the legacy MCP revision can carry.",
+    );
+  }
+  return {
+    content: [{ type: "text", text: messages.join("\n\n") }],
+    isError: true,
+  };
 }
 
 /**
@@ -471,7 +596,10 @@ function filterHeaders(source: Headers): Headers {
   const out = new Headers();
   for (const [key, value] of source) {
     const lower = key.toLowerCase();
-    if (hops.has(lower) || SHIM_OWNED_HEADERS.has(lower)) continue;
+    if (
+      hops.has(lower) || SHIM_OWNED_HEADERS.has(lower) ||
+      BODY_OWNED_HEADERS.has(lower)
+    ) continue;
     out.set(key, value);
   }
   return out;
@@ -547,10 +675,14 @@ async function forwardOne(
   headers.set("Content-Type", "application/json");
   headers.set("Accept", "application/json, text/event-stream");
 
+  // Client rời đi thì lượt gọi upstream cũng phải dừng: không nối tín hiệu
+  // huỷ, shim giữ nguyên request, thân response và socket cho tới khi upstream
+  // tự xong, nên một chuỗi lời gọi bị bỏ dở tích lại thành công việc thừa.
   const res = await fetch(target, {
     method: "POST",
     headers,
     body: JSON.stringify(outbound),
+    signal: req.signal,
   });
 
   const contentType = res.headers.get("Content-Type") ?? "";
@@ -623,10 +755,14 @@ async function proxyPassThrough(
   const hops = hopByHopFor(req.headers);
   const headers = new Headers();
   for (const [key, value] of req.headers) {
-    if (hops.has(key.toLowerCase())) continue;
+    const lower = key.toLowerCase();
+    if (hops.has(lower)) continue;
+    // Thân đã đọc là thân đã giải nén: giữ `Content-Encoding` của client ở đây
+    // là bảo upstream giải nén một lần nữa thứ đã phẳng.
+    if (body !== undefined && BODY_OWNED_HEADERS.has(lower)) continue;
     headers.set(key, value);
   }
-  const init: RequestInit & { duplex?: string } = {
+  const init: RequestInit & { duplex?: string; signal?: AbortSignal } = {
     method: req.method,
     headers,
     redirect: "manual",
@@ -638,6 +774,7 @@ async function proxyPassThrough(
     // Bắt buộc khi thân là stream chưa đọc hết, nếu không fetch từ chối gửi.
     init.duplex = "half";
   }
+  init.signal = req.signal;
   return await fetch(target, init);
 }
 
@@ -659,19 +796,30 @@ const DEFAULT_MAX_BODY_BYTES = 32 * 1024 * 1024;
  * trước khi đọc byte nào; nhưng nó không phải bằng chứng nên vòng đọc vẫn tự
  * đếm, vì thân chunked không khai độ dài và một thân có khai vẫn có thể nói
  * dối.
+ *
+ * Khi thân được nén, `Content-Length` nói về kích thước NÉN nên không dùng để
+ * chặn trước được: mấy KiB nén phồng ra được hàng GiB. Vòng đếm chạy sau khi
+ * giải nén nên cùng một trần chặn luôn cả thân phồng.
+ *
+ * Ném lỗi khi luồng nén hỏng; người gọi hạ nó thành lỗi parse, vì đó đúng là
+ * thứ đã xảy ra: thân không đọc ra được.
  */
 async function readBoundedText(
   req: Request,
   limit: number,
+  encoding?: "gzip" | "deflate",
 ): Promise<string | null> {
   const declared = req.headers.get("Content-Length");
-  if (declared !== null) {
+  if (encoding === undefined && declared !== null) {
     const size = Number(declared);
     if (Number.isFinite(size) && size > limit) return null;
   }
 
-  const body = req.body;
-  if (body === null) return "";
+  const source = req.body;
+  if (source === null) return "";
+  const body = encoding === undefined
+    ? source
+    : source.pipeThrough(new DecompressionStream(encoding));
 
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
@@ -734,6 +882,7 @@ async function authorizeSynthetic(
   const probe = await fetch(target, {
     method: "POST",
     headers,
+    signal: req.signal,
     body: JSON.stringify({
       jsonrpc: "2.0",
       id: "shim-authorization-probe",
@@ -760,6 +909,40 @@ async function authorizeSynthetic(
 }
 
 /**
+ * Kiểm phong bì của một request mà shim tự trả lời, trả lỗi JSON-RPC nếu sai.
+ *
+ * Chỉ dùng cho {@link LOCALLY_ANSWERED}: mọi method khác đều đi lên server và
+ * gặp bộ kiểm thật ở đó.
+ */
+function validateLocalRequest(
+  message: JsonRpcMessage,
+): Record<string, unknown> | undefined {
+  const id = message.id;
+  if (message.jsonrpc !== "2.0") {
+    return jsonRpcError(id, -32600, "Invalid Request: 'jsonrpc' must be '2.0'");
+  }
+  if (typeof id !== "string" && typeof id !== "number") {
+    return jsonRpcError(
+      null,
+      -32600,
+      "Invalid Request: 'id' must be a string or a number",
+    );
+  }
+  if (message.method === "logging/setLevel") {
+    const params = message.params;
+    const level = isRecord(params) ? params["level"] : undefined;
+    if (typeof level !== "string" || !LOGGING_LEVELS.has(level)) {
+      return jsonRpcError(
+        id,
+        -32602,
+        "Invalid params: 'level' must be a syslog severity name",
+      );
+    }
+  }
+  return undefined;
+}
+
+/**
  * Điểm vào duy nhất của shim.
  *
  * Thứ tự nhánh là cố ý: luồng hiện đại được nhận ra trước hết và đi thẳng, nên
@@ -770,11 +953,19 @@ export async function handleShimRequest(
   opts: ShimOptions,
 ): Promise<Response> {
   const url = new URL(req.url);
-  // Client cấu hình endpoint là `/mcp/` không phải chuyện hiếm, và một proxy
-  // đứng trước giữ nguyên dấu gạch chéo đó. Chuẩn hoá về `/mcp` ngay tại đây,
-  // nếu không cả nhánh dịch lẫn hai verb tổng hợp đều không chạy và client cũ
-  // nhận lại đúng lời từ chối mà shim sinh ra để tránh.
-  const path = url.pathname === "/mcp/" ? "/mcp" : url.pathname;
+  // Client cấu hình endpoint là `/mcp/` hoặc trỏ thẳng vào gốc không phải
+  // chuyện hiếm, và một proxy đứng trước giữ nguyên dấu gạch chéo đó. Chuẩn hoá
+  // cả hai về `/mcp` ngay tại đây, nếu không cả nhánh dịch lẫn hai verb tổng
+  // hợp đều không chạy và client cũ nhận lại đúng lời từ chối mà shim sinh ra
+  // để tránh.
+  //
+  // Chuẩn hoá phải xảy ra TRƯỚC khi dựng target, không chỉ ở phép so đường
+  // dẫn: coi `/` là đường MCP mà vẫn gửi lên gốc của upstream nghĩa là
+  // `initialize` rơi vào 404 của tầng định tuyến, và tệ hơn, phép hỏi quyền
+  // đọc đúng cái 404 đó thành "đã lọt cổng".
+  const path = url.pathname === "/mcp/" || url.pathname === "/"
+    ? "/mcp"
+    : url.pathname;
 
   // `new URL(path, upstream)` KHÔNG an toàn ở đây: một path mở đầu bằng `//`
   // là URL scheme-relative, nên `//169.254.169.254/latest/meta-data` thay luôn
@@ -797,15 +988,18 @@ export async function handleShimRequest(
     );
   }
 
-  const isMcpPath = path === "/mcp" || path === "/";
+  const isMcpPath = path === "/mcp";
 
   if (!isMcpPath) return await proxyPassThrough(req, target);
 
   if (req.method === "GET") {
     const accept = req.headers.get("Accept") ?? "";
     // Client hiện đại không mở stream ở đây, nên chỉ nhận SSE mới đổi hành vi;
-    // còn lại vẫn để server trả 405 của chính nó.
-    if (acceptsEventStream(accept)) {
+    // còn lại vẫn để server trả 405 của chính nó. Và chỉ những revision shim
+    // nhận dịch mới được nhận stream tổng hợp: với một revision ngoài danh
+    // sách - `2024-11-05` chờ sự kiện `endpoint`, hay một bản tương lai - stream
+    // im lặng này là một lời hứa suông, client treo thay vì nhận lời từ chối.
+    if (acceptsEventStream(accept) && isTranslatableRequest(req.headers)) {
       const auth = await authorizeSynthetic(req, target);
       if (auth.blocked !== undefined) return auth.blocked;
       return openLegacyStream(opts.heartbeatMs ?? 15_000, auth.upstream);
@@ -815,7 +1009,10 @@ export async function handleShimRequest(
 
   // Transport cũ đóng phiên bằng DELETE. Server stateless không có phiên để
   // đóng, nên câu trả lời đúng là "đã xong", không phải "verb không hợp lệ".
-  if (req.method === "DELETE") {
+  // Nhưng chỉ với revision shim nhận dịch: với các bản khác, shim đã hứa không
+  // đụng vào, mà 204 tổng hợp ở đây là báo đóng phiên thành công thay cho 405
+  // thật của endpoint stateless.
+  if (req.method === "DELETE" && isTranslatableRequest(req.headers)) {
     const auth = await authorizeSynthetic(req, target);
     if (auth.blocked !== undefined) return auth.blocked;
     const headers = new Headers();
@@ -850,8 +1047,26 @@ export async function handleShimRequest(
     return new Response(JSON.stringify(payload), { status, headers });
   };
 
+  // Thân nén: giải được thì giải, không giải được thì đi thẳng. Đọc byte nén
+  // như UTF-8 rồi báo lỗi parse là đổ lỗi sai cho client.
+  const encoding = (req.headers.get("Content-Encoding") ?? "").trim()
+    .toLowerCase();
+  let decoding: "gzip" | "deflate" | undefined;
+  if (encoding.length > 0 && encoding !== "identity") {
+    decoding = DECODABLE_ENCODINGS.get(encoding);
+    if (decoding === undefined) return await proxyPassThrough(req, target);
+  }
+
   const maxBodyBytes = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
-  const raw = await readBoundedText(req, maxBodyBytes);
+  let raw: string | null;
+  try {
+    raw = await readBoundedText(req, maxBodyBytes, decoding);
+  } catch {
+    return await localFailure(
+      400,
+      jsonRpcError(null, -32700, "Parse error: unreadable content encoding"),
+    );
+  }
   if (raw === null) {
     return await localFailure(
       413,
@@ -891,6 +1106,8 @@ export async function handleShimRequest(
   );
   const identity = readClientIdentity(req.headers, clientVersion);
 
+  // Vắng khoá nghĩa là không phân biệt được caller, và khi đó shim không nhớ
+  // và cũng không phát lại gì.
   const sessionKey = await capabilityKey(req);
 
   const replies: unknown[] = [];
@@ -899,6 +1116,12 @@ export async function handleShimRequest(
 
   for (const entry of messages) {
     if (!isRecord(entry) || typeof entry["method"] !== "string") {
+      // Câu trả lời này cũng do shim tự viết, nên nó cũng đi vòng qua cổng xác
+      // thực của server nếu không hỏi: một thân `[{}]` không token vẫn nhận
+      // HTTP 200 thay vì 401.
+      const auth = await authorize();
+      if (auth.blocked !== undefined) return auth.blocked;
+      upstreamHeaders ??= auth.upstream;
       replies.push(jsonRpcError(
         isRecord(entry) ? entry["id"] : null,
         -32600,
@@ -918,11 +1141,20 @@ export async function handleShimRequest(
       const auth = await authorize();
       if (auth.blocked !== undefined) return auth.blocked;
       upstreamHeaders ??= auth.upstream;
-      replies.push({ jsonrpc: "2.0", id, result: {} });
+      // Hai method này không bao giờ tới bộ kiểm của server, nên shim phải tự
+      // kiểm. Không kiểm thì một phong bì sai - thiếu `jsonrpc`, `id` là object,
+      // `level` không hợp lệ - vẫn nhận `result` rỗng như một lời gọi đúng.
+      const invalid = validateLocalRequest(message);
+      replies.push(
+        invalid ?? { jsonrpc: "2.0", id, result: {} },
+      );
       continue;
     }
 
-    if (message.method === "initialize" && isRecord(message.params)) {
+    if (
+      sessionKey !== undefined && message.method === "initialize" &&
+      isRecord(message.params)
+    ) {
       rememberCapabilities(sessionKey, message.params["capabilities"]);
     }
 
@@ -932,7 +1164,7 @@ export async function handleShimRequest(
       target,
       identity,
       clientVersion,
-      CAPABILITY_CACHE.get(sessionKey),
+      sessionKey === undefined ? undefined : CAPABILITY_CACHE.get(sessionKey),
     );
     upstreamHeaders = outcome.response.headers;
 
