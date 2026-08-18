@@ -1966,3 +1966,165 @@ Deno.test("client tu choi SSE thi luot goi upstream cung khong xin SSE", async (
     await upstream.close();
   }
 });
+
+Deno.test("mot entry khai hai revision khac nhau bi tu choi", async () => {
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      legacyPost({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          _meta: { [META_PROTOCOL]: "2025-03-26" },
+        },
+      }),
+      { upstream: upstream.url },
+    );
+
+    // Lời khai tự mâu thuẫn nằm gọn trong một entry, nên phép so chỉ đọc chỗ
+    // khai đầu tiên sẽ thấy đúng một revision và cho request đi tiếp: server
+    // nhận `2026-07-28` ở cả hai chỗ và cuộc bắt tay sai vẫn thành công.
+    assertEquals(res.status, 400);
+    const body = await res.json() as Record<string, unknown>;
+    assertEquals((body["error"] as Record<string, unknown>)["code"], -32600);
+    // Lượt duy nhất chạm upstream là phép dò quyền của chính shim; bản thân
+    // `initialize` sai thì không được chuyển tiếp.
+    assertEquals(
+      upstream.captured.filter((entry) =>
+        (entry.body as Record<string, unknown>)?.["method"] === "initialize"
+      ).length,
+      0,
+    );
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("202 cua notification cung echo revision client khai", async () => {
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "Authorization": "Bearer test-token",
+          "MCP-Protocol-Version": "2025-06-18",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "notifications/initialized",
+        }),
+      }),
+      { upstream: upstream.url },
+    );
+
+    assertEquals(res.status, 202);
+    assertEquals(res.headers.get("MCP-Protocol-Version"), "2025-06-18");
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("revision thoa thuan o initialize song qua cac luot khong header", async () => {
+  clearCapabilityCache();
+  const upstream = await startUpstream();
+  const headers = {
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    // 2025-03-26 ra đời trước `MCP-Protocol-Version`, nên client này khai
+    // revision đúng một lần rồi im lặng mãi mãi. Khoá phiên là thứ duy nhất
+    // nối hai lượt gọi lại với nhau.
+    "Mcp-Session-Id": "sess-2025-03-26",
+    "Authorization": "Bearer test-token",
+  };
+  try {
+    const init = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: { protocolVersion: "2025-03-26" },
+        }),
+      }),
+      { upstream: upstream.url },
+    );
+    assertEquals(init.headers.get("MCP-Protocol-Version"), "2025-03-26");
+    await init.body?.cancel();
+
+    const next = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
+      }),
+      { upstream: upstream.url },
+    );
+
+    // Không nhớ thì lượt này rơi về bản mặc định 2025-11-25, tức response khai
+    // một revision client chưa từng xin.
+    assertEquals(next.headers.get("MCP-Protocol-Version"), "2025-03-26");
+    const meta = (upstream.captured[1].body as Record<string, unknown>)[
+      "params"
+    ] as Record<string, unknown>;
+    assertEquals(
+      upstream.captured[1].headers["mcp-protocol-version"],
+      "2026-07-28",
+    );
+    assertExists(meta["_meta"]);
+    await next.body?.cancel();
+  } finally {
+    clearCapabilityCache();
+    await upstream.close();
+  }
+});
+
+Deno.test("revision cua phien khong de len loi khai cua luot sau", async () => {
+  clearCapabilityCache();
+  const upstream = await startUpstream();
+  const base = {
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Mcp-Session-Id": "sess-doi-ban",
+    "Authorization": "Bearer test-token",
+  };
+  try {
+    const init = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers: base,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: { protocolVersion: "2025-03-26" },
+        }),
+      }),
+      { upstream: upstream.url },
+    );
+    await init.body?.cancel();
+
+    // Lời khai của chính request luôn thắng bộ nhớ: nhớ sai còn tệ hơn không
+    // nhớ, và một client đổi bản giữa chừng vẫn phải được trả lời đúng bản nó
+    // vừa xin.
+    const next = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers: { ...base, "MCP-Protocol-Version": "2025-11-25" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
+      }),
+      { upstream: upstream.url },
+    );
+    assertEquals(next.headers.get("MCP-Protocol-Version"), "2025-11-25");
+    await next.body?.cancel();
+  } finally {
+    clearCapabilityCache();
+    await upstream.close();
+  }
+});

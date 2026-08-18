@@ -432,22 +432,35 @@ export function readDeclaredRevisions(
   for (const entry of entries) {
     const params = entry?.params;
     if (!isRecord(params)) continue;
-    let declared: unknown = params["protocolVersion"];
-    if (typeof declared !== "string") {
-      const meta = params["_meta"];
-      declared = isRecord(meta) ? meta[META_PROTOCOL_VERSION] : undefined;
+    const meta = params["_meta"];
+    // Đọc cả hai chỗ khai trong cùng một entry chứ không dừng ở chỗ đầu tiên:
+    // một `initialize` khai `2025-06-18` ở thân và `2025-03-26` ở `_meta` là
+    // một lời khai tự mâu thuẫn, mà nếu chỉ đọc thân thì nó lọt qua phép so
+    // bên dưới và `rewriteOutbound` ghi đè cả hai bằng bản 2026.
+    for (
+      const value of [
+        params["protocolVersion"],
+        isRecord(meta) ? meta[META_PROTOCOL_VERSION] : undefined,
+      ]
+    ) {
+      if (typeof value !== "string" || value.length === 0) continue;
+      if (!found.includes(value)) found.push(value);
     }
-    if (typeof declared !== "string" || declared.length === 0) continue;
-    if (!found.includes(declared)) found.push(declared);
   }
   return found;
 }
 
-/** Revision mà client cũ tự nhận, để trả lại đúng thứ nó chờ đợi. */
-export function readClientProtocolVersion(
+/**
+ * Revision mà request này thật sự khai, hoặc `undefined` nếu nó không khai gì.
+ *
+ * Tách khỏi {@link readClientProtocolVersion} vì hai câu hỏi khác nhau: "client
+ * xin bản nào" và "shim đoán bản nào". Chỗ gọi cần phân biệt được lời khai thật
+ * với bản mặc định thì mới biết có gì đáng nhớ cho lượt sau.
+ */
+export function readDeclaredProtocolVersion(
   headers: Headers,
   message: JsonRpcMessage | JsonRpcMessage[] | undefined,
-): string {
+): string | undefined {
   const fromHeader = headers.get("MCP-Protocol-Version");
   if (typeof fromHeader === "string" && fromHeader.length > 0) {
     return fromHeader;
@@ -455,7 +468,16 @@ export function readClientProtocolVersion(
   // Message không phải `initialize` khai revision ở `_meta`, và đó là chỗ
   // {@link isTranslatableBody} đã chấp nhận, nên bỏ qua nó ở đây là dịch đúng
   // nhưng trả lời sai: response echo một revision client không hề xin.
-  return readDeclaredRevisions(message)[0] ?? LEGACY_FALLBACK_VERSION;
+  return readDeclaredRevisions(message)[0];
+}
+
+/** Revision mà client cũ tự nhận, để trả lại đúng thứ nó chờ đợi. */
+export function readClientProtocolVersion(
+  headers: Headers,
+  message: JsonRpcMessage | JsonRpcMessage[] | undefined,
+): string {
+  return readDeclaredProtocolVersion(headers, message) ??
+    LEGACY_FALLBACK_VERSION;
 }
 
 /** Suy ra danh tính client từ header Anthropic gửi kèm, để log server có nghĩa. */
@@ -541,9 +563,32 @@ function rememberCapabilities(key: string, capabilities: unknown): void {
   }
 }
 
+/**
+ * Revision mà mỗi client đã thoả thuận ở `initialize`.
+ *
+ * `MCP-Protocol-Version` chỉ có từ bản 2025-06-18, nên một client 2025-03-26
+ * khai bản của nó đúng một lần - trong thân `initialize` - rồi im lặng mãi mãi.
+ * Không nhớ thì mọi lượt sau của nó rơi về {@link LEGACY_FALLBACK_VERSION}, và
+ * response echo một revision nó chưa từng xin.
+ */
+const REVISION_CACHE = new Map<string, string>();
+
+function rememberRevision(key: string, version: string): void {
+  // Cùng phép đuổi với CAPABILITY_CACHE: đặt lại để bản ghi vừa dùng về cuối
+  // hàng, rồi bỏ bản ghi lâu không đụng tới nhất.
+  REVISION_CACHE.delete(key);
+  REVISION_CACHE.set(key, version);
+  while (REVISION_CACHE.size > CAPABILITY_CACHE_MAX) {
+    const oldest = REVISION_CACHE.keys().next().value;
+    if (oldest === undefined) break;
+    REVISION_CACHE.delete(oldest);
+  }
+}
+
 /** Xoá bộ nhớ capabilities. Dành cho test, để hai bài không dẫm lên nhau. */
 export function clearCapabilityCache(): void {
   CAPABILITY_CACHE.clear();
+  REVISION_CACHE.clear();
 }
 
 export interface OutboundMessage {
@@ -1343,15 +1388,19 @@ export async function handleShimRequest(
   }
 
   const messages = Array.isArray(parsed) ? parsed : [parsed];
-  const clientVersion = readClientProtocolVersion(
-    req.headers,
-    parsed as JsonRpcMessage | JsonRpcMessage[],
-  );
-  const identity = readClientIdentity(req.headers, clientVersion);
 
   // Vắng khoá nghĩa là không phân biệt được caller, và khi đó shim không nhớ
   // và cũng không phát lại gì.
   const sessionKey = await capabilityKey(req);
+
+  const declaredVersion = readDeclaredProtocolVersion(
+    req.headers,
+    parsed as JsonRpcMessage | JsonRpcMessage[],
+  );
+  const clientVersion = declaredVersion ??
+    (sessionKey === undefined ? undefined : REVISION_CACHE.get(sessionKey)) ??
+    LEGACY_FALLBACK_VERSION;
+  const identity = readClientIdentity(req.headers, clientVersion);
 
   const replies: unknown[] = [];
   let status = 200;
@@ -1421,6 +1470,15 @@ export async function handleShimRequest(
       isRecord(message.params)
     ) {
       rememberCapabilities(sessionKey, message.params["capabilities"]);
+      // Thoả thuận revision xảy ra đúng một lần, ở đây. Chỉ nhớ bản đời cũ đã
+      // biết: một lời khai `2026-07-28` được phát lại cho lượt sau là dựng
+      // ngược chính thứ shim sinh ra để dịch.
+      if (
+        declaredVersion !== undefined &&
+        KNOWN_LEGACY_VERSIONS.has(declaredVersion)
+      ) {
+        rememberRevision(sessionKey, declaredVersion);
+      }
     }
 
     const outcome = await forwardOne(
@@ -1454,6 +1512,10 @@ export async function handleShimRequest(
 
   if (replies.length === 0) {
     const accepted = new Headers();
+    // 202 vẫn là một câu trả lời, nên nó cũng phải mang revision như đường
+    // JSON bên dưới: client chặt chẽ đọc thiếu header này thì bỏ luôn một
+    // response vốn đã thành công.
+    accepted.set("MCP-Protocol-Version", clientVersion);
     copyCorsHeaders(upstreamHeaders, accepted);
     return new Response(null, { status: 202, headers: accepted });
   }
