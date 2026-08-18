@@ -591,7 +591,13 @@ function bridgeableCapabilities(
 function rememberCapabilities(key: string, capabilities: unknown): void {
   if (!isRecord(capabilities)) return;
   const bridged = bridgeableCapabilities(capabilities);
-  if (JSON.stringify(bridged).length > CAPABILITY_MAX_BYTES) return;
+  if (JSON.stringify(bridged).length > CAPABILITY_MAX_BYTES) {
+    // Khoá này giờ thuộc về client vừa `initialize`, nên giữ lại bản ghi cũ là
+    // dịch mọi lượt sau của nó bằng capabilities của một phiên khác - đúng thứ
+    // mà việc từ chối lời khai quá khổ định tránh. Quên hẳn đúng hơn nhớ nhầm.
+    CAPABILITY_CACHE.delete(key);
+    return;
+  }
   // Xoá rồi đặt lại để bản ghi vừa dùng về cuối hàng, nên phép đuổi bên dưới
   // bỏ đúng bản ghi lâu không đụng tới nhất.
   CAPABILITY_CACHE.delete(key);
@@ -1151,7 +1157,21 @@ async function readBoundedText(
     if (Number.isFinite(size) && size > limit) return null;
   }
 
-  const source = req.body;
+  return await readBoundedStream(req.body, limit, encoding);
+}
+
+/**
+ * Đọc một luồng thành văn bản, hoặc trả `null` khi nó vượt `limit` byte.
+ *
+ * Tách khỏi {@link readBoundedText} vì phép thử quyền cũng phải đọc một thân
+ * có trần: thân đó do upstream gửi, nhưng "do upstream gửi" không phải một lời
+ * hứa về kích thước.
+ */
+async function readBoundedStream(
+  source: ReadableStream<Uint8Array<ArrayBuffer>> | null,
+  limit: number,
+  encoding?: "gzip" | "deflate",
+): Promise<string | null> {
   if (source === null) return "";
   const body = encoding === undefined
     ? source
@@ -1243,13 +1263,55 @@ async function authorizeSynthetic(
   // một trang login, 400 của một tầng chặn, 405 của một endpoint sai - và
   // đường đi sau đó là shim tự tổng hợp `ping`, GET stream hay DELETE thành
   // công cho một caller chưa từng qua xác thực.
-  const passed = (probe.status >= 200 && probe.status < 300) ||
-    probe.status === 404;
-  if (!passed) {
-    return { blocked: probe, upstream: probe.headers };
+  if (probe.status >= 200 && probe.status < 300) {
+    await probe.body?.cancel();
+    return { upstream: probe.headers };
   }
-  await probe.body?.cancel();
-  return { upstream: probe.headers };
+  if (probe.status === 404) {
+    // 404 một mình không nói được gì: một tầng xác thực chọn cách giấu request
+    // chưa đăng nhập cũng trả đúng mã đó, và một route đặt sai cũng vậy. Chỉ
+    // thân mới phân biệt được, vì cái shim chờ là câu trả lời method-not-found
+    // của `ping`: `-32601` kèm HTTP 404 là hình dạng mà server 2026-07-28 trả
+    // cho một method nó không có.
+    const raw = await readBoundedStream(probe.body, PROBE_BODY_MAX_BYTES);
+    if (raw !== null && isMethodNotFound(raw)) {
+      return { upstream: probe.headers };
+    }
+    // Thân đã bị đọc mất nên response gốc không gửi lại được; dựng lại nó từ
+    // bản vừa đọc, bỏ những header nói về khung tin của thân cũ.
+    const headers = new Headers(probe.headers);
+    for (const name of BODY_OWNED_HEADERS) headers.delete(name);
+    return {
+      blocked: new Response(raw ?? "", { status: 404, headers }),
+      upstream: probe.headers,
+    };
+  }
+  return { blocked: probe, upstream: probe.headers };
+}
+
+/**
+ * Trần đọc thân của phép thử quyền, tính bằng byte.
+ *
+ * Câu trả lời chờ đợi là một lỗi JSON-RPC vài trăm byte. Thân lớn hơn thế
+ * nhiều nghĩa là thứ khác - một trang login, một trang lỗi HTML - và thứ khác
+ * thì không cần đọc hết mới biết là không đạt.
+ */
+const PROBE_BODY_MAX_BYTES = 64 * 1024;
+
+/** Thân của phép thử có đúng là lỗi method-not-found (`-32601`) không. */
+function isMethodNotFound(raw: string): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return false;
+  }
+  const entries = Array.isArray(parsed) ? parsed : [parsed];
+  return entries.some((entry) => {
+    if (!isRecord(entry)) return false;
+    const error = entry["error"];
+    return isRecord(error) && error["code"] === -32601;
+  });
 }
 
 /**
@@ -1424,6 +1486,14 @@ export async function handleShimRequest(
   if (encoding.length > 0 && encoding !== "identity") {
     decoding = DECODABLE_ENCODINGS.get(encoding);
     if (decoding === undefined) return await proxyPassThrough(req, target);
+    // Thân nén là chỗ duy nhất mà chi phí của shim không tỉ lệ với chi phí của
+    // caller: vài KiB nén phồng ra tới trần dưới đây, nên một caller chưa qua
+    // cổng ép được tiến trình cấp phát trọn trần mà gần như không tốn gì. Thân
+    // phẳng không có phần khuếch đại đó - muốn shim ôm 32 MiB thì phải gửi đủ
+    // 32 MiB - nên chỉ nhánh nén mới hỏi quyền trước, và lượt gọi thường vẫn
+    // giữ đúng một lần chạm upstream.
+    const auth = await authorize();
+    if (auth.blocked !== undefined) return auth.blocked;
   }
 
   const maxBodyBytes = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
@@ -1533,7 +1603,8 @@ export async function handleShimRequest(
   // Phiên chỉ được trao đi khi đã có gì đó để nó trỏ tới.
   let issuedSession: string | undefined;
 
-  for (const entry of messages) {
+  for (let index = 0; index < messages.length; index += 1) {
+    const entry = messages[index];
     if (!isRecord(entry) || typeof entry["method"] !== "string") {
       // Câu trả lời này cũng do shim tự viết, nên nó cũng đi vòng qua cổng xác
       // thực của server nếu không hỏi: một thân `[{}]` không token vẫn nhận
@@ -1601,7 +1672,14 @@ export async function handleShimRequest(
       sessionKey === undefined
         ? undefined
         : touch(CAPABILITY_CACHE, sessionKey),
-      !Array.isArray(parsed),
+      // `initialize` phải về dạng JSON. Upstream được quyền trả stream SSE cho
+      // một POST đã dịch, mà stream thì shim chuyển tiếp nguyên trạng: nó
+      // không biết cuộc thoả thuận có thành hay không, nên không nhớ
+      // capabilities, không nhớ revision và không cấp phiên. Client 2025-03-26
+      // sau đó rơi về LEGACY_FALLBACK_VERSION dù vừa `initialize` thành công.
+      // Đây là lời gọi duy nhất mà kết quả phải quan sát được, và nó cũng
+      // không cần chở gì theo dòng thời gian.
+      !Array.isArray(parsed) && message.method !== "initialize",
     );
     upstreamHeaders = outcome.response.headers;
 
@@ -1645,7 +1723,25 @@ export async function handleShimRequest(
     // đúng câu đó. Đi tiếp không đổi được kết quả mà biến một request bên
     // ngoài thành N lượt gọi lên tầng xác thực: một thân vừa đủ dưới trần
     // kích thước cũng chứa được hàng nghìn message nhỏ.
-    if (AUTH_STATUSES.has(outcome.status)) break;
+    if (AUTH_STATUSES.has(outcome.status)) {
+      // Ngừng gọi thì đúng, nhưng im lặng bỏ phần còn lại thì sai: client gửi
+      // N id và chỉ nhận về vài id, nên nó không biết entry nào đã chạy. Lần
+      // thử lại của nó lặp lại đúng những thay đổi đã xảy ra, và 429 cũng
+      // không hứa rằng các entry chưa gửi sẽ nhận cùng câu trả lời đó. Mỗi
+      // entry còn lại phải có một kết quả nói rõ nó chưa được thực thi.
+      for (const skipped of messages.slice(index + 1)) {
+        if (!isRecord(skipped)) continue;
+        const skippedId = skipped["id"];
+        if (skippedId === undefined) continue;
+        replies.push(jsonRpcError(
+          normalizeId(skippedId),
+          -32000,
+          `Not executed: an earlier entry in this batch was answered with ` +
+            `HTTP ${outcome.status}`,
+        ));
+      }
+      break;
+    }
   }
 
   if (replies.length === 0) {

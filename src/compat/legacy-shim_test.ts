@@ -4,7 +4,7 @@
  * `Mcp-Name` phải soi gương trường định danh), nên một bài test đạt nghĩa là
  * request đó cũng đi lọt server thật, chứ không chỉ lọt một bản giả dễ tính.
  */
-import { assertEquals, assertExists } from "@std/assert";
+import { assert, assertEquals, assertExists } from "@std/assert";
 import {
   acceptsEventStream,
   clearCapabilityCache,
@@ -918,8 +918,21 @@ Deno.test("batch dung lai ngay khi cham 401, khong khuech dai", async () => {
     assertEquals(upstream.captured.length, 1);
     assertExists(res.headers.get("WWW-Authenticate"));
     const payload = await res.json();
-    assertEquals(payload.length, 1);
+    // Nhưng client vẫn phải có kết quả cho đủ bốn id nó gửi: thiếu ba câu trả
+    // lời thì nó không biết entry nào đã chạy, và lần thử lại lặp lại đúng
+    // những thay đổi đã xảy ra.
+    assertEquals(payload.length, 4);
     assertEquals(payload[0].error.code, -31401);
+    // Ba id chưa chạy được gọi tên đúng như client đã gửi (bản 401 của
+    // upstream giả không echo id, nên entry đầu không nằm trong phép so này).
+    assertEquals(
+      payload.slice(1).map((entry: { id: number }) => entry.id),
+      [21, 22, 23],
+    );
+    for (const entry of payload.slice(1)) {
+      assertEquals(entry.error.code, -32000);
+      assert(String(entry.error.message).includes("Not executed"));
+    }
   } finally {
     await upstream.close();
   }
@@ -1090,9 +1103,15 @@ Deno.test("407 giu Proxy-Authenticate khi dung lai response", async () => {
 });
 
 Deno.test("loi 413 do shim sinh ra van mang CORS cua upstream", async () => {
+  // Phép thử quyền là một `ping`, và server 2026-07-28 trả nó bằng 404 kèm
+  // `-32601`; chính thân đó mới nói rằng caller đã qua cổng.
   const upstream = await startUpstream((req) =>
     req.method === "POST"
-      ? new Response(null, {
+      ? Response.json({
+        jsonrpc: "2.0",
+        id: "shim-authorization-probe",
+        error: { code: -32601, message: "Method not found: ping" },
+      }, {
         status: 404,
         headers: { "Access-Control-Allow-Origin": "https://claude.ai" },
       })
@@ -1280,13 +1299,21 @@ Deno.test("than gzip duoc giai nen truoc khi dich", async () => {
     );
 
     assertEquals(res.status, 200);
-    assertEquals(upstream.captured.length, 1);
+    // Hai lượt: phép thử quyền chạy TRƯỚC khi giải nén, rồi mới tới lời gọi
+    // thật. Thân nén là chỗ duy nhất mà vài KiB của caller phồng thành 32 MiB
+    // trong bộ nhớ shim, nên nó không được giải nén trước khi biết caller là ai.
+    assertEquals(upstream.captured.length, 2);
     assertEquals(
       (upstream.captured[0].body as Record<string, unknown>)["method"],
+      "ping",
+    );
+    const forwarded = upstream.captured[1];
+    assertEquals(
+      (forwarded.body as Record<string, unknown>)["method"],
       "tools/call",
     );
     // Thân shim gửi đi là JSON phẳng, nên không được mang theo lời khai nén cũ.
-    assertEquals(upstream.captured[0].headers["content-encoding"], undefined);
+    assertEquals(forwarded.headers["content-encoding"], undefined);
     await res.body?.cancel();
   } finally {
     await upstream.close();
@@ -2422,6 +2449,237 @@ Deno.test("capabilities qua kho khong duoc giu lai", async () => {
     // riêng: thứ vượt trần byte không phải khai báo mà là tải trọng, nên nó
     // không được giữ - kể cả khi giữ nó sẽ tiện hơn cho lượt sau.
     const params = (upstream.captured[1].body as Record<string, unknown>)[
+      "params"
+    ] as Record<string, unknown>;
+    const meta = params["_meta"] as Record<string, unknown>;
+    assertEquals(meta[META_CAPABILITIES], {});
+  } finally {
+    clearCapabilityCache();
+    await upstream.close();
+  }
+});
+
+Deno.test("404 khong phai method-not-found thi khong duoc coi la da qua cong", async () => {
+  // Một tầng xác thực có thể chọn cách giấu request chưa đăng nhập sau một
+  // 404, và một route đặt sai cũng trả đúng mã đó. Nhận bừa 404 là "đã qua
+  // cổng" thì shim tự tổng hợp `ping`, GET stream và DELETE thành công cho một
+  // caller chưa từng xưng danh.
+  const upstream = await startUpstream((req) =>
+    req.method === "POST"
+      ? new Response("<html>Not Found</html>", {
+        status: 404,
+        headers: { "Content-Type": "text/html" },
+      })
+      : undefined
+  );
+  try {
+    const res = await handleShimRequest(
+      legacyPost({ jsonrpc: "2.0", id: 60, method: "ping" }),
+      { upstream: upstream.url },
+    );
+
+    assertEquals(res.status, 404);
+    const body = await res.text();
+    assert(!body.includes('"result"'));
+    // Và đúng một lượt hỏi: 404 bị chặn ngay, không đi tiếp.
+    assertEquals(upstream.captured.length, 1);
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("initialize luon di duong JSON, ke ca khi client nhan SSE", async () => {
+  clearCapabilityCache();
+  // Upstream được quyền trả stream cho một POST đã dịch. Nếu `initialize` đi
+  // đường đó thì shim không đọc được kết quả thoả thuận: không nhớ revision,
+  // không nhớ capabilities, không cấp phiên - và client 2025-03-26 rơi về bản
+  // mặc định ở ngay lượt sau.
+  const upstream = await startUpstream((req) => {
+    if (req.method !== "POST") return undefined;
+    if (!(req.headers.get("Accept") ?? "").includes("text/event-stream")) {
+      return undefined;
+    }
+    return new Response(": streamed\n\n", {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    });
+  });
+  try {
+    const init = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 61,
+          method: "initialize",
+          params: { protocolVersion: "2025-03-26", capabilities: {} },
+        }),
+      }),
+      { upstream: upstream.url },
+    );
+
+    assertEquals(init.headers.get("Content-Type"), "application/json");
+    assertEquals(upstream.captured[0].headers["accept"], "application/json");
+    const session = init.headers.get("Mcp-Session-Id");
+    assertExists(session);
+    await init.body?.cancel();
+
+    // Và trạng thái vừa thoả thuận thật sự sống: lượt sau không header vẫn
+    // được trả lời bằng đúng revision client đã xin.
+    const next = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "Mcp-Session-Id": session ?? "",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 62, method: "tools/list" }),
+      }),
+      { upstream: upstream.url },
+    );
+    assertEquals(next.headers.get("MCP-Protocol-Version"), "2025-03-26");
+    await next.body?.cancel();
+  } finally {
+    clearCapabilityCache();
+    await upstream.close();
+  }
+});
+
+Deno.test("429 giua batch khong xoa dau vet cua nhung entry con lai", async () => {
+  // Entry đầu đã chạy và đã đổi dữ liệu. Nếu ba entry sau biến mất không dấu
+  // vết, client chỉ thấy một 429 cho cả batch và thử lại nguyên batch - tức là
+  // lặp lại đúng thay đổi vừa xảy ra.
+  let calls = 0;
+  const upstream = await startUpstream((req, body) => {
+    if (req.method !== "POST") return undefined;
+    calls += 1;
+    if (calls < 2) return undefined;
+    return Response.json({
+      jsonrpc: "2.0",
+      id: (body as Record<string, unknown>)["id"],
+      error: { code: -32000, message: "Rate limit exceeded" },
+    }, { status: 429, headers: { "Retry-After": "30" } });
+  });
+  try {
+    const res = await handleShimRequest(
+      legacyPost([
+        { jsonrpc: "2.0", id: 70, method: "tools/call", params: { name: "a" } },
+        { jsonrpc: "2.0", id: 71, method: "tools/call", params: { name: "b" } },
+        { jsonrpc: "2.0", id: 72, method: "tools/call", params: { name: "c" } },
+      ]),
+      { upstream: upstream.url },
+    );
+
+    assertEquals(res.status, 429);
+    assertEquals(res.headers.get("Retry-After"), "30");
+    const payload = await res.json();
+    assertEquals(payload.length, 3);
+    assertEquals(payload[0].id, 70);
+    assertEquals(payload[1].id, 71);
+    assertEquals(payload[1].error.code, -32000);
+    assertEquals(payload[2].id, 72);
+    assert(String(payload[2].error.message).includes("Not executed"));
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("than nen phai qua cong quyen truoc khi duoc giai nen", async () => {
+  // Vài KiB nén phồng ra tới trần 32 MiB, nên giải nén trước khi biết caller là
+  // ai là để một người chưa xưng danh ép shim cấp phát trọn trần gần như miễn
+  // phí.
+  const upstream = await startUpstream((req) =>
+    req.method === "POST" ? unauthorized() : undefined
+  );
+  try {
+    const plain = new TextEncoder().encode(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 80,
+      method: "tools/call",
+      params: { name: "erpnext_whoami" },
+    }));
+    const gzipped = new Response(
+      new Blob([plain]).stream().pipeThrough(new CompressionStream("gzip")),
+    );
+
+    const res = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Encoding": "gzip",
+          "Accept": "application/json",
+        },
+        body: await gzipped.arrayBuffer(),
+      }),
+      { upstream: upstream.url },
+    );
+
+    assertEquals(res.status, 401);
+    // Đúng một lượt, và lượt đó là phép thử quyền: lời gọi thật không bao giờ
+    // được dựng, nên thân nén cũng không bao giờ được phồng ra.
+    assertEquals(upstream.captured.length, 1);
+    assertEquals(
+      (upstream.captured[0].body as Record<string, unknown>)["method"],
+      "ping",
+    );
+    await res.body?.cancel();
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("khai bao qua kho xoa luon capabilities cu cua cung khoa", async () => {
+  clearCapabilityCache();
+  const upstream = await startUpstream();
+  const headers = {
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Authorization": "Bearer test-token-replaced",
+  };
+  const initialize = (id: number, capabilities: Record<string, unknown>) =>
+    new Request("https://erp.example/mcp", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25", capabilities },
+      }),
+    });
+  try {
+    const first = await handleShimRequest(
+      initialize(1, { elicitation: {} }),
+      { upstream: upstream.url },
+    );
+    await first.body?.cancel();
+
+    // Client mới trên cùng chứng danh khai một bộ capabilities quá khổ. Bộ đó
+    // không được giữ - nhưng giữ lại bộ cũ cũng sai y như vậy: lượt sau là của
+    // client mới, mà `elicitation` thì nó chưa bao giờ khai.
+    const second = await handleShimRequest(
+      initialize(2, { experimental: { blob: "x".repeat(64 * 1024) } }),
+      { upstream: upstream.url },
+    );
+    await second.body?.cancel();
+
+    const next = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list" }),
+      }),
+      { upstream: upstream.url },
+    );
+    await next.body?.cancel();
+
+    const params = (upstream.captured.at(-1)?.body as Record<string, unknown>)[
       "params"
     ] as Record<string, unknown>;
     const meta = params["_meta"] as Record<string, unknown>;

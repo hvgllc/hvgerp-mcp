@@ -84,6 +84,47 @@ const SPECIFIER_CONTEXT = /(?:\bfrom|\bimport)\s*\(?\s*$/;
 const REGEX_POSITION =
   /(?:[=(,:[!&|?{};+\-*%~^<>]|\b(?:return|typeof|case|in|of|do|else|yield|await))\s*$/;
 
+/**
+ * Từ khoá mở đầu một điều kiện có ngoặc.
+ *
+ * Sau dấu `)` đóng điều kiện là vị trí câu lệnh, nên `/` ở đó mở một regex chứ
+ * không phải phép chia.
+ */
+const CONTROL_HEAD = /\b(?:if|while|for|switch|catch|with)\s*$/;
+
+/** Số ký tự quét ngược tối đa khi dò điều kiện điều khiển. */
+const CONTROL_LOOKBEHIND = 4096;
+
+/**
+ * Phần đã phát có kết thúc bằng điều kiện của một lệnh điều khiển không.
+ *
+ * `if (ready) /["']/.test(value); import("node:fs");` là mã hợp lệ, và cả ba
+ * mệnh đề nằm trên một dòng. Không nhận ra regex ở vị trí này thì dấu nháy
+ * trong lớp ký tự được đọc thành dấu mở chuỗi, nuốt luôn `import(` đứng sau nó
+ * ngay trong dòng đó - tức là chặn thiệt hại trong một dòng vẫn chưa đủ, phải
+ * đọc đúng regex. Chỉ nhận diện theo cấu trúc: `)` phải khớp với một `(` mà
+ * ngay trước nó là một từ khoá điều khiển, nên `(a + b) / 2` vẫn là phép chia.
+ */
+function closesControlCondition(out: string): boolean {
+  let index = out.length - 1;
+  while (index >= 0 && /\s/.test(out[index])) index -= 1;
+  if (index < 0 || out[index] !== ")") return false;
+
+  const floor = Math.max(0, index - CONTROL_LOOKBEHIND);
+  let depth = 0;
+  while (index >= floor) {
+    const char = out[index];
+    if (char === ")") depth += 1;
+    else if (char === "(") {
+      depth -= 1;
+      if (depth === 0) break;
+    }
+    index -= 1;
+  }
+  if (index < floor || depth !== 0) return false;
+  return CONTROL_HEAD.test(out.slice(Math.max(0, index - 32), index));
+}
+
 /** Từ khoá mở đầu một khối template: `${`. */
 type ScanFrame =
   | { kind: "template"; keep: boolean }
@@ -218,7 +259,10 @@ function stripNonCode(source: string): string {
       index += 2;
       continue;
     }
-    if (char === "/" && REGEX_POSITION.test(out.slice(-32))) {
+    if (
+      char === "/" &&
+      (REGEX_POSITION.test(out.slice(-32)) || closesControlCondition(out))
+    ) {
       const closed = skipRegexLiteral(source, index);
       if (closed > 0) {
         // Nội dung regex không bao giờ là một phụ thuộc, nên chỉ cần một chỗ
@@ -541,21 +585,38 @@ Deno.test("dinh danh module viet bang template van la mot phu thuoc", () => {
   assert(matches(`import { readFile } from ${templateSpecifier};`));
 });
 
-Deno.test("dau nhay le khong nuot phan con lai cua tep", () => {
+Deno.test("regex sau dieu kien dieu khien duoc doc dung", () => {
   const matches = (source: string) =>
     NODE_IMPORTS.some((pattern) => pattern.test(stripNonCode(source)));
 
-  // `/` đứng sau `)` vẫn mở được một regex, mà phân biệt nó với phép chia thì
-  // cần đúng một bộ phân tích cú pháp. Nên chặn thiệt hại thay vì đoán: dấu
-  // nháy không đóng trong cùng dòng thì không phải dấu mở chuỗi, và một import
-  // ở dòng sau vẫn bị nhìn thấy.
+  // `/` đứng sau `)` của một điều kiện là vị trí câu lệnh, nên nó mở một
+  // regex. Đọc nó thành phép chia thì dấu nháy trong lớp ký tự thành dấu mở
+  // chuỗi và nuốt luôn phần còn lại của dòng - kể cả một import thật nằm ngay
+  // sau đó, tức gate xanh trong khi phụ thuộc đã ở đó.
   assert(
-    matches(`if (ready) /["']/.test(value);\nawait import(${NODE_MODULE});`),
+    matches(`if (ready) /["']/.test(value); import(${NODE_MODULE});`),
   );
   assert(
     DENO_GLOBAL.test(
-      stripNonCode(`if (ready) /["']/.test(value);\nDeno.exit(1);`),
+      stripNonCode(`while (ready) /["']/.test(value); Deno.exit(1);`),
     ),
+  );
+
+  // Dòng sau cũng vậy, và đây là mức bảo vệ cũ: dấu nháy không đóng trong cùng
+  // dòng thì không phải dấu mở chuỗi.
+  assert(
+    matches(`if (ready) /["']/.test(value);\nawait import(${NODE_MODULE});`),
+  );
+
+  // Chiều ngược lại: `)` không đóng một điều kiện thì `/` sau nó vẫn là phép
+  // chia. Nhận nhầm ở đây là nuốt phần còn lại của một biểu thức số học.
+  assertEquals(
+    stripNonCode("const half = (a + b) / 2;"),
+    "const half = (a + b) / 2;",
+  );
+  assertEquals(
+    stripNonCode("const ratio = width(box) / height(box);"),
+    "const ratio = width(box) / height(box);",
   );
 
   // Và chuỗi bình thường vẫn phải được đọc là chuỗi.
