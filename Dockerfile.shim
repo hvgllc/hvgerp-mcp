@@ -1,0 +1,22 @@
+# Shim tương thích cho client MCP đời cũ (2025-03-26 .. 2025-11-25).
+#
+# Image riêng chứ không dùng chung image server: shim không import `@casys/mcp-server`
+# và không đụng tới ERPNext, nên nó không cần bundle Node, `ui-dist`, hay bất kỳ biến
+# môi trường bí mật nào. Giữ riêng để bề mặt của nó đúng bằng thứ nó làm: đọc JSON-RPC,
+# thêm header, chuyển tiếp.
+FROM denoland/deno:2.3.3
+
+WORKDIR /app
+
+# Chép đúng hai tệp mà shim cần. `deno cache` ở đây chỉ để type-check sớm và nạp sẵn
+# đồ thị module; shim không có dependency ngoài nên bước này không chạm mạng.
+COPY shim.ts ./shim.ts
+COPY src/compat/legacy-shim.ts ./src/compat/legacy-shim.ts
+RUN deno cache shim.ts
+
+USER deno
+EXPOSE 7654
+
+# Quyền tối thiểu: mở cổng, gọi upstream, đọc biến môi trường. Không đọc tệp, không chạy
+# tiến trình con.
+CMD ["run", "--allow-net", "--allow-env", "shim.ts"]

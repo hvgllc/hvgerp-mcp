@@ -115,7 +115,17 @@ happened in an earlier design and the header comment of the script says so.
 **All source code imports `from "./runtime.ts"` — never import Deno or Node APIs
 directly.** The two adapter files are the only exception, and
 `src/runtime-boundary_test.ts` enforces it: any other module importing a `node:`
-builtin fails the suite.
+builtin — or calling `Deno.*` — fails the suite. The gate covers `src/` plus the
+root entry points `mod.ts`, `server.ts` and `shim.ts`.
+
+`shim.ts` carries one narrow, gated exception: it may call `Deno.*` directly. It
+is a sidecar process, not library code — `Dockerfile.shim` copies exactly two
+files (`shim.ts` and `src/compat/legacy-shim.ts`) into a `denoland/deno` image,
+and the npm bundle does not ship it. Pulling the runtime port in to read two
+environment variables would add four files and an adapter selector to an image
+that will never run Node. The exception stops at the entry point: the shim's
+library half, `src/compat/legacy-shim.ts`, must stay platform-free (fetch,
+Request, Response, Headers, crypto only), and the gate asserts that separately.
 
 ### Tool architecture
 
@@ -383,9 +393,15 @@ Utility and UI-shared modules (e.g. `src/ui/shared/refresh_test.ts`,
 
 Two GitHub Actions workflows matter:
 
-1. `.github/workflows/test.yml` runs on pull requests and pushes to `main`:
-   `deno fmt --check`, `deno lint`, `deno task check`, UI build, and
-   `deno test --allow-all src/`.
+1. `.github/workflows/test.yml` runs `deno fmt --check`, `deno lint`,
+   `deno task check`, the UI build, and `deno test --allow-all src/`. It is
+   **manual only** (`workflow_dispatch`): start it with
+   `gh workflow run Test --ref <branch>`. Automatic `push`/`pull_request`
+   triggers were removed on purpose - a review loop on one branch burned more
+   Actions minutes than the gate was worth, and the same commands run locally.
+   Run them locally before pushing, and dispatch the hosted run when you want
+   the full suite confirmed (locally, `deno test src/` needs jsr.io access for
+   `@casys/mcp-server`).
 2. `.github/workflows/publish.yml` is reusable/manual:
    - **publish-jsr**: builds UI → `npx jsr publish --allow-dirty`
    - **publish-npm**: builds UI → `scripts/build-node.sh` →

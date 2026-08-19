@@ -1,16 +1,23 @@
 name: Test
 
+# Manual only. Every push to a pull request used to start a full run, and the
+# review loop on a single branch spent more minutes than the gate was worth.
+# The same checks run locally (`deno fmt --check`, `deno lint`, `deno task
+# check`, `deno test --allow-all src/`), so the hosted run is kept as an
+# on-demand confirmation: `gh workflow run Test --ref <branch>`.
+#
+# This repository is also a fork, and GitHub suppresses `push`/`pull_request`
+# triggers on a fork until the owner acknowledges workflows in the Actions tab.
+# `workflow_dispatch` is exempt from that suppression, so it is the trigger
+# that works here without that one-time click.
 on:
-  pull_request:
-  push:
-    branches: [main]
-  # This repository is a fork, and GitHub suppresses `push`/`pull_request`
-  # triggers on a fork until the owner acknowledges workflows in the Actions
-  # tab. `workflow_dispatch` is exempt from that suppression, so it is the only
-  # way to get a Deno test run here without that one-time click - and the local
-  # route is closed too, because jsr.io answers this host with a Cloudflare
-  # challenge (403) for every package the project imports.
   workflow_dispatch:
+
+# Một nhánh chỉ cần kết quả của lần chạy mới nhất, nên lần chạy cũ còn dở là
+# phút máy tiêu cho một câu trả lời không ai đọc nữa.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   deno:
