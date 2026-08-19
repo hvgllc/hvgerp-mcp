@@ -80,9 +80,12 @@ const SPECIFIER_CONTEXT = /(?:\bfrom|\bimport)\s*\(?\s*$/;
  *
  * Cần phân biệt vì regex chứa dấu nháy - `["']` trong chính tệp này - và đọc
  * nó như một chuỗi làm bộ quét lệch pha suốt phần còn lại của tệp.
+ *
+ * Danh sách từ khoá gồm cả toán tử một ngôi (`void`, `delete`, `throw`, `new`):
+ * sau chúng luôn là một biểu thức, nên `/` ở đó không bao giờ là phép chia.
  */
 const REGEX_POSITION =
-  /(?:[=(,:[!&|?{};+\-*%~^<>]|\b(?:return|typeof|case|in|of|do|else|yield|await))\s*$/;
+  /(?:[=(,:[!&|?{};+\-*%~^<>]|\b(?:return|typeof|case|in|of|do|else|yield|await|void|delete|throw|new))\s*$/;
 
 /**
  * Từ khoá mở đầu một điều kiện có ngoặc.
@@ -606,6 +609,17 @@ Deno.test("regex sau dieu kien dieu khien duoc doc dung", () => {
   // dòng thì không phải dấu mở chuỗi.
   assert(
     matches(`if (ready) /["']/.test(value);\nawait import(${NODE_MODULE});`),
+  );
+
+  // Sau một toán tử một ngôi cũng vậy: `void`, `delete`, `throw`, `new` đều
+  // buộc thứ theo sau là biểu thức, nên `/` ở đó mở một regex.
+  assert(
+    matches(
+      `void /["']/.test(String(import(${NODE_MODULE})));`,
+    ),
+  );
+  assert(
+    DENO_GLOBAL.test(stripNonCode(`throw /["']/.test(x) ? Deno : null;`)),
   );
 
   // Chiều ngược lại: `)` không đóng một điều kiện thì `/` sau nó vẫn là phép

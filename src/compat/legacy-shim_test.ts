@@ -581,9 +581,11 @@ Deno.test("header CORS cua upstream duoc giu tren response da dich", async () =>
       res.headers.get("Access-Control-Allow-Origin"),
       "https://claude.ai",
     );
+    // Phiên do shim cấp cũng phải được khai ở đây, nếu không client trong
+    // trình duyệt không đọc nổi thứ vừa được trao cho nó.
     assertEquals(
       res.headers.get("Access-Control-Expose-Headers"),
-      "MCP-Protocol-Version",
+      "MCP-Protocol-Version, Mcp-Session-Id",
     );
     assertEquals(res.headers.get("Vary"), "Origin");
     await res.body?.cancel();
@@ -1188,6 +1190,10 @@ Deno.test("capabilities thuong luong o initialize duoc giu cho loi goi sau", asy
 
     // Client cũ chỉ khai capabilities một lần, còn server 2026-07-28 đọc chúng
     // ở TỪNG request: gửi `{}` là nói dối rằng client không làm được elicitation.
+    //
+    // Lượt thứ hai ở đây cũng không gửi lại phiên mà `initialize` vừa cấp, nên
+    // nó đi bằng khoá chứng danh: đường lui cho client bỏ qua phiên phải còn
+    // sống, không thì "cấp phiên" biến thành "mất trạng thái".
     const params = (upstream.captured[1].body as Record<string, unknown>)[
       "params"
     ] as Record<string, unknown>;
@@ -2235,7 +2241,7 @@ Deno.test("client khong chung danh duoc cap phien de nho revision", async () => 
   }
 });
 
-Deno.test("phien chi duoc cap khi client thuc su khong co gi de nhan dien", async () => {
+Deno.test("client mang token van duoc cap phien rieng o initialize", async () => {
   clearCapabilityCache();
   const upstream = await startUpstream();
   try {
@@ -2248,14 +2254,180 @@ Deno.test("phien chi duoc cap khi client thuc su khong co gi de nhan dien", asyn
       }),
       { upstream: upstream.url },
     );
-    // Có `Authorization` là đã phân biệt được caller; cấp thêm một phiên chỉ
-    // là thêm một thứ để client phải mang theo.
+    // Token tĩnh có thể là của cả một đội: nếu khoá chỉ dựng từ chứng danh thì
+    // capabilities của client này dịch cho lời gọi của client kia. Phiên là
+    // thứ duy nhất nhận diện đúng một client, nên nó được cấp kể cả khi request
+    // đã có `Authorization`.
+    const session = res.headers.get("Mcp-Session-Id");
+    assert(session !== null && session.length > 0);
+    await res.body?.cancel();
+  } finally {
+    clearCapabilityCache();
+    await upstream.close();
+  }
+});
+
+Deno.test("request da mang san phien thi khong duoc cap phien khac", async () => {
+  clearCapabilityCache();
+  const upstream = await startUpstream();
+  try {
+    const req = legacyPost({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2025-11-25" },
+    });
+    req.headers.set("Mcp-Session-Id", "phien-cua-client");
+    const res = await handleShimRequest(req, { upstream: upstream.url });
+    // Cấp đè một phiên mới lên phiên client đang giữ là bắt nó vứt trạng thái
+    // vừa dùng, nên chỉ request chưa mang phiên nào mới được cấp.
     assertEquals(res.headers.get("Mcp-Session-Id"), null);
     await res.body?.cancel();
   } finally {
     clearCapabilityCache();
     await upstream.close();
   }
+});
+
+Deno.test("than khong phai UTF-8 hop le bi tu choi thay vi sua tham", async () => {
+  const upstream = await startUpstream();
+  try {
+    // 0xFF không phải byte UTF-8 hợp lệ. Giải mã kiểu thay thế biến nó thành
+    // U+FFFD nằm gọn trong một chuỗi JSON, nên thân vẫn parse được và shim
+    // chuyển tiếp lên upstream một nội dung đã bị sửa mà không ai biết.
+    const head = new TextEncoder().encode(
+      '{"jsonrpc":"2.0","id":1,"method":"tools/call",' +
+        '"params":{"name":"erpnext_whoami","arguments":{"note":"',
+    );
+    const tail = new TextEncoder().encode('"}}}');
+    const body = new Uint8Array(head.length + 1 + tail.length);
+    body.set(head, 0);
+    body[head.length] = 0xff;
+    body.set(tail, head.length + 1);
+
+    const res = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer test-token",
+        },
+        body,
+      }),
+      { upstream: upstream.url },
+    );
+
+    assertEquals(res.status, 400);
+    const payload = await res.json() as Record<string, unknown>;
+    assertEquals(
+      (payload["error"] as Record<string, unknown>)["code"],
+      -32700,
+    );
+    // Lượt chạm upstream duy nhất là phép thử quyền của chính lỗi này; thân
+    // hỏng không bao giờ được chuyển tiếp.
+    assertEquals(upstream.captured.length, 1);
+    assertEquals(
+      (upstream.captured[0].body as Record<string, unknown>)["method"],
+      "ping",
+    );
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("batch giu lai ket qua da chay khi mot entry tra than khong dich duoc", async () => {
+  let seen = 0;
+  const upstream = await startUpstream((req, body) => {
+    if (req.method !== "POST") return undefined;
+    seen += 1;
+    if (seen === 1) {
+      return Response.json({
+        jsonrpc: "2.0",
+        id: (body as Record<string, unknown>)["id"],
+        result: { ok: true },
+      });
+    }
+    // Một tầng trung gian trả trang lỗi HTML: không có JSON để dịch, nhưng
+    // entry đầu thì đã thực thi thật rồi.
+    return new Response("<html>gateway error</html>", {
+      status: 502,
+      headers: { "Content-Type": "text/html" },
+    });
+  });
+  try {
+    const res = await handleShimRequest(
+      legacyPost([
+        {
+          jsonrpc: "2.0",
+          id: 51,
+          method: "tools/call",
+          params: { name: "erpnext_whoami" },
+        },
+        {
+          jsonrpc: "2.0",
+          id: 52,
+          method: "tools/call",
+          params: { name: "erpnext_whoami" },
+        },
+        {
+          jsonrpc: "2.0",
+          id: 53,
+          method: "tools/call",
+          params: { name: "erpnext_whoami" },
+        },
+      ]),
+      { upstream: upstream.url },
+    );
+
+    assertEquals(res.status, 502);
+    const payload = await res.json() as Record<string, unknown>[];
+    // Trả nguyên response của upstream ở đây là xoá dấu vết của entry 51: client
+    // thử lại cả batch và chạy lại đúng thay đổi vừa xảy ra. Mỗi id phải có một
+    // câu trả lời của riêng nó.
+    assertEquals(payload.map((entry) => entry["id"]), [51, 52, 53]);
+    assertExists(payload[0]["result"]);
+    assertEquals(
+      (payload[1]["error"] as Record<string, unknown>)["code"],
+      -32603,
+    );
+    assertEquals(
+      (payload[2]["error"] as Record<string, unknown>)["code"],
+      -32000,
+    );
+    // Entry thứ ba không bao giờ được gửi đi.
+    assertEquals(seen, 2);
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("su kien SSE khong co ranh gioi bi chan tran thay vi gom mai", async () => {
+  // Một sự kiện dài hơn trần và không bao giờ đóng: nếu bộ đệm không có trần
+  // thì nó lớn theo đúng thứ upstream gửi, tức là một thân không giới hạn bám
+  // vào tiến trình shim.
+  const oversized = "data: " + "x".repeat(2 * 1024 * 1024);
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const encoder = new TextEncoder();
+      controller.enqueue(encoder.encode(oversized));
+      controller.enqueue(encoder.encode("\n\n"));
+      controller.enqueue(
+        encoder.encode(
+          'data: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2026-07-28"}}\n\n',
+        ),
+      );
+      controller.close();
+    },
+  });
+
+  const text = await new Response(
+    translateEventStream(source, "2025-11-25"),
+  ).text();
+
+  // Phần quá khổ đi qua nguyên trạng, không mất byte nào...
+  assert(text.startsWith(oversized));
+  // ...và sự kiện sau nó vẫn được dịch bình thường.
+  assert(text.includes('"protocolVersion":"2025-11-25"'));
 });
 
 Deno.test("CRLF bi cat doi giua hai chunk khong sinh ra su kien gia", async () => {

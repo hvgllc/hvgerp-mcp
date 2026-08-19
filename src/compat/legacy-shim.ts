@@ -635,6 +635,27 @@ function touch<T>(cache: Map<string, T>, key: string): T | undefined {
   return value;
 }
 
+/**
+ * Đọc một bản ghi theo khoá phiên, rồi mới đến khoá chứng danh.
+ *
+ * Hai khoá vì client được cấp phiên vẫn có quyền phớt lờ nó: khoá chứng danh
+ * là chỗ dựa cuối để một client như vậy không mất trạng thái vừa thoả thuận.
+ * Thứ tự thì cố định - phiên nhận diện đúng một client, chứng danh có thể là
+ * của cả một đội dùng chung token - nên bản ghi riêng luôn thắng bản ghi chung.
+ */
+function recall<T>(
+  cache: Map<string, T>,
+  primary: string | undefined,
+  fallback: string | undefined,
+): T | undefined {
+  if (primary !== undefined) {
+    const hit = touch(cache, primary);
+    if (hit !== undefined) return hit;
+  }
+  if (fallback === undefined || fallback === primary) return undefined;
+  return touch(cache, fallback);
+}
+
 function rememberRevision(key: string, version: string): void {
   // Cùng phép đuổi với CAPABILITY_CACHE: đặt lại để bản ghi vừa dùng về cuối
   // hàng, rồi bỏ bản ghi lâu không đụng tới nhất.
@@ -965,6 +986,43 @@ async function forwardOne(
 }
 
 /**
+ * Ghi một kết quả "chưa được thực thi" cho mọi entry sau `index` của batch.
+ *
+ * Ngừng gọi khi một entry đã nhận câu trả lời về quyền, về nhịp hay về một
+ * thân không dịch được thì đúng, nhưng im lặng bỏ phần còn lại thì sai: client
+ * gửi N id và chỉ nhận về vài id, nên nó không biết entry nào đã chạy. Lần thử
+ * lại của nó lặp lại đúng những thay đổi đã xảy ra, và một mã như 429 cũng
+ * không hứa rằng các entry chưa gửi sẽ nhận cùng câu trả lời đó.
+ */
+function markNotExecuted(
+  replies: unknown[],
+  messages: unknown[],
+  index: number,
+  status: number,
+): void {
+  for (const skipped of messages.slice(index + 1)) {
+    if (!isRecord(skipped)) continue;
+    const skippedId = skipped["id"];
+    if (skippedId === undefined) continue;
+    replies.push(jsonRpcError(
+      normalizeId(skippedId),
+      -32000,
+      `Not executed: an earlier entry in this batch was answered with ` +
+        `HTTP ${status}`,
+    ));
+  }
+}
+
+/**
+ * Trần cho một sự kiện SSE đang gom dở, tính bằng ký tự.
+ *
+ * Một sự kiện thật là một message JSON-RPC; 1 MiB đã rộng hơn mọi kết quả tool
+ * mà transport này chở, nên vượt qua đó nghĩa là đầu kia không đặt ranh giới
+ * sự kiện chứ không phải nội dung lớn thật.
+ */
+const EVENT_BUFFER_MAX_CHARS = 1024 * 1024;
+
+/**
  * Dịch từng sự kiện SSE khi bay qua, giữ nguyên khung sự kiện.
  *
  * Sự kiện SSE kết thúc ở một dòng trống, mà ranh giới chunk của mạng thì rơi ở
@@ -979,6 +1037,9 @@ export function translateEventStream(
   const encoder = new TextEncoder();
   let buffer = "";
   let pendingCr = false;
+  // Đang chuyển tiếp phần đuôi của một sự kiện đã vượt trần: nó không còn là
+  // JSON trọn vẹn nữa nên không được đem đi dịch.
+  let overflowed = false;
 
   const rewriteBlock = (block: string): string => {
     const lines = block.split("\n");
@@ -1027,8 +1088,24 @@ export function translateEventStream(
       while (boundary >= 0) {
         const block = buffer.slice(0, boundary);
         buffer = buffer.slice(boundary + 2);
-        controller.enqueue(encoder.encode(`${rewriteBlock(block)}\n\n`));
+        controller.enqueue(
+          encoder.encode(
+            `${overflowed ? block : rewriteBlock(block)}\n\n`,
+          ),
+        );
+        overflowed = false;
         boundary = buffer.indexOf("\n\n");
+      }
+      // Không có ranh giới nào trong buffer nghĩa là sự kiện chưa kết thúc, và
+      // upstream được quyền không kết thúc nó bao giờ. Dịch đòi hỏi giữ trọn
+      // một sự kiện trong bộ nhớ, nên một stream không có `\n\n` là một thân
+      // không trần bám vào tiến trình shim. Vượt trần thì bỏ việc dịch sự kiện
+      // đó: đẩy nguyên phần đã gom xuống client và quên nó đi, vì chuyển tiếp
+      // không dịch vẫn đúng hơn giữ mãi hoặc cắt cụt.
+      if (buffer.length > EVENT_BUFFER_MAX_CHARS) {
+        controller.enqueue(encoder.encode(buffer));
+        buffer = "";
+        overflowed = true;
       }
     },
     flush(controller) {
@@ -1039,7 +1116,9 @@ export function translateEventStream(
         pendingCr = false;
       }
       if (buffer.length === 0) return;
-      controller.enqueue(encoder.encode(rewriteBlock(buffer)));
+      controller.enqueue(
+        encoder.encode(overflowed ? buffer : rewriteBlock(buffer)),
+      );
     },
   });
 
@@ -1197,7 +1276,10 @@ async function readBoundedStream(
     merged.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return new TextDecoder().decode(merged);
+  // `fatal` thay vì thay thế im lặng: byte hỏng biến thành U+FFFD thì một thân
+  // JSON vẫn parse được, và shim chuyển tiếp lên upstream một chuỗi đã bị sửa
+  // nội dung mà không ai biết. Đọc không ra thì phải nói là đọc không ra.
+  return new TextDecoder("utf-8", { fatal: true }).decode(merged);
 }
 
 /**
@@ -1273,7 +1355,15 @@ async function authorizeSynthetic(
     // thân mới phân biệt được, vì cái shim chờ là câu trả lời method-not-found
     // của `ping`: `-32601` kèm HTTP 404 là hình dạng mà server 2026-07-28 trả
     // cho một method nó không có.
-    const raw = await readBoundedStream(probe.body, PROBE_BODY_MAX_BYTES);
+    // Thân không đọc ra được - không phải UTF-8 hợp lệ - thì chắc chắn không
+    // phải câu trả lời `-32601` đang tìm, nên nó rơi về nhánh chặn chứ không
+    // làm hỏng cả request.
+    let raw: string | null = null;
+    try {
+      raw = await readBoundedStream(probe.body, PROBE_BODY_MAX_BYTES);
+    } catch {
+      raw = null;
+    }
     if (raw !== null && isMethodNotFound(raw)) {
       return { upstream: probe.headers };
     }
@@ -1577,23 +1667,34 @@ export async function handleShimRequest(
   // biệt được caller vừa không đoán mò: transport 2025-03-26 trở đi bắt client
   // gửi lại `Mcp-Session-Id` ở mọi request sau, và upstream 2026-07-28 không
   // bao giờ thấy header này vì nó nằm trong SHIM_OWNED_HEADERS.
-  const mintedSession = credentialKey === undefined &&
+  //
+  // Mang token cũng chưa đủ để khỏi cần phiên: một token tĩnh dùng chung thì
+  // mọi client đứng sau nó băm ra cùng một khoá, nên capabilities và revision
+  // của client này dịch cho lời gọi của client kia. Vì vậy phiên được cấp mỗi
+  // khi request chưa mang sẵn `Mcp-Session-Id`, bất kể có chứng danh hay
+  // không; chứng danh chỉ còn là khoá dự phòng cho client bỏ qua phiên đó.
+  const incomingSession = req.headers.get("Mcp-Session-Id");
+  const mintedSession = incomingSession === null &&
       messages.some((entry) =>
         isRecord(entry) && entry["method"] === "initialize"
       )
     ? crypto.randomUUID()
     : undefined;
-  const sessionKey = credentialKey ??
-    (mintedSession === undefined ? undefined : await digestKey(mintedSession));
+  const sessionKey = mintedSession !== undefined
+    ? await digestKey(mintedSession)
+    : credentialKey;
+  // Khoá chứng danh vẫn được ghi song song khi có phiên mới: client đời cũ
+  // được quyền không gửi lại `Mcp-Session-Id`, và với nó thì mất khoá riêng
+  // nghĩa là mất luôn capabilities vừa khai. Ghi cả hai chỗ giữ nguyên đường
+  // lui đó mà không lấy đi phần nhận diện riêng của client biết giữ phiên.
+  const fallbackKey = credentialKey === sessionKey ? undefined : credentialKey;
 
   const declaredVersion = readDeclaredProtocolVersion(
     req.headers,
     parsed as JsonRpcMessage | JsonRpcMessage[],
   );
   const clientVersion = declaredVersion ??
-    (sessionKey === undefined
-      ? undefined
-      : touch(REVISION_CACHE, sessionKey)) ??
+    recall(REVISION_CACHE, sessionKey, fallbackKey) ??
     LEGACY_FALLBACK_VERSION;
   const identity = readClientIdentity(req.headers, clientVersion);
 
@@ -1669,9 +1770,7 @@ export async function handleShimRequest(
       target,
       identity,
       clientVersion,
-      sessionKey === undefined
-        ? undefined
-        : touch(CAPABILITY_CACHE, sessionKey),
+      recall(CAPABILITY_CACHE, sessionKey, fallbackKey),
       // `initialize` phải về dạng JSON. Upstream được quyền trả stream SSE cho
       // một POST đã dịch, mà stream thì shim chuyển tiếp nguyên trạng: nó
       // không biết cuộc thoả thuận có thành hay không, nên không nhớ
@@ -1691,7 +1790,26 @@ export async function handleShimRequest(
     // biết cuộc thoả thuận có thành hay không, nên không cấp phiên ở đây: quên
     // vẫn đúng hơn nhớ một trạng thái chưa chắc có thật.
     if (outcome.payload === undefined && outcome.status !== 202) {
-      return outcome.response;
+      // Chưa gom được câu trả lời nào thì trả nguyên response của upstream là
+      // đúng nhất: thân chưa bị đọc, `WWW-Authenticate` còn nguyên, stream SSE
+      // đi thẳng tới client.
+      if (replies.length === 0) return outcome.response;
+      // Nhưng giữa một batch đã chạy dở thì nó xoá sạch dấu vết của những
+      // entry đã thực thi: client chỉ thấy một lỗi chung, thử lại cả batch, và
+      // lặp lại đúng những thay đổi vừa xảy ra. Ghi một kết quả cho entry này
+      // rồi đánh dấu phần còn lại là chưa chạy.
+      await outcome.response.body?.cancel();
+      if (id !== undefined) {
+        replies.push(jsonRpcError(
+          normalizeId(id),
+          -32603,
+          `Internal error: upstream answered HTTP ${outcome.status} with a ` +
+            `body this shim cannot translate`,
+        ));
+      }
+      if (outcome.status >= 400) status = outcome.status;
+      markNotExecuted(replies, messages, index, outcome.status);
+      break;
     }
     if (outcome.status >= 400) status = outcome.status;
     if (outcome.payload !== undefined) replies.push(outcome.payload);
@@ -1706,6 +1824,9 @@ export async function handleShimRequest(
       outcome.payload !== undefined && !hasJsonRpcError(outcome.payload)
     ) {
       rememberCapabilities(sessionKey, message.params["capabilities"]);
+      if (fallbackKey !== undefined) {
+        rememberCapabilities(fallbackKey, message.params["capabilities"]);
+      }
       // Thoả thuận revision xảy ra đúng một lần, ở đây. Chỉ nhớ bản đời cũ đã
       // biết: một lời khai `2026-07-28` được phát lại cho lượt sau là dựng
       // ngược chính thứ shim sinh ra để dịch.
@@ -1714,6 +1835,9 @@ export async function handleShimRequest(
         KNOWN_LEGACY_VERSIONS.has(declaredVersion)
       ) {
         rememberRevision(sessionKey, declaredVersion);
+        if (fallbackKey !== undefined) {
+          rememberRevision(fallbackKey, declaredVersion);
+        }
       }
       issuedSession = mintedSession;
     }
@@ -1724,22 +1848,7 @@ export async function handleShimRequest(
     // ngoài thành N lượt gọi lên tầng xác thực: một thân vừa đủ dưới trần
     // kích thước cũng chứa được hàng nghìn message nhỏ.
     if (AUTH_STATUSES.has(outcome.status)) {
-      // Ngừng gọi thì đúng, nhưng im lặng bỏ phần còn lại thì sai: client gửi
-      // N id và chỉ nhận về vài id, nên nó không biết entry nào đã chạy. Lần
-      // thử lại của nó lặp lại đúng những thay đổi đã xảy ra, và 429 cũng
-      // không hứa rằng các entry chưa gửi sẽ nhận cùng câu trả lời đó. Mỗi
-      // entry còn lại phải có một kết quả nói rõ nó chưa được thực thi.
-      for (const skipped of messages.slice(index + 1)) {
-        if (!isRecord(skipped)) continue;
-        const skippedId = skipped["id"];
-        if (skippedId === undefined) continue;
-        replies.push(jsonRpcError(
-          normalizeId(skippedId),
-          -32000,
-          `Not executed: an earlier entry in this batch was answered with ` +
-            `HTTP ${outcome.status}`,
-        ));
-      }
+      markNotExecuted(replies, messages, index, outcome.status);
       break;
     }
   }
