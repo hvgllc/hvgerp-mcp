@@ -6,6 +6,25 @@
 # thêm header, chuyển tiếp.
 FROM denoland/deno:2.3.3
 
+# Provenance: chính ảnh phải khai được nó dựng từ commit nào. Không có nhãn thì liên kết
+# "ảnh này dựng từ commit kia" chỉ là lời khai của phiên đã dựng, không ai kiểm lại được
+# từ registry - đúng thứ đã xảy ra với 0.3.0 (đo ngày 20/8/2026: `.Config.Labels` là null).
+#
+# `revision` lấy từ ARG chứ không viết cứng chuỗi commit: nhãn viết cứng vẫn cho ra ảnh
+# xanh, vẫn có nhãn đọc được, chỉ là nó khai một commit khác với commit thật sự đã dựng.
+# Truy ngược lúc đó còn tệ hơn không có nhãn, vì người đọc mất luôn tín hiệu rằng mình
+# không biết. Mặc định `unknown` cũng vì lẽ đó: quên truyền thì ảnh nói thẳng là không rõ.
+#
+# Dựng:
+#   docker build -f Dockerfile.shim --build-arg VCS_REF="$(git rev-parse HEAD)" \
+#     -t ghcr.io/hvgllc/hvgerp-mcp-shim:<phien-ban> .
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.title="hvgerp-mcp-shim"
+LABEL org.opencontainers.image.description="Legacy MCP transport shim for hvgerp-mcp"
+LABEL org.opencontainers.image.source="https://github.com/hvgllc/hvgerp-mcp"
+LABEL org.opencontainers.image.licenses="MIT"
+LABEL org.opencontainers.image.revision="$VCS_REF"
+
 WORKDIR /app
 
 # Chép đúng hai tệp mà shim cần. `deno cache` ở đây chỉ để type-check sớm và nạp sẵn

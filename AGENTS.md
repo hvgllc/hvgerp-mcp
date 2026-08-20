@@ -127,6 +127,19 @@ that will never run Node. The exception stops at the entry point: the shim's
 library half, `src/compat/legacy-shim.ts`, must stay platform-free (fetch,
 Request, Response, Headers, crypto only), and the gate asserts that separately.
 
+Build the shim image with the commit passed in, so the image can name its own
+source:
+
+```bash
+docker build -f Dockerfile.shim --build-arg VCS_REF="$(git rev-parse HEAD)" \
+  -t ghcr.io/hvgllc/hvgerp-mcp-shim:<version> .
+```
+
+Without the build arg the `org.opencontainers.image.revision` label reads
+`unknown`, which is an honest answer but a useless one: an image already sitting
+in a registry cannot be traced back to its commit afterwards. Deployment pins
+the image by digest, not by tag.
+
 ### Tool architecture
 
 Each tool is an `ErpNextTool` object (`src/tools/types.ts`) with: `name`,
