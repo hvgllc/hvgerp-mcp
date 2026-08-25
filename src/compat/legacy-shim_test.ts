@@ -192,6 +192,87 @@ Deno.test("initialize doi cu duoc dich va tra ve dung ban client de nghi", async
   }
 });
 
+// Chép nguyên hình dạng đo được ngày 2026-08-25 khi app Android fetch resource
+// `ui://` cho MCP App viewer: có `Mcp-Method` nhưng KHÔNG có
+// `MCP-Protocol-Version`, thân khai "2026-01-26" (2025-11-25 cộng extension
+// MCP Apps) kèm `capabilities.extensions`. Trước bản sửa, request này rơi vào
+// nhánh "revision lạ đi thẳng" và origin trả 400 `-32020`.
+Deno.test("initialize cua ClaudeAndroid 2026-01-26 duoc dich", async () => {
+  const upstream = await startUpstream();
+  try {
+    const capabilities = {
+      extensions: {
+        "io.modelcontextprotocol/ui": {
+          mimeTypes: ["text/html;profile=mcp-app", "text/html+mcp"],
+        },
+      },
+    };
+    const res = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json, text/event-stream",
+          "Authorization": "Bearer test-token",
+          "Mcp-Method": "initialize",
+          "User-Agent": "Claude-User",
+          "X-Anthropic-Client": "ClaudeAI",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 14,
+          method: "initialize",
+          params: {
+            protocolVersion: "2026-01-26",
+            capabilities,
+            clientInfo: { name: "ClaudeAndroid", version: "1.260817.0" },
+          },
+        }),
+      }),
+      { upstream: upstream.url },
+    );
+
+    assertEquals(res.status, 200);
+    const payload = await res.json();
+    // Client nhận lại đúng revision nó đề nghị, không phải bản của server.
+    assertEquals(payload.result.protocolVersion, "2026-01-26");
+    assertEquals(res.headers.get("MCP-Protocol-Version"), "2026-01-26");
+
+    const sent = upstream.captured[0];
+    assertEquals(sent.headers["mcp-protocol-version"], "2026-07-28");
+    const params =
+      (sent.body as Record<string, Record<string, unknown>>).params;
+    const meta = params._meta as Record<string, unknown>;
+    assertEquals(meta[META_PROTOCOL], "2026-07-28");
+    // Extension MCP Apps phải đi tới server nguyên vẹn: nó là lý do client này
+    // gọi tới, và mất nó thì server không bind viewer cho tool result.
+    assertEquals(meta[META_CAPABILITIES], capabilities);
+  } finally {
+    await upstream.close();
+  }
+});
+
+Deno.test("GET SSE khai 2026-01-26 duoc stream tong hop", async () => {
+  const upstream = await startUpstream();
+  try {
+    const res = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        headers: {
+          "Accept": "text/event-stream",
+          "MCP-Protocol-Version": "2026-01-26",
+        },
+      }),
+      { upstream: upstream.url, heartbeatMs: 60_000 },
+    );
+
+    assertEquals(res.status, 200);
+    assertEquals(res.headers.get("Content-Type"), "text/event-stream");
+    await res.body!.cancel();
+  } finally {
+    await upstream.close();
+  }
+});
+
 Deno.test("tools/call sinh Mcp-Name khop voi than request", async () => {
   const upstream = await startUpstream();
   try {
@@ -399,6 +480,7 @@ Deno.test("cong tac dich doc ca revision khai trong than initialize", () => {
 
   assertEquals(init(), true);
   assertEquals(init("2025-11-25"), true);
+  assertEquals(init("2026-01-26"), true);
   assertEquals(init("2026-07-28"), true);
   assertEquals(init("2027-03-01"), false);
   // Khai sai kiểu là khai, không phải im lặng: dịch nó nghĩa là thay 42 bằng
@@ -603,6 +685,7 @@ Deno.test("cong tac dich: chi ban cu va ban khong khai moi duoc dich", () => {
   assertEquals(at(), true);
   assertEquals(at("2025-11-25"), true);
   assertEquals(at("2025-03-26"), true);
+  assertEquals(at("2026-01-26"), true);
   assertEquals(at("2026-07-28"), false);
   assertEquals(at("2027-03-01"), false);
   assertEquals(at("khong-phai-ngay"), false);
