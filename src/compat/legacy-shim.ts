@@ -48,11 +48,23 @@ export const LEGACY_FALLBACK_VERSION = "2025-11-25";
  * {@link openLegacyStream} chỉ phát comment giữ nhịp. Nhận dịch bản ấy là hứa
  * một thứ shim không làm: client sẽ chờ `endpoint` mãi mãi và không bao giờ
  * gửi nổi `initialize`. Chuyển tiếp thẳng thì nó nhận lời từ chối ngay.
+ *
+ * 2026-01-26 KHÔNG phải một revision spec chính thức: đó là ngày MCP Apps ship
+ * như extension đầu tiên, và app Claude di động dùng chuỗi này để khai
+ * "2025-11-25 cộng extension MCP Apps". Đo trên dây ngày 2026-08-25 với
+ * `ClaudeAndroid/1.260817.0` khi nó fetch resource `ui://` cho viewer: thân
+ * `initialize` y hệt 2025-11-25 (protocolVersion trong params, capabilities,
+ * clientInfo) cộng `capabilities.extensions`, có `Mcp-Method` nhưng KHÔNG có
+ * `MCP-Protocol-Version`. Không dịch thì chuỗi đó rơi đúng vào nhánh "revision
+ * lạ đi thẳng": origin trả 400 `-32020`, client tụt xuống `GET` SSE nhận 405,
+ * và viewer chết với "Failed to fetch app content" trong khi tool call thường
+ * (đi bằng client 2026-07-28 của backend claude.ai) vẫn chạy.
  */
 const KNOWN_LEGACY_VERSIONS: ReadonlySet<string> = new Set([
   "2025-03-26",
   "2025-06-18",
   LEGACY_FALLBACK_VERSION,
+  "2026-01-26",
 ]);
 
 /**
@@ -72,6 +84,10 @@ const KNOWN_LEGACY_VERSIONS: ReadonlySet<string> = new Set([
 const SYNTHETIC_STREAM_VERSIONS: ReadonlySet<string> = new Set([
   "2025-06-18",
   LEGACY_FALLBACK_VERSION,
+  // Cùng lý do với chỗ nó vào KNOWN_LEGACY_VERSIONS: hình dạng dây của
+  // 2026-01-26 là 2025-11-25 cộng extension MCP Apps, nên sau khi thoả thuận
+  // xong client được quyền mở stream GET với header khai đúng chuỗi này.
+  "2026-01-26",
 ]);
 
 /**
