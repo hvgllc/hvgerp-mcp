@@ -5,7 +5,7 @@
 [![MCP](https://img.shields.io/badge/MCP-server-1f6feb?logo=modelcontextprotocol&logoColor=white)](https://modelcontextprotocol.io)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-MCP server for [ERPNext](https://erpnext.com) / Frappe ERP — **129 tools**
+MCP server for [ERPNext](https://erpnext.com) / Frappe ERP — **131 tools**
 across **16 categories**, with **7 interactive UI viewers**.
 
 Connect any MCP-compatible AI agent (Claude Desktop, Claude Code, VS Code
@@ -223,9 +223,9 @@ npm install
 node build-all.mjs
 ```
 
-## Tools (129)
+## Tools (131)
 
-129 tools across 16 categories. Each `_list` tool returns interactive results
+131 tools across 16 categories. Each `_list` tool returns interactive results
 via the doclist-viewer with row click, inline detail, and cross-viewer
 navigation.
 
@@ -240,8 +240,12 @@ navigation.
 - **Purchasing** (11) — Suppliers, Purchase Orders, Purchase Invoices, Receipts,
   and Supplier Quotations.
 - **Inventory** (9) — Items, Stock Balance, Warehouses, and Stock Entries.
-- **Accounting** (6) — Chart of Accounts (filterable by `disabled`), Journal
-  Entries, and Payment Entries.
+- **Accounting** (8) — Chart of Accounts (filterable by `disabled`), Journal
+  Entries, and Payment Entries, plus `erpnext_gl_entry_list` (the posted general
+  ledger, cancelled entries excluded by default) and `erpnext_financial_report`,
+  which runs a standard financial report (Profit and Loss Statement, Balance
+  Sheet, General Ledger, Trial Balance…) from a closed allowlist and never
+  queues a Prepared Report.
 - **HR** (12) — Employees, Attendance, Leave Applications, Salary Slips, Payroll
   Entries, and Expense Claims.
 - **Project** (9) — Projects, Tasks (with native assignment), and Timesheets.
