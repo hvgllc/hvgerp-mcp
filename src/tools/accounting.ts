@@ -10,8 +10,12 @@
 import type { FrappeFilter } from "../api/types.ts";
 import type { ErpNextTool } from "./types.ts";
 import { listResult } from "./list-result.ts";
+import { FINANCIAL_REPORTS, runQueryReport } from "./query-report.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
 import { resolveDynamicLink } from "../api/resolve.ts";
+
+/** Bao nhiêu dòng báo cáo trả về khi người gọi không nói gì. */
+const DEFAULT_REPORT_ROWS = 100;
 
 export const accountingTools: ErpNextTool[] = [
   // ── Chart of Accounts ─────────────────────────────────────────────────────
@@ -375,6 +379,249 @@ export const accountingTools: ErpNextTool[] = [
       return {
         data: doc,
         message: `Journal Entry ${doc.name} created successfully`,
+      };
+    },
+  },
+
+  // ── General Ledger ────────────────────────────────────────────────────────
+
+  {
+    name: "erpnext_gl_entry_list",
+    annotations: { readOnlyHint: true },
+    _meta: DOCLIST_META,
+    description:
+      "List GL Entry rows: the general ledger itself, one row per account posting. " +
+      "This is where the money actually is — every submitted Sales Invoice, Purchase Invoice, " +
+      "Payment Entry, Journal Entry and Expense Claim writes its debits and credits here, " +
+      "so income and expense totals must be read from GL Entry, not from orders. " +
+      "Filterable by account, party, voucher, cost_center, project, company and date range. " +
+      "Fields: name, posting_date, account, account_currency, party_type, party, debit, credit, " +
+      "voucher_type, voucher_no, against, cost_center, project, company, is_cancelled, remarks. " +
+      "Cancelled rows are excluded by default; see 'include_cancelled'.",
+    category: "accounting",
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 20)",
+        },
+        account: {
+          type: "string",
+          description:
+            "Filter by account (e.g. 'Administrative Expenses - HVG')",
+        },
+        party_type: {
+          type: "string",
+          description:
+            "Filter by party type (Customer, Supplier, Employee, Shareholder). " +
+            "Required when 'party' is set, so the party name/ID can be resolved against the right doctype.",
+          enum: ["Customer", "Supplier", "Employee", "Shareholder"],
+        },
+        party: {
+          type: "string",
+          description:
+            "Filter by party — ID or name (e.g. 'HR-EMP-00024' or 'Acme Corp'). Requires 'party_type'.",
+        },
+        voucher_type: {
+          type: "string",
+          description:
+            "Filter by source document type (Sales Invoice, Purchase Invoice, Payment Entry, Journal Entry, Expense Claim, ...)",
+        },
+        voucher_no: {
+          type: "string",
+          description:
+            "Filter by source document name (e.g. 'HR-EXP-2026-00089')",
+        },
+        cost_center: { type: "string", description: "Filter by cost center" },
+        project: { type: "string", description: "Filter by project" },
+        company: { type: "string", description: "Filter by company" },
+        date_from: {
+          type: "string",
+          description: "Earliest posting_date, YYYY-MM-DD",
+        },
+        date_to: {
+          type: "string",
+          description: "Latest posting_date, YYYY-MM-DD",
+        },
+        include_cancelled: {
+          type: "boolean",
+          description:
+            "Include cancelled ledger rows (default false). Cancelling a voucher does not delete " +
+            "its GL rows: ERPNext keeps the original AND writes a mirrored reversal, both flagged " +
+            "is_cancelled=1. Summing debits with these included therefore double-counts every " +
+            "cancelled voucher, so only turn this on to audit cancellations, never to total money.",
+        },
+      },
+    },
+    handler: async (input, ctx) => {
+      const limit = (input.limit as number) ?? 20;
+      const filters: FrappeFilter[] = [];
+
+      if (!input.include_cancelled) {
+        filters.push(["is_cancelled", "=", 0]);
+      }
+      if (input.account) {
+        filters.push(["account", "=", input.account as string]);
+      }
+      if (input.party_type) {
+        filters.push(["party_type", "=", input.party_type as string]);
+      }
+      if (input.party) {
+        if (!input.party_type) {
+          throw new Error(
+            "[erpnext_gl_entry_list] 'party_type' is required when filtering by 'party'",
+          );
+        }
+        filters.push([
+          "party",
+          "=",
+          await resolveDynamicLink(
+            ctx.client,
+            input.party_type as string,
+            input.party as string,
+            { inputPath: "party" },
+          ),
+        ]);
+      }
+      if (input.voucher_type) {
+        filters.push(["voucher_type", "=", input.voucher_type as string]);
+      }
+      if (input.voucher_no) {
+        filters.push(["voucher_no", "=", input.voucher_no as string]);
+      }
+      if (input.cost_center) {
+        filters.push(["cost_center", "=", input.cost_center as string]);
+      }
+      if (input.project) {
+        filters.push(["project", "=", input.project as string]);
+      }
+      if (input.company) {
+        filters.push(["company", "=", input.company as string]);
+      }
+      if (input.date_from) {
+        filters.push(["posting_date", ">=", input.date_from as string]);
+      }
+      if (input.date_to) {
+        filters.push(["posting_date", "<=", input.date_to as string]);
+      }
+
+      const docs = await ctx.client.list("GL Entry", {
+        fields: [
+          "name",
+          "posting_date",
+          "account",
+          "account_currency",
+          "party_type",
+          "party",
+          "debit",
+          "credit",
+          "voucher_type",
+          "voucher_no",
+          "against",
+          "cost_center",
+          "project",
+          "company",
+          "is_cancelled",
+          "remarks",
+        ],
+        filters,
+        limit,
+        order_by: "posting_date desc, creation desc",
+      });
+
+      return await listResult(ctx, "GL Entry", docs, { filters, limit });
+    },
+  },
+
+  // ── Standard financial reports ────────────────────────────────────────────
+
+  {
+    name: "erpnext_financial_report",
+    annotations: { readOnlyHint: true },
+    description:
+      "Run one of ERPNext's standard financial reports and return its columns, rows and summary. " +
+      "These reports read the general ledger and apply ERPNext's own accounting rules " +
+      "(account tree, period buckets, debit/credit signs), so they are the correct source for " +
+      "P&L, balance sheet and ledger questions — reproducing them by hand gets the signs wrong. " +
+      "'filters' is passed through to the report as-is; common keys are company, from_date, to_date, " +
+      "period_start_date, period_end_date, filter_based_on ('Date Range' or 'Fiscal Year'), " +
+      "periodicity (Monthly, Quarterly, Half-Yearly, Yearly), fiscal_year and accumulated_values. " +
+      "Reports run under the caller's own permissions and most require an Accounts User, " +
+      "Accounts Manager or Auditor role.",
+    category: "accounting",
+    inputSchema: {
+      type: "object",
+      properties: {
+        report: {
+          type: "string",
+          description: "Which standard report to run",
+          enum: [...FINANCIAL_REPORTS],
+        },
+        filters: {
+          type: "object",
+          description:
+            "Report filters, passed to ERPNext unchanged. Most financial reports require at " +
+            "least 'company' plus a date range.",
+        },
+        limit: {
+          type: "number",
+          minimum: 1,
+          description:
+            `Max report rows to return (default ${DEFAULT_REPORT_ROWS}). ` +
+            "Truncation is always reported in 'count', 'returned' and 'has_more'.",
+        },
+      },
+      required: ["report"],
+    },
+    handler: async (input, ctx) => {
+      const report = input.report as string;
+      if (!report) {
+        throw new Error("[erpnext_financial_report] 'report' is required");
+      }
+      if (!(FINANCIAL_REPORTS as readonly string[]).includes(report)) {
+        throw new Error(
+          `[erpnext_financial_report] '${report}' is not one of the standard financial reports. ` +
+            `Choose one of: ${FINANCIAL_REPORTS.join(", ")}.`,
+        );
+      }
+
+      const filters = (input.filters ?? {}) as Record<string, unknown>;
+      if (typeof filters !== "object" || Array.isArray(filters)) {
+        throw new Error(
+          "[erpnext_financial_report] 'filters' must be an object of report filter values",
+        );
+      }
+
+      // `minimum: 1` trong schema chỉ ràng buộc được client nào chịu kiểm schema; một
+      // `limit` âm lọt qua sẽ khiến `slice(0, limit)` cắt từ cuối bảng và trả ra một
+      // bảng thiếu trông y hệt bảng đủ.
+      const limit = (input.limit as number) ?? DEFAULT_REPORT_ROWS;
+      if (!Number.isInteger(limit) || limit < 1) {
+        throw new Error(
+          `[erpnext_financial_report] 'limit' must be a whole number of at least 1, got ${
+            JSON.stringify(input.limit)
+          }`,
+        );
+      }
+      const result = await runQueryReport(ctx, report, filters);
+      const rows = result.result;
+
+      return {
+        report,
+        filters,
+        columns: result.columns,
+        // `count` là tổng dòng báo cáo trả về, `returned` là số dòng thật sự nằm dưới đây.
+        // Cắt bớt luôn được nói ra, vì một bảng bị cắt im lặng đọc y hệt một bảng đầy đủ.
+        count: rows.length,
+        returned: Math.min(rows.length, limit),
+        has_more: rows.length > limit,
+        rows: rows.slice(0, limit),
+        ...(result.report_summary
+          ? { report_summary: result.report_summary }
+          : {}),
+        ...(result.message ? { message: result.message } : {}),
       };
     },
   },

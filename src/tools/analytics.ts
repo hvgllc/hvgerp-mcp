@@ -6,14 +6,16 @@
  * - erpnext_sales_chart        → Bar/donut chart of sales by customer or item
  * - erpnext_ar_aging           → Stacked bar of AR aging buckets by customer
  * - erpnext_gross_profit       → Composed chart: revenue bars + margin % line
- * - erpnext_profit_loss        → P&L: income vs expenses per month + net profit
+ * - erpnext_profit_loss        → P&L from the general ledger: income vs expenses per month
  *
  * @module lib/erpnext/tools/analytics
  */
 
 import type { FrappeFilter } from "../api/types.ts";
 import { normalizeLimit } from "../api/frappe-client.ts";
-import type { ErpNextTool } from "./types.ts";
+import type { ErpNextTool, ErpNextToolContext } from "./types.ts";
+import { cellNumber, periodColumns, runQueryReport } from "./query-report.ts";
+import { siteToday } from "./site-date.ts";
 import { CHART_META, FUNNEL_META, KPI_META } from "./viewer-meta.ts";
 
 /**
@@ -29,6 +31,62 @@ import { CHART_META, FUNNEL_META, KPI_META } from "./viewer-meta.ts";
  * the schema alone leaves that path unbounded, and the handler checks too.
  */
 const MAX_RADAR_ITEMS = 8;
+
+/**
+ * Trần số tháng của `erpnext_profit_loss`.
+ *
+ * Mỗi tháng là một cột trong báo cáo, nên số tháng lớn không làm hỏng gì nhưng làm bảng
+ * rộng đến mức vô nghĩa với một biểu đồ. Năm năm là đủ cho mọi câu hỏi xu hướng.
+ */
+const MAX_PL_MONTHS = 60;
+
+/**
+ * Công ty để chạy báo cáo tài chính.
+ *
+ * Bắt buộc phải có một công ty cụ thể: báo cáo lãi lỗ của "tất cả công ty" không tồn tại,
+ * vì mỗi công ty có cây tài khoản và đồng tiền riêng. Khi site chỉ có đúng một công ty thì
+ * suy ra được, còn nhiều hơn một thì phải hỏi: đoán bừa lấy công ty đầu bảng chữ cái sẽ trả
+ * ra một con số đúng của một công ty khác, tức là sai mà trông không giống sai.
+ */
+async function resolveReportCompany(
+  ctx: ErpNextToolContext,
+  input: Record<string, unknown>,
+): Promise<string> {
+  if (typeof input.company === "string" && input.company.trim() !== "") {
+    return input.company.trim();
+  }
+
+  // Lấy dư một dòng so với mức "duy nhất" để phân biệt một công ty với nhiều công ty.
+  const companies = await ctx.client.list("Company", {
+    fields: ["name"],
+    limit: 21,
+    order_by: "name asc",
+  });
+  const names = companies
+    .map((row) => row.name)
+    .filter((name): name is string => typeof name === "string");
+
+  if (names.length === 1) return names[0];
+  if (names.length === 0) {
+    throw new Error(
+      "[erpnext_profit_loss] no Company is visible to you, so there is no chart of accounts " +
+        "to report on. Ask an administrator for access to a company.",
+    );
+  }
+  throw new Error(
+    `[erpnext_profit_loss] this site has ${
+      names.length > 20 ? "more than 20" : names.length
+    } companies, so 'company' is required. ` +
+      `Pass one of: ${names.slice(0, 20).join(", ")}${
+        names.length > 20 ? ", ..." : ""
+      }.`,
+  );
+}
+
+/** Ngày dạng YYYY-MM-DD của một mốc dựng bằng `Date.UTC`. */
+function utcDateString(instant: Date): string {
+  return instant.toISOString().slice(0, 10);
+}
 
 export const analyticsTools: ErpNextTool[] = [
   // ── Stock Chart ───────────────────────────────────────────────────────────
@@ -1656,16 +1714,26 @@ export const analyticsTools: ErpNextTool[] = [
     annotations: { readOnlyHint: true },
     _meta: CHART_META,
     description:
-      "Profit & Loss overview — bar chart comparing total income vs total expenses per month " +
-      "from Sales Orders (income) and Purchase Orders (expenses). " +
-      "Shows net profit line. Use type='composed' for bar+line.",
+      "Profit & Loss per month, read from the general ledger through ERPNext's own " +
+      "'Profit and Loss Statement' report: income bars, expense bars and a net profit line. " +
+      "Numbers match what the ERPNext P&L screen shows for the same company and period, " +
+      "because they come from the same report, not from a hand-rolled sum of orders. " +
+      "Requires 'company' when the site has more than one. Use type='composed' for bars+line.",
     category: "analytics",
     inputSchema: {
       type: "object",
       properties: {
         months: {
           type: "number",
-          description: "How many months back (default 6)",
+          minimum: 1,
+          maximum: MAX_PL_MONTHS,
+          description:
+            `How many months back, ending with the current month (default 6, max ${MAX_PL_MONTHS})`,
+        },
+        company: {
+          type: "string",
+          description:
+            "Which company to report on. Optional only when the site has exactly one company.",
         },
         type: {
           type: "string",
@@ -1676,93 +1744,159 @@ export const analyticsTools: ErpNextTool[] = [
     },
     handler: async (input, ctx) => {
       const monthsBack = (input.months as number) ?? 6;
-      const chartType = (input.type as string) ?? "composed";
-
-      const now = new Date();
-      const startDate = new Date(
-        now.getFullYear(),
-        now.getMonth() - monthsBack + 1,
-        1,
-      );
-      const startStr = startDate.toISOString().split("T")[0];
-
-      // Income and expenses are the same query against two doctypes, with no
-      // dependency between them — one round-trip instead of two.
-      const [salesOrders, purchaseOrders] = await Promise.all([
-        // Sales Orders (income) — submitted only
-        ctx.client.list("Sales Order", {
-          fields: ["grand_total", "transaction_date"],
-          filters: [["transaction_date", ">=", startStr], [
-            "docstatus",
-            "=",
-            1,
-          ]],
-          limit: 1000,
-          order_by: "transaction_date asc",
-        }),
-        // Purchase Orders (expenses) — submitted only
-        ctx.client.list("Purchase Order", {
-          fields: ["grand_total", "transaction_date"],
-          filters: [["transaction_date", ">=", startStr], [
-            "docstatus",
-            "=",
-            1,
-          ]],
-          limit: 1000,
-          order_by: "transaction_date asc",
-        }),
-      ]);
-
-      // Build month labels
-      const months: string[] = [];
-      for (let m = 0; m < monthsBack; m++) {
-        const d = new Date(
-          now.getFullYear(),
-          now.getMonth() - monthsBack + 1 + m,
-          1,
-        );
-        months.push(
-          `${d.toLocaleString("en", { month: "short" })} ${
-            d.getFullYear().toString().slice(2)
+      if (!Number.isInteger(monthsBack) || monthsBack < 1) {
+        throw new Error(
+          `[erpnext_profit_loss] 'months' must be a whole number of at least 1, got ${
+            JSON.stringify(input.months)
           }`,
         );
       }
+      if (monthsBack > MAX_PL_MONTHS) {
+        throw new Error(
+          `[erpnext_profit_loss] 'months' is capped at ${MAX_PL_MONTHS}, got ${monthsBack}`,
+        );
+      }
+      const chartType = (input.type as string) ?? "composed";
 
-      // Aggregate by month
-      const income = new Array(monthsBack).fill(0) as number[];
-      const expenses = new Array(monthsBack).fill(0) as number[];
+      const company = await resolveReportCompany(ctx, input);
 
-      for (const so of salesOrders) {
-        const d = new Date(so.transaction_date as string);
-        const mIdx = (d.getFullYear() - startDate.getFullYear()) * 12 +
-          d.getMonth() - startDate.getMonth();
-        if (mIdx >= 0 && mIdx < monthsBack) {
-          income[mIdx] += Number(so.grand_total) || 0;
+      // Cửa sổ báo cáo tính từ "hôm nay" theo múi giờ site, và mọi phép cộng tháng làm bằng
+      // `Date.UTC`. Bản cũ dựng `new Date(y, m, 1)` theo giờ máy rồi gọi `toISOString()`:
+      // ở UTC+7 chuỗi ra lùi một ngày, nên ngày mồng một thành ngày cuối tháng trước và cả
+      // cửa sổ trượt đi một tháng.
+      const today = await siteToday(ctx);
+      const [todayYear, todayMonth] = today.split("-").map(Number);
+      if (!Number.isInteger(todayYear) || !Number.isInteger(todayMonth)) {
+        throw new Error(
+          `[erpnext_profit_loss] could not read today's date from the site (got '${today}')`,
+        );
+      }
+      const periodStart = utcDateString(
+        new Date(Date.UTC(todayYear, todayMonth - monthsBack, 1)),
+      );
+      // Ngày 0 của tháng kế tiếp chính là ngày cuối tháng hiện tại, kể cả tháng 2 năm nhuận.
+      const periodEnd = utcDateString(
+        new Date(Date.UTC(todayYear, todayMonth, 0)),
+      );
+
+      const report = await runQueryReport(
+        ctx,
+        "Profit and Loss Statement",
+        {
+          company,
+          filter_based_on: "Date Range",
+          period_start_date: periodStart,
+          period_end_date: periodEnd,
+          periodicity: "Monthly",
+          // Cộng dồn tắt: mỗi cột phải là riêng tháng đó, nếu không biểu đồ vẽ ra một đường
+          // chỉ đi lên và mọi tháng đều "lãi hơn" tháng trước.
+          accumulated_values: 0,
+        },
+      );
+
+      const periods = periodColumns(report);
+      if (periods.length === 0) {
+        throw new Error(
+          "[erpnext_profit_loss] the Profit and Loss Statement returned no period columns for " +
+            `${company} between ${periodStart} and ${periodEnd}. Check that the company has a ` +
+            "fiscal year covering that range.",
+        );
+      }
+
+      // Dòng gốc của cây tài khoản: `indent` là số (dòng tổng tổng hợp và dòng trống mà báo
+      // cáo chèn vào giữa không có `indent`), và không có cha. Cộng đúng những dòng này là
+      // cộng đúng một lần: mọi dòng con đã nằm trong tổng của gốc rồi.
+      const rootRows = report.result.filter((row) =>
+        row !== null && typeof row === "object" &&
+        cellNumber(row.indent) !== null && !row.parent_account
+      );
+      const rootAccounts = rootRows
+        .map((row) => row.account)
+        .filter((name): name is string =>
+          typeof name === "string" && name !== ""
+        );
+      if (rootAccounts.length !== rootRows.length) {
+        throw new Error(
+          "[erpnext_profit_loss] the Profit and Loss Statement returned a top-level row with no " +
+            "account name, so its amounts cannot be classified as income or expense.",
+        );
+      }
+
+      // Dòng báo cáo không mang `root_type`, nên phải hỏi lại chính bảng Account. Không suy ra
+      // từ nhãn: nhãn đã qua `_()` nên trên site tiếng Việt "Income" hiện thành "Thu nhập".
+      const rootTypeByAccount = new Map<string, string>();
+      if (rootAccounts.length > 0) {
+        const accounts = await ctx.client.list("Account", {
+          fields: ["name", "root_type"],
+          filters: [["name", "in", rootAccounts]],
+          limit: rootAccounts.length,
+        });
+        for (const account of accounts) {
+          if (
+            typeof account.name === "string" &&
+            typeof account.root_type === "string"
+          ) {
+            rootTypeByAccount.set(account.name, account.root_type);
+          }
         }
       }
 
-      for (const po of purchaseOrders) {
-        const d = new Date(po.transaction_date as string);
-        const mIdx = (d.getFullYear() - startDate.getFullYear()) * 12 +
-          d.getMonth() - startDate.getMonth();
-        if (mIdx >= 0 && mIdx < monthsBack) {
-          expenses[mIdx] += Number(po.grand_total) || 0;
+      const income = new Array<number>(periods.length).fill(0);
+      const expenses = new Array<number>(periods.length).fill(0);
+
+      for (const row of rootRows) {
+        const account = row.account as string;
+        const rootType = rootTypeByAccount.get(account);
+        if (rootType !== "Income" && rootType !== "Expense") {
+          throw new Error(
+            `[erpnext_profit_loss] top-level report row '${account}' has root_type ${
+              rootType === undefined ? "unknown" : `'${rootType}'`
+            }, so it cannot be counted as income or expense. Refusing to report a total that ` +
+              "silently drops it.",
+          );
         }
+        const bucket = rootType === "Income" ? income : expenses;
+        periods.forEach((period, index) => {
+          const raw = row[period.fieldname];
+          if (raw === undefined || raw === null || raw === "") return;
+          const amount = cellNumber(raw);
+          if (amount === null) {
+            throw new Error(
+              `[erpnext_profit_loss] report cell ${account} / ${period.fieldname} is ${
+                JSON.stringify(raw)
+              }, which is not an amount.`,
+            );
+          }
+          bucket[index] += amount;
+        });
       }
 
-      const netProfit = income.map((inc, i) => Math.round(inc - expenses[i]));
+      // Đối chiếu ngay trong cùng một phản hồi: `report_summary` do ERPNext tự tính từ dòng
+      // tổng của chính báo cáo này, nên nếu cách cộng ở trên đọc sai cấu trúc cây thì hai
+      // con số lệch nhau. Sai lệch thì ném lỗi chứ không vẽ biểu đồ, vì một biểu đồ lãi lỗ
+      // sai không tự khai là sai.
+      const crossCheck = verifyAgainstSummary(report.report_summary, {
+        income: income.reduce((sum, value) => sum + value, 0),
+        expenses: expenses.reduce((sum, value) => sum + value, 0),
+      });
+
+      const currency = reportCurrency(report.report_summary, rootRows);
+      const round = (value: number) => Math.round(value * 100) / 100;
+      const netProfit = income.map((value, index) =>
+        round(value - expenses[index])
+      );
 
       // deno-lint-ignore no-explicit-any
       const datasets: any[] = [
         {
           label: "Income",
-          values: income.map((v) => Math.round(v)),
+          values: income.map(round),
           color: "#4ade80",
           type: "bar",
         },
         {
           label: "Expenses",
-          values: expenses.map((v) => Math.round(v)),
+          values: expenses.map(round),
           color: "#f87171",
           type: "bar",
         },
@@ -1781,17 +1915,105 @@ export const analyticsTools: ErpNextTool[] = [
 
       return {
         title: "Profit & Loss",
-        subtitle: `Last ${monthsBack} months`,
+        subtitle:
+          `${company}, last ${monthsBack} months (${periodStart} to ${periodEnd})`,
         type: chartType,
-        labels: months,
+        labels: periods.map((period) => period.label),
         datasets,
         ...(chartType === "composed"
           ? { showRightAxis: true, rightAxisLabel: "Net Profit" }
           : {}),
-        currency: "EUR",
+        ...(currency ? { currency } : {}),
         yAxisLabel: "Amount",
+        source: {
+          report: "Profit and Loss Statement",
+          company,
+          period_start_date: periodStart,
+          period_end_date: periodEnd,
+          periodicity: "Monthly",
+          cross_check: crossCheck,
+        },
         _meta: CHART_META,
       };
     },
   },
 ];
+
+/**
+ * Sai số cho phép khi so tổng tự cộng với tổng của ERPNext.
+ *
+ * Một xu cho phần làm tròn tiền tệ, cộng thêm một phần tương đối cho sai số dấu phẩy động:
+ * cộng gần bảy trăm triệu bằng `double` theo hai thứ tự khác nhau ra hai kết quả lệch nhau
+ * ở hàng cuối, và đó không phải lỗi số liệu.
+ */
+function amountTolerance(expected: number): number {
+  return 0.01 + Math.abs(expected) * 1e-12;
+}
+
+/**
+ * So tổng thu và tổng chi tự cộng với dải tóm tắt của chính báo cáo.
+ *
+ * `report_summary` có thứ tự cố định trong `financial_statements.py`: [0] tổng thu, [1] tổng
+ * chi, [2] lãi lỗ ròng. Nhãn thì đã qua `_()` nên không dùng để nhận diện được.
+ */
+function verifyAgainstSummary(
+  summary: { value?: unknown }[] | undefined,
+  derived: { income: number; expenses: number },
+): Record<string, unknown> {
+  const expectedIncome = summary && summary.length > 1
+    ? cellNumber(summary[0]?.value)
+    : null;
+  const expectedExpenses = summary && summary.length > 1
+    ? cellNumber(summary[1]?.value)
+    : null;
+
+  if (expectedIncome === null || expectedExpenses === null) {
+    return {
+      status: "unavailable",
+      detail:
+        "the report returned no usable summary row, so the totals below could not be checked " +
+        "against ERPNext's own figures",
+      derived_income: derived.income,
+      derived_expenses: derived.expenses,
+    };
+  }
+
+  const incomeGap = Math.abs(derived.income - expectedIncome);
+  const expenseGap = Math.abs(derived.expenses - expectedExpenses);
+  if (
+    incomeGap > amountTolerance(expectedIncome) ||
+    expenseGap > amountTolerance(expectedExpenses)
+  ) {
+    throw new Error(
+      "[erpnext_profit_loss] the per-month totals do not add up to what the report itself " +
+        `reports: income ${derived.income} vs ${expectedIncome}, expenses ${derived.expenses} ` +
+        `vs ${expectedExpenses}. Refusing to return a P&L chart that disagrees with ERPNext.`,
+    );
+  }
+
+  return {
+    status: "verified",
+    detail:
+      "per-month totals match the report's own income and expense summary to the cent",
+    income: expectedIncome,
+    expenses: expectedExpenses,
+  };
+}
+
+/** Đồng tiền của báo cáo: ưu tiên dải tóm tắt, sau đó cột `currency` của dòng tài khoản. */
+function reportCurrency(
+  summary: { currency?: unknown }[] | undefined,
+  rows: Record<string, unknown>[],
+): string | undefined {
+  for (const entry of summary ?? []) {
+    if (typeof entry?.currency === "string" && entry.currency !== "") {
+      return entry.currency;
+    }
+  }
+  for (const row of rows) {
+    if (typeof row.currency === "string" && row.currency !== "") {
+      return row.currency;
+    }
+  }
+  return undefined;
+}

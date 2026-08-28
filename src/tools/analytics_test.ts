@@ -9,7 +9,7 @@
 
 // deno-lint-ignore-file no-explicit-any
 
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { SchemaValidator } from "@casys/mcp-server";
 import { analyticsTools } from "./analytics.ts";
 import type { FrappeClient } from "../api/frappe-client.ts";
@@ -686,26 +686,360 @@ Deno.test("erpnext_gross_profit - returns composed chart with margin line", asyn
 
 // ── erpnext_profit_loss ─────────────────────────────────────────────────────
 
-Deno.test("erpnext_profit_loss - returns monthly income vs expense", async () => {
-  const mockClient = makeMockClient({
-    list: async (doctype: string) => {
-      if (doctype === "Sales Order") {
-        return [{ grand_total: 10000, transaction_date: relativeMonth(0, 15) }];
+const INCOME_ROOT = "Income - HVG";
+const EXPENSE_ROOT = "Expenses - HVG";
+const MONTH_ABBR = [
+  "jan",
+  "feb",
+  "mar",
+  "apr",
+  "may",
+  "jun",
+  "jul",
+  "aug",
+  "sep",
+  "oct",
+  "nov",
+  "dec",
+];
+
+/** Tên cột kỳ mà báo cáo sinh ra cho khoảng ngày, dạng `aug_2026`. */
+function monthKeys(start: string, end: string): string[] {
+  const [startYear, startMonth] = start.split("-").map(Number);
+  const [endYear, endMonth] = end.split("-").map(Number);
+  const count = (endYear - startYear) * 12 + (endMonth - startMonth) + 1;
+  const keys: string[] = [];
+  for (let step = 0; step < count; step++) {
+    const index = startMonth - 1 + step;
+    keys.push(
+      `${MONTH_ABBR[index % 12]}_${startYear + Math.floor(index / 12)}`,
+    );
+  }
+  return keys;
+}
+
+/**
+ * Một phản hồi "Profit and Loss Statement" giả, dựng theo đúng hình dạng đã đo trên
+ * production: dòng gốc có `indent`, dòng con nằm dưới gốc, và hai dòng tổng hợp mà báo cáo
+ * chèn vào cuối thì không có `indent`.
+ */
+function makePlReport(
+  filters: any,
+  opts: {
+    income?: number[];
+    expenses?: number[];
+    summary?: [number, number] | null;
+  } = {},
+) {
+  const keys = monthKeys(filters.period_start_date, filters.period_end_date);
+  const income = opts.income ?? keys.map(() => 0);
+  const expenses = opts.expenses ?? keys.map(() => 0);
+  const byMonth = (values: number[]) =>
+    Object.fromEntries(keys.map((key, index) => [key, values[index] ?? 0]));
+  const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
+
+  const rootRow = (account: string, values: number[]) => ({
+    account,
+    account_name: account,
+    parent_account: "",
+    indent: 0.0,
+    currency: "VND",
+    is_group: 1,
+    ...byMonth(values),
+    total: sum(values),
+  });
+
+  const result: Record<string, unknown>[] = [
+    rootRow(INCOME_ROOT, income),
+    rootRow(EXPENSE_ROOT, expenses),
+    // Dòng con: số của nó đã nằm trong tổng của gốc, cộng thêm là đếm hai lần.
+    {
+      ...rootRow(EXPENSE_ROOT, expenses),
+      account: "Administrative Expenses - HVG",
+      parent_account: EXPENSE_ROOT,
+      indent: 2.0,
+      is_group: 0,
+    },
+    // Dòng tổng tổng hợp và dòng trống: không có `indent`, không được cộng.
+    {
+      account: "'Tổng Chi phí (Ghi nợ)'",
+      account_name: "'Tổng Chi phí (Ghi nợ)'",
+      currency: "VND",
+      ...byMonth(expenses),
+      total: sum(expenses),
+    },
+    {},
+  ];
+
+  const summary = opts.summary === null
+    ? undefined
+    : (opts.summary ?? [sum(income), sum(expenses)]);
+
+  return {
+    columns: [
+      {
+        fieldname: "account",
+        label: "Tài Khoản",
+        fieldtype: "Link",
+        options: "Account",
+      },
+      {
+        fieldname: "currency",
+        label: "Tiền tệ",
+        fieldtype: "Link",
+        options: "Currency",
+        hidden: 1,
+      },
+      ...keys.map((key) => ({
+        // Nhãn đã qua `_()`: cột phải nhận diện bằng `fieldtype`, không bằng nhãn.
+        fieldname: key,
+        label: `thg ${key} tiếng Việt`,
+        fieldtype: "Currency",
+        options: "currency",
+      })),
+      {
+        fieldname: "total",
+        label: "Tổng cộng",
+        fieldtype: "Currency",
+        options: "currency",
+      },
+    ],
+    result,
+    ...(summary
+      ? {
+        report_summary: [
+          {
+            label: "Tổng thu nhập",
+            value: summary[0],
+            datatype: "Currency",
+            currency: "VND",
+          },
+          {
+            label: "Tổng chi phí",
+            value: summary[1],
+            datatype: "Currency",
+            currency: "VND",
+          },
+          {
+            label: "Lợi nhuận ròng",
+            value: summary[0] - summary[1],
+            datatype: "Currency",
+            currency: "VND",
+          },
+        ],
       }
-      if (doctype === "Purchase Order") {
-        return [{ grand_total: 6000, transaction_date: relativeMonth(1, 10) }];
+      : {}),
+  };
+}
+
+/** Client giả cho `erpnext_profit_loss`: công ty, báo cáo, và bảng root_type. */
+function makePlClient(opts: {
+  companies?: string[];
+  accounts?: Record<string, string>;
+  report?: (filters: any) => unknown;
+} = {}) {
+  const companies = opts.companies ?? ["Havi Group"];
+  const accounts = opts.accounts ??
+    { [INCOME_ROOT]: "Income", [EXPENSE_ROOT]: "Expense" };
+  const listedDoctypes: string[] = [];
+  const runArgs: any[] = [];
+
+  const client = makeMockClient({
+    list: async (doctype: string, options: any) => {
+      listedDoctypes.push(doctype);
+      if (doctype === "Company") return companies.map((name) => ({ name }));
+      if (doctype === "Account") {
+        const wanted = (options?.filters?.[0]?.[2] ?? []) as string[];
+        return wanted
+          .filter((name) => name in accounts)
+          .map((name) => ({ name, root_type: accounts[name] }));
       }
       return [];
     },
+    callMethod: async (method: string, args: any) => {
+      if (method === "frappe.client.get_value") {
+        return { time_zone: "Asia/Ho_Chi_Minh" };
+      }
+      if (method === "frappe.desk.query_report.run") {
+        runArgs.push(args);
+        const filters = args.filters as any;
+        return (opts.report ?? ((f: any) => makePlReport(f)))(filters);
+      }
+      return null;
+    },
+  });
+
+  return { client, listedDoctypes, runArgs };
+}
+
+Deno.test("erpnext_profit_loss - reads the ledger report, not Sales/Purchase Orders", async () => {
+  // Chính là lỗi phải sửa: site có 0 Sales Order và 0 Purchase Order, nên bản cũ luôn báo
+  // thu 0 và chi 0 trong khi sổ cái có gần bảy trăm triệu chi phí.
+  const { client, listedDoctypes, runArgs } = makePlClient({
+    report: (filters) =>
+      makePlReport(filters, {
+        expenses: monthKeys(
+          filters.period_start_date,
+          filters.period_end_date,
+        ).map((_, index, all) => index === all.length - 1 ? 709262820.06 : 0),
+      }),
   });
 
   const tool = getTool("erpnext_profit_loss");
-  const result = await tool.handler({ months: 3 }, makeCtx(mockClient)) as any;
+  const result = await tool.handler({ months: 6 }, makeCtx(client)) as any;
 
-  assertEquals(result.type, "composed");
-  assert(result.labels.length > 0);
-  assert(result.datasets.length >= 2);
+  assertEquals(listedDoctypes.includes("Sales Order"), false);
+  assertEquals(listedDoctypes.includes("Purchase Order"), false);
+  assertEquals(runArgs[0].report_name, "Profit and Loss Statement");
+
+  const expenses = result.datasets.find((d: any) => d.label === "Expenses");
+  assertEquals(expenses.values.at(-1), 709262820.06);
+  assertEquals(result.currency, "VND");
+  assertEquals(result.source.cross_check.status, "verified");
+  assertEquals(result.source.cross_check.expenses, 709262820.06);
   assertChartMeta(result);
+});
+
+Deno.test("erpnext_profit_loss - never lets the report queue a Prepared Report", async () => {
+  // Không có cờ này, `query_report.run` có thể chèn một bản ghi Prepared Report, tức là một
+  // tool khai read-only lại ghi lên site sản xuất.
+  const { client, runArgs } = makePlClient();
+  await getTool("erpnext_profit_loss").handler({ months: 3 }, makeCtx(client));
+
+  assertEquals(runArgs[0].ignore_prepared_report, true);
+  assertEquals(runArgs[0].filters.accumulated_values, 0);
+  assertEquals(runArgs[0].filters.periodicity, "Monthly");
+  assertEquals(runArgs[0].filters.filter_based_on, "Date Range");
+});
+
+Deno.test("erpnext_profit_loss - window starts on the first of a month and ends on a month end", async () => {
+  // Bản cũ dựng ngày theo giờ máy rồi gọi `toISOString()`: ở múi giờ dương, ngày mồng một
+  // trượt về ngày cuối tháng trước và cả cửa sổ lệch một tháng.
+  const { client } = makePlClient();
+  const result = await getTool("erpnext_profit_loss").handler(
+    { months: 6 },
+    makeCtx(client),
+  ) as any;
+
+  const start = result.source.period_start_date as string;
+  const end = result.source.period_end_date as string;
+  assertEquals(start.slice(-3), "-01");
+
+  const [endYear, endMonth, endDay] = end.split("-").map(Number);
+  const lastDayOfEndMonth = new Date(Date.UTC(endYear, endMonth, 0))
+    .getUTCDate();
+  assertEquals(endDay, lastDayOfEndMonth);
+
+  const [startYear, startMonth] = start.split("-").map(Number);
+  assertEquals((endYear - startYear) * 12 + (endMonth - startMonth), 5);
+  assertEquals(result.labels.length, 6);
+});
+
+Deno.test("erpnext_profit_loss - counts each root once, ignoring child and total rows", async () => {
+  const { client } = makePlClient({
+    report: (filters) =>
+      makePlReport(filters, {
+        income: [100, 200, 300],
+        expenses: [10, 20, 30],
+      }),
+  });
+
+  const result = await getTool("erpnext_profit_loss").handler(
+    { months: 3 },
+    makeCtx(client),
+  ) as any;
+
+  const income = result.datasets.find((d: any) => d.label === "Income");
+  const expenses = result.datasets.find((d: any) => d.label === "Expenses");
+  const net = result.datasets.find((d: any) => d.label === "Net Profit");
+  assertEquals(income.values, [100, 200, 300]);
+  assertEquals(expenses.values, [10, 20, 30]);
+  assertEquals(net.values, [90, 180, 270]);
+});
+
+Deno.test("erpnext_profit_loss - refuses to chart totals that disagree with the report", async () => {
+  const { client } = makePlClient({
+    report: (filters) =>
+      makePlReport(filters, {
+        expenses: [10, 20, 30],
+        // ERPNext tự báo một tổng khác: nghĩa là cách đọc cây tài khoản ở đây đã sai.
+        summary: [0, 999],
+      }),
+  });
+
+  await assertRejects(
+    () =>
+      getTool("erpnext_profit_loss").handler({ months: 3 }, makeCtx(client)),
+    Error,
+    "do not add up",
+  );
+});
+
+Deno.test("erpnext_profit_loss - refuses a top-level account it cannot classify", async () => {
+  const { client } = makePlClient({
+    accounts: { [INCOME_ROOT]: "Income" },
+  });
+
+  await assertRejects(
+    () =>
+      getTool("erpnext_profit_loss").handler({ months: 3 }, makeCtx(client)),
+    Error,
+    EXPENSE_ROOT,
+  );
+});
+
+Deno.test("erpnext_profit_loss - says so when the report gives nothing to check against", async () => {
+  const { client } = makePlClient({
+    report: (filters) =>
+      makePlReport(filters, { expenses: [1, 2, 3], summary: null }),
+  });
+
+  const result = await getTool("erpnext_profit_loss").handler(
+    { months: 3 },
+    makeCtx(client),
+  ) as any;
+
+  assertEquals(result.source.cross_check.status, "unavailable");
+  assertEquals(result.source.cross_check.derived_expenses, 6);
+});
+
+Deno.test("erpnext_profit_loss - requires 'company' when the site has several", async () => {
+  const { client } = makePlClient({
+    companies: ["Havi Group", "Havi Logistics"],
+  });
+
+  await assertRejects(
+    () =>
+      getTool("erpnext_profit_loss").handler({ months: 3 }, makeCtx(client)),
+    Error,
+    "'company' is required",
+  );
+});
+
+Deno.test("erpnext_profit_loss - passes an explicit company straight through", async () => {
+  const { client, runArgs, listedDoctypes } = makePlClient({
+    companies: ["Havi Group", "Havi Logistics"],
+  });
+
+  await getTool("erpnext_profit_loss").handler(
+    { months: 3, company: "Havi Logistics" },
+    makeCtx(client),
+  );
+
+  assertEquals(runArgs[0].filters.company, "Havi Logistics");
+  // Công ty đã biết thì không cần hỏi lại danh sách.
+  assertEquals(listedDoctypes.includes("Company"), false);
+});
+
+Deno.test("erpnext_profit_loss - rejects a months value it cannot honour", async () => {
+  const tool = getTool("erpnext_profit_loss");
+  for (const months of [0, -1, 2.5, 61]) {
+    await assertRejects(
+      () => tool.handler({ months }, makeCtx(makePlClient().client)),
+      Error,
+      "months",
+    );
+  }
 });
 
 // ── All tools have required fields ──────────────────────────────────────────
