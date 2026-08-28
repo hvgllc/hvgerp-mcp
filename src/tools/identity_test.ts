@@ -44,7 +44,8 @@ function makeCtx(
   calls: ListCall[] = [],
 ): ErpNextToolContext {
   const client = {
-    callMethod: async () => "khoa.do@havigroup.com",
+    callMethod: async (method: string) =>
+      method === "frappe.client.get_count" ? 0 : "khoa.do@havigroup.com",
     get: async () => USER_DOC,
     list: async (doctype: string, options: Record<string, unknown>) => {
       calls.push({ doctype, options });
@@ -324,4 +325,339 @@ Deno.test("erpnext_my_work asks for draft timesheets, not merely uncancelled one
     ["employee", "=", "HR-EMP-00044"],
     ["docstatus", "=", 0],
   ]);
+});
+
+// ── mục dự án: hợp của `Project User` với `_assign` ─────────────────────────
+
+const USER = "khoa.do@havigroup.com";
+const MEMBER_FILTER = ["Project User", "user", "=", USER];
+const ASSIGN_FILTER = ["_assign", "like", `%"${USER}"%`];
+const OPEN_FILTER = ["status", "=", "Open"];
+
+/** Nhận ra nửa nào của hợp đang được hỏi, bằng chính bộ lọc đã gửi đi. */
+function asksFor(
+  options: Record<string, unknown>,
+  needle: readonly unknown[],
+): boolean {
+  return JSON.stringify(options.filters ?? []).includes(JSON.stringify(needle));
+}
+
+function project(name: string, endDate: string | null) {
+  return {
+    name,
+    project_name: name,
+    status: "Open",
+    expected_end_date: endDate,
+  };
+}
+
+Deno.test("erpnext_my_work asks for projects both by team membership and by assignment", async () => {
+  clearCallerProfileCache();
+  const calls: ListCall[] = [];
+  await tool("erpnext_my_work").handler(
+    { sections: ["projects"] },
+    makeCtx({}, calls),
+  );
+
+  // Lọc mỗi `_assign` là hỏng trên site thật: 1 trong 142 dự án có `_assign` khác rỗng, trong khi
+  // `Project User` có 688 dòng, nên mục này trả rỗng cho gần như mọi người.
+  const projects = calls.filter((call) => call.doctype === "Project");
+  assertEquals(projects.length, 2);
+  assertEquals(projects[0].options.filters, [OPEN_FILTER, MEMBER_FILTER]);
+  assertEquals(projects[1].options.filters, [OPEN_FILTER, ASSIGN_FILTER]);
+  // Thứ tự phải là toàn phần, không thì phần cắt `limit` của trang ghép không tái lập được.
+  assertEquals(projects[0].options.order_by, "expected_end_date asc, name asc");
+  assertEquals(projects[1].options.order_by, "expected_end_date asc, name asc");
+});
+
+Deno.test("erpnext_my_work drops the open-only filter from both project halves", async () => {
+  clearCallerProfileCache();
+  const calls: ListCall[] = [];
+  await tool("erpnext_my_work").handler(
+    { sections: ["projects"], include_closed: true },
+    makeCtx({}, calls),
+  );
+
+  const projects = calls.filter((call) => call.doctype === "Project");
+  assertEquals(projects[0].options.filters, [MEMBER_FILTER]);
+  assertEquals(projects[1].options.filters, [ASSIGN_FILTER]);
+});
+
+Deno.test("erpnext_my_work returns projects reachable only through Project User", async () => {
+  clearCallerProfileCache();
+  const ctx = makeCtx({
+    list: async (doctype: string, options: Record<string, unknown>) => {
+      if (doctype === "Employee") return [EMPLOYEE_ROW];
+      if (doctype !== "Project") return [];
+      // Người thật này có 98 dự án qua bảng con và 0 qua `_assign`; hình dạng đó là cả lỗi.
+      return asksFor(options, MEMBER_FILTER)
+        ? [project("PROJ-0037", null), project("PROJ-0100", "2026-09-30")]
+        : [];
+    },
+  });
+
+  const result = await tool("erpnext_my_work").handler(
+    { sections: ["projects"] },
+    ctx,
+  ) as Record<string, unknown>;
+
+  const rows = result.data as Record<string, unknown>[];
+  assertEquals(rows.map((row) => row.name), ["PROJ-0037", "PROJ-0100"]);
+  assertEquals(rows.every((row) => row.section === "projects"), true);
+  const sections = result.sections as Record<string, Record<string, unknown>>;
+  assertEquals(sections.projects.count, 2);
+  assertEquals(sections.projects.returned, 2);
+  assertEquals(sections.projects.has_more, false);
+});
+
+Deno.test("erpnext_my_work counts a project reachable both ways only once", async () => {
+  clearCallerProfileCache();
+  const ctx = makeCtx({
+    list: async (doctype: string) => {
+      if (doctype === "Employee") return [EMPLOYEE_ROW];
+      if (doctype !== "Project") return [];
+      // Cùng một dự án trả về từ cả hai nửa: hợp chứ không phải nối.
+      return [project("PROJ-0007", "2026-10-01")];
+    },
+  });
+
+  const result = await tool("erpnext_my_work").handler(
+    { sections: ["projects"] },
+    ctx,
+  ) as Record<string, unknown>;
+
+  assertEquals((result.data as unknown[]).length, 1);
+  assertEquals(result.count, 1);
+});
+
+Deno.test("erpnext_my_work orders the merged project page the way MariaDB does", async () => {
+  clearCallerProfileCache();
+  const ctx = makeCtx({
+    list: async (doctype: string, options: Record<string, unknown>) => {
+      if (doctype === "Employee") return [EMPLOYEE_ROW];
+      if (doctype !== "Project") return [];
+      return asksFor(options, MEMBER_FILTER)
+        ? [project("PROJ-B", null), project("PROJ-D", "2026-12-01")]
+        : [project("PROJ-A", null), project("PROJ-C", "2026-06-01")];
+    },
+  });
+
+  const result = await tool("erpnext_my_work").handler(
+    { sections: ["projects"] },
+    ctx,
+  ) as Record<string, unknown>;
+
+  // `ORDER BY expected_end_date asc` của MariaDB đặt ô rỗng lên TRƯỚC - đo trên chính site, nơi
+  // 113 trong 142 dự án không có `expected_end_date`. Sắp sai chỗ này thì phần cắt theo `limit`
+  // của trang ghép bỏ nhầm đúng những hàng máy chủ xếp lên đầu.
+  assertEquals(
+    (result.data as Record<string, unknown>[]).map((row) => row.name),
+    ["PROJ-A", "PROJ-B", "PROJ-C", "PROJ-D"],
+  );
+});
+
+Deno.test("erpnext_my_work reports the real project total for a truncated page", async () => {
+  clearCallerProfileCache();
+  const counted: unknown[] = [];
+  const ctx = makeCtx({
+    list: async (doctype: string, options: Record<string, unknown>) => {
+      if (doctype === "Employee") return [EMPLOYEE_ROW];
+      if (doctype !== "Project") return [];
+      return asksFor(options, MEMBER_FILTER)
+        ? [project("PROJ-0037", null), project("PROJ-0050", null)]
+        : [project("PROJ-0900", null), project("PROJ-0901", null)];
+    },
+    callMethod: async (method: string, params: Record<string, unknown>) => {
+      if (method !== "frappe.client.get_count") return USER;
+      const filters = params.filters as unknown[];
+      counted.push(filters);
+      const text = JSON.stringify(filters);
+      if (
+        text.includes(JSON.stringify(MEMBER_FILTER)) &&
+        text.includes(JSON.stringify(ASSIGN_FILTER))
+      ) return 1;
+      return text.includes(JSON.stringify(MEMBER_FILTER)) ? 98 : 4;
+    },
+  });
+
+  const result = await tool("erpnext_my_work").handler(
+    { sections: ["projects"], limit: 2 },
+    ctx,
+  ) as Record<string, unknown>;
+
+  const sections = result.sections as Record<string, Record<string, unknown>>;
+  // 98 + 4 - 1: `frappe.client.get_count` không nhận `or_filters`, nên hợp phải đếm bằng bao hàm
+  // - loại trừ chứ không có một lời gọi nào đếm thẳng được.
+  assertEquals(sections.projects.count, 101);
+  assertEquals(sections.projects.returned, 2);
+  assertEquals(sections.projects.has_more, true);
+  assertEquals(counted.length, 3);
+  assertEquals(counted[0], [OPEN_FILTER, MEMBER_FILTER]);
+  assertEquals(counted[1], [OPEN_FILTER, ASSIGN_FILTER]);
+  assertEquals(counted[2], [OPEN_FILTER, MEMBER_FILTER, ASSIGN_FILTER]);
+  // Trang bị cắt thì tổng thật, không phải độ dài trang, mới là câu trả lời cho "bao nhiêu".
+  assertEquals(result.count, 101);
+  assertEquals(result.returned, 2);
+  assertEquals(result.has_more, true);
+});
+
+Deno.test("erpnext_my_work leaves the project total unknown rather than reporting the page length", async () => {
+  clearCallerProfileCache();
+  const ctx = makeCtx({
+    list: async (doctype: string, options: Record<string, unknown>) => {
+      if (doctype === "Employee") return [EMPLOYEE_ROW];
+      if (doctype !== "Project") return [];
+      return asksFor(options, MEMBER_FILTER)
+        ? [project("PROJ-0037", null), project("PROJ-0050", null)]
+        : [];
+    },
+    callMethod: async (method: string) =>
+      method === "frappe.client.get_count" ? null : USER,
+  });
+
+  const result = await tool("erpnext_my_work").handler(
+    { sections: ["projects"], limit: 2 },
+    ctx,
+  ) as Record<string, unknown>;
+
+  const sections = result.sections as Record<string, Record<string, unknown>>;
+  assertEquals(sections.projects.count, null);
+  assertEquals(sections.projects.returned, 2);
+  // Trang đầy mà tổng chưa biết thì rất có thể còn hàng phía sau: nghiêng về "còn nữa".
+  assertEquals(sections.projects.has_more, true);
+  assertStringIncludes(sections.projects.count_error as string, "get_count");
+  assertEquals(result.count, null);
+  assertStringIncludes(result.count_error as string, "unknown");
+});
+
+Deno.test("erpnext_my_work rejects a union total below the page it is holding", async () => {
+  clearCallerProfileCache();
+  const ctx = makeCtx({
+    list: async (doctype: string, options: Record<string, unknown>) => {
+      if (doctype === "Employee") return [EMPLOYEE_ROW];
+      if (doctype !== "Project") return [];
+      return asksFor(options, MEMBER_FILTER)
+        ? [project("PROJ-0037", null), project("PROJ-0050", null)]
+        : [];
+    },
+    callMethod: async (method: string, params: Record<string, unknown>) => {
+      if (method !== "frappe.client.get_count") return USER;
+      // Ba lần đếm không nằm trong một giao dịch: một lượt ghi xen giữa làm phép trừ ra số âm.
+      return JSON.stringify(params.filters).includes(
+          JSON.stringify(ASSIGN_FILTER),
+        )
+        ? 9
+        : 1;
+    },
+  });
+
+  const result = await tool("erpnext_my_work").handler(
+    { sections: ["projects"], limit: 2 },
+    ctx,
+  ) as Record<string, unknown>;
+
+  const sections = result.sections as Record<string, Record<string, unknown>>;
+  assertEquals(sections.projects.count, null);
+  assertStringIncludes(
+    sections.projects.count_error as string,
+    "below the 2 documents already in hand",
+  );
+});
+
+// ── tổng thật cho mọi mục, không phải độ dài trang ──────────────────────────
+
+Deno.test("erpnext_my_work reports the real ToDo total for a truncated page", async () => {
+  clearCallerProfileCache();
+  const ctx = makeCtx({
+    list: async (doctype: string) => {
+      if (doctype === "Employee") return [EMPLOYEE_ROW];
+      if (doctype === "ToDo") return [{ name: "TODO-1", status: "Open" }];
+      return [];
+    },
+    callMethod: async (method: string) =>
+      method === "frappe.client.get_count" ? 7 : USER,
+  });
+
+  const result = await tool("erpnext_my_work").handler(
+    { sections: ["todos"], limit: 1 },
+    ctx,
+  ) as Record<string, unknown>;
+
+  const sections = result.sections as Record<string, Record<string, unknown>>;
+  // Người có 7 ToDo và `limit` 1 từng nhận đúng chữ "1" để trả lời "tôi còn bao nhiêu việc".
+  assertEquals(sections.todos.count, 7);
+  assertEquals(sections.todos.returned, 1);
+  assertEquals(sections.todos.has_more, true);
+  assertEquals(result.count, 7);
+  assertEquals(result.returned, 1);
+  assertEquals(result.has_more, true);
+});
+
+Deno.test("erpnext_my_work adds the section totals up, and counts no page twice", async () => {
+  clearCallerProfileCache();
+  const ctx = makeCtx({
+    list: async (doctype: string) => {
+      if (doctype === "Employee") return [EMPLOYEE_ROW];
+      if (doctype === "ToDo") return [{ name: "TODO-1", status: "Open" }];
+      if (doctype === "Task") return [{ name: "TASK-1", status: "Working" }];
+      return [];
+    },
+  });
+
+  const result = await tool("erpnext_my_work").handler({}, ctx) as Record<
+    string,
+    unknown
+  >;
+
+  // Trang ngắn hơn `limit` đã tự chứng minh mình là toàn bộ kết quả, nên không tốn lần đếm nào.
+  assertEquals(result.count, 2);
+  assertEquals(result.returned, 2);
+  assertEquals(result.has_more, false);
+  assertEquals(result.count_error, undefined);
+});
+
+Deno.test("erpnext_my_work will not total a roll-up with a refused section in it", async () => {
+  clearCallerProfileCache();
+  const ctx = makeCtx({
+    list: async (doctype: string) => {
+      if (doctype === "Employee") return [EMPLOYEE_ROW];
+      if (doctype === "Timesheet") {
+        throw new FrappeAPIError("Not permitted for Timesheet", 403, {});
+      }
+      if (doctype === "ToDo") return [{ name: "TODO-1", status: "Open" }];
+      return [];
+    },
+  });
+
+  const result = await tool("erpnext_my_work").handler({}, ctx) as Record<
+    string,
+    unknown
+  >;
+
+  // Cộng các mục đọc được rồi trình bày như tổng của mọi việc là đúng cái lời nói dối mà số đếm
+  // này sinh ra để dẹp: người đọc không có cách nào biết một phân hệ đã rơi ra ngoài.
+  assertEquals(result.count, null);
+  assertEquals(result.returned, 1);
+  assertStringIncludes(
+    result.count_error as string,
+    "'timesheets' was refused",
+  );
+});
+
+Deno.test("erpnext_my_work will not total a roll-up with a skipped section in it", async () => {
+  clearCallerProfileCache();
+  const ctx = makeCtx({
+    list: async (doctype: string) => doctype === "Employee" ? [] : [],
+  });
+
+  const result = await tool("erpnext_my_work").handler({}, ctx) as Record<
+    string,
+    unknown
+  >;
+
+  assertEquals(result.count, null);
+  assertStringIncludes(
+    result.count_error as string,
+    "'leave_applications' was skipped",
+  );
 });

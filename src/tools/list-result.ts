@@ -55,6 +55,63 @@ export interface TotalResolution {
 }
 
 /**
+ * Ask ERPNext how many documents match a filter set.
+ *
+ * `minimum` is the number of documents the caller already holds: a total below
+ * it is a contradiction, not a count. Pass 0 when counting without a page in
+ * hand, which is what a union total does - it counts each side and the overlap
+ * before any of them can be compared against a page.
+ *
+ * A failed or unparseable count is reported as unknown, never smoothed over.
+ */
+export async function resolveCount(
+  ctx: ErpNextToolContext,
+  doctype: string,
+  filters: FrappeFilter[] | undefined,
+  minimum: number,
+): Promise<TotalResolution> {
+  try {
+    const raw = await ctx.client.callMethod<unknown>(
+      "frappe.client.get_count",
+      { doctype, filters: filters ?? [] },
+      { httpMethod: "GET" },
+    );
+    // `Number()` alone is too generous to be a validator: it turns `null`,
+    // `""`, `[]` and `false` into 0. On an empty page that 0 survives every
+    // check below and is reported as "no matching documents" - a confident
+    // answer built from a response that in fact carried no count at all. Only
+    // a number, or a string that is entirely a number, is accepted.
+    const total = typeof raw === "number"
+      ? raw
+      : (typeof raw === "string" && raw.trim() !== "")
+      ? Number(raw)
+      : Number.NaN;
+    if (!Number.isFinite(total) || total < minimum) {
+      return {
+        count: null,
+        error:
+          `frappe.client.get_count on '${doctype}' returned ${
+            JSON.stringify(raw)
+          }, ` +
+          `which cannot be a total of at least ${minimum}. Treat the total ` +
+          "as unknown; do not answer a 'how many' question from this result.",
+      };
+    }
+    return { count: total };
+  } catch (err) {
+    return {
+      count: null,
+      error:
+        `frappe.client.get_count on '${doctype}' failed (${
+          err instanceof Error ? err.message : String(err)
+        }). The documents below are correct, but this page may not be the whole ` +
+        "result set and the total is unknown, so do not answer a 'how many' " +
+        "question from this result.",
+    };
+  }
+}
+
+/**
  * Resolve the true total for a page of documents.
  *
  * A failed count is reported as unknown, never smoothed over. Returning the
@@ -81,46 +138,7 @@ export async function resolveTotal(
   if (isUsableLimit(limit) && pageLength < normalizeLimit(limit)) {
     return { count: pageLength };
   }
-  try {
-    const raw = await ctx.client.callMethod<unknown>(
-      "frappe.client.get_count",
-      { doctype, filters: filters ?? [] },
-      { httpMethod: "GET" },
-    );
-    // `Number()` alone is too generous to be a validator: it turns `null`,
-    // `""`, `[]` and `false` into 0. On an empty page that 0 survives every
-    // check below and is reported as "no matching documents" - a confident
-    // answer built from a response that in fact carried no count at all. Only
-    // a number, or a string that is entirely a number, is accepted.
-    const total = typeof raw === "number"
-      ? raw
-      : (typeof raw === "string" && raw.trim() !== "")
-      ? Number(raw)
-      : Number.NaN;
-    // A total below the page we are holding is a contradiction, not a count.
-    if (!Number.isFinite(total) || total < pageLength) {
-      return {
-        count: null,
-        error:
-          `frappe.client.get_count on '${doctype}' returned ${
-            JSON.stringify(raw)
-          }, ` +
-          `which cannot be the total for a page of ${pageLength}. Treat the total ` +
-          "as unknown; do not answer a 'how many' question from this result.",
-      };
-    }
-    return { count: total };
-  } catch (err) {
-    return {
-      count: null,
-      error:
-        `frappe.client.get_count on '${doctype}' failed (${
-          err instanceof Error ? err.message : String(err)
-        }). The documents below are correct, but this page may not be the whole ` +
-        "result set and the total is unknown, so do not answer a 'how many' " +
-        "question from this result.",
-    };
-  }
+  return await resolveCount(ctx, doctype, filters, pageLength);
 }
 
 /**
