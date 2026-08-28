@@ -7,10 +7,62 @@
  */
 
 import type { FrappeFilter } from "../api/types.ts";
-import type { ErpNextTool } from "./types.ts";
+import type { ErpNextTool, ErpNextToolContext } from "./types.ts";
 import { listResult } from "./list-result.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
 import { resolveEmployee, resolveLink } from "../api/resolve.ts";
+
+/** One leave type's line in what `get_leave_details` returns. */
+interface LeaveAllocationEntry {
+  total_leaves?: number;
+  expired_leaves?: number;
+  leaves_taken?: number;
+  leaves_pending_approval?: number;
+  remaining_leaves?: number;
+}
+
+/** Shape of `hrms...leave_application.get_leave_details`. */
+interface LeaveDetails {
+  leave_allocation?: Record<string, LeaveAllocationEntry>;
+}
+
+/**
+ * Hôm nay theo múi giờ của chính site, dạng YYYY-MM-DD.
+ *
+ * Không dùng thẳng ngày UTC của tiến trình: máy chủ MCP có thể chạy ở múi giờ khác site, và
+ * "số dư phép tính đến hôm nay" lệch một ngày là một câu trả lời sai trông y hệt câu đúng
+ * ngay đúng lúc nó quan trọng nhất, tức ngày đầu hoặc cuối kỳ phép. Khi không đọc được cấu
+ * hình thì lùi về UTC, và người gọi vẫn thấy ngày đã dùng qua `as_on_date` trong kết quả.
+ */
+async function siteToday(ctx: ErpNextToolContext): Promise<string> {
+  let timeZone: string | null = null;
+  try {
+    const value = await ctx.client.callMethod<{ time_zone?: string } | null>(
+      "frappe.client.get_value",
+      { doctype: "System Settings", fieldname: "time_zone" },
+      { httpMethod: "GET" },
+    );
+    timeZone = value?.time_zone ?? null;
+  } catch {
+    timeZone = null;
+  }
+
+  const now = new Date();
+  if (timeZone) {
+    try {
+      // `en-CA` cho ra đúng YYYY-MM-DD, và `timeZone` là thứ duy nhất làm nó khác UTC.
+      return new Intl.DateTimeFormat("en-CA", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(now);
+    } catch {
+      // Múi giờ site khai không hợp lệ với runtime này; rơi xuống UTC bên dưới.
+    }
+  }
+  return now.toISOString().slice(0, 10);
+}
 
 export const hrTools: ErpNextTool[] = [
   // ── Employees ─────────────────────────────────────────────────────────────
@@ -117,8 +169,12 @@ export const hrTools: ErpNextTool[] = [
     annotations: { readOnlyHint: true },
     _meta: DOCLIST_META,
     description:
-      "List Attendance records. Filterable by employee, date range. " +
-      "Fields: name, employee, employee_name, attendance_date, status.",
+      "List Attendance records. Only submitted records are returned unless " +
+      "include_cancelled is set, because Attendance is submittable and cancelled " +
+      "records must not be counted towards attendance. " +
+      "Filterable by employee, status, date range. " +
+      "Fields: name, employee, employee_name, attendance_date, status, docstatus, " +
+      "company, department, shift, late_entry, early_exit.",
     category: "hr",
     inputSchema: {
       type: "object",
@@ -135,8 +191,22 @@ export const hrTools: ErpNextTool[] = [
         },
         status: {
           type: "string",
-          description: "Filter by status (Present, Absent, Half Day, On Leave)",
-          enum: ["Present", "Absent", "Half Day", "On Leave"],
+          description:
+            "Filter by status (Present, Absent, Half Day, On Leave, Work From Home)",
+          enum: [
+            "Present",
+            "Absent",
+            "Half Day",
+            "On Leave",
+            "Work From Home",
+          ],
+        },
+        include_cancelled: {
+          type: "boolean",
+          description:
+            "Include draft and cancelled records too. Default false: only submitted " +
+            "(docstatus = 1) records count towards attendance.",
+          default: false,
         },
         date_from: {
           type: "string",
@@ -148,6 +218,12 @@ export const hrTools: ErpNextTool[] = [
     handler: async (input, ctx) => {
       const limit = (input.limit as number) ?? 20;
       const filters: FrappeFilter[] = [];
+      // Attendance là doctype submittable, và bản ghi đã hủy vẫn nằm trong bảng. Không lọc
+      // `docstatus` thì một câu hỏi về chuyên cần cộng luôn cả những ngày đã bị hủy bỏ, và
+      // câu trả lời sai đó trông y hệt câu trả lời đúng.
+      if (!input.include_cancelled) {
+        filters.push(["docstatus", "=", 1]);
+      }
       if (input.employee) {
         filters.push([
           "employee",
@@ -174,6 +250,14 @@ export const hrTools: ErpNextTool[] = [
           "employee_name",
           "attendance_date",
           "status",
+          // `docstatus` đi kèm để người đọc kết quả thấy được bản ghi nào đã hủy khi
+          // `include_cancelled` được bật, thay vì phải đoán.
+          "docstatus",
+          "company",
+          "department",
+          "shift",
+          "late_entry",
+          "early_exit",
         ],
         filters,
         limit,
@@ -319,11 +403,18 @@ export const hrTools: ErpNextTool[] = [
         },
         leave_type: {
           type: "string",
-          description: "Leave type (e.g. Sick Leave, Casual Leave)",
+          description:
+            "Leave type, exactly as it is named on this site. Leave types are configured " +
+            "per site and a type with no allocation produces an application with no " +
+            "entitlement behind it, so read the real names off Leave Type rather than " +
+            "guessing from the ERPNext defaults.",
         },
         from_date: { type: "string", description: "Start date YYYY-MM-DD" },
         to_date: { type: "string", description: "End date YYYY-MM-DD" },
-        reason: { type: "string", description: "Reason for leave (optional)" },
+        description: {
+          type: "string",
+          description: "Reason for the leave (optional)",
+        },
       },
       required: ["employee", "leave_type", "from_date", "to_date"],
     },
@@ -362,8 +453,11 @@ export const hrTools: ErpNextTool[] = [
         from_date: input.from_date as string,
         to_date: input.to_date as string,
       };
-      if (input.reason) {
-        data.reason = input.reason as string;
+      // Leave Application không có ô `reason`. Frappe bỏ im lặng mọi khoá lạ khi chèn bản
+      // ghi, nên lý do nghỉ người dùng nhập biến mất mà không có lỗi nào. Ô thật là
+      // `description`.
+      if (input.description) {
+        data.description = input.description as string;
       }
 
       const doc = await ctx.client.create("Leave Application", data);
@@ -556,8 +650,12 @@ export const hrTools: ErpNextTool[] = [
     annotations: { readOnlyHint: true },
     _meta: DOCLIST_META,
     description:
-      "List Expense Claims. Filterable by employee, status, approval_status. " +
-      "Fields: name, employee, employee_name, posting_date, total_claimed_amount, status, approval_status.",
+      "List Expense Claims. Filterable by employee, status, approval_status, workflow_state. " +
+      "Fields: name, employee, employee_name, posting_date, total_claimed_amount, " +
+      "total_sanctioned_amount, status, approval_status, workflow_state. " +
+      "When the site drives Expense Claim through a Workflow, workflow_state is the stage " +
+      "people actually work with; its values are site-defined, so read them off the " +
+      "Workflow rather than assuming the ERPNext defaults.",
     category: "hr",
     inputSchema: {
       type: "object",
@@ -574,14 +672,29 @@ export const hrTools: ErpNextTool[] = [
         },
         status: {
           type: "string",
-          description: "Filter by status (Draft, Submitted, Cancelled)",
-          enum: ["Draft", "Submitted", "Cancelled"],
+          description:
+            "Filter by status (Draft, Paid, Unpaid, Rejected, Submitted, Cancelled)",
+          enum: [
+            "Draft",
+            "Paid",
+            "Unpaid",
+            "Rejected",
+            "Submitted",
+            "Cancelled",
+          ],
         },
         approval_status: {
           type: "string",
           description:
-            "Filter by approval status (Pending, Approved, Rejected)",
-          enum: ["Pending", "Approved", "Rejected"],
+            "Filter by approval status (Draft, Approved, Rejected, Cancelled). " +
+            "Claims awaiting approval sit in Draft, not in a 'Pending' state.",
+          enum: ["Draft", "Approved", "Rejected", "Cancelled"],
+        },
+        workflow_state: {
+          type: "string",
+          description:
+            "Filter by the site's Workflow state. Values are defined by the Workflow " +
+            "attached to Expense Claim, so they are not fixed here.",
         },
         date_from: {
           type: "string",
@@ -608,6 +721,9 @@ export const hrTools: ErpNextTool[] = [
       if (input.approval_status) {
         filters.push(["approval_status", "=", input.approval_status as string]);
       }
+      if (input.workflow_state) {
+        filters.push(["workflow_state", "=", input.workflow_state as string]);
+      }
       if (input.date_from) {
         filters.push(["posting_date", ">=", input.date_from as string]);
       }
@@ -622,8 +738,13 @@ export const hrTools: ErpNextTool[] = [
           "employee_name",
           "posting_date",
           "total_claimed_amount",
+          "total_sanctioned_amount",
           "status",
           "approval_status",
+          // Trạng thái mà tổ chức thật sự làm việc cùng nằm ở `workflow_state`, không phải ở
+          // `status`. Không phơi ra thì người đọc kết quả không có cách nào biết hồ sơ đang
+          // ở khâu nào.
+          "workflow_state",
         ],
         filters,
         limit,
@@ -667,6 +788,18 @@ export const hrTools: ErpNextTool[] = [
                 description: "Expense type (e.g. Travel, Food)",
               },
               amount: { type: "number", description: "Claimed amount" },
+              sanctioned_amount: {
+                type: "number",
+                description:
+                  "Approved amount (optional). Defaults to 'amount'; the claim's total " +
+                  "sanctioned amount is the sum of this column, so leaving it unset " +
+                  "produces a claim whose approved total is zero.",
+              },
+              expense_date: {
+                type: "string",
+                description:
+                  "Date the expense was incurred YYYY-MM-DD (optional)",
+              },
               description: {
                 type: "string",
                 description: "Description of the expense (optional)",
@@ -698,7 +831,13 @@ export const hrTools: ErpNextTool[] = [
       }
 
       const expenses = input.expenses as Array<
-        { expense_type: string; amount: number; description?: string }
+        {
+          expense_type: string;
+          amount: number;
+          sanctioned_amount?: number;
+          description?: string;
+          expense_date?: string;
+        }
       >;
 
       const data: Record<string, unknown> = {
@@ -713,7 +852,12 @@ export const hrTools: ErpNextTool[] = [
         expenses: expenses.map((e) => ({
           expense_type: e.expense_type,
           amount: e.amount,
+          // `ExpenseClaim.calculate_total_amount` cộng đúng cột này, mà cột này không có
+          // default và không fetch từ `amount`. Bỏ trống thì hồ sơ tạo ra có tổng duyệt bằng 0
+          // trong khi vẫn hiện đủ số tiền đề nghị - một hồ sơ hỏng nhìn như hồ sơ bình thường.
+          sanctioned_amount: e.sanctioned_amount ?? e.amount,
           description: e.description ?? "",
+          ...(e.expense_date ? { expense_date: e.expense_date } : {}),
         })),
       };
       if (input.posting_date) {
@@ -734,8 +878,12 @@ export const hrTools: ErpNextTool[] = [
     name: "erpnext_leave_balance",
     annotations: { readOnlyHint: true },
     _meta: DOCLIST_META,
-    description: "Get leave balance (allocations) for an employee. " +
-      "Returns Leave Allocations with leave_type, total_leaves_allocated, new_leaves_allocated.",
+    description:
+      "Get an employee's leave balance as of a date: for every leave type, how many days " +
+      "were allocated, how many were taken, how many sit in applications awaiting approval, " +
+      "how many expired, and how many are still available. The numbers come from HR's own " +
+      "leave ledger, so leave already taken is deducted — an allocation total on its own is " +
+      "not a balance. The date actually used is echoed back as as_on_date.",
     category: "hr",
     inputSchema: {
       type: "object",
@@ -745,6 +893,17 @@ export const hrTools: ErpNextTool[] = [
           description:
             "Employee ID or name (e.g. 'HR-EMP-00001' or 'John Doe')",
         },
+        as_on_date: {
+          type: "string",
+          description:
+            "Date to value the balance on, YYYY-MM-DD. Defaults to today on the site. " +
+            "Balances are scoped to the leave period containing this date.",
+        },
+        leave_type: {
+          type: "string",
+          description:
+            "Return only this leave type. Leave types are named per site.",
+        },
       },
       required: ["employee"],
     },
@@ -753,38 +912,65 @@ export const hrTools: ErpNextTool[] = [
         throw new Error("[erpnext_leave_balance] 'employee' is required");
       }
 
-      const filters: FrappeFilter[] = [
-        [
-          "employee",
-          "=",
-          await resolveEmployee(ctx.client, input.employee as string, {
-            inputPath: "employee",
-          }),
-        ],
-        ["docstatus", "=", 1],
-      ];
+      const employee = await resolveEmployee(
+        ctx.client,
+        input.employee as string,
+        { inputPath: "employee" },
+      );
 
-      const docs = await ctx.client.list("Leave Allocation", {
-        fields: [
-          "name",
-          "leave_type",
-          "total_leaves_allocated",
-          "new_leaves_allocated",
-          "from_date",
-          "to_date",
-        ],
-        filters,
-        limit: 50,
-        order_by: "leave_type asc",
-      });
+      let asOnDate = input.as_on_date as string | undefined;
+      if (asOnDate !== undefined) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(asOnDate)) {
+          throw new Error(
+            "[erpnext_leave_balance] 'as_on_date' must be a date in YYYY-MM-DD form",
+          );
+        }
+      } else {
+        asOnDate = await siteToday(ctx);
+      }
 
-      const result = await listResult(ctx, "Leave Allocation", docs, {
-        filters,
-        limit: 50,
-      });
+      // Bảng Leave Allocation một mình không trả lời được câu hỏi "còn bao nhiêu ngày phép":
+      // nó chỉ nói được cấp bao nhiêu. Số đã nghỉ nằm ở Leave Ledger Entry, và phép cộng trừ
+      // giữa hai bảng có đủ luật riêng (hết hạn, nghỉ nửa ngày, kỳ phép) để không nên chép
+      // lại ở đây. Hàm này là chính cái mà màn hình HR của ERPNext dùng.
+      const details = await ctx.client.callMethod<LeaveDetails>(
+        "hrms.hr.doctype.leave_application.leave_application.get_leave_details",
+        { employee, date: asOnDate },
+        { httpMethod: "GET" },
+      );
+
+      const allocation = details?.leave_allocation;
+      if (!allocation || typeof allocation !== "object") {
+        throw new Error(
+          `[erpnext_leave_balance] HR returned no leave allocation block for ${employee} ` +
+            `on ${asOnDate}; the balance is unknown, not zero.`,
+        );
+      }
+
+      const wanted = input.leave_type as string | undefined;
+      const rows = Object.entries(allocation)
+        .filter(([leaveType]) => !wanted || leaveType === wanted)
+        .map(([leaveType, entry]) => ({
+          leave_type: leaveType,
+          allocated: entry.total_leaves ?? 0,
+          used: entry.leaves_taken ?? 0,
+          pending_approval: entry.leaves_pending_approval ?? 0,
+          expired: entry.expired_leaves ?? 0,
+          balance: entry.remaining_leaves ?? 0,
+        }))
+        .sort((a, b) => a.leave_type.localeCompare(b.leave_type));
+
       return {
-        ...result,
-        employee: input.employee as string,
+        _title: "Leave balance",
+        employee,
+        as_on_date: asOnDate,
+        // Không phân trang: HR trả về mọi loại phép của người này trong một lượt, nên số dòng
+        // ở đây ĐÚNG LÀ tổng, không phải độ dài một trang.
+        count: rows.length,
+        returned: rows.length,
+        has_more: false,
+        data: rows,
+        _meta: DOCLIST_META,
       };
     },
   },
