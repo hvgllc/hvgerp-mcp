@@ -570,7 +570,7 @@ export const accountingTools: ErpNextTool[] = [
           minimum: 1,
           description:
             `Max report rows to return (default ${DEFAULT_REPORT_ROWS}). ` +
-            "Truncation is always reported in 'total_rows' and 'has_more'.",
+            "Truncation is always reported in 'count', 'returned' and 'has_more'.",
         },
       },
       required: ["report"],
@@ -594,7 +594,17 @@ export const accountingTools: ErpNextTool[] = [
         );
       }
 
+      // `minimum: 1` trong schema chỉ ràng buộc được client nào chịu kiểm schema; một
+      // `limit` âm lọt qua sẽ khiến `slice(0, limit)` cắt từ cuối bảng và trả ra một
+      // bảng thiếu trông y hệt bảng đủ.
       const limit = (input.limit as number) ?? DEFAULT_REPORT_ROWS;
+      if (!Number.isInteger(limit) || limit < 1) {
+        throw new Error(
+          `[erpnext_financial_report] 'limit' must be a whole number of at least 1, got ${
+            JSON.stringify(input.limit)
+          }`,
+        );
+      }
       const result = await runQueryReport(ctx, report, filters);
       const rows = result.result;
 

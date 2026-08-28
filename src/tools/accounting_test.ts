@@ -415,6 +415,27 @@ Deno.test("erpnext_financial_report - refuses a report outside the standard list
   );
 });
 
+Deno.test("erpnext_financial_report - refuses a limit it cannot honour", async () => {
+  // `slice(0, -1)` cắt mất dòng cuối và trả về một bảng thiếu trông y hệt bảng đủ, nên
+  // `limit` xấu phải chặn ở runtime chứ không chỉ ở schema.
+  const client = makeReportClient({
+    columns: [{ fieldname: "account", fieldtype: "Link" }],
+    result: [{ account: "A0" }, { account: "A1" }],
+  });
+
+  for (const limit of [0, -1, 2.5]) {
+    await assertRejects(
+      () =>
+        getTool("erpnext_financial_report").handler(
+          { report: "Trial Balance", limit },
+          makeCtx(client),
+        ),
+      Error,
+      "'limit' must be a whole number of at least 1",
+    );
+  }
+});
+
 Deno.test("erpnext_financial_report - requires a report name", async () => {
   await assertRejects(
     () =>
