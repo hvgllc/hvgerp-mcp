@@ -357,6 +357,104 @@ Deno.test("erpnext_leave_balance - refuses to report an unknown balance as zero"
   );
 });
 
+Deno.test("erpnext_leave_balance - a leave type with no remaining_leaves is unknown, not zero", async () => {
+  const client = makeMockClient({
+    callMethod: async (method: string) =>
+      method ===
+          "hrms.hr.doctype.leave_application.leave_application.get_leave_details"
+        ? { leave_allocation: { "Phép năm": { total_leaves: 12 } } }
+        : null,
+  });
+
+  await assertRejects(
+    () =>
+      getTool("erpnext_leave_balance").handler(
+        { employee: "HR-EMP-00024", as_on_date: "2026-08-28" },
+        makeCtx(client),
+      ),
+    Error,
+  );
+});
+
+Deno.test("erpnext_leave_balance - names the real leave types instead of returning nothing", async () => {
+  // An empty list would read as "that leave type has no days left", which is a different
+  // answer from "this employee has no such leave type".
+  const client = makeMockClient({
+    callMethod: async (method: string) =>
+      method ===
+          "hrms.hr.doctype.leave_application.leave_application.get_leave_details"
+        ? {
+          leave_allocation: {
+            "Phép năm": { total_leaves: 12, remaining_leaves: 10 },
+          },
+        }
+        : null,
+  });
+
+  const error = await assertRejects(
+    () =>
+      getTool("erpnext_leave_balance").handler(
+        {
+          employee: "HR-EMP-00024",
+          as_on_date: "2026-08-28",
+          leave_type: "Annual Leave",
+        },
+        makeCtx(client),
+      ),
+    Error,
+  );
+
+  assertEquals(error.message.includes("Phép năm"), true);
+});
+
+Deno.test("erpnext_leave_balance - falls back to get_time_zone when System Settings is closed", async () => {
+  // System Settings only grants read to System Manager, so for most callers the first
+  // rung throws. Falling straight through to UTC would shift "today" by up to seven
+  // hours in Vietnam, which is the whole reason the date is resolved server-side.
+  const called: string[] = [];
+  const client = makeMockClient({
+    callMethod: async (method: string) => {
+      called.push(method);
+      if (method === "frappe.client.get_value") {
+        throw new Error("PermissionError: System Settings");
+      }
+      if (method === "frappe.client.get_time_zone") {
+        return { time_zone: "Asia/Ho_Chi_Minh" };
+      }
+      if (
+        method ===
+          "hrms.hr.doctype.leave_application.leave_application.get_leave_details"
+      ) {
+        return {
+          leave_allocation: {
+            "Phép năm": { total_leaves: 12, remaining_leaves: 10 },
+          },
+        };
+      }
+      return null;
+    },
+  });
+
+  const result = await getTool("erpnext_leave_balance").handler(
+    { employee: "HR-EMP-00024" },
+    makeCtx(client),
+  ) as any;
+
+  assertEquals(called.includes("frappe.client.get_time_zone"), true);
+  assertEquals(/^\d{4}-\d{2}-\d{2}$/.test(result.as_on_date), true);
+});
+
+Deno.test("erpnext_leave_balance - rejects a malformed as_on_date instead of guessing", async () => {
+  await assertRejects(
+    () =>
+      getTool("erpnext_leave_balance").handler(
+        { employee: "HR-EMP-00024", as_on_date: "28/08/2026" },
+        makeCtx(makeMockClient()),
+      ),
+    Error,
+  );
+});
+
 Deno.test("erpnext_employee_get - honours its description and resolves a name", async () => {
   // Its description promises a name works. It previously did not resolve at all,
   // so an agent following the description got a 404 — a description that lies is

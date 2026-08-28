@@ -27,6 +27,43 @@ interface LeaveDetails {
 }
 
 /**
+ * Múi giờ site khai báo, hoặc `null` khi không đọc được bằng quyền của người đang gọi.
+ *
+ * Hai bậc chứ không một, vì mỗi bậc hỏng theo một kiểu khác nhau. `System Settings` là nơi
+ * chính Frappe lấy múi giờ ra dùng, nhưng doctype đó chỉ cấp quyền đọc cho System Manager,
+ * nên với hầu hết người dùng lời gọi này trả PermissionError. `frappe.client.get_time_zone`
+ * thì ai cũng gọi được, đổi lại nó đọc bảng defaults chứ không đọc System Settings: đo trên
+ * production thấy nó trả `Asia/Kolkata` cho Administrator trong khi site khai
+ * `Asia/Ho_Chi_Minh`. Nên thứ tự là quyền-cao-trước, và giá trị lệch chỉ được dùng khi không
+ * còn cách nào khác.
+ */
+async function siteTimeZone(ctx: ErpNextToolContext): Promise<string | null> {
+  try {
+    const value = await ctx.client.callMethod<{ time_zone?: string } | null>(
+      "frappe.client.get_value",
+      { doctype: "System Settings", fieldname: "time_zone" },
+      { httpMethod: "GET" },
+    );
+    if (value?.time_zone) return value.time_zone;
+  } catch {
+    // Không có quyền đọc System Settings: thử bậc dưới.
+  }
+
+  try {
+    const value = await ctx.client.callMethod<{ time_zone?: string } | null>(
+      "frappe.client.get_time_zone",
+      {},
+      { httpMethod: "GET" },
+    );
+    if (value?.time_zone) return value.time_zone;
+  } catch {
+    // Cả hai đường đều tắc.
+  }
+
+  return null;
+}
+
+/**
  * Hôm nay theo múi giờ của chính site, dạng YYYY-MM-DD.
  *
  * Không dùng thẳng ngày UTC của tiến trình: máy chủ MCP có thể chạy ở múi giờ khác site, và
@@ -35,17 +72,7 @@ interface LeaveDetails {
  * hình thì lùi về UTC, và người gọi vẫn thấy ngày đã dùng qua `as_on_date` trong kết quả.
  */
 async function siteToday(ctx: ErpNextToolContext): Promise<string> {
-  let timeZone: string | null = null;
-  try {
-    const value = await ctx.client.callMethod<{ time_zone?: string } | null>(
-      "frappe.client.get_value",
-      { doctype: "System Settings", fieldname: "time_zone" },
-      { httpMethod: "GET" },
-    );
-    timeZone = value?.time_zone ?? null;
-  } catch {
-    timeZone = null;
-  }
+  const timeZone = await siteTimeZone(ctx);
 
   const now = new Date();
   if (timeZone) {
@@ -882,7 +909,7 @@ export const hrTools: ErpNextTool[] = [
       "Get an employee's leave balance as of a date: for every leave type, how many days " +
       "were allocated, how many were taken, how many sit in applications awaiting approval, " +
       "how many expired, and how many are still available. The numbers come from HR's own " +
-      "leave ledger, so leave already taken is deducted — an allocation total on its own is " +
+      "leave ledger, so leave already taken is deducted: an allocation total on its own is " +
       "not a balance. The date actually used is echoed back as as_on_date.",
     category: "hr",
     inputSchema: {
@@ -948,16 +975,36 @@ export const hrTools: ErpNextTool[] = [
       }
 
       const wanted = input.leave_type as string | undefined;
+      if (wanted && !(wanted in allocation)) {
+        // Không trả danh sách rỗng: "không có loại phép nào tên như vậy" và "loại phép đó
+        // còn 0 ngày" là hai câu trả lời khác hẳn nhau, mà một mảng rỗng thì nói cả hai.
+        const available = Object.keys(allocation).sort().join(", ");
+        throw new Error(
+          `[erpnext_leave_balance] ${employee} has no leave type named "${wanted}" ` +
+            `on ${asOnDate}. Allocated types: ${available || "(none)"}`,
+        );
+      }
+
       const rows = Object.entries(allocation)
         .filter(([leaveType]) => !wanted || leaveType === wanted)
-        .map(([leaveType, entry]) => ({
-          leave_type: leaveType,
-          allocated: entry.total_leaves ?? 0,
-          used: entry.leaves_taken ?? 0,
-          pending_approval: entry.leaves_pending_approval ?? 0,
-          expired: entry.expired_leaves ?? 0,
-          balance: entry.remaining_leaves ?? 0,
-        }))
+        .map(([leaveType, entry]) => {
+          if (typeof entry?.remaining_leaves !== "number") {
+            // Cùng lý do với khối `leave_allocation` thiếu ở trên: HR đổi hình dạng trả về mà
+            // ta lặng lẽ điền 0 thì số dư sai đi thẳng vào câu trả lời cho người dùng.
+            throw new Error(
+              `[erpnext_leave_balance] HR returned no remaining_leaves for ${employee} / ` +
+                `${leaveType} on ${asOnDate}; the balance is unknown, not zero.`,
+            );
+          }
+          return {
+            leave_type: leaveType,
+            allocated: entry.total_leaves ?? 0,
+            used: entry.leaves_taken ?? 0,
+            pending_approval: entry.leaves_pending_approval ?? 0,
+            expired: entry.expired_leaves ?? 0,
+            balance: entry.remaining_leaves,
+          };
+        })
         .sort((a, b) => a.leave_type.localeCompare(b.leave_type));
 
       return {
