@@ -980,8 +980,10 @@ export const hrTools: ErpNextTool[] = [
         // còn 0 ngày" là hai câu trả lời khác hẳn nhau, mà một mảng rỗng thì nói cả hai.
         const available = Object.keys(allocation).sort().join(", ");
         throw new Error(
-          `[erpnext_leave_balance] ${employee} has no leave type named "${wanted}" ` +
-            `on ${asOnDate}. Allocated types: ${available || "(none)"}`,
+          `[erpnext_leave_balance] ${employee} has no allocated leave type named ` +
+            `"${wanted}" on ${asOnDate}. Allocated types: ${
+              available || "(none)"
+            }`,
         );
       }
 

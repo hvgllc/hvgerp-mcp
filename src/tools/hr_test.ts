@@ -440,7 +440,10 @@ Deno.test("erpnext_leave_balance - falls back to get_time_zone when System Setti
     makeCtx(client),
   ) as any;
 
-  assertEquals(called.includes("frappe.client.get_time_zone"), true);
+  // Thứ tự cũng là một phần của hành vi: get_time_zone đọc bảng defaults, nên nó chỉ được
+  // hỏi sau khi System Settings từ chối, không bao giờ trước.
+  assertEquals(called[0], "frappe.client.get_value");
+  assertEquals(called[1], "frappe.client.get_time_zone");
   assertEquals(/^\d{4}-\d{2}-\d{2}$/.test(result.as_on_date), true);
 });
 
