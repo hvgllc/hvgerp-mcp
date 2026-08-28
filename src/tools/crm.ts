@@ -359,7 +359,8 @@ export const crmTools: ErpNextTool[] = [
     annotations: { readOnlyHint: true },
     _meta: DOCLIST_META,
     description: "List CRM Campaigns. " +
-      "Fields: name, campaign_name, campaign_type, start_date, end_date, description.",
+      "Fields: name, campaign_name, description. " +
+      "Campaign carries no type or date fields; schedules live in the campaign_schedules child table.",
     category: "crm",
     inputSchema: {
       type: "object",
@@ -369,37 +370,16 @@ export const crmTools: ErpNextTool[] = [
           minimum: 1,
           description: "Max results (default 20)",
         },
-        campaign_type: {
-          type: "string",
-          description: "Filter by campaign type",
-        },
-        date_from: {
-          type: "string",
-          description: "Start date filter YYYY-MM-DD",
-        },
-        date_to: { type: "string", description: "End date filter YYYY-MM-DD" },
       },
     },
     handler: async (input, ctx) => {
       const limit = (input.limit as number) ?? 20;
       const filters: FrappeFilter[] = [];
-      if (input.campaign_type) {
-        filters.push(["campaign_type", "=", input.campaign_type as string]);
-      }
-      if (input.date_from) {
-        filters.push(["start_date", ">=", input.date_from as string]);
-      }
-      if (input.date_to) {
-        filters.push(["end_date", "<=", input.date_to as string]);
-      }
 
       const docs = await ctx.client.list("Campaign", {
         fields: [
           "name",
           "campaign_name",
-          "campaign_type",
-          "start_date",
-          "end_date",
           "description",
         ],
         filters,

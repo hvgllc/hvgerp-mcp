@@ -22,8 +22,8 @@ export const assetsTools: ErpNextTool[] = [
     _meta: DOCLIST_META,
     description:
       "List Fixed Assets. Filterable by status, asset_category, location, custodian. " +
-      "Fields: name, asset_name, asset_category, status, purchase_date, gross_purchase_amount, " +
-      "current_value, location, custodian.",
+      "Fields: name, asset_name, asset_category, status, purchase_date, purchase_amount, " +
+      "value_after_depreciation, location, custodian.",
     category: "assets",
     inputSchema: {
       type: "object",
@@ -93,8 +93,9 @@ export const assetsTools: ErpNextTool[] = [
           "asset_category",
           "status",
           "purchase_date",
-          "gross_purchase_amount",
-          "current_value",
+          // Tên v15 (`gross_purchase_amount`, `current_value`) không còn trên v16.
+          "purchase_amount",
+          "value_after_depreciation",
           "location",
           "custodian",
         ],
@@ -319,8 +320,9 @@ export const assetsTools: ErpNextTool[] = [
     annotations: { readOnlyHint: true },
     _meta: DOCLIST_META,
     description:
-      "List Asset Maintenance records. Filterable by asset_name, maintenance_status. " +
-      "Fields: name, asset_name, asset_category, maintenance_team, maintenance_status.",
+      "List Asset Maintenance records. Filterable by asset_name, maintenance_status " +
+      "(matched against the maintenance tasks of the record). " +
+      "Fields: name, asset_name, asset_category, maintenance_team, maintenance_manager, company.",
     category: "assets",
     inputSchema: {
       type: "object",
@@ -334,7 +336,8 @@ export const assetsTools: ErpNextTool[] = [
         maintenance_status: {
           type: "string",
           description:
-            "Filter by status (Planned, Overdue, Cancelled, Completed)",
+            "Filter by the status of the record's maintenance tasks (Planned, Overdue, Cancelled)",
+          enum: ["Planned", "Overdue", "Cancelled"],
         },
       },
     },
@@ -345,7 +348,10 @@ export const assetsTools: ErpNextTool[] = [
         filters.push(["asset_name", "=", input.asset_name as string]);
       }
       if (input.maintenance_status) {
+        // Trạng thái bảo trì nằm ở từng dòng của bảng con Asset Maintenance Task, không
+        // phải trên bản ghi cha, nên lọc theo bộ bốn phần tử của Frappe.
         filters.push([
+          "Asset Maintenance Task",
           "maintenance_status",
           "=",
           input.maintenance_status as string,
@@ -358,7 +364,8 @@ export const assetsTools: ErpNextTool[] = [
           "asset_name",
           "asset_category",
           "maintenance_team",
-          "maintenance_status",
+          "maintenance_manager",
+          "company",
         ],
         filters,
         limit,

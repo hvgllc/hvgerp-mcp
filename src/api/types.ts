@@ -94,12 +94,22 @@ export interface FrappeErrorResponse {
   message?: string;
 }
 
-/** Frappe list filter: [field, operator, value]. Array values pair with the "in"/"not in" operators. */
-export type FrappeFilter = [
-  string,
-  string,
-  string | number | boolean | null | (string | number)[],
-];
+/** Value side of a Frappe filter. Arrays pair with the "in"/"not in" operators. */
+export type FrappeFilterValue =
+  | string
+  | number
+  | boolean
+  | null
+  | (string | number)[];
+
+/**
+ * Frappe list filter, in either of the two shapes the REST API accepts:
+ * `[field, operator, value]` on the document itself, or
+ * `[child doctype, field, operator, value]` to match a row of a child table.
+ */
+export type FrappeFilter =
+  | [string, string, FrappeFilterValue]
+  | [string, string, string, FrappeFilterValue];
 
 /** Options for Frappe list queries (`GET /api/resource/{doctype}`). */
 export interface FrappeListOptions {

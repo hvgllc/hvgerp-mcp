@@ -82,6 +82,24 @@ Deno.test("erpnext_payment_entry_list - works without party/party_type at all", 
   assertEquals(result.doctype, "Payment Entry");
 });
 
+Deno.test("erpnext_payment_entry_list - asks for the per-side currency columns", async () => {
+  let capturedFields: string[] = [];
+  const client = makeMockClient({
+    list: async (_doctype: string, opts: { fields?: string[] }) => {
+      capturedFields = opts?.fields ?? [];
+      return [];
+    },
+  });
+
+  await getTool("erpnext_payment_entry_list").handler({}, makeCtx(client));
+
+  // Payment Entry không có cột `currency`: tiền chi và tiền thu mang đơn vị riêng theo tài
+  // khoản hai đầu. Hỏi `currency` làm cả truy vấn chết với SQL 1054.
+  assertEquals(capturedFields.includes("paid_from_account_currency"), true);
+  assertEquals(capturedFields.includes("paid_to_account_currency"), true);
+  assertEquals(capturedFields.includes("currency"), false);
+});
+
 // ── erpnext_account_list ─────────────────────────────────────────────────────
 
 Deno.test("erpnext_account_list - returns chart of accounts with doclist meta", async () => {

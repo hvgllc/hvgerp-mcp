@@ -204,9 +204,8 @@ export const deliveryTools: ErpNextTool[] = [
     name: "erpnext_shipment_list",
     annotations: { readOnlyHint: true },
     _meta: DOCLIST_META,
-    description:
-      "List Shipments. Filterable by status, pickup_from date range. " +
-      "Fields: name, status, pickup_date, delivery_date, carrier, shipment_amount.",
+    description: "List Shipments. Filterable by status, pickup date range. " +
+      "Fields: name, status, pickup_date, pickup_from, pickup_to, carrier, shipment_amount.",
     category: "delivery",
     inputSchema: {
       type: "object",
@@ -252,8 +251,10 @@ export const deliveryTools: ErpNextTool[] = [
         fields: [
           "name",
           "status",
+          // Shipment không có `delivery_date`; ngày lấy hàng kèm khung giờ là thứ có thật.
           "pickup_date",
-          "delivery_date",
+          "pickup_from",
+          "pickup_to",
           "carrier",
           "shipment_amount",
         ],

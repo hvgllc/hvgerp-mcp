@@ -36,29 +36,21 @@ function getTool(name: string) {
   return tool;
 }
 
-Deno.test("erpnext_campaign_list - filters by date range", async () => {
-  let capturedFilters: unknown[][] = [];
+Deno.test("erpnext_campaign_list - asks only for columns Campaign really has", async () => {
+  let capturedFields: string[] = [];
   const client = makeMockClient({
-    list: async (_doctype: string, opts: { filters?: unknown[][] }) => {
-      capturedFilters = opts?.filters ?? [];
+    list: async (_doctype: string, opts: { fields?: string[] }) => {
+      capturedFields = opts?.fields ?? [];
       return [];
     },
   });
 
-  const tool = getTool("erpnext_campaign_list");
-  await tool.handler(
-    { date_from: "2026-01-01", date_to: "2026-01-31" },
-    makeCtx(client),
-  );
+  await getTool("erpnext_campaign_list").handler({}, makeCtx(client));
 
-  const hasStart = capturedFilters.some((f) =>
-    f[0] === "start_date" && f[1] === ">=" && f[2] === "2026-01-01"
-  );
-  const hasEnd = capturedFilters.some((f) =>
-    f[0] === "end_date" && f[1] === "<=" && f[2] === "2026-01-31"
-  );
-  assertEquals(hasStart, true);
-  assertEquals(hasEnd, true);
+  // Campaign trên v16 chỉ còn campaign, campaign_name, campaign_schedules, description,
+  // naming_series. Hỏi `campaign_type`/`start_date`/`end_date` như trước không bị bỏ qua im
+  // lặng mà làm cả truy vấn chết với SQL 1054, nên tool trả lỗi thay vì trả danh sách.
+  assertEquals(capturedFields, ["name", "campaign_name", "description"]);
 });
 
 Deno.test("erpnext_opportunity_list - throws if party_name set without opportunity_from", async () => {
