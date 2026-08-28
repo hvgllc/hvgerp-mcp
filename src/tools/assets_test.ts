@@ -67,6 +67,55 @@ function makeCtx(overrides: Record<string, AnyFn> = {}): ErpNextToolContext {
   return { client };
 }
 
+Deno.test("erpnext_asset_list asks for the v16 amount columns", async () => {
+  let capturedFields: string[] = [];
+  const ctx = makeCtx({
+    list: async (_doctype: string, options: { fields?: string[] }) => {
+      capturedFields = options?.fields ?? [];
+      return [];
+    },
+  });
+
+  await tool("erpnext_asset_list").handler({}, ctx);
+
+  // `gross_purchase_amount` và `current_value` là tên của v15. Trên v16 chúng không còn là cột
+  // của Asset, nên hỏi chúng làm cả truy vấn chết với SQL 1054 chứ không bị bỏ qua im lặng.
+  assertEquals(capturedFields.includes("purchase_amount"), true);
+  assertEquals(capturedFields.includes("value_after_depreciation"), true);
+  assertEquals(capturedFields.includes("gross_purchase_amount"), false);
+  assertEquals(capturedFields.includes("current_value"), false);
+});
+
+Deno.test("erpnext_asset_maintenance_list filters status through the task child table", async () => {
+  let capturedFilters: unknown[][] = [];
+  let capturedFields: string[] = [];
+  const ctx = makeCtx({
+    list: async (
+      _doctype: string,
+      options: { filters?: unknown[][]; fields?: string[] },
+    ) => {
+      capturedFilters = options?.filters ?? [];
+      capturedFields = options?.fields ?? [];
+      return [];
+    },
+  });
+
+  await tool("erpnext_asset_maintenance_list").handler(
+    { maintenance_status: "Planned" },
+    ctx,
+  );
+
+  // `maintenance_status` nằm trên từng dòng Asset Maintenance Task chứ không trên bản ghi cha,
+  // nên chỉ bộ lọc bốn phần tử của Frappe mới chạm tới được.
+  assertEquals(capturedFilters, [[
+    "Asset Maintenance Task",
+    "maintenance_status",
+    "=",
+    "Planned",
+  ]]);
+  assertEquals(capturedFields.includes("maintenance_status"), false);
+});
+
 Deno.test("erpnext_asset_create resolves `me` in custodian before creating", async () => {
   clearCallerProfileCache();
   let created: Record<string, unknown> | null = null;

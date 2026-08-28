@@ -582,11 +582,16 @@ export const operationsTools: ErpNextTool[] = [
         filters: {
           type: "array",
           description:
-            "Frappe filters as array of [fieldname, operator, value] tuples. " +
-            'Example: [["status","=","Open"],["company","=","Acme"]]',
+            "Frappe filters as array of [fieldname, operator, value] tuples. The value may be " +
+            "a string, number, boolean, null, or an array for the 'in'/'not in' operators. " +
+            'Examples: [["status","=","Open"]], [["docstatus","=",1]], ' +
+            '[["status","in",["Open","Working"]]]. A four-element tuple ' +
+            "[child doctype, fieldname, operator, value] matches a row of a child table.",
           items: {
             type: "array",
-            items: { type: "string" },
+            // Không ghim `type: "string"` cho phần tử của tuple: ràng buộc cũ làm client nào
+            // kiểm tra schema cũng chặn [["docstatus","=",1]] trước khi lời gọi rời máy.
+            items: { type: ["string", "number", "boolean", "null", "array"] },
           },
         },
         assigned_to: {

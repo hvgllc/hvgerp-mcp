@@ -309,6 +309,51 @@ Deno.test("erpnext_doc_list - has _meta.ui for doclist-viewer", () => {
   assertEquals(tool._meta?.ui?.resourceUri, "ui://hvgerp-mcp/doclist-viewer");
 });
 
+Deno.test("erpnext_doc_list - the filters schema accepts more than strings", () => {
+  const properties = getTool("erpnext_doc_list").inputSchema.properties as
+    | Record<string, Record<string, unknown>>
+    | undefined;
+  const tupleItems = properties?.filters?.items as
+    | Record<string, unknown>
+    | undefined;
+
+  // Ràng buộc cũ là `items: { type: "string" }`, nên client nào kiểm tra schema đều chặn
+  // [["docstatus","=",1]] trước khi lời gọi rời máy: `1` không phải chuỗi. Bộ ba của Frappe
+  // nhận cả số, boolean, null và mảng, nên phần tử của tuple không được ghim kiểu.
+  assertEquals(tupleItems?.type, "array");
+  assertEquals((tupleItems?.items as Record<string, unknown>)?.type, [
+    "string",
+    "number",
+    "boolean",
+    "null",
+    "array",
+  ]);
+});
+
+Deno.test("erpnext_doc_list - forwards non-string filter values untouched", async () => {
+  let capturedFilters: unknown[][] = [];
+  const client = makeMockClient({
+    list: async (_doctype: string, opts: { filters?: unknown[][] }) => {
+      capturedFilters = opts?.filters ?? [];
+      return [];
+    },
+  });
+
+  const filters = [
+    ["docstatus", "=", 1],
+    ["is_group", "=", false],
+    ["parent_account", "is", null],
+    ["status", "in", ["Open", "Working"]],
+    ["Asset Maintenance Task", "maintenance_status", "=", "Planned"],
+  ];
+  await getTool("erpnext_doc_list").handler(
+    { doctype: "Account", filters },
+    makeCtx(client),
+  );
+
+  assertEquals(capturedFilters, filters);
+});
+
 // ── erpnext_doc_update ──────────────────────────────────────────────────────
 
 Deno.test("erpnext_doc_update - throws if doctype missing", async () => {

@@ -187,7 +187,8 @@ export const accountingTools: ErpNextTool[] = [
     _meta: DOCLIST_META,
     description:
       "List Payment Entries. Filterable by payment_type, party_type, date range. " +
-      "Fields: name, payment_type, party_type, party, posting_date, paid_amount, currency. " +
+      "Fields: name, payment_type, party_type, party, posting_date, paid_amount, " +
+      "paid_from_account_currency, paid_to_account_currency. " +
       "payment_type values: Receive, Pay, Internal Transfer.",
     category: "accounting",
     inputSchema: {
@@ -259,7 +260,10 @@ export const accountingTools: ErpNextTool[] = [
           "party",
           "posting_date",
           "paid_amount",
-          "currency",
+          // Payment Entry không có cột `currency`: số tiền chi và số tiền thu mang đơn vị
+          // riêng, lấy từ tài khoản hai đầu.
+          "paid_from_account_currency",
+          "paid_to_account_currency",
         ],
         filters,
         limit,
