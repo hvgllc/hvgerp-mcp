@@ -8,6 +8,46 @@ This package is a fork of
 deliberately still point at the upstream repository, where those commits, pull
 requests and tags actually live.
 
+## [3.3.3] - 2026-08-28
+
+### Fixed
+
+- **Five list tools no longer fail with a SQL error on ERPNext v16.**
+  `erpnext_payment_entry_list`, `erpnext_asset_list`,
+  `erpnext_asset_maintenance_list`, `erpnext_campaign_list` and
+  `erpnext_shipment_list` asked for column names that v16 renamed, so every call
+  came back as MySQL error 1054 instead of a list. The `filters` schema of
+  `erpnext_doc_list` also accepts numbers, booleans, null and arrays now, not
+  strings alone.
+- **`erpnext_leave_balance` reports the real balance.** It returns the
+  allocated, used and remaining days from the site instead of a placeholder.
+  `erpnext_attendance_list` defaults to submitted records only, so cancelled
+  attendance no longer inflates a count, and it knows the "Work From Home"
+  status. `erpnext_leave_application_create` writes `description`, the field
+  ERPNext actually stores, and `erpnext_expense_claim_create` defaults
+  `sanctioned_amount` to the claimed amount instead of leaving it at zero.
+- **`erpnext_my_work` reports real totals and finds projects it used to miss.**
+  Counts come back as `{count, returned, has_more}` against the true total, and
+  a person's projects are found through the `Project User` child table as well
+  as `_assign` - membership alone used to return nothing.
+- **`erpnext_profit_loss` reads the general ledger.** It summed Sales Order and
+  Purchase Order totals, so a site that books its costs through Expense Claims
+  saw income 0 and expenses 0 no matter what the ledger held. The chart now
+  comes from the Profit and Loss Statement report, cross-checks its own
+  per-month totals against the report summary and refuses to chart numbers that
+  disagree. The reporting window was also off by a day east of UTC.
+
+### Added
+
+- **`erpnext_gl_entry_list`** - the posted general ledger, filterable by
+  account, party, voucher, cost center, project and date range. Cancelled
+  entries are excluded by default so a cancelled voucher and its reversal are
+  not both counted.
+- **`erpnext_financial_report`** - runs one of ERPNext's standard financial
+  reports (Profit and Loss Statement, Balance Sheet, General Ledger, Trial
+  Balance and nine more) from a closed allowlist. Reading a report never queues
+  a Prepared Report, so it leaves no document behind on the site.
+
 ## [3.3.2] - 2026-08-18
 
 ### Fixed

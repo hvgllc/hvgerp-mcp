@@ -102,7 +102,7 @@ async function startUpstream(
         result: {
           protocolVersion: "2026-07-28",
           capabilities: { tools: {} },
-          serverInfo: { name: "hvgerp-mcp", version: "3.3.2" },
+          serverInfo: { name: "hvgerp-mcp", version: "3.3.3" },
           resultType: "complete",
         },
       }, { headers: { "MCP-Protocol-Version": "2026-07-28" } });
@@ -1728,7 +1728,7 @@ Deno.test("Content-Type viet hoa van duoc doc la JSON", async () => {
         result: {
           protocolVersion: "2026-07-28",
           capabilities: { tools: {} },
-          serverInfo: { name: "hvgerp-mcp", version: "3.3.2" },
+          serverInfo: { name: "hvgerp-mcp", version: "3.3.3" },
           resultType: "complete",
         },
       }),
@@ -1766,7 +1766,7 @@ Deno.test("response SSE cua POST da dich cung duoc dich tung message", async () 
       result: {
         protocolVersion: "2026-07-28",
         capabilities: { tools: {} },
-        serverInfo: { name: "hvgerp-mcp", version: "3.3.2" },
+        serverInfo: { name: "hvgerp-mcp", version: "3.3.3" },
         resultType: "complete",
       },
     });
