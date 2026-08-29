@@ -394,3 +394,50 @@ Deno.test("erpnext_task_list - an email in assigned_to costs no User read", asyn
   assertEquals(reads, []);
   assertStringIncludes(JSON.stringify(taskFilters), "khoa.do@havigroup.com");
 });
+
+Deno.test("erpnext_task_list - asks for custom_sku, and only for the column", async () => {
+  // Hai khẳng định trong một phép thử vì chúng là hai nửa của cùng một quyết định: cột SKU phải
+  // được hỏi, và `custom_agent_meta` phải KHÔNG được hỏi. Kéo `custom_agent_meta` về đây là mở
+  // đường cho một bản chép lại luật trích mã phía TypeScript, và ba bản chép độc lập đã cho ba
+  // con số sai khác nhau khi đo trên site thật.
+  let taskFields: unknown = null;
+  const client = makeMockClient({
+    list: async (doctype: string, options: Record<string, unknown>) => {
+      if (doctype === "Task") taskFields = options.fields;
+      return [{
+        name: "TASK-001",
+        subject: "Áo thu",
+        custom_sku: "CQ-DUC-001",
+      }];
+    },
+  });
+
+  const result = await getTool("erpnext_task_list").handler(
+    {},
+    makeCtx(client),
+  );
+
+  const fields = taskFields as string[];
+  assertEquals(fields.includes("custom_sku"), true);
+  assertEquals(fields.includes("custom_agent_meta"), false);
+  assertStringIncludes(JSON.stringify(result), "CQ-DUC-001");
+});
+
+Deno.test("erpnext_task_list - passes an empty custom_sku through untouched", async () => {
+  // Không có đợt backfill nào, nên mọi việc tạo trước khi trường SKU lên prod đều trả về rỗng.
+  // Tool phải chuyển nguyên trạng: chỗ này mà tự suy ra một mã từ dữ liệu khác thì MCP sẽ nói
+  // ngược với báo cáo đối soát của `hvg_workspace`, và người đọc sẽ tưởng một trong hai bên hỏng.
+  const client = makeMockClient({
+    list: async () => [
+      { name: "TASK-OLD", subject: "Việc cũ", custom_sku: null },
+    ],
+  });
+
+  const result = await getTool("erpnext_task_list").handler(
+    {},
+    makeCtx(client),
+  );
+
+  const rows = (result as { data: Record<string, unknown>[] }).data;
+  assertEquals(rows[0].custom_sku, null);
+});

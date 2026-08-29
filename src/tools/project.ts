@@ -120,7 +120,9 @@ export const projectTools: ErpNextTool[] = [
     annotations: { readOnlyHint: true },
     _meta: DOCLIST_META,
     description: "List Tasks. Filterable by project, status, priority. " +
-      "Fields: name, subject, project, status, priority, exp_start_date, exp_end_date, progress.",
+      "Fields: name, subject, project, status, priority, exp_start_date, exp_end_date, progress, " +
+      "custom_sku. 'custom_sku' is empty for every Task created before the SKU field shipped and " +
+      "was never backfilled, so an empty value means 'not recorded here', never 'no product'.",
     category: "project",
     inputSchema: {
       type: "object",
@@ -194,6 +196,14 @@ export const projectTools: ErpNextTool[] = [
           "exp_start_date",
           "exp_end_date",
           "progress",
+          // Mã sản phẩm, do `hvg_workspace.api.update_task_meta` ghi. Chỉ đọc CỘT, tuyệt đối
+          // không tự tách `sku:` ra khỏi `custom_agent_meta` ở đây: luật trích mã có ít nhất ba
+          // mặt độc lập cùng phải khớp (vị ngữ người phụ trách, phép lọc `is_group`/`is_template`,
+          // và phạm vi áp biểu thức chỗ điền mẫu `x{4,}` lên GIÁ TRỊ chứ không lên cả khối), nên
+          // mỗi bản chép lại chỉ cần trượt một mặt là ra một con số trông hoàn toàn hợp lý mà vẫn
+          // sai. Đo ngày 29/08/2026 trên site thật, ba bản chép độc lập cho ba số sai khác nhau.
+          // Nguồn duy nhất là `_read_task_sku`, và nó không whitelist nên MCP không gọi được.
+          "custom_sku",
         ],
         filters,
         limit,
