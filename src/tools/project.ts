@@ -64,20 +64,32 @@ const TASK_SKU_FIELD = "custom_sku";
 const taskSkuSupport = new WeakMap<FrappeClient, boolean>();
 
 /**
- * Whether this error is Frappe refusing a column that does not exist on the site.
+ * The column a MySQL 1054 names, e.g. `Unknown column 'tabTask.custom_sku' in 'SELECT'`.
  *
- * Both halves are required. Matching "1054" alone would swallow an unknown-column error about
- * some OTHER field, and the retry - which only drops `custom_sku` - would fail again anyway,
- * after teaching the client a lie it keeps for the rest of the process.
+ * The optional backslash covers the quote surviving a JSON round-trip of the response body.
+ */
+const UNKNOWN_COLUMN_RE = /Unknown column \\?['"`]([^'"`\\]+)/i;
+
+/**
+ * Whether this error is Frappe refusing the given column because the site does not have it.
+ *
+ * Reads the response body ONLY, and compares the column the database named. Searching
+ * `error.message` for the field would be wrong twice over: the message embeds the request path,
+ * and that path carries `custom_sku` inside the `fields` query parameter, so an unknown-column
+ * error about a COMPLETELY DIFFERENT column would match. The retry, which only drops
+ * `custom_sku`, would then fail again anyway - after teaching the client a lie it keeps for the
+ * rest of the process, so a site whose real schema problem later gets fixed would silently stop
+ * being asked for a column it does have.
  */
 function isUnknownColumnError(error: unknown, field: string): boolean {
   if (!(error instanceof FrappeAPIError)) return false;
   const body = typeof error.body === "string"
     ? error.body
     : JSON.stringify(error.body ?? "");
-  const haystack = `${error.message} ${body}`;
-  return haystack.includes(field) &&
-    (haystack.includes("1054") || haystack.includes("Unknown column"));
+  const named = UNKNOWN_COLUMN_RE.exec(body)?.[1];
+  if (named === undefined) return false;
+  // Có bản Frappe nêu trần tên cột, có bản nêu kèm bảng (`tabTask.custom_sku`).
+  return named.split(".").pop() === field;
 }
 
 export const projectTools: ErpNextTool[] = [

@@ -442,9 +442,17 @@ Deno.test("erpnext_task_list - passes an empty custom_sku through untouched", as
   assertEquals(rows[0].custom_sku, null);
 });
 
-/** Lỗi Frappe trả về khi câu `SELECT` hỏi một cột site không có. */
+/**
+ * Lỗi Frappe trả về khi câu `SELECT` hỏi một cột site không có.
+ *
+ * Thông điệp dựng đúng như `FrappeClient.request` dựng: có nhúng đường dẫn yêu cầu, mà đường dẫn
+ * đó luôn mang `custom_sku` trong tham số `fields`. Nhờ vậy phép thử mới bắt được cái bẫy tìm tên
+ * cột trong `error.message` thay vì trong thân phản hồi.
+ */
 function unknownColumnError(field: string): FrappeAPIError {
-  return new FrappeAPIError("Internal Server Error", 500, {
+  const fields = JSON.stringify(["name", "subject", "custom_sku"]);
+  const path = `/api/resource/Task?fields=${encodeURIComponent(fields)}`;
+  return new FrappeAPIError(`GET ${path} failed: OperationalError`, 500, {
     exception:
       `OperationalError: (1054, "Unknown column '${field}' in 'SELECT'")`,
   });
@@ -517,4 +525,44 @@ Deno.test("erpnext_task_list - does not read an unrelated failure as a missing c
     "Not permitted",
   );
   assertEquals(calls, 1);
+});
+
+Deno.test("erpnext_task_list - a 1054 about another column is not a missing custom_sku", async () => {
+  // Thông điệp lỗi có nhúng đường dẫn yêu cầu, và đường dẫn đó mang sẵn `custom_sku` trong tham số
+  // `fields`. Tìm tên cột trong thông điệp là nhận nhầm MỌI lỗi 1054 thành "site không có cột
+  // SKU": lượt gọi này vẫn hỏng (bỏ `custom_sku` đâu có chữa được cột kia), mà client thì đã học
+  // một điều sai và giữ tới hết tiến trình, nên khi lược đồ được sửa nó vẫn im lặng bỏ cột SKU.
+  let calls = 0;
+  const client = makeMockClient({
+    list: async () => {
+      calls++;
+      throw unknownColumnError("some_other_column");
+    },
+  });
+
+  await assertRejects(
+    () => getTool("erpnext_task_list").handler({}, makeCtx(client)),
+    FrappeAPIError,
+    "OperationalError",
+  );
+  assertEquals(calls, 1);
+});
+
+Deno.test("erpnext_task_list - reads a table-qualified column name", async () => {
+  // Có bản Frappe nêu `tabTask.custom_sku` chứ không nêu trần `custom_sku`.
+  const attempts: string[][] = [];
+  const client = makeMockClient({
+    list: async (_doctype: string, options: { fields: string[] }) => {
+      attempts.push(options.fields);
+      if (options.fields.includes("custom_sku")) {
+        throw unknownColumnError("tabTask.custom_sku");
+      }
+      return [{ name: "TASK-001", subject: "Plain ERPNext task" }];
+    },
+  });
+
+  await getTool("erpnext_task_list").handler({}, makeCtx(client));
+
+  assertEquals(attempts.length, 2);
+  assertEquals(attempts[1].includes("custom_sku"), false);
 });
