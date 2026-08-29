@@ -441,3 +441,80 @@ Deno.test("erpnext_task_list - passes an empty custom_sku through untouched", as
   const rows = (result as { data: Record<string, unknown>[] }).data;
   assertEquals(rows[0].custom_sku, null);
 });
+
+/** Lỗi Frappe trả về khi câu `SELECT` hỏi một cột site không có. */
+function unknownColumnError(field: string): FrappeAPIError {
+  return new FrappeAPIError("Internal Server Error", 500, {
+    exception:
+      `OperationalError: (1054, "Unknown column '${field}' in 'SELECT'")`,
+  });
+}
+
+Deno.test("erpnext_task_list - a site without custom_sku still gets its Tasks", async () => {
+  // `custom_sku` là của `hvg_workspace`, không phải của ERPNext, và Frappe không bỏ qua im lặng
+  // một cột nó không tìm thấy: nó giết cả câu `SELECT` bằng SQL 1054. Hỏi vô điều kiện là làm
+  // hỏng `erpnext_task_list` trên mọi site chuẩn, tức trên chính nhóm người dùng mà gói này phát
+  // hành cho.
+  const attempts: string[][] = [];
+  const client = makeMockClient({
+    list: async (_doctype: string, options: { fields: string[] }) => {
+      attempts.push(options.fields);
+      if (options.fields.includes("custom_sku")) {
+        throw unknownColumnError("custom_sku");
+      }
+      return [{ name: "TASK-001", subject: "Plain ERPNext task" }];
+    },
+  });
+
+  const result = await getTool("erpnext_task_list").handler(
+    {},
+    makeCtx(client),
+  );
+
+  assertEquals(attempts.length, 2);
+  assertEquals(attempts[1].includes("custom_sku"), false);
+  assertEquals(attempts[1].length, 8);
+  const rows = (result as { data: Record<string, unknown>[] }).data;
+  assertEquals(rows[0].name, "TASK-001");
+});
+
+Deno.test("erpnext_task_list - stops asking a site that answered 1054 once", async () => {
+  // Một vòng phí là chấp nhận được, mỗi lượt gọi một vòng phí thì không.
+  const attempts: string[][] = [];
+  const client = makeMockClient({
+    list: async (_doctype: string, options: { fields: string[] }) => {
+      attempts.push(options.fields);
+      if (options.fields.includes("custom_sku")) {
+        throw unknownColumnError("custom_sku");
+      }
+      return [];
+    },
+  });
+
+  const tool = getTool("erpnext_task_list");
+  await tool.handler({}, makeCtx(client));
+  await tool.handler({}, makeCtx(client));
+
+  // Lượt đầu: hỏi có SKU rồi hỏi lại không SKU. Lượt sau: đúng một lần, không SKU.
+  assertEquals(attempts.length, 3);
+  assertEquals(attempts[2].includes("custom_sku"), false);
+});
+
+Deno.test("erpnext_task_list - does not read an unrelated failure as a missing column", async () => {
+  // Nuốt một lỗi bất kỳ rồi thử lại sẽ dạy client một điều sai mà nó giữ tới hết tiến trình, và
+  // che mất lỗi thật của lượt gọi. Chỉ 1054 đúng tên cột mới được coi là "site không có cột này".
+  let calls = 0;
+  const client = makeMockClient({
+    list: async () => {
+      calls++;
+      throw new FrappeAPIError("Not permitted", 403, {});
+    },
+  });
+
+  await assertRejects(
+    () => getTool("erpnext_task_list").handler({}, makeCtx(client)),
+    FrappeAPIError,
+    "Not permitted",
+  );
+  assertEquals(calls, 1);
+});

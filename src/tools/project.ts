@@ -8,6 +8,7 @@
 
 import type { FrappeFilter } from "../api/types.ts";
 import type { ErpNextTool } from "./types.ts";
+import { FrappeAPIError, type FrappeClient } from "../api/frappe-client.ts";
 import { listResult } from "./list-result.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
 import {
@@ -20,6 +21,64 @@ import {
   validateAssignees,
 } from "./assignment.ts";
 import { resolveAssigneeUser, resolveEmployee } from "../api/resolve.ts";
+
+/**
+ * The eight columns `erpnext_task_list` reads on every ERPNext site, custom fields excluded.
+ */
+const TASK_LIST_FIELDS = [
+  "name",
+  "subject",
+  "project",
+  "status",
+  "priority",
+  "exp_start_date",
+  "exp_end_date",
+  "progress",
+];
+
+/**
+ * Mã sản phẩm, do `hvg_workspace.api.update_task_meta` ghi. Chỉ đọc CỘT, tuyệt đối không tự tách
+ * `sku:` ra khỏi `custom_agent_meta`: luật trích mã có ít nhất ba mặt độc lập cùng phải khớp (vị
+ * ngữ người phụ trách, phép lọc `is_group`/`is_template`, và phạm vi áp biểu thức chỗ điền mẫu
+ * `x{4,}` lên GIÁ TRỊ chứ không lên cả khối), nên mỗi bản chép lại chỉ cần trượt một mặt là ra một
+ * con số trông hoàn toàn hợp lý mà vẫn sai. Đo ngày 29/08/2026 trên site thật, ba bản chép độc lập
+ * cho ba số sai khác nhau. Nguồn duy nhất là `_read_task_sku`, và nó không whitelist nên MCP không
+ * gọi được.
+ */
+const TASK_SKU_FIELD = "custom_sku";
+
+/**
+ * Whether a site carries `Task.custom_sku`, remembered per client.
+ *
+ * The field belongs to `hvg_workspace`, not to ERPNext, so most sites this package is published
+ * for do not have it - and Frappe does not quietly skip a column it cannot find. It fails the
+ * whole `SELECT` with MySQL error 1054, which is exactly how five list tools came to return an
+ * error instead of a list on v16 (3.3.3). Asking for the field unconditionally would break
+ * `erpnext_task_list` on every standard site.
+ *
+ * A `WeakMap` rather than a module-level flag because one process may talk to several sites, and
+ * a site without the field must not teach the next client to stop asking. `true` is never stored
+ * eagerly: the first successful call records it, so a site that has the field pays no probe at
+ * all and a site that lacks it pays one wasted request, once.
+ */
+const taskSkuSupport = new WeakMap<FrappeClient, boolean>();
+
+/**
+ * Whether this error is Frappe refusing a column that does not exist on the site.
+ *
+ * Both halves are required. Matching "1054" alone would swallow an unknown-column error about
+ * some OTHER field, and the retry - which only drops `custom_sku` - would fail again anyway,
+ * after teaching the client a lie it keeps for the rest of the process.
+ */
+function isUnknownColumnError(error: unknown, field: string): boolean {
+  if (!(error instanceof FrappeAPIError)) return false;
+  const body = typeof error.body === "string"
+    ? error.body
+    : JSON.stringify(error.body ?? "");
+  const haystack = `${error.message} ${body}`;
+  return haystack.includes(field) &&
+    (haystack.includes("1054") || haystack.includes("Unknown column"));
+}
 
 export const projectTools: ErpNextTool[] = [
   // ── Projects ──────────────────────────────────────────────────────────────
@@ -120,9 +179,10 @@ export const projectTools: ErpNextTool[] = [
     annotations: { readOnlyHint: true },
     _meta: DOCLIST_META,
     description: "List Tasks. Filterable by project, status, priority. " +
-      "Fields: name, subject, project, status, priority, exp_start_date, exp_end_date, progress, " +
-      "custom_sku. 'custom_sku' is empty for every Task created before the SKU field shipped and " +
-      "was never backfilled, so an empty value means 'not recorded here', never 'no product'.",
+      "Fields: name, subject, project, status, priority, exp_start_date, exp_end_date, progress. " +
+      "Sites carrying hvg_workspace also get 'custom_sku'; it is absent elsewhere. Where present " +
+      "it is empty for every Task created before that field shipped and never backfilled, so an " +
+      "empty value means 'not recorded here', never 'no product'.",
     category: "project",
     inputSchema: {
       type: "object",
@@ -186,29 +246,31 @@ export const projectTools: ErpNextTool[] = [
         filters.push(["exp_end_date", "<=", input.date_to as string]);
       }
 
-      const docs = await ctx.client.list("Task", {
-        fields: [
-          "name",
-          "subject",
-          "project",
-          "status",
-          "priority",
-          "exp_start_date",
-          "exp_end_date",
-          "progress",
-          // Mã sản phẩm, do `hvg_workspace.api.update_task_meta` ghi. Chỉ đọc CỘT, tuyệt đối
-          // không tự tách `sku:` ra khỏi `custom_agent_meta` ở đây: luật trích mã có ít nhất ba
-          // mặt độc lập cùng phải khớp (vị ngữ người phụ trách, phép lọc `is_group`/`is_template`,
-          // và phạm vi áp biểu thức chỗ điền mẫu `x{4,}` lên GIÁ TRỊ chứ không lên cả khối), nên
-          // mỗi bản chép lại chỉ cần trượt một mặt là ra một con số trông hoàn toàn hợp lý mà vẫn
-          // sai. Đo ngày 29/08/2026 trên site thật, ba bản chép độc lập cho ba số sai khác nhau.
-          // Nguồn duy nhất là `_read_task_sku`, và nó không whitelist nên MCP không gọi được.
-          "custom_sku",
-        ],
-        filters,
-        limit,
-        order_by: "modified desc",
-      });
+      const query = { filters, limit, order_by: "modified desc" };
+      // Chưa biết site có cột SKU hay không thì cứ hỏi: site của Havi có, và đó là ca thường.
+      const askForSku = taskSkuSupport.get(ctx.client) !== false;
+
+      let docs;
+      try {
+        docs = await ctx.client.list("Task", {
+          fields: askForSku
+            ? [...TASK_LIST_FIELDS, TASK_SKU_FIELD]
+            : TASK_LIST_FIELDS,
+          ...query,
+        });
+        if (askForSku) taskSkuSupport.set(ctx.client, true);
+      } catch (error) {
+        if (!askForSku || !isUnknownColumnError(error, TASK_SKU_FIELD)) {
+          throw error;
+        }
+        // Site không mang `hvg_workspace`. Nhớ lại để lượt sau không tốn thêm một vòng nữa, rồi
+        // trả về đúng tám cột chuẩn thay vì ném lỗi vào mặt người chỉ muốn liệt kê công việc.
+        taskSkuSupport.set(ctx.client, false);
+        docs = await ctx.client.list("Task", {
+          fields: TASK_LIST_FIELDS,
+          ...query,
+        });
+      }
 
       return await listResult(ctx, "Task", docs, {
         filters,
