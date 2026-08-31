@@ -415,8 +415,11 @@ Two GitHub Actions workflows matter:
    Run them locally before pushing, and dispatch the hosted run when you want
    the full suite confirmed (locally, `deno test src/` needs jsr.io access for
    `@casys/mcp-server`).
-2. `.github/workflows/publish.yml` is reusable/manual:
-   - **publish-jsr**: builds UI → `npx jsr publish --allow-dirty`
+2. `.github/workflows/publish.yml` runs when a GitHub release is published, and
+   is also reusable (`workflow_call`) and manual (`workflow_dispatch`):
+   - **publish-jsr**: builds UI → `npx jsr publish --allow-dirty`. Gated on the
+     repository variable `PUBLISH_JSR`, which is unset, so this job **skips**
+     and the run still reports green. Only npm is shipped today.
    - **publish-npm**: builds UI → `scripts/build-node.sh` →
      `npm publish --access public` (skips only if the version is already
      published)
@@ -560,12 +563,17 @@ running in its own compose project), join that stack's external network instead
 ### Release a version
 
 1. Get explicit approval for the version.
-2. Update `deno.json` and `server.ts`.
+2. Update `deno.json` and `src/version.ts` (both, see "Versioning" above).
 3. Update `CHANGELOG.md` with user-facing changes.
 4. Run `deno task release:check`.
 5. Commit and push to `main`.
-6. Create the GitHub release/tag, for example `v2.3.0`.
-7. Run the `Publish` workflow manually to ship JSR and npm.
+6. Create the GitHub release/tag, for example `v2.3.0`. Publishing it starts
+   `Publish` on its own; dispatch that workflow by hand only when re-running it.
+7. Confirm the version actually reached the registry:
+   `npm view @hvgllc/hvgerp-mcp@latest version --prefer-online`. A green Publish
+   run is not proof on its own - npm answers "your package is being processed"
+   and takes a few minutes, and `publish-jsr` reports success by skipping while
+   `vars.PUBLISH_JSR` is unset.
 
 ## Collaboration Notes
 

@@ -3,6 +3,17 @@ name: Publish
 on:
   workflow_call:
   workflow_dispatch:
+  # Publishing used to be a manual step someone had to remember after creating
+  # the release, and 3.1.0, 3.2.0, 3.3.0, 3.3.1, 3.3.2 and 3.3.3 are the six
+  # releases where nobody did: they exist as commits and CHANGELOG entries, but
+  # npm never received them, so `npm install` served 3.0.3 from 16 August until
+  # 3.4.0 shipped on the 31st. Creating the release is already the
+  # deliberate act the manual dispatch was standing in for, so let it be the
+  # trigger. `types: [published]` keeps drafts out, and the npm step still exits
+  # cleanly when the version is already on the registry, so a re-run or a
+  # dispatch alongside this trigger is harmless.
+  release:
+    types: [published]
 
 jobs:
   # Opt-in: this fork publishes to npm, and only to JSR once an @hvgllc scope
