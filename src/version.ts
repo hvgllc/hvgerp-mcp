@@ -12,4 +12,4 @@
  * @module lib/erpnext/src/version
  */
 
-export const SERVER_VERSION = "3.3.3";
+export const SERVER_VERSION = "3.4.0";
