@@ -8,6 +8,20 @@ This package is a fork of
 deliberately still point at the upstream repository, where those commits, pull
 requests and tags actually live.
 
+## [3.4.0] - 2026-08-31
+
+### Added
+
+- **`erpnext_task_list` returns `custom_sku`.** Sites carrying `hvg_workspace`
+  store a product code on the Task itself, and the tool read a fixed list of
+  eight columns that never included it, so the code was reachable only one Task
+  at a time through `erpnext_task_get`. The column is discovered rather than
+  demanded: a site without the field answers the first call with SQL error 1054,
+  and the tool retries with the eight standard columns and remembers that
+  answer, so `erpnext_task_list` behaves exactly as before on a standard ERPNext
+  site. Where the field does exist it is empty for every Task created before it
+  shipped, so an empty value means "not recorded here", never "no product".
+
 ## [3.3.3] - 2026-08-28
 
 ### Fixed
