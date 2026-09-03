@@ -561,6 +561,7 @@ function attendanceClient(
 Deno.test("erpnext_employee_checkin_list - date_to covers the whole last day", async () => {
   // `time` là Datetime. So với `YYYY-MM-DD` trần thì cận trên rơi vào 00:00:00 và mọi
   // lượt bấm của chính ngày cuối khoảng biến mất - đúng ngày người hỏi quan tâm nhất.
+  // Cận trên phải MỞ ở nửa đêm hôm sau, vì `<= 23:59:59` vẫn cắt mất phần lẻ giây.
   let seen: any;
   const client = makeMockClient({
     list: async (_doctype: string, opts: any) => {
@@ -581,7 +582,17 @@ Deno.test("erpnext_employee_checkin_list - date_to covers the whole last day", a
   assertEquals(seen.filters, [
     ["employee", "=", "HR-EMP-00044"],
     ["time", ">=", "2026-08-29 00:00:00"],
-    ["time", "<=", "2026-08-29 23:59:59"],
+    ["time", "<", "2026-08-30 00:00:00"],
+  ]);
+
+  // Và cận trên phải qua được ranh giới tháng, không phải phép cộng chuỗi.
+  await getTool("erpnext_employee_checkin_list").handler(
+    { employee: "HR-EMP-00044", date_to: "2026-08-31" },
+    makeCtx(client),
+  );
+  assertEquals(seen.filters, [
+    ["employee", "=", "HR-EMP-00044"],
+    ["time", "<", "2026-09-01 00:00:00"],
   ]);
 });
 
@@ -977,8 +988,11 @@ Deno.test("erpnext_attendance_day_fix - invalidates the caches it just made stal
     makeCtx(client),
   );
 
+  // Cả tên lẫn không tên: không tên dọn cache danh sách, còn `get:Employee Checkin:{name}`
+  // chỉ chịu đúng một tên, mà lượt sửa gắn lại mọi lượt bấm của ngày vào bản mới.
   assertEquals(invalidated, [
     ["Employee Checkin", undefined],
+    ["Employee Checkin", "EMP-CKIN-001"],
     ["Attendance", "HR-ATT-2026-00332"],
     ["Attendance", "HR-ATT-2026-00401"],
   ]);

@@ -141,6 +141,19 @@ async function readAttendanceDay(
   );
 }
 
+/**
+ * Ngày kế tiếp của một chuỗi `YYYY-MM-DD`, tính hoàn toàn trong UTC.
+ *
+ * Phép cộng ngày không được chạm vào múi giờ cục bộ: `new Date("2026-08-29")` phân giải ra
+ * nửa đêm UTC, nên đọc lại bằng `toISOString` giữ nguyên ngày lịch dù tiến trình MCP đang
+ * chạy ở đâu.
+ */
+function nextDayISO(date: string): string {
+  const shifted = new Date(`${date}T00:00:00Z`);
+  shifted.setUTCDate(shifted.getUTCDate() + 1);
+  return shifted.toISOString().slice(0, 10);
+}
+
 /** `log_type` phải là IN hoặc OUT; rỗng đi tới server sẽ bị từ chối bằng tiếng Việt. */
 function assertLogType(value: unknown, tool: string): void {
   const text = String(value ?? "").toUpperCase();
@@ -464,7 +477,14 @@ export const hrTools: ErpNextTool[] = [
         filters.push(["time", ">=", `${input.date_from as string} 00:00:00`]);
       }
       if (input.date_to) {
-        filters.push(["time", "<=", `${input.date_to as string} 23:59:59`]);
+        // Cận trên MỞ ở nửa đêm hôm sau, không phải `<= 23:59:59`: cột Datetime của Frappe
+        // giữ cả phần lẻ giây, nên một lượt bấm lúc `23:59:59.500000` rơi ra ngoài phép so
+        // đóng - đúng ngày cuối khoảng mà lời hứa "phủ trọn ngày" nói tới.
+        filters.push([
+          "time",
+          "<",
+          `${nextDayISO(input.date_to as string)} 00:00:00`,
+        ]);
       }
 
       const docs = await ctx.client.list("Employee Checkin", {
@@ -780,7 +800,14 @@ export const hrTools: ErpNextTool[] = [
       // Ghi qua `callMethod` thì cache không tự dọn - `create`/`update`/`delete` mới tự
       // dọn. Một lượt gọi này đổi cả lượt bấm giờ lẫn ngày công, nên bỏ qua bước này là
       // lượt đọc ngay sau đó còn trả về đúng đống dữ liệu vừa được sửa.
+      // Không tên thì chỉ dọn được cache danh sách và cache phân giải: `invalidate` xoá
+      // `get:{doctype}:{name}` theo đúng một tên. Lượt sửa này gắn lại MỌI lượt bấm của
+      // ngày vào bản Attendance mới, nên bản `erpnext_doc_get` đã cache của bất kỳ lượt nào
+      // trong ngày cũng vừa cũ đi.
       ctx.client.invalidate("Employee Checkin");
+      for (const row of current) {
+        ctx.client.invalidate("Employee Checkin", row.name);
+      }
       for (const name of saved.cancelled_attendance ?? []) {
         ctx.client.invalidate("Attendance", name);
       }
