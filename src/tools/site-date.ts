@@ -58,6 +58,40 @@ export async function siteTimeZone(
  * ngay đúng lúc nó quan trọng nhất, tức ngày đầu hoặc cuối kỳ phép. Khi không đọc được cấu
  * hình thì lùi về UTC, và người gọi vẫn thấy ngày đã dùng qua `as_on_date` trong kết quả.
  */
+/**
+ * Bây giờ theo múi giờ của chính site, dạng `YYYY-MM-DD HH:MM:SS`.
+ *
+ * Cùng lý do với `siteToday`, nhưng cho những phép kiểm mà độ phân giải ngày là chưa đủ:
+ * một lượt bấm giờ lúc 17:30 của chính hôm nay vẫn là sự kiện chưa xảy ra khi đồng hồ mới
+ * chỉ 9h. Định dạng khớp đúng kiểu Datetime của Frappe nên so sánh chuỗi là so sánh thời
+ * gian, không phải một phép quy đổi nữa.
+ */
+export async function siteNow(ctx: ErpNextToolContext): Promise<string> {
+  const timeZone = await siteTimeZone(ctx);
+
+  const now = new Date();
+  if (timeZone) {
+    try {
+      // `en-CA` cho ra `YYYY-MM-DD, HH:MM:SS`; dấu phẩy là thứ duy nhất phải bỏ đi.
+      return new Intl.DateTimeFormat("en-CA", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        // `h23` chứ không phải `hour12: false`: nhánh 12 giờ tắt vẫn cho ra "24:00:00" ở
+        // nửa đêm trên một số runtime, và "24" không phải giờ hợp lệ của một chuỗi Datetime.
+        hourCycle: "h23",
+      }).format(now).replace(", ", " ");
+    } catch {
+      // Múi giờ site khai không hợp lệ với runtime này; rơi xuống UTC bên dưới.
+    }
+  }
+  return now.toISOString().slice(0, 19).replace("T", " ");
+}
+
 export async function siteToday(ctx: ErpNextToolContext): Promise<string> {
   const timeZone = await siteTimeZone(ctx);
 

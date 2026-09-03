@@ -6,10 +6,11 @@
  * @module lib/erpnext/tools/hr
  */
 
+import { FrappeAPIError } from "../api/frappe-client.ts";
 import type { FrappeFilter } from "../api/types.ts";
 import type { ErpNextTool, ErpNextToolContext } from "./types.ts";
 import { listResult } from "./list-result.ts";
-import { siteToday } from "./site-date.ts";
+import { siteNow, siteToday } from "./site-date.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
 import { resolveEmployee, resolveLink } from "../api/resolve.ts";
 
@@ -112,9 +113,16 @@ async function callHvgWorkspace<T>(
     return await ctx.client.callMethod<T>(method, args);
   } catch (err) {
     const text = err instanceof Error ? err.message : String(err);
+    // Soi cả thân phản hồi đã parse, không chỉ `message`: `FrappeAPIError` dựng message từ
+    // `message ?? exc_type ?? statusText`, mà lượt tra hàm hỏng thường chỉ có `exc_type`
+    // là "ValidationError" còn nguyên văn "Failed to get method" nằm trong `exception`.
+    // Chỉ đọc message là trượt đúng cái ca mà lớp bọc này sinh ra để dịch.
+    const body = err instanceof FrappeAPIError && err.body !== null
+      ? JSON.stringify(err.body)
+      : "";
     // Frappe trả cùng một lỗi cho "hàm không tồn tại" dù nguyên nhân là app chưa cài hay
     // tên gõ sai. Người đọc cần biết nhánh nào để còn hành động.
-    if (METHOD_LOOKUP_FAILURE.test(text)) {
+    if (METHOD_LOOKUP_FAILURE.test(text) || METHOD_LOOKUP_FAILURE.test(body)) {
       throw new Error(
         `[${tool}] this site does not expose '${method}'. These attendance repair ` +
           "tools need the 'hvg_workspace' app installed. Original error: " +
@@ -148,10 +156,31 @@ async function readAttendanceDay(
  * nửa đêm UTC, nên đọc lại bằng `toISOString` giữ nguyên ngày lịch dù tiến trình MCP đang
  * chạy ở đâu.
  */
-function nextDayISO(date: string): string {
-  const shifted = new Date(`${date}T00:00:00Z`);
-  shifted.setUTCDate(shifted.getUTCDate() + 1);
-  return shifted.toISOString().slice(0, 10);
+function nextDayISO(date: string, tool: string): string {
+  const parsed = new Date(`${date}T00:00:00Z`);
+  // `2026-02-30` KHÔNG bị `Date` từ chối, nó cuộn sang `2026-03-02`, và cận trên lặng lẽ
+  // ôm thêm hai ngày ngoài khoảng được hỏi. Đối chiếu vòng lại là cách duy nhất phân biệt
+  // một ngày có thật với một ngày vừa được chuẩn hoá thành ngày khác.
+  const roundTrip = Number.isNaN(parsed.getTime())
+    ? null
+    : parsed.toISOString().slice(0, 10);
+  if (roundTrip !== date) {
+    throw new Error(
+      `[${tool}] '${date}' is not a real calendar date. Use YYYY-MM-DD.`,
+    );
+  }
+  parsed.setUTCDate(parsed.getUTCDate() + 1);
+  return parsed.toISOString().slice(0, 10);
+}
+
+/**
+ * Đưa một dấu thời gian về đúng kiểu Datetime của Frappe để so sánh bằng chuỗi.
+ *
+ * Caller gõ `2026-08-29T17:05:00` cũng thường như gõ dấu cách, mà `T` (0x54) lớn hơn dấu
+ * cách (0x20), nên so thẳng là mọi dấu thời gian kiểu ISO đều hoá ra "ở tương lai".
+ */
+function normalizeStamp(time: string): string {
+  return time.replace("T", " ").slice(0, 19);
 }
 
 /** `log_type` phải là IN hoặc OUT; rỗng đi tới server sẽ bị từ chối bằng tiếng Việt. */
@@ -172,32 +201,35 @@ interface TargetPunch {
 }
 
 /**
- * Điền chiều cho những lượt bấm không khai chiều, theo thứ tự của NGÀY SAU KHI SỬA.
+ * Sắp trạng thái đích theo thời gian và đòi mọi hàng khai rõ chiều.
  *
- * `hr_save_day_attendance` đòi mọi hàng mang IN hoặc OUT, nhưng `log_type` là Select có
- * lựa chọn rỗng nên kho thật sự chứa chuỗi rỗng. Phải suy, và phải suy trên trạng thái
- * đích: một lượt `edit` dời giờ hay một lượt `add` chèn vào giữa đều đổi thứ tự trong
- * ngày, nên suy trên thứ tự CŨ là gán chiều không còn khớp trình tự thời gian, và ca này
- * xác định vào/ra bằng "alternating entries" nên giờ công ra sai theo.
- *
- * Quy tắc: đi theo thứ tự thời gian, một hàng trống lấy chiều ngược với hàng liền trước;
- * hàng trống đầu tiên là IN. Hàng đã khai chiều KHÔNG bị đụng tới - giá trị của nó là dữ
- * liệu, không phải chỗ trống để đoán - và chính nó làm mốc neo cho các hàng trống sau.
+ * `log_type` là Select có lựa chọn rỗng, nên kho thật sự chứa chuỗi rỗng, còn
+ * `hr_save_day_attendance` đòi mọi hàng mang IN hoặc OUT. Chỗ trống ấy KHÔNG được đoán:
+ * tool hứa "lượt bấm không được nhắc tới thì để nguyên", và suy chiều theo trình tự
+ * vào-ra xen kẽ là ghi một giá trị caller chưa từng yêu cầu lên một hàng họ không đụng
+ * tới, rồi giờ công của cả ngày đổi theo. Cùng luật với `resolveLink` trên đường ghi:
+ * đường ghi không đoán. Thiếu chiều thì hỏi lại, kèm tên hàng để hỏi được ngay lượt sau.
  */
-function fillBlankLogTypes(
+function orderedPunches(
   target: readonly TargetPunch[],
+  tool: string,
 ): Array<{ name: string; time: string; log_type: string }> {
-  const ordered = [...target].sort((a, b) => a.time.localeCompare(b.time));
-  let previous: string | undefined;
-  return ordered.map((row) => {
-    const log_type = row.log_type
-      ? row.log_type
-      : previous === "IN"
-      ? "OUT"
-      : "IN";
-    previous = log_type;
-    return { name: row.name, time: row.time, log_type };
-  });
+  const blank = target.filter((row) => !row.log_type);
+  if (blank.length > 0) {
+    throw new Error(
+      `[${tool}] these punches carry no log_type in ERPNext: ` +
+        blank.map((row) => `${row.name} (${row.time})`).join(", ") +
+        ". The site refuses a save with a blank direction, and this tool does not " +
+        "guess one. Name each of them in 'edit' with the log_type it should carry.",
+    );
+  }
+  return [...target]
+    .sort((a, b) => a.time.localeCompare(b.time))
+    .map((row) => ({
+      name: row.name,
+      time: row.time,
+      log_type: row.log_type as string,
+    }));
 }
 
 export const hrTools: ErpNextTool[] = [
@@ -483,7 +515,12 @@ export const hrTools: ErpNextTool[] = [
         filters.push([
           "time",
           "<",
-          `${nextDayISO(input.date_to as string)} 00:00:00`,
+          `${
+            nextDayISO(
+              input.date_to as string,
+              "erpnext_employee_checkin_list",
+            )
+          } 00:00:00`,
         ]);
       }
 
@@ -582,8 +619,11 @@ export const hrTools: ErpNextTool[] = [
       "'reason' is written to the audit trail and is required. " +
       "When the day already carries a submitted Attendance, the call is refused unless " +
       "confirm_cancel_attendance is true, because saving cancels that record. " +
-      "Refuses outright for a future date, an unusable log_type, a draft Attendance on " +
-      "the day, or an Attendance backed by a still-valid Attendance Request. " +
+      "Refuses outright for a future date, a timestamp that has not happened yet, an " +
+      "unusable log_type, a draft Attendance on the day, or an Attendance backed by a " +
+      "still-valid Attendance Request. It also refuses when a punch already on the day " +
+      "carries a blank log_type: name that punch in 'edit' with the direction it should " +
+      "carry, because this tool does not guess one. " +
       REQUIRES_HVG_WORKSPACE,
     category: "hr",
     inputSchema: {
@@ -703,7 +743,8 @@ export const hrTools: ErpNextTool[] = [
       // Máy chấm công không chứa sự kiện chưa xảy ra. Đo bằng ngày của SITE, không phải
       // ngày UTC của tiến trình MCP: hai thứ đó lệch nhau đúng quanh nửa đêm, tức đúng lúc
       // một ca đêm đang được sửa.
-      const today = await siteToday(ctx);
+      const now = await siteNow(ctx);
+      const today = now.slice(0, 10);
       if (date > today) {
         throw new Error(
           `[${TOOL}] '${date}' is in the future (site today is ${today}). ` +
@@ -778,9 +819,21 @@ export const hrTools: ErpNextTool[] = [
           log_type: row.log_type as string,
         });
       }
-      // Điền chiều SAU khi đã gộp `edit` và `add`, vì chiều của một lượt bấm là vị trí của
-      // nó trong ngày đã sửa chứ không phải trong ngày trước khi sửa.
-      const rows = fillBlankLogTypes(target);
+      // Kiểm SAU khi đã gộp `edit` và `add`: một hàng đang rỗng mà caller có khai chiều
+      // trong `edit` thì đã hết rỗng, và bắt lỗi nó ở đây là từ chối một lượt gọi hợp lệ.
+      const rows = orderedPunches(target, TOOL);
+
+      // Máy chấm công không chứa sự kiện chưa xảy ra, và điều đó đúng tới từng giây chứ
+      // không chỉ tới từng ngày: phép kiểm ngày ở trên vẫn cho một lượt gọi lúc 9h sáng
+      // ghi một lượt RA lúc 17:30 cùng ngày, tức bịa ra giờ công chưa ai làm.
+      const future = rows.filter((row) => normalizeStamp(row.time) > now);
+      if (future.length > 0) {
+        throw new Error(
+          `[${TOOL}] these punches are still in the future (site now is ${now}): ` +
+            future.map((row) => row.time).join(", ") +
+            ". Attendance can only record time that has already been worked.",
+        );
+      }
 
       // Ảnh chụp mà lượt gọi này ĐANG NHÌN THẤY, để server phát hiện có ai vừa sửa cùng
       // ngày ấy giữa lượt đọc và lượt ghi. Lấy từ chính `state` ở trên, nên nó mô tả đúng

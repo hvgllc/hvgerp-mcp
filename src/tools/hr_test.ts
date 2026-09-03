@@ -625,32 +625,77 @@ Deno.test("erpnext_attendance_day_fix - sends the whole day, not just the added 
   assertEquals(result.data.attendance.status, "Present");
 });
 
-Deno.test("erpnext_attendance_day_fix - fills a blank log_type by position", async () => {
-  // Máy chấm công không khai chiều để lại chuỗi rỗng, mà server đòi IN hoặc OUT. Suy theo
-  // vị trí, và CHỈ cho hàng rỗng.
-  let sent: any;
+Deno.test("erpnext_attendance_day_fix - refuses to guess a blank log_type", async () => {
+  // Máy chấm công không khai chiều để lại chuỗi rỗng, mà server đòi IN hoặc OUT. Tool hứa
+  // "lượt bấm không được nhắc tới thì để nguyên", nên điền hộ chiều cho một hàng caller
+  // không đụng tới là ghi một giá trị chưa ai yêu cầu, và giờ công cả ngày đổi theo.
+  let saved = false;
   const state = brokenDay({
     rows: [
       { name: "EMP-CKIN-001", time: "2026-08-29 07:30:58", log_type: "" },
       { name: "EMP-CKIN-002", time: "2026-08-29 12:00:00", log_type: "OUT" },
     ],
   });
-  const client = attendanceClient(state, (args) => sent = args);
+  const client = attendanceClient(state, () => saved = true);
+
+  const err = await assertRejects(
+    () =>
+      getTool("erpnext_attendance_day_fix").handler(
+        {
+          employee: "HR-EMP-00044",
+          date: "2026-08-29",
+          reason: "Bổ sung lượt ra buổi chiều",
+          add: [{ log_type: "IN", time: "2026-08-29 13:00:00" }],
+          confirm_cancel_attendance: true,
+        },
+        makeCtx(client),
+      ),
+    Error,
+  );
+
+  assertEquals(saved, false, "must not save a day it had to guess about");
+  assertStringIncludes(err.message, "EMP-CKIN-001");
+  // Hàng đã khai chiều không bị lôi vào câu từ chối.
+  assert(
+    !err.message.includes("EMP-CKIN-002"),
+    "only the blank punches belong in the refusal",
+  );
+});
+
+Deno.test("erpnext_attendance_day_fix - takes a blank log_type once the caller names it", async () => {
+  // Và cửa từ chối trên phải MỞ được, nếu không nó chỉ là một ngõ cụt: khai chiều trong
+  // `edit` là đủ, kể cả khi lượt gọi ấy không đổi gì khác của hàng đó.
+  let sent: any;
+  const client = attendanceClient(
+    brokenDay({
+      rows: [
+        { name: "EMP-CKIN-001", time: "2026-08-29 07:30:58", log_type: "" },
+      ],
+    }),
+    (args) => sent = args,
+  );
 
   await getTool("erpnext_attendance_day_fix").handler(
     {
       employee: "HR-EMP-00044",
       date: "2026-08-29",
-      reason: "Bổ sung lượt ra buổi chiều",
-      add: [{ log_type: "IN", time: "2026-08-29 13:00:00" }],
+      reason: "Máy không ghi chiều, đối chiếu camera",
+      edit: [{ name: "EMP-CKIN-001", log_type: "IN" }],
+      add: [{ log_type: "OUT", time: "2026-08-29 17:05:00" }],
       confirm_cancel_attendance: true,
     },
     makeCtx(client),
   );
 
-  assertEquals(sent.rows[0].log_type, "IN");
-  // Hàng đã khai chiều giữ nguyên giá trị của nó: đó là dữ liệu, không phải chỗ trống.
-  assertEquals(sent.rows[1].log_type, "OUT");
+  assertEquals(sent.rows, [
+    { name: "EMP-CKIN-001", time: "2026-08-29 07:30:58", log_type: "IN" },
+    { name: "", time: "2026-08-29 17:05:00", log_type: "OUT" },
+  ]);
+  // `base` vẫn là ảnh chụp NGUYÊN TRẠNG, chuỗi rỗng giữ nguyên rỗng, nếu không khoá lạc
+  // quan của server so với một cái nền chưa từng tồn tại.
+  assertEquals(sent.base, {
+    "EMP-CKIN-001": { time: "2026-08-29 07:30:58", log_type: "" },
+  });
 });
 
 Deno.test("erpnext_attendance_day_fix - reports a skipped recompute instead of claiming success", async () => {
@@ -929,15 +974,15 @@ Deno.test("attendance repair tools do not disguise a business error as a missing
   );
 });
 
-Deno.test("erpnext_attendance_day_fix - infers blank directions from the patched order", async () => {
-  // Hai lượt trống trong kho. Thêm một lượt IN vào SỚM NHẤT ngày thì thứ tự đổi, nên chiều
-  // suy ra phải đổi theo. Suy trên thứ tự cũ là gửi lên IN, IN, OUT.
+Deno.test("erpnext_attendance_day_fix - sends the day in time order after the patch", async () => {
+  // `add` chèn một lượt vào SỚM NHẤT ngày, nên trạng thái đích phải được sắp lại: server
+  // xác định vào/ra theo trình tự thời gian, và gửi sai thứ tự là gửi sai một ngày khác.
   let sent: Record<string, unknown> | undefined;
   const client = attendanceClient(
     brokenDay({
       rows: [
-        { name: "CK-1", time: "2026-08-29 08:00:00", log_type: "" },
-        { name: "CK-2", time: "2026-08-29 17:00:00", log_type: "" },
+        { name: "CK-1", time: "2026-08-29 08:00:00", log_type: "OUT" },
+        { name: "CK-2", time: "2026-08-29 17:00:00", log_type: "OUT" },
       ],
     }),
     (args) => sent = args,
@@ -957,14 +1002,44 @@ Deno.test("erpnext_attendance_day_fix - infers blank directions from the patched
   assertEquals(sent?.rows, [
     { name: "", time: "2026-08-29 07:00:00", log_type: "IN" },
     { name: "CK-1", time: "2026-08-29 08:00:00", log_type: "OUT" },
-    { name: "CK-2", time: "2026-08-29 17:00:00", log_type: "IN" },
+    { name: "CK-2", time: "2026-08-29 17:00:00", log_type: "OUT" },
   ]);
-  // `base` vẫn là ảnh chụp NGUYÊN TRẠNG, chuỗi rỗng giữ nguyên rỗng, nếu không khoá lạc
-  // quan của server so với một cái nền chưa từng tồn tại.
-  assertEquals(sent?.base, {
-    "CK-1": { time: "2026-08-29 08:00:00", log_type: "" },
-    "CK-2": { time: "2026-08-29 17:00:00", log_type: "" },
-  });
+});
+
+Deno.test("erpnext_attendance_day_fix - refuses a punch that has not happened yet", async () => {
+  // Phép kiểm ngày một mình vẫn cho một lượt gọi lúc 9h sáng ghi lượt RA lúc 17:30 CÙNG
+  // ngày, tức bịa ra giờ công chưa ai làm. Mốc so là giây cuối của chính hôm nay theo múi
+  // giờ site, nên phép kiểm chỉ hoà nếu test chạy đúng trong giây ấy.
+  let saved = false;
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  const soon = `${today} 23:59:59`;
+  const client = attendanceClient(
+    brokenDay({ date: today, locked: false, attendance: null }),
+    () => saved = true,
+  );
+
+  const err = await assertRejects(
+    () =>
+      getTool("erpnext_attendance_day_fix").handler(
+        {
+          employee: "HR-EMP-00044",
+          date: today,
+          reason: "Ghi trước lượt ra cuối ca cho tiện",
+          add: [{ log_type: "OUT", time: soon }],
+        },
+        makeCtx(client),
+      ),
+    Error,
+  );
+
+  assertEquals(saved, false, "must not write time nobody has worked yet");
+  assertStringIncludes(err.message, "in the future");
+  assertStringIncludes(err.message, soon);
 });
 
 Deno.test("erpnext_attendance_day_fix - invalidates the caches it just made stale", async () => {
@@ -1019,4 +1094,60 @@ Deno.test("erpnext_attendance_day_fix - shouts when a cancellation happened unco
   assertStringIncludes(result.message, "WARNING");
   assertStringIncludes(result.message, "did not confirm a cancellation");
   assertStringIncludes(result.message, "HR-ATT-2026-00332");
+});
+
+Deno.test("erpnext_employee_checkin_list - refuses a date that does not exist", async () => {
+  // `new Date("2026-02-30")` không báo lỗi, nó cuộn sang 02/03, nên cận trên lặng lẽ ôm
+  // thêm hai ngày ngoài khoảng được hỏi. Câu trả lời sai ấy trông y hệt câu đúng.
+  let listed = false;
+  const client = makeMockClient({
+    list: async () => {
+      listed = true;
+      return [];
+    },
+  });
+
+  const err = await assertRejects(
+    () =>
+      getTool("erpnext_employee_checkin_list").handler(
+        { employee: "HR-EMP-00044", date_to: "2026-02-30" },
+        makeCtx(client),
+      ),
+    Error,
+  );
+
+  assertEquals(listed, false, "must not query a range it had to invent");
+  assertStringIncludes(err.message, "2026-02-30");
+});
+
+Deno.test("attendance repair tools read the parsed body, not only the message", async () => {
+  // `FrappeAPIError` dựng message từ `message ?? exc_type ?? statusText`. Một site thiếu
+  // `hvg_workspace` thường chỉ có `exc_type: "ValidationError"` ở đó, còn nguyên văn
+  // "Failed to get method" nằm trong `exception` - đúng cái ca lớp bọc này sinh ra để dịch.
+  const client = makeMockClient({
+    callMethod: async () => {
+      throw new FrappeAPIError(
+        "POST /api/method/hvg_workspace.api.hr_get_day_attendance failed: ValidationError",
+        417,
+        {
+          exc_type: "ValidationError",
+          exception:
+            "frappe.exceptions.ValidationError: Failed to get method for command hvg_workspace.api.hr_get_day_attendance",
+        },
+      );
+    },
+  });
+
+  const err = await assertRejects(
+    () =>
+      getTool("erpnext_attendance_day_get").handler(
+        { employee: "HR-EMP-00044", date: "2026-08-29" },
+        makeCtx(client),
+      ),
+    Error,
+  );
+
+  assertStringIncludes(err.message, "hvg_workspace' app installed");
+  // Và lỗi gốc phải đi kèm, nếu không người gọi mất `status` với `body` đã parse.
+  assertEquals((err.cause as FrappeAPIError).status, 417);
 });
