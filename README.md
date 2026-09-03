@@ -5,7 +5,7 @@
 [![MCP](https://img.shields.io/badge/MCP-server-1f6feb?logo=modelcontextprotocol&logoColor=white)](https://modelcontextprotocol.io)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-MCP server for [ERPNext](https://erpnext.com) / Frappe ERP — **131 tools**
+MCP server for [ERPNext](https://erpnext.com) / Frappe ERP — **134 tools**
 across **16 categories**, with **7 interactive UI viewers**.
 
 Connect any MCP-compatible AI agent (Claude Desktop, Claude Code, VS Code
@@ -223,9 +223,9 @@ npm install
 node build-all.mjs
 ```
 
-## Tools (131)
+## Tools (134)
 
-131 tools across 16 categories. Each `_list` tool returns interactive results
+134 tools across 16 categories. Each `_list` tool returns interactive results
 via the doclist-viewer with row click, inline detail, and cross-viewer
 navigation.
 
@@ -246,8 +246,14 @@ navigation.
   which runs a standard financial report (Profit and Loss Statement, Balance
   Sheet, General Ledger, Trial Balance…) from a closed allowlist and never
   queues a Prepared Report.
-- **HR** (12) — Employees, Attendance, Leave Applications, Salary Slips, Payroll
-  Entries, and Expense Claims.
+- **HR** (15) — Employees, Attendance, Leave Applications, Salary Slips, Payroll
+  Entries, and Expense Claims, plus attendance repair:
+  `erpnext_employee_checkin_list` (the raw punch log, where a day that never
+  closed shows up), `erpnext_attendance_day_get` and
+  `erpnext_attendance_day_fix`, which add the missing punches and rebuild that
+  day's Attendance even when the existing record is already submitted. The last
+  two need the `hvg_workspace` app on the site, because the day is recomputed by
+  the site's own rule rather than by a copy of it living here.
 - **Project** (9) — Projects, Tasks (with native assignment), and Timesheets.
 - **Delivery** (5) — Delivery Notes and Shipments.
 - **Manufacturing** (7) — BOMs, Work Orders, and Job Cards.

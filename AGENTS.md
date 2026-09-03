@@ -8,7 +8,7 @@ Repository guidelines for AI coding agents working on this codebase.
 
 ## Project Overview
 
-MCP server for ERPNext/Frappe ERP — 131 tools across 16 categories with 7
+MCP server for ERPNext/Frappe ERP — 134 tools across 16 categories with 7
 interactive UI viewers. Connects MCP-compatible AI agents to ERPNext via the
 Model Context Protocol. Published as `@hvgllc/hvgerp-mcp` on npm (Node bundle)
 and JSR (Deno).

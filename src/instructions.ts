@@ -77,9 +77,11 @@ const PERMISSIONS: Record<CallerIdentityMode, string> = {
 
 const WRITES = `WRITES
 - Some tools change live business data, and the NAME does not say which: \`erpnext_doc_assign\`,
-  \`erpnext_doc_unassign\`, \`erpnext_kanban_move_card\`, \`erpnext_file_upload\` and
-  \`erpnext_method_call\` all write without a _create/_update/_submit/_cancel/_delete suffix, and
-  the last of those reaches any allowlisted business method. Every writing tool carries
+  \`erpnext_doc_unassign\`, \`erpnext_kanban_move_card\`, \`erpnext_file_upload\`,
+  \`erpnext_attendance_day_fix\` and \`erpnext_method_call\` all write without a
+  _create/_update/_submit/_cancel/_delete suffix, and the last of those reaches any allowlisted
+  business method. \`erpnext_attendance_day_fix\` goes further still: repairing a day CANCELS the
+  Attendance record already standing on it. Every writing tool carries
   \`readOnlyHint: false\` in its \`tools/list\` annotations - read that rather than the name, and
   confirm the details with the user before calling one.`;
 
