@@ -6,10 +6,11 @@
  * @module lib/erpnext/tools/hr
  */
 
+import { FrappeAPIError } from "../api/frappe-client.ts";
 import type { FrappeFilter } from "../api/types.ts";
-import type { ErpNextTool } from "./types.ts";
+import type { ErpNextTool, ErpNextToolContext } from "./types.ts";
 import { listResult } from "./list-result.ts";
-import { siteToday } from "./site-date.ts";
+import { siteNow, siteToday } from "./site-date.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
 import { resolveEmployee, resolveLink } from "../api/resolve.ts";
 
@@ -25,6 +26,210 @@ interface LeaveAllocationEntry {
 /** Shape of `hrms...leave_application.get_leave_details`. */
 interface LeaveDetails {
   leave_allocation?: Record<string, LeaveAllocationEntry>;
+}
+
+// ── Attendance day repair ───────────────────────────────────────────────────
+//
+// Hai tool sửa ngày công KHÔNG tự tính lại giờ công. Chúng gọi
+// `hvg_workspace.api.hr_get_day_attendance` / `hr_save_day_attendance`, là hai hàm đã
+// whitelist của app riêng mà site này chạy.
+//
+// Không port công thức sang TypeScript, dù `hrms` có sẵn: app ấy ghi đè `Shift Type` bằng
+// `HVGShiftType.get_attendance`, trừ giờ nghỉ trưa không lương rồi mới xét ngưỡng
+// vắng/nửa ngày. Tính lại ở phía MCP là ra một con số khác với con số mà chính site coi là
+// đúng - đo trên production, một ngày cho 13.03h ở chỗ công thức HRMS gốc cho 14.53h.
+// Một luật nghiệp vụ chỉ được có một nguồn.
+//
+// Cũng không gọi `ShiftType.process_auto_attendance`: nó chạy theo CẢ CA và kéo theo
+// `mark_absent_for_dates_with_no_attendance` cho mọi nhân sự được phân ca, tức tác dụng
+// phụ không chặn được cho một thao tác "sửa một ngày của một người".
+//
+// Hai hàm ấy không đi qua `erpnext_method_call` nên `ERPNEXT_METHOD_ALLOWLIST` không liên
+// quan; allowlist đó chỉ gác đúng tool kia.
+
+/** Độ dài tối thiểu của lý do sửa, khớp `hvg_workspace.install.ATTENDANCE_FIX_MIN_REASON`. */
+const MIN_FIX_REASON = 10;
+
+/** Câu nói rõ hai tool sửa ngày công phụ thuộc app riêng, để mô tả tool không hứa suông. */
+const REQUIRES_HVG_WORKSPACE =
+  "Requires the 'hvg_workspace' app on the site; without it the call fails and the " +
+  "generic erpnext_doc_* tools are the only route.";
+
+/** Một lượt bấm giờ như `_serialize_checkin` trả về. */
+interface AttendancePunch {
+  name: string;
+  time: string;
+  /** Máy chấm công không báo chiều thì để rỗng - đó là trạng thái thứ ba, không phải OUT. */
+  log_type?: string;
+  shift?: string | null;
+  attendance?: string | null;
+  skip_auto_attendance?: number;
+}
+
+/** Trạng thái một ngày công, chung cho cả đường đọc lẫn đường ghi. */
+interface AttendanceDayState {
+  employee?: Record<string, unknown>;
+  date?: string;
+  rows?: AttendancePunch[];
+  worked_minutes?: number;
+  shift?: Record<string, unknown> | null;
+  attendance?: {
+    name: string;
+    status: string;
+    working_hours: number;
+    docstatus: number;
+  } | null;
+  /** Ngày đã có Attendance đã duyệt: lưu sẽ HUỶ bản ấy rồi dựng lại. */
+  locked?: boolean;
+  /** Không sửa được chút nào: bản nháp, hoặc bản sinh từ đơn còn hiệu lực. */
+  blocked?: boolean;
+  locked_reason?: string;
+  /** Người đang gọi tự sửa công của chính mình - site chặn, phân tách nhiệm vụ. */
+  is_self?: boolean;
+  cancelled_attendance?: string[];
+  changed_count?: number;
+  recompute?: { attendance?: string | null; skipped?: string | null };
+  no_change?: boolean;
+}
+
+/**
+ * Câu duy nhất Frappe nói khi KHÔNG phân giải được đường dẫn hàm.
+ *
+ * Hẹp có chủ ý. Bắt theo "not found" hay "does not exist" chung thì mọi lỗi nghiệp vụ có
+ * chứa mấy chữ ấy - một lượt bấm giờ vừa bị người khác xoá, chẳng hạn - đều bị dịch thành
+ * "site này không có app", tức là báo sai nguyên nhân, và `FrappeAPIError` bị thay bằng
+ * `Error` trần nên người gọi mất luôn `status` với `body` đã parse.
+ */
+const METHOD_LOOKUP_FAILURE = /Failed to get method|Method Not Found/i;
+
+/** Gọi một hàm của `hvg_workspace`, dịch "app không có" thành câu người đọc hiểu được. */
+async function callHvgWorkspace<T>(
+  ctx: ErpNextToolContext,
+  method: string,
+  args: Record<string, unknown>,
+  tool: string,
+): Promise<T> {
+  try {
+    return await ctx.client.callMethod<T>(method, args);
+  } catch (err) {
+    const text = err instanceof Error ? err.message : String(err);
+    // Soi cả thân phản hồi đã parse, không chỉ `message`: `FrappeAPIError` dựng message từ
+    // `message ?? exc_type ?? statusText`, mà lượt tra hàm hỏng thường chỉ có `exc_type`
+    // là "ValidationError" còn nguyên văn "Failed to get method" nằm trong `exception`.
+    // Chỉ đọc message là trượt đúng cái ca mà lớp bọc này sinh ra để dịch.
+    const body = err instanceof FrappeAPIError && err.body !== null
+      ? JSON.stringify(err.body)
+      : "";
+    // Frappe trả cùng một lỗi cho "hàm không tồn tại" dù nguyên nhân là app chưa cài hay
+    // tên gõ sai. Người đọc cần biết nhánh nào để còn hành động.
+    if (METHOD_LOOKUP_FAILURE.test(text) || METHOD_LOOKUP_FAILURE.test(body)) {
+      throw new Error(
+        `[${tool}] this site does not expose '${method}'. These attendance repair ` +
+          "tools need the 'hvg_workspace' app installed. Original error: " +
+          text,
+        { cause: err },
+      );
+    }
+    throw err;
+  }
+}
+
+/** Đọc trạng thái một ngày. Không phán xét: `blocked` là dữ liệu, không phải lỗi. */
+async function readAttendanceDay(
+  ctx: ErpNextToolContext,
+  employee: string,
+  date: string,
+  tool: string,
+): Promise<AttendanceDayState> {
+  return await callHvgWorkspace<AttendanceDayState>(
+    ctx,
+    "hvg_workspace.api.hr_get_day_attendance",
+    { employee, date },
+    tool,
+  );
+}
+
+/**
+ * Ngày kế tiếp của một chuỗi `YYYY-MM-DD`, tính hoàn toàn trong UTC.
+ *
+ * Phép cộng ngày không được chạm vào múi giờ cục bộ: `new Date("2026-08-29")` phân giải ra
+ * nửa đêm UTC, nên đọc lại bằng `toISOString` giữ nguyên ngày lịch dù tiến trình MCP đang
+ * chạy ở đâu.
+ */
+function nextDayISO(date: string, tool: string): string {
+  const parsed = new Date(`${date}T00:00:00Z`);
+  // `2026-02-30` KHÔNG bị `Date` từ chối, nó cuộn sang `2026-03-02`, và cận trên lặng lẽ
+  // ôm thêm hai ngày ngoài khoảng được hỏi. Đối chiếu vòng lại là cách duy nhất phân biệt
+  // một ngày có thật với một ngày vừa được chuẩn hoá thành ngày khác.
+  const roundTrip = Number.isNaN(parsed.getTime())
+    ? null
+    : parsed.toISOString().slice(0, 10);
+  if (roundTrip !== date) {
+    throw new Error(
+      `[${tool}] '${date}' is not a real calendar date. Use YYYY-MM-DD.`,
+    );
+  }
+  parsed.setUTCDate(parsed.getUTCDate() + 1);
+  return parsed.toISOString().slice(0, 10);
+}
+
+/**
+ * Đưa một dấu thời gian về đúng kiểu Datetime của Frappe để so sánh bằng chuỗi.
+ *
+ * Caller gõ `2026-08-29T17:05:00` cũng thường như gõ dấu cách, mà `T` (0x54) lớn hơn dấu
+ * cách (0x20), nên so thẳng là mọi dấu thời gian kiểu ISO đều hoá ra "ở tương lai".
+ */
+function normalizeStamp(time: string): string {
+  return time.replace("T", " ").slice(0, 19);
+}
+
+/** `log_type` phải là IN hoặc OUT; rỗng đi tới server sẽ bị từ chối bằng tiếng Việt. */
+function assertLogType(value: unknown, tool: string): void {
+  const text = String(value ?? "").toUpperCase();
+  if (text !== "IN" && text !== "OUT") {
+    throw new Error(
+      `[${tool}] log_type must be 'IN' or 'OUT', got ${JSON.stringify(value)}.`,
+    );
+  }
+}
+
+/** Một hàng của trạng thái đích: `name` rỗng nghĩa là lượt bấm mới. */
+interface TargetPunch {
+  name: string;
+  time: string;
+  log_type?: string;
+}
+
+/**
+ * Sắp trạng thái đích theo thời gian và đòi mọi hàng khai rõ chiều.
+ *
+ * `log_type` là Select có lựa chọn rỗng, nên kho thật sự chứa chuỗi rỗng, còn
+ * `hr_save_day_attendance` đòi mọi hàng mang IN hoặc OUT. Chỗ trống ấy KHÔNG được đoán:
+ * tool hứa "lượt bấm không được nhắc tới thì để nguyên", và suy chiều theo trình tự
+ * vào-ra xen kẽ là ghi một giá trị caller chưa từng yêu cầu lên một hàng họ không đụng
+ * tới, rồi giờ công của cả ngày đổi theo. Cùng luật với `resolveLink` trên đường ghi:
+ * đường ghi không đoán. Thiếu chiều thì hỏi lại, kèm tên hàng để hỏi được ngay lượt sau.
+ */
+function orderedPunches(
+  target: readonly TargetPunch[],
+  tool: string,
+): Array<{ name: string; time: string; log_type: string }> {
+  const blank = target.filter((row) => !row.log_type);
+  if (blank.length > 0) {
+    throw new Error(
+      `[${tool}] these punches carry no log_type in ERPNext: ` +
+        blank.map((row) => `${row.name} (${row.time})`).join(", ") +
+        ". The site refuses a save with a blank direction, and this tool does not " +
+        "guess one. Name each of them in 'edit' with the log_type it should carry.",
+    );
+  }
+  return [...target]
+    .sort((a, b) => a.time.localeCompare(b.time))
+    .map((row) => ({
+      name: row.name,
+      time: row.time,
+      log_type: row.log_type as string,
+    }));
 }
 
 export const hrTools: ErpNextTool[] = [
@@ -231,6 +436,498 @@ export const hrTools: ErpNextTool[] = [
         filters,
         limit,
       });
+    },
+  },
+
+  // ── Employee Checkins & day repair ────────────────────────────────────────
+
+  {
+    name: "erpnext_employee_checkin_list",
+    annotations: { readOnlyHint: true },
+    _meta: DOCLIST_META,
+    description:
+      "List Employee Checkin punches for an employee over a date range. This is the " +
+      "raw punch log behind Attendance, so it is where a broken day shows up: a day " +
+      "with an odd number of punches never closed, and a punch whose 'attendance' is " +
+      "empty was never counted. 'skip_auto_attendance' = 1 means auto attendance " +
+      "already refused this punch, which is what happens when a checkin is added to a " +
+      "day that already carries an Attendance record. " +
+      "Fields: name, employee, employee_name, time, log_type, shift, attendance, " +
+      "skip_auto_attendance. " +
+      "Use erpnext_attendance_day_get for the authoritative per-day view, and " +
+      "erpnext_attendance_day_fix to repair a day.",
+    category: "hr",
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: {
+          type: "number",
+          minimum: 1,
+          description: "Max results (default 50)",
+        },
+        employee: {
+          type: "string",
+          description:
+            "Filter by employee ID or name (e.g. 'HR-EMP-00001' or 'John Doe')",
+        },
+        log_type: {
+          type: "string",
+          description:
+            "Filter by direction. Devices that do not report a direction leave this " +
+            "empty, so filtering on it can hide real punches.",
+          enum: ["IN", "OUT"],
+        },
+        date_from: {
+          type: "string",
+          description: "Start date filter YYYY-MM-DD (time >=, from 00:00:00)",
+        },
+        date_to: {
+          type: "string",
+          description: "End date filter YYYY-MM-DD (time <=, up to 23:59:59)",
+        },
+      },
+    },
+    handler: async (input, ctx) => {
+      const limit = (input.limit as number) ?? 50;
+      const filters: FrappeFilter[] = [];
+      if (input.employee) {
+        filters.push([
+          "employee",
+          "=",
+          await resolveEmployee(ctx.client, input.employee as string, {
+            inputPath: "employee",
+          }),
+        ]);
+      }
+      if (input.log_type) {
+        filters.push(["log_type", "=", input.log_type as string]);
+      }
+      // `time` là Datetime, không phải Date. So thẳng với `YYYY-MM-DD` thì cận trên rơi
+      // vào `00:00:00` và mọi lượt bấm trong chính ngày cuối khoảng bị loại - đúng ngày
+      // mà người hỏi quan tâm nhất.
+      if (input.date_from) {
+        filters.push(["time", ">=", `${input.date_from as string} 00:00:00`]);
+      }
+      if (input.date_to) {
+        // Cận trên MỞ ở nửa đêm hôm sau, không phải `<= 23:59:59`: cột Datetime của Frappe
+        // giữ cả phần lẻ giây, nên một lượt bấm lúc `23:59:59.500000` rơi ra ngoài phép so
+        // đóng - đúng ngày cuối khoảng mà lời hứa "phủ trọn ngày" nói tới.
+        filters.push([
+          "time",
+          "<",
+          `${
+            nextDayISO(
+              input.date_to as string,
+              "erpnext_employee_checkin_list",
+            )
+          } 00:00:00`,
+        ]);
+      }
+
+      const docs = await ctx.client.list("Employee Checkin", {
+        fields: [
+          "name",
+          "employee",
+          "employee_name",
+          "time",
+          "log_type",
+          "shift",
+          "attendance",
+          "skip_auto_attendance",
+        ],
+        filters,
+        limit,
+        order_by: "time asc",
+      });
+
+      return await listResult(ctx, "Employee Checkin", docs, {
+        filters,
+        limit,
+      });
+    },
+  },
+
+  {
+    name: "erpnext_attendance_day_get",
+    annotations: { readOnlyHint: true },
+    description:
+      "Read one employee's full attendance picture for ONE day: every punch, the shift " +
+      "that governs it, the minutes worked as this site computes them, and the " +
+      "Attendance record standing in the way of a repair. " +
+      "Read this before calling erpnext_attendance_day_fix: 'locked' true means the day " +
+      "already carries a submitted Attendance, so fixing it CANCELS that record and " +
+      "rebuilds it, and the fix tool will refuse without confirm_cancel_attendance. " +
+      "'blocked' true means the fix cannot proceed at all (a draft Attendance, or one " +
+      "backed by a still-valid Attendance Request); 'locked_reason' says which. " +
+      "'is_self' true means the API user may not edit this employee - the site enforces " +
+      "segregation of duties. " +
+      REQUIRES_HVG_WORKSPACE,
+    category: "hr",
+    inputSchema: {
+      type: "object",
+      properties: {
+        employee: {
+          type: "string",
+          description:
+            "Employee ID or name (e.g. 'HR-EMP-00001' or 'John Doe')",
+        },
+        date: { type: "string", description: "The day to read, YYYY-MM-DD" },
+      },
+      required: ["employee", "date"],
+    },
+    handler: async (input, ctx) => {
+      if (!input.employee) {
+        throw new Error("[erpnext_attendance_day_get] 'employee' is required");
+      }
+      if (!input.date) {
+        throw new Error("[erpnext_attendance_day_get] 'date' is required");
+      }
+      const employee = await resolveEmployee(
+        ctx.client,
+        input.employee as string,
+        { inputPath: "employee" },
+      );
+      const state = await readAttendanceDay(
+        ctx,
+        employee,
+        input.date as string,
+        "erpnext_attendance_day_get",
+      );
+      return { data: state };
+    },
+  },
+
+  {
+    name: "erpnext_attendance_day_fix",
+    annotations: {
+      readOnlyHint: false,
+      // Huỷ một bản Attendance đã duyệt là thao tác không hoàn tác được bằng chính tool
+      // này, nên hint phải nói thật kể cả khi phần lớn lượt gọi chỉ thêm một lượt bấm.
+      destructiveHint: true,
+      idempotentHint: false,
+    },
+    description:
+      "Repair ONE employee's attendance for ONE day: add the missing punches, correct " +
+      "the wrong ones, and rebuild that day's Attendance from the result. " +
+      "This is the tool for the 'a day is missing its check-out' case. Adding an " +
+      "Employee Checkin on its own does NOT fix such a day - HRMS refuses to build a " +
+      "second Attendance for a day that already has one and silently marks the new " +
+      "punch skipped - so the day is repaired by cancelling the stale Attendance and " +
+      "recomputing, which is what this tool does in a single transaction. " +
+      "Pass punches to create in 'add' and corrections in 'edit'; punches you do not " +
+      "mention are left alone. Deleting a punch is not possible here by design. " +
+      "'reason' is written to the audit trail and is required. " +
+      "When the day already carries a submitted Attendance, the call is refused unless " +
+      "confirm_cancel_attendance is true, because saving cancels that record. " +
+      "Refuses outright for a future date, a timestamp that has not happened yet, an " +
+      "unusable log_type, a draft Attendance on the day, or an Attendance backed by a " +
+      "still-valid Attendance Request. It also refuses when a punch already on the day " +
+      "carries a blank log_type: name that punch in 'edit' with the direction it should " +
+      "carry, because this tool does not guess one. " +
+      REQUIRES_HVG_WORKSPACE,
+    category: "hr",
+    inputSchema: {
+      type: "object",
+      properties: {
+        employee: {
+          type: "string",
+          description:
+            "Employee ID or name (e.g. 'HR-EMP-00001' or 'John Doe')",
+        },
+        date: { type: "string", description: "The day to repair, YYYY-MM-DD" },
+        reason: {
+          type: "string",
+          description:
+            `Why the punches are being changed, at least ${MIN_FIX_REASON} characters. ` +
+            "Stored on the audit trail; it is the only record of why the hours moved.",
+        },
+        add: {
+          type: "array",
+          description: "Punches to create on this day.",
+          items: {
+            type: "object",
+            properties: {
+              log_type: {
+                type: "string",
+                description: "Direction of the punch",
+                enum: ["IN", "OUT"],
+              },
+              time: {
+                type: "string",
+                description:
+                  "When the punch happened, 'YYYY-MM-DD HH:MM:SS'. Must fall inside " +
+                  "the day's shift window - see 'shift.window_start' / " +
+                  "'shift.window_end' from erpnext_attendance_day_get.",
+              },
+            },
+            required: ["log_type", "time"],
+          },
+        },
+        edit: {
+          type: "array",
+          description:
+            "Corrections to punches that already exist. Identify each by its " +
+            "Employee Checkin name from erpnext_attendance_day_get.",
+          items: {
+            type: "object",
+            properties: {
+              name: {
+                type: "string",
+                description:
+                  "Employee Checkin ID, e.g. 'EMP-CKIN-08-2026-00123'",
+              },
+              log_type: {
+                type: "string",
+                description: "New direction; omit to keep the current one",
+                enum: ["IN", "OUT"],
+              },
+              time: {
+                type: "string",
+                description:
+                  "New timestamp 'YYYY-MM-DD HH:MM:SS'; omit to keep the current one",
+              },
+            },
+            required: ["name"],
+          },
+        },
+        confirm_cancel_attendance: {
+          type: "boolean",
+          description:
+            "Acknowledge that the day's submitted Attendance will be cancelled and " +
+            "rebuilt. Required only when erpnext_attendance_day_get reports " +
+            "'locked': true.",
+          default: false,
+        },
+      },
+      required: ["employee", "date", "reason"],
+    },
+    handler: async (input, ctx) => {
+      const TOOL = "erpnext_attendance_day_fix";
+      if (!input.employee) throw new Error(`[${TOOL}] 'employee' is required`);
+      if (!input.date) throw new Error(`[${TOOL}] 'date' is required`);
+
+      // Lý do bị chặn ở đây chứ không chỉ ở server: server đo sau khi đã mở giao dịch và
+      // đã tra nhân sự, còn đây là phép kiểm rẻ nhất trong chuỗi.
+      const reason = String(input.reason ?? "").trim();
+      if (reason.length < MIN_FIX_REASON) {
+        throw new Error(
+          `[${TOOL}] 'reason' must be at least ${MIN_FIX_REASON} characters. ` +
+            "It is the only thing that explains the change to whoever reads the " +
+            "audit trail later.",
+        );
+      }
+
+      const adds = (input.add ?? []) as Array<Record<string, unknown>>;
+      const edits = (input.edit ?? []) as Array<Record<string, unknown>>;
+      if (adds.length === 0 && edits.length === 0) {
+        throw new Error(
+          `[${TOOL}] nothing to do: pass at least one punch in 'add' or 'edit'.`,
+        );
+      }
+      for (const row of adds) {
+        assertLogType(row.log_type, TOOL);
+        if (!row.time) {
+          throw new Error(`[${TOOL}] every entry in 'add' needs a 'time'.`);
+        }
+      }
+      for (const row of edits) {
+        if (!row.name) {
+          throw new Error(
+            `[${TOOL}] every entry in 'edit' needs the Employee Checkin 'name'.`,
+          );
+        }
+        if (row.log_type !== undefined) assertLogType(row.log_type, TOOL);
+      }
+
+      const date = input.date as string;
+      // Máy chấm công không chứa sự kiện chưa xảy ra. Đo bằng ngày của SITE, không phải
+      // ngày UTC của tiến trình MCP: hai thứ đó lệch nhau đúng quanh nửa đêm, tức đúng lúc
+      // một ca đêm đang được sửa.
+      // Ngày lấy từ site, và độ tin cậy của đồng hồ đi kèm: phép kiểm theo NGÀY nuốt được
+      // sai số múi giờ của bậc dưới, phép kiểm theo GIỜ ở dưới thì không.
+      const { now, authoritative: exactClock } = await siteNow(ctx);
+      const today = now.slice(0, 10);
+      if (date > today) {
+        throw new Error(
+          `[${TOOL}] '${date}' is in the future (site today is ${today}). ` +
+            "Attendance can only be repaired for a day that has already happened.",
+        );
+      }
+
+      const employee = await resolveLink(
+        ctx.client,
+        "Employee",
+        input.employee as string,
+        "employee_name",
+        // Write path — see purchasing.ts: no fuzzy matching on writes.
+        { allowPartialMatch: false, inputPath: "employee" },
+      );
+
+      const state = await readAttendanceDay(ctx, employee, date, TOOL);
+      const current = (state.rows ?? []) as AttendancePunch[];
+
+      // `blocked` được chặn ở ĐÂY chứ không ở hàm đọc: bản nháp hay bản sinh từ đơn còn
+      // hiệu lực là thứ đường ghi không đi qua được, nhưng đường đọc phải trả về nguyên
+      // trạng thái ấy thì người hỏi mới biết vì sao bế tắc.
+      if (state.blocked) {
+        throw new Error(
+          `[${TOOL}] ${date} cannot be repaired as it stands. ` +
+            (state.locked_reason ?? "The site reports the day as blocked.") +
+            " Resolve that in ERPNext first.",
+        );
+      }
+
+      // Cờ xác nhận chỉ tồn tại ở tầng này: `hr_save_day_attendance` huỷ bản đã duyệt VÔ
+      // ĐIỀU KIỆN. Một tool mà model gọi được thì không được để việc huỷ công của một
+      // người xảy ra như tác dụng phụ của "thêm một lượt bấm".
+      if (state.locked && input.confirm_cancel_attendance !== true) {
+        throw new Error(
+          `[${TOOL}] ${date} already has an Attendance record` +
+            (state.attendance?.name ? ` (${state.attendance.name})` : "") +
+            ". Saving cancels it and rebuilds the day from the punches. " +
+            "Pass confirm_cancel_attendance: true to proceed. " +
+            (state.locked_reason ? `Site says: ${state.locked_reason}` : ""),
+        );
+      }
+
+      const byName = new Map(current.map((row) => [row.name, row]));
+      for (const row of edits) {
+        if (!byName.has(row.name as string)) {
+          throw new Error(
+            `[${TOOL}] checkin '${row.name}' is not one of ${date}'s punches. ` +
+              "Read them with erpnext_attendance_day_get first.",
+          );
+        }
+      }
+
+      // `rows` là TOÀN BỘ trạng thái đích của ngày, và một hàng có sẵn mà vắng mặt bị
+      // server coi là nhầm lẫn chứ không phải yêu cầu xoá. Nên dựng từ trạng thái vừa đọc
+      // chứ không từ payload: caller chỉ nói phần thay đổi.
+      const edited = new Map<string, Record<string, unknown>>();
+      for (const row of edits) {
+        const name = row.name as string;
+        // Gộp hai hàng cùng tên là đoán xem caller muốn giữ giá trị nào, và `Map` dựng
+        // thẳng thì lặng lẽ giữ hàng cuối: `[{name, time}, {name, log_type}]` mất luôn
+        // phần sửa giờ trong khi lượt lưu vẫn chạy và vẫn báo thành công.
+        if (edited.has(name)) {
+          throw new Error(
+            `[${TOOL}] checkin '${name}' appears twice in 'edit'. ` +
+              "Put every change to one punch in a single entry.",
+          );
+        }
+        edited.set(name, row);
+      }
+      // Chuẩn hoá dấu thời gian NGAY tại đây, không chỉ lúc so với đồng hồ: `rows` được
+      // sắp bằng phép so chuỗi, nên một hàng kiểu ISO trộn với hàng kiểu dấu cách đẩy cả
+      // ngày ra khỏi trình tự thời gian và server tính lại theo một trình tự khác hẳn.
+      const target: TargetPunch[] = current.map((row) => {
+        const patch = edited.get(row.name);
+        return {
+          name: row.name,
+          time: normalizeStamp((patch?.time as string) ?? row.time),
+          log_type: (patch?.log_type as string) ?? row.log_type,
+        };
+      });
+      for (const row of adds) {
+        target.push({
+          name: "",
+          time: normalizeStamp(row.time as string),
+          log_type: row.log_type as string,
+        });
+      }
+      // Kiểm SAU khi đã gộp `edit` và `add`: một hàng đang rỗng mà caller có khai chiều
+      // trong `edit` thì đã hết rỗng, và bắt lỗi nó ở đây là từ chối một lượt gọi hợp lệ.
+      const rows = orderedPunches(target, TOOL);
+
+      // Máy chấm công không chứa sự kiện chưa xảy ra, và điều đó đúng tới từng giây chứ
+      // không chỉ tới từng ngày: phép kiểm ngày ở trên vẫn cho một lượt gọi lúc 9h sáng
+      // ghi một lượt RA lúc 17:30 cùng ngày, tức bịa ra giờ công chưa ai làm.
+      // Không có đồng hồ đáng tin thì KHÔNG kiểm theo giờ: một phép kiểm chạy trên múi giờ
+      // lệch sẽ từ chối một lượt bấm vừa xảy ra thật, và đó là hỏng theo hướng tệ hơn. Nơi
+      // đóng kín được ca này là chính `hr_save_day_attendance`, cùng ranh giới với khe
+      // TOCTOU của lượt huỷ Attendance.
+      const future = exactClock ? rows.filter((row) => row.time > now) : [];
+      if (future.length > 0) {
+        throw new Error(
+          `[${TOOL}] these punches are still in the future (site now is ${now}): ` +
+            future.map((row) => row.time).join(", ") +
+            ". Attendance can only record time that has already been worked.",
+        );
+      }
+
+      // Ảnh chụp mà lượt gọi này ĐANG NHÌN THẤY, để server phát hiện có ai vừa sửa cùng
+      // ngày ấy giữa lượt đọc và lượt ghi. Lấy từ chính `state` ở trên, nên nó mô tả đúng
+      // thứ `rows` được dựng trên đó.
+      const base: Record<string, { time: string; log_type: string }> = {};
+      for (const row of current) {
+        base[row.name] = { time: row.time, log_type: row.log_type ?? "" };
+      }
+
+      const saved = await callHvgWorkspace<AttendanceDayState>(
+        ctx,
+        "hvg_workspace.api.hr_save_day_attendance",
+        { employee, date, reason, rows, base },
+        TOOL,
+      );
+
+      // Ghi qua `callMethod` thì cache không tự dọn - `create`/`update`/`delete` mới tự
+      // dọn. Một lượt gọi này đổi cả lượt bấm giờ lẫn ngày công, nên bỏ qua bước này là
+      // lượt đọc ngay sau đó còn trả về đúng đống dữ liệu vừa được sửa.
+      // Không tên thì chỉ dọn được cache danh sách và cache phân giải: `invalidate` xoá
+      // `get:{doctype}:{name}` theo đúng một tên. Lượt sửa này gắn lại MỌI lượt bấm của
+      // ngày vào bản Attendance mới, nên bản `erpnext_doc_get` đã cache của bất kỳ lượt nào
+      // trong ngày cũng vừa cũ đi.
+      ctx.client.invalidate("Employee Checkin");
+      for (const row of current) {
+        ctx.client.invalidate("Employee Checkin", row.name);
+      }
+      for (const name of saved.cancelled_attendance ?? []) {
+        ctx.client.invalidate("Attendance", name);
+      }
+      ctx.client.invalidate("Attendance", saved.attendance?.name);
+
+      const cancelled = saved.cancelled_attendance ?? [];
+      const parts = [
+        `Attendance for ${employee} on ${date} rebuilt`,
+        `${saved.changed_count ?? 0} punch(es) written`,
+      ];
+      if (cancelled.length > 0) {
+        parts.push(`cancelled ${cancelled.join(", ")}`);
+      }
+      // Cửa xác nhận ở trên đo `state.locked` của lượt ĐỌC, còn server huỷ ở lượt GHI, nên
+      // giữa hai lượt vẫn còn một khe: chạy chấm công tự động có thể dựng một bản Attendance
+      // mới đúng vào khe ấy và bản ấy bị huỷ mà không ai xác nhận. Đóng khe cho kín phải sửa
+      // `hr_save_day_attendance` để nhận cờ và kiểm trong cùng giao dịch; ở tầng này chỉ
+      // phát hiện được. Đã phát hiện thì phải nói to, im lặng mới là hỏng.
+      if (cancelled.length > 0 && input.confirm_cancel_attendance !== true) {
+        parts.push(
+          `WARNING: ${
+            cancelled.join(", ")
+          } was cancelled even though this call did ` +
+            "not confirm a cancellation - the record appeared between the read and " +
+            "the save. Check that the rebuilt day is what you expected",
+        );
+      }
+      if (saved.attendance?.name) {
+        parts.push(
+          `now ${saved.attendance.name} ${saved.attendance.status} ` +
+            `(${saved.attendance.working_hours ?? 0}h)`,
+        );
+      }
+      // `skipped` nghĩa là lượt tính lại KHÔNG ra bản ghi nào. Server chỉ hoàn tác khi
+      // ngày đó vừa mất một bản Attendance; ngày chưa từng có bản nào thì lượt lưu thành
+      // công với một ngày vẫn chưa có công, và im lặng ở đây là báo sai.
+      if (saved.recompute?.skipped) {
+        parts.push(
+          `WARNING: the day could not be recomputed (${saved.recompute.skipped}), ` +
+            "so it still has no Attendance record",
+        );
+      }
+      if (saved.no_change) {
+        parts.push("no punch actually differed from what was already stored");
+      }
+
+      return { data: saved, message: `${parts.join("; ")}.` };
     },
   },
 

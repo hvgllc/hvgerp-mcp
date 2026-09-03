@@ -142,3 +142,30 @@ Deno.test("WHO IS ASKING drops the whoami lines when whoami itself is absent", (
   );
   assertStringIncludes(withoutWhoami, "WHO IS ASKING");
 });
+
+Deno.test("the WRITES section only names writes the server actually loaded", () => {
+  // Cùng lý do với WHO IS ASKING: `--categories` loại được một tool khỏi `tools/list`, và
+  // một cảnh báo còn gọi tên nó là chỉ mô hình đi tìm thứ không có. Quy tắc "đọc
+  // `readOnlyHint`, đừng đọc tên" thì không gắn với tool nào nên phải sống sót.
+  const filtered = instructions("required", [
+    "erpnext_whoami",
+    "erpnext_doc_assign",
+  ]);
+
+  assertStringIncludes(filtered, "erpnext_doc_assign");
+  assert(
+    !filtered.includes("erpnext_method_call"),
+    "a write absent from tools/list must not be named in WRITES",
+  );
+  assert(
+    !filtered.includes("erpnext_attendance_day_fix"),
+    "the cancellation warning must not survive without the tool it describes",
+  );
+  assertStringIncludes(filtered, "readOnlyHint");
+
+  // Không nạp tool ghi nào thì phần WRITES chỉ còn quy tắc chung, và nó vẫn phải còn:
+  // `erpnext_method_call` không phải cửa ghi duy nhất của server.
+  const readOnly = instructions("required", ["erpnext_whoami"]);
+  assertStringIncludes(readOnly, "WRITES");
+  assertStringIncludes(readOnly, "readOnlyHint");
+});

@@ -25,13 +25,29 @@ import type { ErpNextToolContext } from "./types.ts";
 export async function siteTimeZone(
   ctx: ErpNextToolContext,
 ): Promise<string | null> {
+  return (await resolveTimeZone(ctx)).zone;
+}
+
+/**
+ * Múi giờ site, kèm câu trả lời cho "giá trị này có phải thứ chính Frappe dùng không".
+ *
+ * `authoritative` không phải chi tiết trang trí: bậc dưới đọc bảng defaults chứ không đọc
+ * `System Settings`, và đo trên production thấy nó trả `Asia/Kolkata` cho một site khai
+ * `Asia/Ho_Chi_Minh` - lệch 1.5 giờ. Một phép kiểm chỉ tính theo NGÀY nuốt được sai số ấy,
+ * còn phép kiểm tính theo GIỜ thì không: nó sẽ từ chối một lượt bấm vừa xảy ra, hoặc cho
+ * lọt một lượt bấm chưa xảy ra, mà không cách nào phân biệt. Nên người gọi phải biết mình
+ * đang cầm giá trị nào.
+ */
+async function resolveTimeZone(
+  ctx: ErpNextToolContext,
+): Promise<{ zone: string | null; authoritative: boolean }> {
   try {
     const value = await ctx.client.callMethod<{ time_zone?: string } | null>(
       "frappe.client.get_value",
       { doctype: "System Settings", fieldname: "time_zone" },
       { httpMethod: "GET" },
     );
-    if (value?.time_zone) return value.time_zone;
+    if (value?.time_zone) return { zone: value.time_zone, authoritative: true };
   } catch {
     // Không có quyền đọc System Settings: thử bậc dưới.
   }
@@ -42,12 +58,57 @@ export async function siteTimeZone(
       {},
       { httpMethod: "GET" },
     );
-    if (value?.time_zone) return value.time_zone;
+    if (value?.time_zone) {
+      return { zone: value.time_zone, authoritative: false };
+    }
   } catch {
     // Cả hai đường đều tắc.
   }
 
-  return null;
+  return { zone: null, authoritative: false };
+}
+
+/**
+ * Bây giờ theo múi giờ của chính site, dạng `YYYY-MM-DD HH:MM:SS`.
+ *
+ * `authoritative` tắt nghĩa là múi giờ chỉ đọc được ở bậc dưới, tức con số này có thể lệch
+ * vài giờ so với đồng hồ site - xem `resolveTimeZone`. Người gọi tự quyết định: phép kiểm
+ * theo ngày vẫn dùng được, phép kiểm theo giờ thì không, và một phép kiểm theo giờ chạy
+ * trên một con số lệch còn tệ hơn không có phép kiểm nào, vì nó từ chối việc hợp lệ.
+ *
+ * Định dạng khớp đúng kiểu Datetime của Frappe nên so sánh chuỗi là so sánh thời gian,
+ * không phải một phép quy đổi nữa.
+ */
+export async function siteNow(
+  ctx: ErpNextToolContext,
+): Promise<{ now: string; authoritative: boolean }> {
+  const { zone, authoritative } = await resolveTimeZone(ctx);
+
+  const now = new Date();
+  if (zone) {
+    try {
+      // `en-CA` cho ra `YYYY-MM-DD, HH:MM:SS`; dấu phẩy là thứ duy nhất phải bỏ đi.
+      const formatted = new Intl.DateTimeFormat("en-CA", {
+        timeZone: zone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        // `h23` chứ không phải `hour12: false`: nhánh 12 giờ tắt vẫn cho ra "24:00:00" ở
+        // nửa đêm trên một số runtime, và "24" không phải giờ hợp lệ của một chuỗi Datetime.
+        hourCycle: "h23",
+      }).format(now).replace(", ", " ");
+      return { now: formatted, authoritative };
+    } catch {
+      // Múi giờ site khai không hợp lệ với runtime này; rơi xuống UTC bên dưới.
+    }
+  }
+  return {
+    now: now.toISOString().slice(0, 19).replace("T", " "),
+    authoritative: false,
+  };
 }
 
 /**
@@ -59,21 +120,5 @@ export async function siteTimeZone(
  * hình thì lùi về UTC, và người gọi vẫn thấy ngày đã dùng qua `as_on_date` trong kết quả.
  */
 export async function siteToday(ctx: ErpNextToolContext): Promise<string> {
-  const timeZone = await siteTimeZone(ctx);
-
-  const now = new Date();
-  if (timeZone) {
-    try {
-      // `en-CA` cho ra đúng YYYY-MM-DD, và `timeZone` là thứ duy nhất làm nó khác UTC.
-      return new Intl.DateTimeFormat("en-CA", {
-        timeZone,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-      }).format(now);
-    } catch {
-      // Múi giờ site khai không hợp lệ với runtime này; rơi xuống UTC bên dưới.
-    }
-  }
-  return now.toISOString().slice(0, 10);
+  return (await siteNow(ctx)).now.slice(0, 10);
 }

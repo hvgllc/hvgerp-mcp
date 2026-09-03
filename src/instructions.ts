@@ -75,13 +75,51 @@ const PERMISSIONS: Record<CallerIdentityMode, string> = {
   is still an answer: do not retry the same read through a different tool hoping for a wider view.`,
 };
 
-const WRITES = `WRITES
-- Some tools change live business data, and the NAME does not say which: \`erpnext_doc_assign\`,
-  \`erpnext_doc_unassign\`, \`erpnext_kanban_move_card\`, \`erpnext_file_upload\` and
-  \`erpnext_method_call\` all write without a _create/_update/_submit/_cancel/_delete suffix, and
-  the last of those reaches any allowlisted business method. Every writing tool carries
-  \`readOnlyHint: false\` in its \`tools/list\` annotations - read that rather than the name, and
-  confirm the details with the user before calling one.`;
+/**
+ * Tool ghi mà cái TÊN không hề báo hiệu là ghi.
+ *
+ * Lọc theo tool thực nạp, cùng lý do với `WHO_IS_ASKING`: `--categories` loại được một tool
+ * khỏi `tools/list`, và một văn bản còn gọi tên nó là chỉ mô hình đi gọi thứ không có.
+ *
+ * `note` dành cho tool mà biết "nó ghi" vẫn chưa đủ an toàn để gọi.
+ */
+const SILENT_WRITES: readonly { name: string; note?: string }[] = [
+  { name: "erpnext_doc_assign" },
+  { name: "erpnext_doc_unassign" },
+  { name: "erpnext_kanban_move_card" },
+  { name: "erpnext_file_upload" },
+  {
+    name: "erpnext_attendance_day_fix",
+    note:
+      "`erpnext_attendance_day_fix` goes further still: repairing a day CANCELS the\n  Attendance record already standing on it.",
+  },
+  {
+    name: "erpnext_method_call",
+    note: "`erpnext_method_call` reaches any allowlisted business method.",
+  },
+];
+
+/** Quy tắc luôn đúng, kể cả khi không tool ghi nào được nạp: đọc hint, đừng đọc tên. */
+const WRITES_RULE =
+  "- Every writing tool carries `readOnlyHint: false` in its `tools/list` annotations - read\n" +
+  "  that rather than the name, and confirm the details with the user before calling one.";
+
+function buildWrites(loaded: Set<string>): string {
+  const present = SILENT_WRITES.filter((tool) => loaded.has(tool.name));
+  const lines = ["WRITES"];
+  if (present.length > 0) {
+    const names = present.map((tool) => `\`${tool.name}\``).join(", ");
+    lines.push(
+      `- Some tools change live business data, and the NAME does not say which: ${names}\n` +
+        "  all write without a _create/_update/_submit/_cancel/_delete suffix.",
+    );
+    for (const tool of present) {
+      if (tool.note) lines.push(`- ${tool.note}`);
+    }
+  }
+  lines.push(WRITES_RULE);
+  return lines.join("\n");
+}
 
 /**
  * Build the `initialize` instructions for a deployment running in `mode`.
@@ -103,5 +141,5 @@ export function buildServerInstructions(
       )
       .map((line) => line.text),
   ].join("\n");
-  return [header, PERMISSIONS[mode], WRITES].join("\n\n");
+  return [header, PERMISSIONS[mode], buildWrites(loaded)].join("\n\n");
 }
