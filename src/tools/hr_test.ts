@@ -1151,3 +1151,104 @@ Deno.test("attendance repair tools read the parsed body, not only the message", 
   // Và lỗi gốc phải đi kèm, nếu không người gọi mất `status` với `body` đã parse.
   assertEquals((err.cause as FrappeAPIError).status, 417);
 });
+
+Deno.test("erpnext_attendance_day_fix - refuses the same checkin twice in 'edit'", async () => {
+  // Dựng `Map` thẳng từ `edit` thì hàng sau đè hàng trước: `[{name, time}, {name, log_type}]`
+  // mất luôn phần sửa giờ, mà lượt lưu vẫn chạy và vẫn báo thành công.
+  let saved = false;
+  const client = attendanceClient(brokenDay(), () => saved = true);
+
+  const err = await assertRejects(
+    () =>
+      getTool("erpnext_attendance_day_fix").handler(
+        {
+          employee: "HR-EMP-00044",
+          date: "2026-08-29",
+          reason: "Sửa giờ vào và chiều của cùng một lượt",
+          edit: [
+            { name: "EMP-CKIN-001", time: "2026-08-29 07:45:00" },
+            { name: "EMP-CKIN-001", log_type: "OUT" },
+          ],
+          confirm_cancel_attendance: true,
+        },
+        makeCtx(client),
+      ),
+    Error,
+  );
+
+  assertEquals(saved, false, "must not drop half of what was asked for");
+  assertStringIncludes(err.message, "appears twice");
+});
+
+Deno.test("erpnext_attendance_day_fix - orders the day by time, not by timestamp spelling", async () => {
+  // `T` (0x54) lớn hơn dấu cách (0x20), nên trộn một lượt kiểu ISO vào những hàng kiểu dấu
+  // cách là đẩy cả ngày ra khỏi trình tự thời gian, và server tính lại theo trình tự ấy.
+  let sent: any;
+  const client = attendanceClient(
+    brokenDay({
+      rows: [
+        { name: "CK-1", time: "2026-08-29 17:00:00", log_type: "OUT" },
+      ],
+    }),
+    (args) => sent = args,
+  );
+
+  await getTool("erpnext_attendance_day_fix").handler(
+    {
+      employee: "HR-EMP-00044",
+      date: "2026-08-29",
+      reason: "Bổ sung lượt vào đầu ca theo camera",
+      add: [{ log_type: "IN", time: "2026-08-29T07:00:00" }],
+      confirm_cancel_attendance: true,
+    },
+    makeCtx(client),
+  );
+
+  assertEquals(sent.rows, [
+    { name: "", time: "2026-08-29 07:00:00", log_type: "IN" },
+    { name: "CK-1", time: "2026-08-29 17:00:00", log_type: "OUT" },
+  ]);
+});
+
+Deno.test("erpnext_attendance_day_fix - skips the hour-level guard when the site clock is not authoritative", async () => {
+  // `frappe.client.get_time_zone` đọc bảng defaults chứ không đọc System Settings, và trên
+  // production nó trả `Asia/Kolkata` cho một site khai `Asia/Ho_Chi_Minh`. Kiểm theo GIỜ
+  // trên con số lệch 1.5 tiếng là từ chối một lượt bấm vừa xảy ra thật - hỏng theo hướng
+  // tệ hơn cả không kiểm. Phép kiểm theo NGÀY vẫn giữ, vì nó nuốt được sai số ấy.
+  let sent: any;
+  const state = brokenDay({ locked: false, attendance: null });
+  const client = makeMockClient({
+    get: async (_doctype: string, name: string) => ({ name }),
+    callMethod: async (method: string, args: Record<string, unknown>) => {
+      // Không đọc được System Settings: đúng tình trạng của gần hết người dùng thật.
+      if (method === "frappe.client.get_value") {
+        throw new FrappeAPIError("PermissionError", 403, null);
+      }
+      if (method === "frappe.client.get_time_zone") {
+        return { time_zone: "Asia/Ho_Chi_Minh" };
+      }
+      if (method === "hvg_workspace.api.hr_get_day_attendance") return state;
+      sent = args;
+      return { ...state, cancelled_attendance: [], changed_count: 1 };
+    },
+  });
+
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+
+  await getTool("erpnext_attendance_day_fix").handler(
+    {
+      employee: "HR-EMP-00044",
+      date: today,
+      reason: "Bổ sung lượt ra cuối ca theo camera",
+      add: [{ log_type: "OUT", time: `${today} 23:59:59` }],
+    },
+    makeCtx(client),
+  );
+
+  assertEquals(sent.rows.length, 2);
+});

@@ -743,7 +743,9 @@ export const hrTools: ErpNextTool[] = [
       // Máy chấm công không chứa sự kiện chưa xảy ra. Đo bằng ngày của SITE, không phải
       // ngày UTC của tiến trình MCP: hai thứ đó lệch nhau đúng quanh nửa đêm, tức đúng lúc
       // một ca đêm đang được sửa.
-      const now = await siteNow(ctx);
+      // Ngày lấy từ site, và độ tin cậy của đồng hồ đi kèm: phép kiểm theo NGÀY nuốt được
+      // sai số múi giờ của bậc dưới, phép kiểm theo GIỜ ở dưới thì không.
+      const { now, authoritative: exactClock } = await siteNow(ctx);
       const today = now.slice(0, 10);
       if (date > today) {
         throw new Error(
@@ -801,21 +803,35 @@ export const hrTools: ErpNextTool[] = [
       // `rows` là TOÀN BỘ trạng thái đích của ngày, và một hàng có sẵn mà vắng mặt bị
       // server coi là nhầm lẫn chứ không phải yêu cầu xoá. Nên dựng từ trạng thái vừa đọc
       // chứ không từ payload: caller chỉ nói phần thay đổi.
-      const edited = new Map(
-        edits.map((row) => [row.name as string, row]),
-      );
+      const edited = new Map<string, Record<string, unknown>>();
+      for (const row of edits) {
+        const name = row.name as string;
+        // Gộp hai hàng cùng tên là đoán xem caller muốn giữ giá trị nào, và `Map` dựng
+        // thẳng thì lặng lẽ giữ hàng cuối: `[{name, time}, {name, log_type}]` mất luôn
+        // phần sửa giờ trong khi lượt lưu vẫn chạy và vẫn báo thành công.
+        if (edited.has(name)) {
+          throw new Error(
+            `[${TOOL}] checkin '${name}' appears twice in 'edit'. ` +
+              "Put every change to one punch in a single entry.",
+          );
+        }
+        edited.set(name, row);
+      }
+      // Chuẩn hoá dấu thời gian NGAY tại đây, không chỉ lúc so với đồng hồ: `rows` được
+      // sắp bằng phép so chuỗi, nên một hàng kiểu ISO trộn với hàng kiểu dấu cách đẩy cả
+      // ngày ra khỏi trình tự thời gian và server tính lại theo một trình tự khác hẳn.
       const target: TargetPunch[] = current.map((row) => {
         const patch = edited.get(row.name);
         return {
           name: row.name,
-          time: (patch?.time as string) ?? row.time,
+          time: normalizeStamp((patch?.time as string) ?? row.time),
           log_type: (patch?.log_type as string) ?? row.log_type,
         };
       });
       for (const row of adds) {
         target.push({
           name: "",
-          time: row.time as string,
+          time: normalizeStamp(row.time as string),
           log_type: row.log_type as string,
         });
       }
@@ -826,7 +842,11 @@ export const hrTools: ErpNextTool[] = [
       // Máy chấm công không chứa sự kiện chưa xảy ra, và điều đó đúng tới từng giây chứ
       // không chỉ tới từng ngày: phép kiểm ngày ở trên vẫn cho một lượt gọi lúc 9h sáng
       // ghi một lượt RA lúc 17:30 cùng ngày, tức bịa ra giờ công chưa ai làm.
-      const future = rows.filter((row) => normalizeStamp(row.time) > now);
+      // Không có đồng hồ đáng tin thì KHÔNG kiểm theo giờ: một phép kiểm chạy trên múi giờ
+      // lệch sẽ từ chối một lượt bấm vừa xảy ra thật, và đó là hỏng theo hướng tệ hơn. Nơi
+      // đóng kín được ca này là chính `hr_save_day_attendance`, cùng ranh giới với khe
+      // TOCTOU của lượt huỷ Attendance.
+      const future = exactClock ? rows.filter((row) => row.time > now) : [];
       if (future.length > 0) {
         throw new Error(
           `[${TOOL}] these punches are still in the future (site now is ${now}): ` +
