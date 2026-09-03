@@ -91,6 +91,16 @@ interface AttendanceDayState {
   no_change?: boolean;
 }
 
+/**
+ * Câu duy nhất Frappe nói khi KHÔNG phân giải được đường dẫn hàm.
+ *
+ * Hẹp có chủ ý. Bắt theo "not found" hay "does not exist" chung thì mọi lỗi nghiệp vụ có
+ * chứa mấy chữ ấy - một lượt bấm giờ vừa bị người khác xoá, chẳng hạn - đều bị dịch thành
+ * "site này không có app", tức là báo sai nguyên nhân, và `FrappeAPIError` bị thay bằng
+ * `Error` trần nên người gọi mất luôn `status` với `body` đã parse.
+ */
+const METHOD_LOOKUP_FAILURE = /Failed to get method|Method Not Found/i;
+
 /** Gọi một hàm của `hvg_workspace`, dịch "app không có" thành câu người đọc hiểu được. */
 async function callHvgWorkspace<T>(
   ctx: ErpNextToolContext,
@@ -104,38 +114,31 @@ async function callHvgWorkspace<T>(
     const text = err instanceof Error ? err.message : String(err);
     // Frappe trả cùng một lỗi cho "hàm không tồn tại" dù nguyên nhân là app chưa cài hay
     // tên gõ sai. Người đọc cần biết nhánh nào để còn hành động.
-    if (/Failed to get method|not found|does not exist/i.test(text)) {
+    if (METHOD_LOOKUP_FAILURE.test(text)) {
       throw new Error(
         `[${tool}] this site does not expose '${method}'. These attendance repair ` +
           "tools need the 'hvg_workspace' app installed. Original error: " +
           text,
+        { cause: err },
       );
     }
     throw err;
   }
 }
 
-/** Đọc trạng thái một ngày, và từ chối sớm ở hai cửa mà server cũng sẽ từ chối. */
+/** Đọc trạng thái một ngày. Không phán xét: `blocked` là dữ liệu, không phải lỗi. */
 async function readAttendanceDay(
   ctx: ErpNextToolContext,
   employee: string,
   date: string,
   tool: string,
 ): Promise<AttendanceDayState> {
-  const state = await callHvgWorkspace<AttendanceDayState>(
+  return await callHvgWorkspace<AttendanceDayState>(
     ctx,
     "hvg_workspace.api.hr_get_day_attendance",
     { employee, date },
     tool,
   );
-  if (state?.blocked) {
-    throw new Error(
-      `[${tool}] ${date} cannot be repaired as it stands. ` +
-        (state.locked_reason ?? "The site reports the day as blocked.") +
-        " Resolve that in ERPNext first.",
-    );
-  }
-  return state;
 }
 
 /** `log_type` phải là IN hoặc OUT; rỗng đi tới server sẽ bị từ chối bằng tiếng Việt. */
@@ -148,22 +151,40 @@ function assertLogType(value: unknown, tool: string): void {
   }
 }
 
+/** Một hàng của trạng thái đích: `name` rỗng nghĩa là lượt bấm mới. */
+interface TargetPunch {
+  name: string;
+  time: string;
+  log_type?: string;
+}
+
 /**
- * Chiều của một lượt bấm cũ khi máy chấm công không khai chiều.
+ * Điền chiều cho những lượt bấm không khai chiều, theo thứ tự của NGÀY SAU KHI SỬA.
  *
- * `hr_save_day_attendance` đòi mọi hàng phải mang IN hoặc OUT, nhưng `log_type` là Select
- * có lựa chọn rỗng nên kho thật sự chứa chuỗi rỗng. Suy theo VỊ TRÍ trong ngày, đúng cách
- * màn hình HR của site suy - và CHỈ cho hàng rỗng: một hàng đã khai chiều thì giá trị của
- * nó là dữ liệu, không phải chỗ trống để đoán.
+ * `hr_save_day_attendance` đòi mọi hàng mang IN hoặc OUT, nhưng `log_type` là Select có
+ * lựa chọn rỗng nên kho thật sự chứa chuỗi rỗng. Phải suy, và phải suy trên trạng thái
+ * đích: một lượt `edit` dời giờ hay một lượt `add` chèn vào giữa đều đổi thứ tự trong
+ * ngày, nên suy trên thứ tự CŨ là gán chiều không còn khớp trình tự thời gian, và ca này
+ * xác định vào/ra bằng "alternating entries" nên giờ công ra sai theo.
+ *
+ * Quy tắc: đi theo thứ tự thời gian, một hàng trống lấy chiều ngược với hàng liền trước;
+ * hàng trống đầu tiên là IN. Hàng đã khai chiều KHÔNG bị đụng tới - giá trị của nó là dữ
+ * liệu, không phải chỗ trống để đoán - và chính nó làm mốc neo cho các hàng trống sau.
  */
-function inferLogType(
-  row: AttendancePunch,
-  all: AttendancePunch[],
-): string {
-  if (row.log_type) return row.log_type;
-  const ordered = [...all].sort((a, b) => a.time.localeCompare(b.time));
-  const index = ordered.findIndex((candidate) => candidate.name === row.name);
-  return index % 2 === 0 ? "IN" : "OUT";
+function fillBlankLogTypes(
+  target: readonly TargetPunch[],
+): Array<{ name: string; time: string; log_type: string }> {
+  const ordered = [...target].sort((a, b) => a.time.localeCompare(b.time));
+  let previous: string | undefined;
+  return ordered.map((row) => {
+    const log_type = row.log_type
+      ? row.log_type
+      : previous === "IN"
+      ? "OUT"
+      : "IN";
+    previous = log_type;
+    return { name: row.name, time: row.time, log_type };
+  });
 }
 
 export const hrTools: ErpNextTool[] = [
@@ -682,6 +703,17 @@ export const hrTools: ErpNextTool[] = [
       const state = await readAttendanceDay(ctx, employee, date, TOOL);
       const current = (state.rows ?? []) as AttendancePunch[];
 
+      // `blocked` được chặn ở ĐÂY chứ không ở hàm đọc: bản nháp hay bản sinh từ đơn còn
+      // hiệu lực là thứ đường ghi không đi qua được, nhưng đường đọc phải trả về nguyên
+      // trạng thái ấy thì người hỏi mới biết vì sao bế tắc.
+      if (state.blocked) {
+        throw new Error(
+          `[${TOOL}] ${date} cannot be repaired as it stands. ` +
+            (state.locked_reason ?? "The site reports the day as blocked.") +
+            " Resolve that in ERPNext first.",
+        );
+      }
+
       // Cờ xác nhận chỉ tồn tại ở tầng này: `hr_save_day_attendance` huỷ bản đã duyệt VÔ
       // ĐIỀU KIỆN. Một tool mà model gọi được thì không được để việc huỷ công của một
       // người xảy ra như tác dụng phụ của "thêm một lượt bấm".
@@ -711,22 +743,24 @@ export const hrTools: ErpNextTool[] = [
       const edited = new Map(
         edits.map((row) => [row.name as string, row]),
       );
-      const rows = current.map((row) => {
+      const target: TargetPunch[] = current.map((row) => {
         const patch = edited.get(row.name);
         return {
           name: row.name,
           time: (patch?.time as string) ?? row.time,
-          log_type: (patch?.log_type as string) ??
-            inferLogType(row, current),
+          log_type: (patch?.log_type as string) ?? row.log_type,
         };
       });
       for (const row of adds) {
-        rows.push({
+        target.push({
           name: "",
           time: row.time as string,
           log_type: row.log_type as string,
         });
       }
+      // Điền chiều SAU khi đã gộp `edit` và `add`, vì chiều của một lượt bấm là vị trí của
+      // nó trong ngày đã sửa chứ không phải trong ngày trước khi sửa.
+      const rows = fillBlankLogTypes(target);
 
       // Ảnh chụp mà lượt gọi này ĐANG NHÌN THẤY, để server phát hiện có ai vừa sửa cùng
       // ngày ấy giữa lượt đọc và lượt ghi. Lấy từ chính `state` ở trên, nên nó mô tả đúng
@@ -743,6 +777,15 @@ export const hrTools: ErpNextTool[] = [
         TOOL,
       );
 
+      // Ghi qua `callMethod` thì cache không tự dọn - `create`/`update`/`delete` mới tự
+      // dọn. Một lượt gọi này đổi cả lượt bấm giờ lẫn ngày công, nên bỏ qua bước này là
+      // lượt đọc ngay sau đó còn trả về đúng đống dữ liệu vừa được sửa.
+      ctx.client.invalidate("Employee Checkin");
+      for (const name of saved.cancelled_attendance ?? []) {
+        ctx.client.invalidate("Attendance", name);
+      }
+      ctx.client.invalidate("Attendance", saved.attendance?.name);
+
       const cancelled = saved.cancelled_attendance ?? [];
       const parts = [
         `Attendance for ${employee} on ${date} rebuilt`,
@@ -750,6 +793,20 @@ export const hrTools: ErpNextTool[] = [
       ];
       if (cancelled.length > 0) {
         parts.push(`cancelled ${cancelled.join(", ")}`);
+      }
+      // Cửa xác nhận ở trên đo `state.locked` của lượt ĐỌC, còn server huỷ ở lượt GHI, nên
+      // giữa hai lượt vẫn còn một khe: chạy chấm công tự động có thể dựng một bản Attendance
+      // mới đúng vào khe ấy và bản ấy bị huỷ mà không ai xác nhận. Đóng khe cho kín phải sửa
+      // `hr_save_day_attendance` để nhận cờ và kiểm trong cùng giao dịch; ở tầng này chỉ
+      // phát hiện được. Đã phát hiện thì phải nói to, im lặng mới là hỏng.
+      if (cancelled.length > 0 && input.confirm_cancel_attendance !== true) {
+        parts.push(
+          `WARNING: ${
+            cancelled.join(", ")
+          } was cancelled even though this call did ` +
+            "not confirm a cancellation - the record appeared between the read and " +
+            "the save. Check that the rebuilt day is what you expected",
+        );
       }
       if (saved.attendance?.name) {
         parts.push(
