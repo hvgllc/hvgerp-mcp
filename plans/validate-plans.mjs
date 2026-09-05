@@ -60,8 +60,29 @@ function outsideFencedCode(body) {
   }).join("\n");
 }
 function outsideInlineCode(body) {
-  // Cặp backtick phải cùng độ dài; không ghép qua ranh giới đoạn trống.
-  return body.split(/(\r?\n[ \t]*\r?\n)/).map((paragraph) => {
+  // Inline span không được nối qua heading, list, quote hoặc đoạn trống.
+  const paragraphs = [];
+  let current = "";
+  function flush() {
+    if (current) paragraphs.push(current);
+    current = "";
+  }
+  for (const line of body.match(/[^\n]*(?:\n|$)/g) ?? []) {
+    const content = line.replace(/\r?\n$/, "");
+    const standalone = /^ {0,3}#{1,6}(?:[ \t]|$)/.test(content) ||
+      /^ {0,3}(?:=+|-+)[ \t]*$/.test(content) ||
+      /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})$/.test(
+        content,
+      );
+    if (
+      standalone || /^[ \t]*$/.test(content) ||
+      /^ {0,3}(?:(?:[-+*]|[0-9]+[.)])[ \t]+|>)/.test(content)
+    ) flush();
+    current += line;
+    if (standalone || /^[ \t]*$/.test(content)) flush();
+  }
+  flush();
+  return paragraphs.map((paragraph) => {
     const runs = [...paragraph.matchAll(/`+/g)];
     let output = "", start = 0;
     for (let index = 0; index < runs.length; index++) {

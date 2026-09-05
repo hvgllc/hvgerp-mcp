@@ -322,6 +322,58 @@ for (const newline of ["\n", "\r\n"]) {
   });
 }
 
+for (
+  const block of ["## Section [Live](missing-live.md)", "- [Live](/etc/passwd)"]
+) {
+  test(`Markdown inline code cannot cross a structural block ${block}`, () => {
+    invalid({
+      "plans/evidence/backlog-review.md": (text) =>
+        text + "\nExample " + tick + "\n" + block + "\n" + tick + "\n",
+    }, /link hỏng missing-live.md|unsafe Markdown link \/etc\/passwd/);
+  });
+}
+test("Markdown inline code retains multiline spans within the same paragraph", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      "\nExample " + tick +
+      "first line\n[Example](missing-example.md)\nlast line" + tick + ".\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+for (
+  const boundary of [
+    "+ Item",
+    "* Item",
+    "1. Item",
+    "1) Item",
+    "2. Item",
+    "42) Item",
+    "> Quote",
+    "***",
+    "---",
+    "===",
+  ]
+) {
+  test(`Markdown inline span ends before block boundary ${boundary}`, () => {
+    invalid({
+      "plans/evidence/backlog-review.md": (text) =>
+        text +
+        "\nExample " + tick + "\n" + boundary +
+        "\n[Live](missing-live.md)\n" + tick + "\n",
+    }, /link hỏng missing-live.md/);
+  });
+}
+test("Markdown heading inline opener cannot mask the following paragraph", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      "\n## Section " + tick + "\n[Live](missing-live.md)\n" + tick + "\n",
+  }, /link hỏng missing-live.md/);
+});
+
 function editManifest(edit) {
   return (text) => {
     const entries = JSON.parse(text);
