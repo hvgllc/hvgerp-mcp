@@ -82,6 +82,27 @@ const files = readdirSync(planRoot).filter((name) =>
   /^\d{3}-.*\.md$/.test(name)
 );
 if (files.length !== 25) fail(`Có ${files.length} file kế hoạch thay vì 25`);
+const manifestFiles = new Set();
+for (const entry of manifest) {
+  if (manifestFiles.has(entry.file)) {
+    fail("Duplicate manifest file: " + entry.file);
+  }
+  manifestFiles.add(entry.file);
+  const prefix = entry.file.match(/^(\d{3})-[^/\\]+\.md$/)?.[1];
+  if (prefix !== String(entry.id).padStart(3, "0")) {
+    fail("Manifest file prefix does not match ID: " + entry.file);
+  }
+}
+for (const file of files) {
+  if (!manifestFiles.has(file)) {
+    fail("Numbered plan file missing from manifest: " + file);
+  }
+}
+for (const file of manifestFiles) {
+  if (!files.includes(file)) {
+    fail("Manifest file is not a numbered plan file: " + file);
+  }
+}
 const visiting = new Set();
 const visited = new Set();
 const order = [];

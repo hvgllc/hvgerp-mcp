@@ -132,3 +132,41 @@ test validator thay browser, Deno hoặc CI.
 
 005 không được đánh DONE. Không ghi đè trạng thái IN_PROGRESS hoặc ghi chú
 002/005 của parent ở root. Nhánh backlog chưa được push trong lượt này.
+
+## Codex vòng tiếp: review 5119892746
+
+Review trên HEAD `10cb145` của
+[PR 25](https://github.com/hvgllc/hvgerp-mcp/pull/25) phát hiện hai lỗi kế
+hoạch/validator. Không áp dụng verdict APPROVE của `d00356d` cho delta mới này.
+
+- Finding `3939553020`: glob phải tương đối với `src/ui/tsconfig.json`.
+  Assertion đọc include/exclude thực của config đã merge; trước sửa kế hoạch, đỏ
+  đúng lỗi thiếu `*-viewer/src/**/*.ts`. Sau sửa, cả năm include và bốn exclude
+  xuất hiện nguyên văn trong kế hoạch, kiểm tra xanh. Giữ Deno test excludes và
+  giải thích registry thuần được import gián tiếp. Không sửa production
+  tsconfig.
+- Finding `3939553022`: ba regression riêng kiểm filename trùng, prefix không
+  khớp ID và file vật lý bị bỏ khỏi manifest. Fixture chọn hai plan cùng trạng
+  thái, thay đồng thời file/evidence để không fail vì status hoặc snippet. Trước
+  sửa, cả ba fixture đều được validator chấp nhận sai (exit 0). Sau sửa, từng
+  fixture exit 1 với diagnostic đúng guard tương ứng. Validator kiểm uniqueness,
+  prefix và đối chiếu tập file theo cả hai chiều; đủ 25 ID không còn thay thế
+  cho coverage 25 file.
+
+Kết quả đỏ: 33 test, 29 pass, 4 fail đúng các assertion trên. Kết quả xanh:
+33/33 test, validator 25/25. Đây là fixture trong bộ nhớ, không sửa Git history
+hoặc dữ liệu thực để tạo phản chứng.
+
+Parent đã xác nhận gate ứng dụng trên `d00356d`, source bằng main `0cf6a69`:
+browser tsc và server check exit 0; lint 195 file; format 257 file; UI đủ 7
+viewer; Node bundle framework 0.25.0 và node check exit 0; full suite 847
+passed, 0 failed, 4 ignored, session 94737 exit 0. Hai sửa đổi mới chỉ nằm trong
+plans, không dùng kết quả này thay review/CI đúng HEAD cuối. Root chỉ nhận delta
+của 007 và validator/test/báo cáo; giữ trạng thái và ghi chú mới 002, 005, 008,
+manifest 022 và nhật ký parent. Chưa push, chưa reply finding trong lượt này.
+
+Gate tài liệu sau sửa: backlog format 43 file, lint hai script, diff check và
+đối chiếu source ngoài plans với main 0cf6a69 đều exit 0. Root validator 25/25,
+format bốn file chạm và diff check plans exit 0. Full format root còn một dòng
+chưa wrap trong ghi chú 005 của parent, nằm ngoài delta này; không tự sửa file
+đó. Root source vẫn d2c5305; không chạy regression phụ thuộc source mới ở root.

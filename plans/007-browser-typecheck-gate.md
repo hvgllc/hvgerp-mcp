@@ -137,13 +137,16 @@ lỗi môi trường.
 
 ### Bước 2: Tách project browser mà giữ đủ coverage
 
-Include rõ các viewer `src/**/*.tsx`, `src/**/*.ts` cùng shared browser modules;
-exclude `**/*_test.ts` và các root server resource helpers như mod.ts,
-viewers.ts, viewer-resource-paths.ts. Bật allowImportingTsExtensions với noEmit
-để shared pure .ts dùng được cả Deno; khai báo alias ~ tương ứng Vite. Chứng
-minh cả bảy main.tsx có mặt bằng --listFilesOnly, và Deno test vẫn kiểm shared
-tests. Thêm script typecheck trong src/ui/package.json gọi tsc --noEmit -p
-tsconfig.json.
+Các glob tính tương đối từ `src/ui/tsconfig.json`: include
+`*-viewer/src/**/*.ts`, `*-viewer/src/**/*.tsx`, `shared/**/*.ts`,
+`shared/**/*.tsx` và `testing/**/*.ts`; exclude `node_modules`, `dist`,
+`**/*_test.ts` và `**/*.test.ts`. Không include trực tiếp các root server
+resource helpers `mod.ts`, `viewer-resource-paths.ts`; `viewers.ts` là registry
+thuần được browser host import gián tiếp nên vẫn được kiểm kiểu. Bật
+allowImportingTsExtensions với noEmit để shared pure .ts dùng được cả Deno; khai
+báo alias ~ tương ứng Vite. Chứng minh cả bảy main.tsx có mặt bằng
+--listFilesOnly, và Deno test vẫn kiểm shared tests. Thêm script typecheck trong
+src/ui/package.json gọi tsc --noEmit -p tsconfig.json.
 
 **Kiểm tra:**
 `src/ui/node_modules/.bin/tsc --noEmit -p src/ui/tsconfig.json --listFilesOnly`

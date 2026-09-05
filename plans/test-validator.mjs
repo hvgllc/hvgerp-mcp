@@ -274,10 +274,60 @@ test("refreshed baseline remains stable across TODO to DONE", () => {
 });
 test("007 specifies real TypeScript include and test exclude globs", () => {
   const text = readFileSync(resolve(repoRoot, fileFor(7)), "utf8");
-  assert(text.includes(tick + "src/**/*.ts" + tick));
-  assert(text.includes(tick + "**/*_test.ts" + tick));
+  const config = JSON.parse(
+    readFileSync(resolve(repoRoot, "src/ui/tsconfig.json"), "utf8"),
+  );
+  for (const glob of [...config.include, ...config.exclude]) {
+    assert(
+      text.includes(tick + glob + tick),
+      "Missing tsconfig-relative glob: " + glob,
+    );
+  }
+  assert(!text.includes(tick + "src/**/*.ts" + tick));
+  assert(!text.includes(tick + "src/**/*.tsx" + tick));
   assert(!text.includes("src/**/_.ts"));
   assert(!text.includes("**/__test.ts"));
+});
+
+function sameStatusPair() {
+  const groups = new Map();
+  for (const entry of manifest) {
+    const body = readFileSync(resolve(planRoot, entry.file), "utf8");
+    const state = body.match(/Trạng thái thực thi:\s*`([A-Z_]+)`/)?.[1];
+    const first = groups.get(state);
+    if (first) return [first.id, entry.id];
+    groups.set(state, entry);
+  }
+  throw new Error("Expected two plans with the same execution status");
+}
+
+const duplicateFile = editManifest((entries) => {
+  const [firstId, secondId] = sameStatusPair();
+  const first = entries.find((entry) => entry.id === firstId);
+  const second = entries.find((entry) => entry.id === secondId);
+  second.file = first.file;
+  second.evidence = first.evidence;
+});
+
+test("manifest rejects duplicate plan filenames", () => {
+  invalid({ "plans/manifest.json": duplicateFile }, /Duplicate manifest file:/);
+});
+test("manifest requires each filename prefix to match its ID", () => {
+  invalid({
+    "plans/manifest.json": editManifest((entries) => {
+      const [firstId, secondId] = sameStatusPair();
+      const first = entries.find((entry) => entry.id === firstId);
+      const second = entries.find((entry) => entry.id === secondId);
+      [first.file, second.file] = [second.file, first.file];
+      [first.evidence, second.evidence] = [second.evidence, first.evidence];
+    }),
+  }, /Manifest file prefix does not match ID:/);
+});
+test("manifest covers every physical numbered plan file", () => {
+  invalid(
+    { "plans/manifest.json": duplicateFile },
+    /Numbered plan file missing from manifest:/,
+  );
 });
 test("021 requires both explicit Node runtime paths", () => {
   const text = readFileSync(resolve(repoRoot, fileFor(21)), "utf8");
