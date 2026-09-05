@@ -383,6 +383,276 @@ function completeDatasetClient(datasets: Record<string, any[]>) {
   return { client, calls };
 }
 
+function salesDraftDataset() {
+  const invoices = [0, 1, 2].flatMap((docstatus) =>
+    ["Vietnam Company", "Other Company"].map((company) => ({
+      name: `INV-${company}-${docstatus}`,
+      company,
+      docstatus,
+      status: ["Draft", "Paid", "Cancelled"][docstatus],
+      customer: `CUSTOMER-${docstatus}`,
+      customer_name: `Customer ${docstatus}`,
+      currency: "USD",
+      grand_total: 999999,
+      base_grand_total: company === "Other Company"
+        ? 90000
+        : [66, 120, 80000][docstatus],
+      modified: "2026-09-05 09:00:00",
+    }))
+  );
+  return {
+    "Sales Invoice": invoices,
+    "Sales Invoice Item": invoices.map((invoice) => ({
+      name: `ROW-${invoice.name}`,
+      parent: invoice.name,
+      parenttype: "Sales Invoice",
+      docstatus: invoice.docstatus,
+      item_code: `ITEM-${invoice.docstatus}`,
+      item_name: `Item ${invoice.docstatus}`,
+      amount: 777777,
+      base_amount: invoice.company === "Other Company"
+        ? 70000
+        : [60, 100, 60000][invoice.docstatus],
+    })),
+  };
+}
+
+for (const group_by of ["customer", "item", "status"]) {
+  for (const include_drafts of [undefined, false, true]) {
+    Deno.test(`sales draft population ${group_by} ${include_drafts}`, async () => {
+      const fixture = completeDatasetClient(salesDraftDataset());
+      const list = fixture.client.list.bind(fixture.client);
+      const queries: { doctype: string; filters: unknown[] }[] = [];
+      fixture.client.list = (doctype, options = {}) => {
+        queries.push({ doctype, filters: options.filters ?? [] });
+        return list(doctype, options);
+      };
+      const input = {
+        company: "Vietnam Company",
+        group_by,
+        ...(include_drafts === undefined ? {} : { include_drafts }),
+      };
+      const tool = getTool("erpnext_sales_chart");
+      const result = await tool.handler(input, makeCtx(fixture.client)) as any;
+      const submitted = group_by === "item" ? 100 : 120;
+      const draft = group_by === "item" ? 60 : 66;
+      assertEquals(
+        result.datasets[0].values,
+        include_drafts === true ? [submitted, draft] : [submitted],
+      );
+      const labels = group_by === "item"
+        ? ["Item 1", "Item 0"]
+        : group_by === "customer"
+        ? ["Customer 1", "Customer 0"]
+        : ["Paid", "Draft"];
+      assertEquals(
+        result.labels,
+        include_drafts === true ? labels : labels.slice(0, 1),
+      );
+      assertEquals(result.currency, "VND");
+      assertEquals(result.refreshRequest, {
+        toolName: tool.name,
+        arguments: input,
+      });
+      assertEquals(result._meta, tool._meta);
+      const policy = include_drafts === true
+        ? ["docstatus", "in", [0, 1]]
+        : ["docstatus", "=", 1];
+      for (const query of queries) {
+        assert(
+          query.filters.some((filter) =>
+            JSON.stringify(filter) === JSON.stringify(policy)
+          ),
+        );
+        if (query.doctype === "Sales Invoice") {
+          assert(query.filters.some((filter) =>
+            JSON.stringify(filter) ===
+              JSON.stringify(["company", "=", "Vietnam Company"])
+          ));
+        }
+      }
+      if (group_by === "item") {
+        assert(queries.some((query) => query.doctype === "Sales Invoice Item"));
+      }
+    });
+  }
+}
+
+Deno.test("sales draft schema accepts only boolean options without coercion", () => {
+  const tool = getTool("erpnext_sales_chart");
+  const validator = new SchemaValidator();
+  validator.addSchema(tool.name, tool.inputSchema as Record<string, unknown>);
+  for (const group_by of ["customer", "item", "status"]) {
+    for (const include_drafts of [false, true]) {
+      assert(validator.validate(tool.name, { group_by, include_drafts }).valid);
+    }
+    assert(validator.validate(tool.name, { group_by }).valid);
+    for (const include_drafts of ["true", "false", "", 0, 1, null, [], {}]) {
+      assertEquals(
+        validator.validate(tool.name, { group_by, include_drafts }).valid,
+        false,
+      );
+    }
+  }
+});
+
+Deno.test("sales draft direct handler rejects non-boolean options before invoice reads", async () => {
+  for (const group_by of ["customer", "item", "status"]) {
+    for (const include_drafts of ["true", "false", "", 0, 1, null, [], {}]) {
+      const fixture = completeDatasetClient(salesDraftDataset());
+      await assertRejects(
+        () =>
+          getTool("erpnext_sales_chart").handler({
+            company: "Vietnam Company",
+            group_by,
+            include_drafts,
+          }, makeCtx(fixture.client)),
+        Error,
+        "'include_drafts' must be a boolean",
+      );
+      assertEquals(fixture.calls, []);
+    }
+  }
+});
+
+for (const group_by of ["customer", "item", "status"]) {
+  for (const include_drafts of [undefined, false, true]) {
+    Deno.test(`sales draft pagination preserves 5001 submitted rows for ${group_by} ${include_drafts}`, async () => {
+      const count = 5001;
+      const datasets = salesDraftDataset();
+      const submitted = Array.from({ length: count }, (_, i) => ({
+        ...datasets["Sales Invoice"][2],
+        name: `BULK-${String(i).padStart(5, "0")}`,
+        base_grand_total: 3,
+      }));
+      datasets["Sales Invoice"] = datasets["Sales Invoice"].filter((row) =>
+        row.company !== "Vietnam Company" || row.docstatus !== 1
+      ).concat(submitted);
+      datasets["Sales Invoice Item"] = datasets["Sales Invoice Item"].filter((
+        row,
+      ) => row.parent !== "INV-Vietnam Company-1").concat(
+        submitted.map((invoice) => ({
+          ...datasets["Sales Invoice Item"][2],
+          name: `LINE-${invoice.name}`,
+          parent: submitted.at(-1)!.name,
+          base_amount: 2,
+        })),
+      );
+      const fixture = completeDatasetClient(datasets);
+      const result = await getTool("erpnext_sales_chart").handler({
+        company: "Vietnam Company",
+        group_by,
+        ...(include_drafts === undefined ? {} : { include_drafts }),
+      }, makeCtx(fixture.client)) as any;
+      const total = count * (group_by === "item" ? 2 : 3);
+      assertEquals(
+        result.datasets[0].values,
+        include_drafts === true
+          ? [total, group_by === "item" ? 60 : 66]
+          : [total],
+      );
+      assertEquals(result.currency, "VND");
+      assert(
+        fixture.calls.some((call) =>
+          call.doctype === "Sales Invoice" && call.offset === 5000
+        ),
+      );
+      if (group_by === "item") {
+        assert(
+          fixture.calls.some((call) =>
+            call.doctype === "Sales Invoice Item" && call.offset === 5000
+          ),
+        );
+      }
+      assert(fixture.calls.every((call) => call.size === 1000));
+    });
+  }
+}
+
+Deno.test("sales draft item discovery excludes children of cancelled and foreign parents", async () => {
+  const datasets = salesDraftDataset();
+  for (const row of datasets["Sales Invoice Item"]) {
+    if (
+      row.parent === "INV-Vietnam Company-2" ||
+      row.parent.startsWith("INV-Other Company")
+    ) row.docstatus = 1;
+  }
+  for (const include_drafts of [false, true]) {
+    const fixture = completeDatasetClient(datasets);
+    const result = await getTool("erpnext_sales_chart").handler({
+      company: "Vietnam Company",
+      group_by: "item",
+      include_drafts,
+    }, makeCtx(fixture.client)) as any;
+    assertEquals(result.datasets[0].values, include_drafts ? [100, 60] : [100]);
+  }
+});
+
+Deno.test("sales draft filter preserves tax discount metrics and existing top N semantics", async () => {
+  const invoices = [
+    { name: "A", docstatus: 1, base_grand_total: 120, line: 100 },
+    { name: "B", docstatus: 1, base_grand_total: 90, line: 95 },
+    { name: "C", docstatus: 1, base_grand_total: 115, line: 110 },
+    { name: "D", docstatus: 0, base_grand_total: 250, line: 300 },
+    { name: "X", docstatus: 2, base_grand_total: 99999, line: 99999 },
+  ].map((row) => ({
+    ...row,
+    company: "Vietnam Company",
+    customer: row.name,
+    customer_name: row.name,
+    status: row.docstatus === 0
+      ? "Draft"
+      : row.docstatus === 1
+      ? "Paid"
+      : "Cancelled",
+    modified: "2026-09-05 09:00:00",
+  }));
+  const datasets = {
+    "Sales Invoice": invoices,
+    "Sales Invoice Item": invoices.map((row) => ({
+      name: `LINE-${row.name}`,
+      parent: row.name,
+      parenttype: "Sales Invoice",
+      docstatus: row.docstatus,
+      item_code: row.name,
+      item_name: row.name,
+      base_amount: row.line,
+    })),
+  };
+  for (const include_drafts of [false, true]) {
+    for (const group_by of ["customer", "item", "status"]) {
+      const fixture = completeDatasetClient(datasets);
+      const result = await getTool("erpnext_sales_chart").handler({
+        company: "Vietnam Company",
+        group_by,
+        include_drafts,
+        limit: 1,
+      }, makeCtx(fixture.client)) as any;
+      if (group_by === "status") {
+        assertEquals(
+          result.labels,
+          include_drafts ? ["Paid", "Draft"] : ["Paid"],
+        );
+        assertEquals(
+          result.datasets[0].values,
+          include_drafts ? [325, 250] : [325],
+        );
+      } else {
+        assertEquals(
+          result.labels,
+          include_drafts ? ["D"] : group_by === "customer" ? ["A"] : ["C"],
+        );
+        assertEquals(
+          result.datasets[0].values,
+          include_drafts
+            ? [group_by === "customer" ? 250 : 300]
+            : [group_by === "customer" ? 120 : 110],
+        );
+      }
+    }
+  }
+});
+
 async function withAnalyticsClock(
   run: (advance: () => void) => Promise<void>,
   instant = "2026-09-04T18:30:00Z",

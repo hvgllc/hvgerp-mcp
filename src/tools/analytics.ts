@@ -198,19 +198,25 @@ export const analyticsTools: ErpNextTool[] = [
     },
     handler: async (input, _ctx, context) => {
       const { currency } = context;
+      if (
+        input.include_drafts !== undefined &&
+        typeof input.include_drafts !== "boolean"
+      ) {
+        throw new Error("'include_drafts' must be a boolean");
+      }
       const limit = normalizeLimit((input.limit as number) ?? 10);
       const groupBy = (input.group_by as string) ?? "customer";
-      const filters: FrappeFilter[] = [];
-
-      if (!input.include_drafts) {
-        filters.push(["docstatus", "=", 1]); // Submitted only
-      }
+      const filters: FrappeFilter[] = [
+        input.include_drafts === true
+          ? ["docstatus", "in", [0, 1]]
+          : ["docstatus", "=", 1],
+      ];
 
       if (groupBy === "status") {
         // Get invoice counts + amounts by status — fetch more to cover all statuses
         const invoices = await context.listAllDocuments("Sales Invoice", {
           fields: ["name", "status", "base_grand_total"],
-          filters: [["docstatus", "!=", 2]], // exclude cancelled
+          filters,
           order_by: "modified desc",
         });
 
@@ -238,7 +244,7 @@ export const analyticsTools: ErpNextTool[] = [
         // Fetch invoice items (Sales Invoice Item child table)
         const items = await context.listAllItems("Sales Invoice", {
           fields: ["item_code", "item_name", "base_amount"],
-          filters: [["docstatus", "=", 1]],
+          filters,
           order_by: "base_amount desc",
         });
 
