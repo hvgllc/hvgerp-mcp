@@ -147,7 +147,57 @@ function scopedObject(tree, path) {
     ? object
     : undefined;
 }
-function approved(body, entry) {
+function blobId(data) {
+  const bytes = typeof data === "string" ? Buffer.from(data) : data;
+  return createHash("sha1").update("blob " + bytes.length + "\0")
+    .update(bytes).digest("hex");
+}
+function canonicalValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value).sort().map((key) => [key, canonicalValue(value[key])]),
+    );
+  }
+  return value;
+}
+function definitionApproved(field, entry, planBody) {
+  if (field("definition_review_verdict") !== "APPROVE") return false;
+  const ref = field("definition_commit");
+  const planBlob = field("definition_plan_blob");
+  const manifestBlob = field("definition_manifest_blob");
+  if (
+    ![ref, planBlob, manifestBlob].every((value) =>
+      /^[0-9a-f]{40}$/.test(value ?? "")
+    )
+  ) {
+    return false;
+  }
+  const tree = gitTree(ref);
+  if (!tree) return false;
+  const planObject = scopedObject(tree, "plans/" + entry.file);
+  const manifestObject = scopedObject(tree, "plans/manifest.json");
+  if (
+    !planObject || planObject.oid !== planBlob ||
+    blobId(planBody) !== planBlob ||
+    !manifestObject || manifestObject.oid !== manifestBlob
+  ) return false;
+  const historical = evidenceSource("plans/manifest.json", ref);
+  if (historical === undefined || blobId(historical) !== manifestBlob) {
+    return false;
+  }
+  try {
+    const entries = JSON.parse(historical);
+    if (!Array.isArray(entries)) return false;
+    const matches = entries.filter((candidate) => candidate?.id === entry.id);
+    return matches.length === 1 &&
+      JSON.stringify(canonicalValue(matches[0])) ===
+        JSON.stringify(canonicalValue(entry));
+  } catch {
+    return false;
+  }
+}
+function approved(body, entry, planBody) {
   const metadata = body.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1];
   const field = (key) => {
     const lines = metadata?.split(/\r?\n/).filter((line) =>
@@ -158,6 +208,10 @@ function approved(body, entry) {
       : undefined;
   };
   const id = String(entry.id).padStart(3, "0");
+  const validDefinition = definitionApproved(field, entry, planBody);
+  if (!validDefinition) {
+    fail(entry.file + ": DONE requires approved definition snapshot");
+  }
   if (field("review_verdict") !== "APPROVE" || field("plan_id") !== id) {
     return false;
   }
@@ -195,13 +249,12 @@ function approved(body, entry) {
         const current = resolve(repoRoot, name);
         if (!existsSync(current) || !lstatSync(current).isFile()) return false;
         const data = readFileSync(current);
-        const oid = createHash("sha1").update("blob " + data.length + "\0")
-          .update(data).digest("hex");
+        const oid = blobId(data);
         if (oid !== object.oid) return false;
       }
     }
   }
-  return true;
+  return validDefinition;
 }
 function planFiles(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -369,7 +422,7 @@ for (const entry of manifest) {
     );
     if (
       !existsSync(evidencePath) ||
-      !approved(readFileSync(evidencePath, "utf8"), entry)
+      !approved(readFileSync(evidencePath, "utf8"), entry, body)
     ) {
       fail(entry.file + ": DONE requires reviewer approval evidence");
     }

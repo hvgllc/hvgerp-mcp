@@ -697,3 +697,52 @@ definition. Yêu cầu pin npm của `3940080337` do parent ghi trong kế hoạ
 chưa phải implementation hoặc quyền cài package manager. Clean-history gate phải
 chạy sau commit snapshot; kết quả được bàn giao riêng, không suy ra từ validator
 chạy trong worktree có metadata chưa commit.
+
+## Lượt B: binding định nghĩa DONE
+
+Finding `3940080334` yêu cầu bảo vệ chính định nghĩa kế hoạch, không chỉ source
+và artifact implementation. Reviewer độc lập `/root/goal_execute_006` đã APPROVE
+supplemental definition snapshot `b9d6d02a9692c3efff11836b97d8cfbc69da1ec7`,
+manifest blob `2ff4089ea1fef9ae82699d021bc51be346747952`, cho đúng 13 DONE:
+001/003/004/005/007/008/009/010/011/012/018/019/024. Parent chuyển kết luận này
+cho executor trước khi triển khai binding. Không cấp approval cho 006/015/017
+hoặc definition khác; không đổi các file kế hoạch hay manifest snapshot.
+
+Mỗi evidence của 13 mục trên thêm riêng `definition_review_verdict: APPROVE`,
+`definition_commit`, `definition_plan_blob`, `definition_manifest_blob`. Blob
+đọc từ đúng path tại snapshot Git đã được duyệt, không lấy hash mutable plan để
+tự duyệt. Sáu field implementation giữ nguyên từng byte. Các source PR cũ không
+được tuyên bố hồi tố là đã chứa hoặc được review cùng định nghĩa này.
+
+Validator kiểm commit thật qua cat-file và tree; so đúng path/type/blob của plan
+và manifest. Toàn bộ byte kế hoạch hiện tại phải bằng approved plan blob, kể cả
+prose, prerequisite, scope và checklist. Historical manifest được đọc bằng Git
+và kiểm blob, rồi so duy nhất record đúng ID với current record: canonical
+object key order, không đổi array content/order. Record khác tiến độ không
+invalidate mọi DONE. Binding nằm ngoài manifest để tránh self-reference. Git
+thiếu/sai type/sai path/sai blob fail closed. Đây là kiểm nhất quán offline,
+không xác thực danh tính reviewer, CI hoặc chứng minh implementation production.
+
+Red thực trước sửa validator, sau khi thêm metadata từ approval có thật:
+`node --test --test-name-pattern='DONE definition' plans/test-validator.mjs` có
+**1 passed, 28 failed** trong 29 test. Validator cũ nhận sai việc xóa đồng thời
+scope khỏi plan/manifest, xóa đồng thời prerequisite khỏi ba biểu diễn, bỏ một
+acceptance đã checked, thêm prose, bỏ/trùng/sai metadata và dùng Git blob hoặc
+commit không chứa kế hoạch. Không có lỗi import hoặc Git giả làm red. Control
+thay record khác đạt ngay; test canonical object còn đỏ vì array đảo thứ tự chưa
+bị definition gate chặn.
+
+Sau implementation, 29 test mới đạt. Một lượt full suite còn tám assertion cũ
+không phù hợp chính sách full-plan binding: prose/checklist ngoài acceptance,
+refresh definition DONE, hoặc diagnostic mới đi kèm classification/audit. Đã giữ
+invariant gốc và cập nhật expectation chính xác: DONE edit chỉ báo hai
+diagnostic definition/approval nếu không vi phạm invariant khác; kiểm semantic
+whitespace/marker/prose hợp lệ chạy trên non-DONE. Audit vẫn kiểm từng mục đủ 25
+ID; classification vẫn yêu cầu đúng lỗi cũ, thêm lỗi definition khi phù hợp.
+Không sửa plan thật hoặc nới source, prerequisite, checklist, artifact gates.
+
+Gate trước commit: validator 25/25 và **153 passed, 0 failed, 0 skipped** gồm
+124 regression cũ cùng 29 mới. Cache Git vẫn ghi đủ historicalReads; quan sát 84
+subprocess khi cold và 2 khi warm, 84 historicalReads ở cả hai lượt. Callback
+Git error/output vẫn bypass cache và không làm nhiễm lượt sau. Clean-history
+gate sẽ chạy trên commit thật; không dùng kết quả local này thay phép kiểm đó.

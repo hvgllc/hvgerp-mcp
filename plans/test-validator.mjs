@@ -94,6 +94,7 @@ function run(replacements = {}, hidden = [], filesystem = {}, gitOutput) {
           : readGitFixture(command, args, settings, execute);
       },
       dirname,
+      Buffer,
       createHash,
       relative,
       resolve,
@@ -170,6 +171,147 @@ function stale(
   return replacements;
 }
 
+const definitionRef = "b9d6d02a9692c3efff11836b97d8cfbc69da1ec7";
+const definitionFields = [
+  "definition_review_verdict",
+  "definition_commit",
+  "definition_plan_blob",
+  "definition_manifest_blob",
+];
+const definitionFailures = (id) => [
+  fileFor(id).slice("plans/".length) +
+  ": DONE requires approved definition snapshot",
+  fileFor(id).slice("plans/".length) +
+  ": DONE requires reviewer approval evidence",
+];
+function definitionField(key, value) {
+  return {
+    "plans/evidence/001.md": (text) =>
+      text.replace(
+        new RegExp("^" + key + ":.*$", "m"),
+        value === undefined ? "" : key + ": " + value,
+      ),
+  };
+}
+test("DONE definition rejects synchronized scope removal", () => {
+  invalid({
+    [fileFor(1)]: (text) => text.replace("- `src/auth/config.ts`\n", ""),
+    "plans/manifest.json": editManifest((entries) => {
+      entries[0].scope = entries[0].scope.filter((path) =>
+        path !== "src/auth/config.ts"
+      );
+    }),
+  }, /001.*definition/);
+});
+test("DONE definition rejects synchronized prerequisite removal", () => {
+  invalid({
+    [fileFor(8)]: (text) => planDependencies(text, "không"),
+    "plans/README.md": (text) => indexDependencies(text, 8, "không"),
+    "plans/manifest.json": editManifest((entries) => {
+      entries.find((entry) => entry.id === 8).depends = [];
+    }),
+  }, /008.*definition/);
+});
+test("DONE definition rejects removal of one checked acceptance criterion", () => {
+  invalid({
+    [fileFor(24)]: (text) => text.replace(/^- \[x\][^\n]*\n/m, ""),
+  }, /024.*definition/);
+});
+test("DONE definition rejects prose-only edits", () => {
+  invalid({
+    [fileFor(1)]: (text) => text + "\nGhi chú mới chưa được review.\n",
+  }, /001.*definition/);
+});
+for (const key of definitionFields) {
+  test("DONE definition requires " + key, () => {
+    invalid(definitionField(key, undefined), /001.*definition/);
+  });
+  test("DONE definition rejects duplicate " + key, () => {
+    invalid({
+      "plans/evidence/001.md": (text) =>
+        text.replace(
+          new RegExp("^(" + key + ":.*)$", "m"),
+          "$1\n$1",
+        ),
+    }, /001.*definition/);
+  });
+}
+for (const verdict of ["NOT APPROVED", "REVISE", "APPROVE with findings"]) {
+  test("DONE definition rejects verdict " + verdict, () => {
+    invalid(
+      definitionField("definition_review_verdict", verdict),
+      /001.*definition/,
+    );
+  });
+}
+for (const key of definitionFields.slice(1)) {
+  for (
+    const value of ["0".repeat(40), definitionRef.slice(0, 7), "g".repeat(40)]
+  ) {
+    test("DONE definition rejects invalid " + key + " " + value, () => {
+      invalid(definitionField(key, value), /001.*definition/);
+    });
+  }
+}
+test("DONE definition rejects blob used as commit", () => {
+  const report = readFileSync(resolve(planRoot, "evidence/001.md"), "utf8");
+  const blob = report.match(/^definition_plan_blob: (.+)$/m)[1];
+  invalid(
+    definitionField("definition_commit", blob),
+    /Cannot read Git commit tree/,
+  );
+});
+test("DONE definition rejects real commit without plan snapshot", () => {
+  const report = readFileSync(resolve(planRoot, "evidence/001.md"), "utf8");
+  const ref = report.match(/^reviewed_commit: (.+)$/m)[1];
+  invalid(definitionField("definition_commit", ref), /001.*definition/);
+});
+test("DONE definition compares only the matching manifest record", () => {
+  const result = run({
+    "plans/manifest.json": editManifest((entries) => {
+      entries.find((entry) => entry.id === 21).maintenanceNote =
+        "Unrelated plan progress";
+    }),
+  });
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+test("DONE definition canonicalizes object keys but preserves array contents", () => {
+  const result = run({
+    "plans/manifest.json": editManifest((entries) => {
+      entries[0] = Object.fromEntries(Object.entries(entries[0]).reverse());
+      entries[0].evidence[0] = Object.fromEntries(
+        Object.entries(entries[0].evidence[0]).reverse(),
+      );
+    }),
+  });
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  invalid({
+    "plans/manifest.json": editManifest((entries) => {
+      entries[0].scope.reverse();
+    }),
+  }, /001.*definition/);
+});
+test("DONE definition requires a readable historical manifest with one matching record", () => {
+  for (
+    const mutate of [() => "not JSON", () => "{}", (output) => {
+      const entries = JSON.parse(output);
+      entries.push(entries[0]);
+      return JSON.stringify(entries);
+    }]
+  ) {
+    invalid(
+      {},
+      /001.*definition/,
+      [],
+      {},
+      (args, output) =>
+        args[0] === "show" && args[1] === definitionRef + ":plans/manifest.json"
+          ? mutate(output)
+          : output,
+    );
+  }
+});
+
 test("baseline preserves historical auth evidence", () => {
   const result = run();
   assert.equal(result.exitCode, 0, result.messages.join("\n"));
@@ -197,12 +339,13 @@ test("DONE requires a completion checklist", () => {
     /024.*completion checklist/,
   );
 });
-test("an unchecked checklist outside completion does not block DONE", () => {
+test("an unchecked checklist outside completion only invalidates the DONE definition", () => {
   const result = run({
     [fileFor(24)]: (text) =>
       text + "\n## Future work\n\n- [ ] Not an acceptance criterion\n",
   });
-  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  assert.equal(result.exitCode, 1);
+  assert.deepEqual(result.messages, definitionFailures(24));
 });
 for (
   const verdict of [
@@ -438,7 +581,7 @@ test("nested Markdown resolves links from its containing directory", () => {
   const result = run();
   assert.equal(result.exitCode, 0, result.messages.join("\n"));
 });
-test("refreshed baseline remains stable across TODO to DONE", () => {
+test("refreshed baseline retains historical source but DONE requires definition re-review", () => {
   const ref = "013a1cfda64d41b3e62658ff16f7e25be0b3b4c7";
   const current = execFileSync("git", ["show", ref + ":src/auth/config.ts"], {
     cwd: repoRoot,
@@ -474,7 +617,14 @@ test("refreshed baseline remains stable across TODO to DONE", () => {
       };
     });
     const result = run(replacements);
-    assert.equal(result.exitCode, 0, next + ": " + result.messages.join("\n"));
+    assert.equal(
+      result.exitCode,
+      next === "DONE" ? 1 : 0,
+      next + ": " + result.messages.join("\n"),
+    );
+    if (next === "DONE") {
+      assert.deepEqual(result.messages, definitionFailures(1));
+    }
     assert.equal(result.thrown, undefined);
     assert(result.historicalReads.includes(ref + ":src/auth/config.ts"));
   }
@@ -575,13 +725,13 @@ test("adding manifest prerequisite requires matching docs", () => {
     }),
   }, /plan and manifest dependencies differ/);
 });
-test("dependency sets allow whitespace backticks and different order", () => {
+test("dependency sets allow whitespace backticks and different order outside approved DONE definitions", () => {
   const result = run({
     [fileFor(13)]: (text) =>
       planDependencies(text, "  " + tick + "006" + tick + " , 005  "),
     "plans/README.md": (text) =>
       indexDependencies(text, 13, " 006 , " + tick + "005" + tick + " "),
-    [fileFor(5)]: (text) =>
+    [fileFor(21)]: (text) =>
       planDependencies(text, "  " + tick + "không" + tick + "  "),
   });
   assert.equal(result.exitCode, 0, result.messages.join("\n"));
@@ -999,6 +1149,7 @@ test("newFiles cannot exempt an existing scope path without the plan marker", ()
   );
   assert.deepEqual(result.messages, [
     entry.file + ": plan and manifest new-file classifications differ",
+    ...definitionFailures(entry.id),
   ]);
 });
 test("newFiles must be a subset of scope", () => {
@@ -1020,6 +1171,7 @@ test("a plan new-file marker requires the manifest exemption", () => {
   }, /007.*plan and manifest new-file classifications differ/);
   assert.deepEqual(result.messages, [
     entry.file + ": plan and manifest new-file classifications differ",
+    ...definitionFailures(entry.id),
   ]);
 });
 test("dependency-created scope still requires consistent new-file classification", () => {
@@ -1056,7 +1208,7 @@ test("historical new-file markers remain valid after their files are tracked", (
 });
 test("new-file marker accepts wrapped explanations but ignores unrelated prose", () => {
   const result = run({
-    [fileFor(5)]: (text) =>
+    [fileFor(15)]: (text) =>
       text.replace("(tạo mới)", "(tạo\n  mới; thêm test tương ứng)") +
       "\nGhi chú: (tạo mới) chỉ phân loại trong scope.\n",
   });
@@ -1079,6 +1231,11 @@ test("audit metadata must match the manifest for all numeric and direction plans
       [fileFor(entry.id)]: (text) => auditLabel(text, changed),
     }, /plan and manifest audit mappings differ/);
     assert.deepEqual(result.messages, [
+      ...(readFileSync(resolve(planRoot, entry.file), "utf8").includes(
+          "Trạng thái thực thi: `DONE`",
+        )
+        ? definitionFailures(entry.id)
+        : []),
       entry.file + ": plan and manifest audit mappings differ",
     ]);
   }
@@ -1113,9 +1270,9 @@ for (
     );
   });
 }
-test("audit prose outside declarations does not change metadata", () => {
+test("audit prose outside declarations does not change non-DONE metadata", () => {
   const result = run({
-    [fileFor(5)]: (text) =>
+    [fileFor(15)]: (text) =>
       text + "\nGhi chú: Mục audit: 6 không phải metadata.\n",
   });
   assert.equal(result.exitCode, 0, result.messages.join("\n"));

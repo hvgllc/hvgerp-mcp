@@ -172,8 +172,8 @@ sau trim, không dùng prose ngoài metadata hoặc dòng trùng để miễn cu
 TODO/IN_PROGRESS/BLOCKED và STALE thiếu lý do vẫn không được bỏ kiểm source hiện
 tại; DONE tiếp tục kiểm lịch sử theo binding bên dưới.
 
-Approval DONE ràng buộc bằng sáu field duy nhất trong YAML frontmatter:
-`review_verdict: APPROVE`, `plan_id: NNN`, `reviewed_commit`,
+Approval implementation của DONE ràng buộc bằng sáu field duy nhất trong YAML
+frontmatter: `review_verdict: APPROVE`, `plan_id: NNN`, `reviewed_commit`,
 `completed_commit`, `reviewed_evidence_blob`, `completed_evidence_blob`. Hai
 commit dùng full SHA, phải là Git commit đọc được. reviewed_commit là revision
 đã được review sạch, completed_commit là final/merge thật được ghi trong
@@ -183,6 +183,24 @@ trong plans, phải có cùng Git object/type/mode ở hai revision, chấp nh�
 hoặc docs-only final mà không ép hai commit bằng nhau. Artifact trong scope dưới
 plans còn phải khớp byte hiện tại với completed revision; report NNN chính có
 thể append lịch sử sau đó, giữ blob snapshot gốc.
+
+Định nghĩa DONE được review riêng và có thêm bốn field duy nhất trong cùng
+frontmatter: `definition_review_verdict: APPROVE`, `definition_commit`,
+`definition_plan_blob`, `definition_manifest_blob`. Ba ID dùng full SHA. Commit
+phải đọc được và chứa đúng blob tại `plans/NNN-slug.md` cùng
+`plans/manifest.json`; toàn bộ byte kế hoạch hiện tại phải khớp blob đã duyệt.
+Scope, prerequisite, checklist, bằng chứng và cả prose của DONE thay đổi đều cần
+review định nghĩa mới, không tự hash file vừa sửa rồi cấp APPROVE. Binding này
+không thay sáu field implementation hoặc hồi tố rằng source PR cũ chứa kế hoạch.
+
+Historical manifest phải khớp blob đã ghim; chỉ record của đúng ID được đối
+chiếu với record hiện tại bằng object canonical, giữ nguyên nội dung và thứ tự
+array nhưng không phụ thuộc thứ tự key object. Thay đổi tiến độ record khác
+không làm mất approval của DONE này. Không đặt binding vào manifest record để
+tránh tự tham chiếu. Snapshot định nghĩa cũng phải reachable trong clean clone;
+thiếu Git object là lỗi, không fallback về file hiện tại. Supplemental review
+snapshot đầu tiên và giới hạn được ghi tại
+[evidence/backlog-review.md](evidence/backlog-review.md).
 
 Đây là kiểm tính nhất quán của metadata và Git, không xác thực danh tính người
 review hoặc CI bằng offline. Các mốc review độc lập cũ được giữ trong narrative

@@ -94,7 +94,13 @@ test("committed plan provenance survives a clean single-branch clone", () => {
         join(checkout, "plans/evidence/" + id + ".md"),
         "utf8",
       );
-      for (const key of ["reviewed_commit", "completed_commit"]) {
+      for (
+        const key of [
+          "reviewed_commit",
+          "completed_commit",
+          "definition_commit",
+        ]
+      ) {
         const ref = report.match(new RegExp("^" + key + ": (.+)$", "m"))?.[1];
         assert(ref, "Validated DONE evidence must contain " + key);
         references.add(ref);
