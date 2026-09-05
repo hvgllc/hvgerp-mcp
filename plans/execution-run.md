@@ -659,3 +659,34 @@ backlog, GitHub, commit hoặc push.
   được hỗ trợ. Không spoof document.visibilityState hoặc coi test VM là Browser.
 - Quyền thay framework của002 và pin dependency/npm cùng native lock021 vẫn chưa
   có câu trả lời rõ cho câu hỏi riêng; không suy từ permission downloadNode.
+
+## Tiếp tục goal sau 12:11 UTC ngày 2026-09-05
+
+- PR43/020 merge `7d4546b8d303af5323205c75e6d6b51ba367d3c4`: CI33964673608 dùng
+  JSR thật, 1440/0/4 ở Tests và release preflight; Codex sạch5551639002 trên
+  đúng c886e77a84. Tree merge khớp HEAD. Root ghi 020 DONE, tổng21/25.
+- Definition020 snapshot55bb746 được reviewer độc lập APPROVE: scope, tiêu chí,
+  sáu provenance fields và20binding cũ giữ nguyên. Parent thêm4definition fields
+  sau review, không giả định snapshot trước approval đã qua validator.
+- PR25 helper4af7bd1 được reviewer độc lập APPROVE tại bcb57cc: tự chạy208
+  self/history tests và red16/control5; chặn namespace .git và buộc citation vào
+  đúng block. Plan021 đã bổ sung so mọi byte/mode của package, kể cả7HTML, cùng
+  negative control chỉ đổi HTML. Đây là gate dự kiến, chưa triển khai021.
+- Gate local backlog bcb57cc: full1385/0/4, check/lint213/fmt303, UItype/UI7,
+  Node build/syntax và pack10/7 đạt. Lock frozen giữ nguyên. Các số này trước
+  tích hợp020, không dùng thay gate main mới.
+- Hai binary Node chính thức20.20.2 và22.23.2 chạy cùng bundle ba5a6e1479 tại
+  integration02341f9621: initialize, tools/list135 và resources/list7 đạt. Không
+  gọi ERP tool, không đổi dependency. Đây là một build trên hai runtime, chưa
+  phải gate hai build tái lập của021.
+- Drop fix01692dcf27 và snapshotad0e76 được reviewer APPROVE: red11 mới, Node
+  contract27 và full1389 đạt. Parent tích hợp mainffc tại1e9e26a, UI7/Node build
+  và full1411/0/4 đạt. Chưa tích hợp020 tại thời điểm Browser này.
+- Browser sau sửa4a4a1c3d: native drag cả hai thứ tự response, rollback lỗi,
+  queue hai move với lỗi thứ hai, đổi project và offset đều đạt. Tab hidden thật
+  kiểm bằng tắt focus emulation trong tab QA riêng rồi đưa tab cover lên trước;
+  không spoof visibility hoặc phát event giả. Read cũ timeout khi hidden, không
+  retry; visible lại phát đúng một read bù. Còn hoàn tất matrix detail/evidence,
+  CI/Codex và merge016, chưa ghi DONE.
+- Quyền framework002, graph/npm/native lock021 vẫn chờ trả lời;022 phụ thuộc021.
+  Không release, publish, nâng dependency, đổi production hoặc file cá nhân.

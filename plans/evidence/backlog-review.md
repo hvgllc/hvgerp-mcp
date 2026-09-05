@@ -1000,3 +1000,39 @@ Không sửa source ứng dụng, plan/manifest/README hoặc approval; không c
 application build, network, Browser, push hay trả lời GitHub trong lượt này.
 Review độc lập helper mới do parent điều phối, không lấy verdict cũ làm approval
 cho delta này.
+
+## Parent xác nhận review helper và các snapshot sau 020
+
+Reviewer độc lập `/root/goal_execute_006` APPROVE helper tại
+`bcb57ccea3bcdab129c84d14bec3842c1c3b315a`, tree
+`1efa539c2480a03f97bc919684f4adb2d625add0`, report blob
+`e5b1939ffcc97886fba1da9b3d964726e068ba2d`. Reviewer tự chạy toàn bộ208
+self/history tests, validator25/25, fmt73, lint3; red trên validator trước sửa
+đạt5control và thất bại16ca đúng nguyên nhân, HEAD đạt21/21ca mới. Các183
+selftests cũ nguyên byte, history helper không đổi. Probe VM đầu có lỗi thay
+chuỗi đã sửa trong bộ nhớ, không tính là behavioral red.
+
+Gate application độc lập ở cùng bcb57cc đạt full1385/0/4, server check, lint213,
+fmt303, UI typecheck, UI7, Node build/syntax và pack10file/7HTML. Build xong
+trước full suite, worktree sạch, frozen lock giữ SHA-256
+`f32268af50c10ba06223c9a0b7f2d7092555ffa90172cd573ecf8d3feb2d882a`. Bundle là
+`ba5a6e147950660ca408b27b3db00972aef2d5072448e9015761de147cb04bd1`. Gate này
+trước khi merge source020; không dùng số1385 thay kiểm tích hợp mới.
+
+Finding3940494468 được xử lý trong plan021 tại bcb57cc, plan blob
+`7ff97786d71cba206a0d42d3e15628d9d828257d`, reviewer độc lập APPROVE delta. Kế
+hoạch nay buộc so toàn bộ path/mode/size/SHA-256 của từng file trong package, kể
+cả7HTML, và negative control chỉ đổi byte HTML trong khi bundle/list không đổi.
+Có control thiếu/thừa file, mode và hai package giống nhau. Đây là tiêu chí
+triển khai021 còn TODO, không phải tuyên bố đã thực hiện hai build tái lập.
+
+Sau PR43 merge, parent merge main7d4546b vào backlog tại
+`e36592bad028e442203b055ed8c2911c0311f1a8`, giữ application đúng main mới.
+Definition020 snapshot `55bb74697d3d731bda0c3cb297fcdce29f8e9045` được reviewer
+độc lập `/root/goal_execute_011` APPROVE: plan
+`115b585038233f71f1faffd93369776e253bc546`, manifest
+`72559f33368a0624fe8e569a44cb528126c08708`, report
+`1df02f77b294c32d484407951ce79497fc585402`. Sáu provenance fields khớp Git,
+scope/tiêu chí không giảm,20definition cũ nguyên byte. Snapshot lúc chưa có bốn
+definition fields thất bại đúng hai diagnostic020; parent chỉ thêm binding sau
+review, chưa push snapshot thiếu approval. Tổng metadata nay21DONE.
