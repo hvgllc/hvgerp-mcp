@@ -1260,3 +1260,84 @@ trực tiếp một nhánh từ GitHub tới 72fb6a7: hai pinned refs b9d6d02/bb
 ancestor, validator 25 và history 4 đạt. Reply discussion3940853839 yêu cầu kiểm
 đúng SHA, giữ rule hiện có và không rebind approval sang checkout khác. Không
 suy đoán ai tạo d399 hoặc bỏ kiểm ancestry thật sau merge.
+
+## Sửa findings 3940924244 và 3940924246: code không phải cấu trúc Markdown
+
+Ngày 2026-09-06. Base đúng HEAD PR25 `7d20671284bbaadbadcd7fbf297635ee116a68b1`,
+review `5121591635`. Executor đọc đủ validator, toàn bộ selftests/history và
+plans/AGENTS trước khi sửa. Source commit
+`b4ef4ba2f6b6f93130efa4c3df9a88b425acd81c`, tree
+`15a60b710ee5b80126a4ef2cce5a28e40e0be284`. Chỉ sửa validator, selftests và mục
+report này; không thay AGENTS, journal, plan/manifest/approval, history helper
+hoặc source ứng dụng.
+
+Helper cũ dùng raw substring cho required heading và quét link/definition trên
+toàn bộ Markdown. Vì vậy ví dụ link hỏng/unsafe trong code vẫn báo lỗi, còn
+heading chỉ nằm trong fenced example có thể làm tiêu chí cấu trúc qua sai.
+
+### Red thực và giới hạn parser đã chọn
+
+Trước sửa production helper, chạy trên 7d206:
+
+```sh
+node --test --test-name-pattern='Markdown (code fence|inline code|require)' plans/test-validator.mjs
+```
+
+Kết quả **1 passed, 16 failed, 0 cancelled**, exit 1, đủ 17 ca. Các failure là
+assertion quan sát được: validator cũ báo diagnostic cho link/reference ví dụ
+trong code, hoặc nhận heading thiếu với exit 0. Một control heading được bọc
+inline tick đã bị từ chối đúng từ trước. Không lấy exception/import/Git thiếu
+làm red, không đổi trạng thái hoặc approval thật để tạo kết quả xanh. Fixture
+heading đặt plan021 ở STALE trong bộ nhớ với lý do rõ, giữ các kiểm lịch sử.
+
+Bản sửa thêm lớp bỏ nội dung fenced code trước kiểm heading và link, rồi bỏ
+inline code trước thu thập link/definition. Quy tắc hẹp:
+
+- Fence top-level bắt đầu sau 0 đến 3 dấu cách, dùng ít nhất ba backtick hoặc
+  tilde. Backtick info không được chứa backtick. Closing fence phải cùng marker,
+  dài bằng hoặc hơn opener và chỉ có whitespace theo sau. Fence ngắn, khác loại
+  hoặc có text sau marker không đóng block. Không cắt bỏ snippet nguồn trong
+  phần kiểm evidence exact text; phần đó vẫn đọc body nguyên bản.
+- Fence chưa đóng được coi kéo dài tới EOF, không tự phát sinh lỗi syntax riêng.
+  Ví dụ link trong vùng đó không thành live target; required heading bị che
+  trong vùng đó vẫn bị báo thiếu. Không tự kết thúc fence để làm tài liệu qua
+  gate.
+- Inline code dùng cặp run backtick có cùng độ dài, giữ các backtick lẻ bên
+  trong. Opener đã escape hoặc không có closer không che link; không ghép span
+  qua đoạn trống LF/CRLF. Link và reference definition bên ngoài span vẫn kiểm
+  như cũ.
+- Required heading phải là dòng ATX cấp 2 ngoài fence, không phải substring
+  trong prose hoặc heading cấp 3. Cho phép indentation 0 đến 3 space và closing
+  hashes có whitespace đúng dạng. Không thay contract metadata/scope section
+  hiện hữu.
+
+Đây không phải parser CommonMark đầy đủ: không mở phạm vi sang indented code,
+fence lồng list/blockquote, HTML block hoặc toàn bộ grammar link. Các giới hạn
+destination/reference title đã được duyệt trước vẫn giữ nguyên. Validator vẫn
+kiểm mọi reference definition thật, kể cả chưa dùng; definition chỉ nằm trong
+fence không sinh target ngay cả khi có usage ngoài fence.
+
+### Green và bảo toàn regression
+
+Thêm 38 selftests: backtick/tilde, indentation, delimiter length/type, info sai,
+fence chưa đóng, inline run/escape/unmatched/blank paragraph, required heading
+trong code/prose/cấp sai và controls heading/link/definition thật sau code.
+Focused Markdown ban đầu đạt 93/93; ba control bổ sung sau đó được bao phủ trong
+full selftest cuối. So sánh bằng Node assertion, sau khi bỏ duy nhất đoạn test
+mới, toàn bộ selftest cũ khớp byte với 7d206.
+
+| Lệnh                                                                                             | Kết quả                                   |
+| ------------------------------------------------------------------------------------------------ | ----------------------------------------- |
+| `node --test plans/test-validator.mjs`                                                           | 307 passed, 0 failed, gồm 269 cũ + 38 mới |
+| `node plans/validate-plans.mjs`                                                                  | exit 0, đủ 25 kế hoạch                    |
+| `deno fmt --no-config --check plans/`                                                            | exit 0, 75 file                           |
+| `deno lint --no-config plans/validate-plans.mjs plans/test-validator.mjs plans/test-history.mjs` | exit 0, 3 file                            |
+| `git diff --check`                                                                               | exit 0                                    |
+| `node --test plans/test-history.mjs` sau commit source sạch                                      | 4 passed, 0 failed                        |
+
+Tổng 311 self/history tests, giữ đủ 273 ca cũ. History gate dùng Git transport
+local và disposable clone, không gọi mạng; giữ ca thiếu reviewed refs và thiếu
+definition ref bị từ chối rồi phục hồi đúng khi fetch local ref thật. Không
+build ứng dụng, Browser, GitHub, push hoặc publish. Kết quả này chỉ là kiểm
+consistency offline, không chứng thực danh tính reviewer. Source và evidence mới
+còn chờ review độc lập, không tự ghi APPROVE.
