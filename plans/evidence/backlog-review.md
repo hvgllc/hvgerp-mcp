@@ -1118,3 +1118,64 @@ thật. Finding không tái hiện trên HEAD remote hiện tại, parent trả 
 tại discussion3940678021. Không sửa các approval hợp lệ hoặc bỏ gate history.
 PR25 vẫn phải merge commit, không squash/rebase, rồi kiểm ancestry trên main
 mới.
+
+## Sửa finding 3940727090 và 3940727091
+
+Executor bắt đầu tại `5a3631946c188eace908ea252ea80581603f7f62`, source sửa
+`d97f092cf3b9f553a002adfeccaad159070ec9fe`. Chỉ sửa validator, selftests và mục
+báo cáo này; không sửa rule ancestry, `plans/AGENTS.md`, history helper,
+metadata approval, kế hoạch hoặc source ứng dụng. P1 ancestry lần hai do parent
+xử lý riêng.
+
+`3940727090`: bộ kiểm cũ chỉ lấy destination trong inline link, bỏ qua các
+reference definitions. Bản sửa thu destination từ definition rồi đưa qua chính
+guard HTTP/anchor, absolute/Windows/backslash, traversal và tồn tại file hiện
+hữu. Path được resolve từ thư mục chứa Markdown, không từ repo root. Test unsafe
+khai báo file đích tồn tại trong VM, kiểm đúng một diagnostic và xác nhận không
+có filesystem lookup đích bị chặn; không đọc nội dung file hệ thống.
+
+Phạm vi cú pháp được hỗ trợ là definition một dòng dạng `[label]: destination`,
+destination bare không whitespace hoặc bọc angle brackets, có thể có title được
+bọc bằng nháy đơn, nháy kép hoặc ngoặc tròn trên cùng dòng. Kiểm mọi definition,
+kể cả chưa được dùng hoặc trùng label, nên full/collapsed/shortcut reference đều
+không thể bỏ kiểm destination. Definition nhiều dòng, angle bị thiếu hoặc phần
+đuôi không parse được bị từ chối bằng diagnostic
+`unsupported Markdown reference definition`, không bỏ qua âm thầm.
+
+Đây là cú pháp giới hạn phục vụ tài liệu kế hoạch, không phải triển khai đầy đủ
+CommonMark: không thêm dependency parser, không tuyên bố phân tích toàn bộ
+escape/HTML/entity/code-block grammar. Bộ quét definition có tính bảo thủ, kể cả
+declaration chưa dùng cũng phải có đích hợp lệ. Các giới hạn lexical/symlink của
+guard đường dẫn trước vẫn giữ nguyên.
+
+`3940727091`: checklist DONE nay nhận cả unordered `-`, `*`, `+` lẫn ordered
+number-dot/number-parenthesis, kể cả indentation. Bất kỳ `[ ]` nào được nhận
+trong mục Tiêu chí hoàn tất làm DONE thất bại; `[x]` và `[X]` đều được nhận.
+Checklist ở section khác không trở thành completion gate. Definition binding vẫn
+hoạt động độc lập: sửa checklist của DONE đã review vẫn phải review lại
+definition, không tạo approval giả để lấy control xanh.
+
+Red thực chạy trước sửa production:
+
+```sh
+node --test --test-name-pattern='Markdown reference|DONE ordered completion' plans/test-validator.mjs
+```
+
+Exit 1, **7 passed, 18 failed**. Bốn ordered unchecked không tạo diagnostic
+unchecked; bốn ordered checked bị báo sai là thiếu checklist. Mười reference
+negative/unsupported được validator cũ nhận sai: ba missing destination theo
+full/collapsed/shortcut, bốn absolute/traversal/Windows/backslash và ba
+definition không được hỗ trợ. Bảy control hợp lệ đã đạt trước sửa. Red không dựa
+lỗi import, Git hoặc exception; với DONE, assertion tìm diagnostic checklist
+riêng, không lấy lỗi definition binding sẵn có làm bằng chứng.
+
+Sau sửa, focused 25/25 và `node plans/validate-plans.mjs` đạt 25 kế hoạch.
+`node --test plans/test-validator.mjs` đạt 245 passed, 0 failed, 0 skipped, giữ
+đủ 220 selftests trước đó và thêm 25 ca. `deno fmt --check plans/` đạt 75 file;
+lint ba helper `--no-config` và `git diff --check` đều exit 0. Sau commit source
+với worktree sạch, `node --test plans/test-history.mjs` đạt 4/4, giữ nguyên
+clean single-branch clone và các negative provenance. Tổng 249 self/history, giữ
+toàn bộ 224 ca cũ. Chỉ dùng Git transport local, không cần mạng.
+
+Không push, trả lời GitHub, chạy application build, Browser, Publish hoặc thay
+dependency. Đây là evidence executor, không phải approval độc lập của delta mới.
