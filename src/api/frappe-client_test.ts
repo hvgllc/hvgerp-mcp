@@ -23,6 +23,101 @@ import { opportunityKanbanAdapter } from "../kanban/adapters/opportunity.ts";
 import { issueKanbanAdapter } from "../kanban/adapters/issue.ts";
 
 for (const readKind of ["get", "list"] as const) {
+  Deno.test(`FrappeClient inflight ${readKind} remains invalidated across capacity-one eviction`, async () => {
+    const originalFetch = globalThis.fetch;
+    const started = Promise.withResolvers<void>();
+    const deferred = Promise.withResolvers<Response>();
+    const cache = new MemoryCache(1);
+    const client = makeClient({ cache, retries: 0 });
+    let taskReads = 0;
+    let otherReads = 0;
+    const value = (revision: number) =>
+      readKind === "get"
+        ? { name: "TASK-001", revision }
+        : [{ name: "TASK-001", revision }];
+    const read = () =>
+      readKind === "get" ? client.get("Task", "TASK-001") : client.list("Task");
+    globalThis.fetch = async (input, init) => {
+      if (init?.method !== "GET") {
+        return Response.json({ data: { name: "TASK-001" } });
+      }
+      if (String(input).includes("Customer")) {
+        otherReads++;
+        return Response.json({ data: { name: "CUSTOMER-001" } });
+      }
+      if (++taskReads === 1) {
+        started.resolve();
+        return await deferred.promise;
+      }
+      return Response.json({ data: value(1) });
+    };
+    let pending: ReturnType<typeof read> | undefined;
+    try {
+      pending = read();
+      await started.promise;
+      await client.update("Task", "TASK-001", {});
+      assertEquals(await read(), value(1));
+      await client.get("Customer", "CUSTOMER-001");
+      deferred.resolve(Response.json({ data: value(0) }));
+      assertEquals(await pending, value(0));
+      await client.get("Customer", "CUSTOMER-001");
+      assertEquals(
+        otherReads,
+        1,
+        "late Task fill must not evict the unrelated fresh entry",
+      );
+      assertEquals(await read(), value(1));
+      assertEquals(await read(), value(1));
+      assertEquals(taskReads, 3);
+    } finally {
+      deferred.resolve(Response.json({ data: value(0) }));
+      try {
+        await pending;
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    }
+  });
+
+  Deno.test(`FrappeClient ${readKind} cache miss returns data isolated from later cache hits`, async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    const doc = {
+      name: "TASK-001",
+      nested: { status: "Open" },
+      rows: [{ qty: 1 }],
+    };
+    const data = readKind === "get" ? doc : [doc];
+    globalThis.fetch = async () => {
+      calls++;
+      return Response.json({ data });
+    };
+    try {
+      const client = makeClient({ cache: new MemoryCache(1), retries: 0 });
+      const read = () =>
+        readKind === "get"
+          ? client.get<typeof doc>("Task", "TASK-001")
+          : client.list<typeof doc>("Task");
+      const first = await read();
+      const firstDoc = Array.isArray(first) ? first[0] : first;
+      firstDoc.name = "CHANGED";
+      firstDoc.nested.status = "Changed";
+      firstDoc.rows[0].qty = 99;
+      firstDoc.rows.push({ qty: 2 });
+      if (Array.isArray(first)) first.push(firstDoc);
+      const second = await read();
+      assertEquals(second, data);
+      const secondDoc = Array.isArray(second) ? second[0] : second;
+      secondDoc.rows[0].qty = 200;
+      assertEquals(await read(), data);
+      assertEquals(calls, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+}
+
+for (const readKind of ["get", "list"] as const) {
   for (const skipCache of [false, true]) {
     for (
       const mutation of [
