@@ -75,7 +75,19 @@ to 20, default 5. It returns `{data: rows}` with `name`, `item_code`,
 posting time, then name descending. Cancelled rows are excluded. The tool uses
 normal ERPNext read permissions and works with only the `inventory` category;
 permission errors never fall back to site-wide Stock Entries or generic
-operations. It has no standalone viewer binding.
+operations. Each ledger query bypasses the list cache so a new read sees posted
+or cancelled movements without waiting for the cache TTL; this does not promise
+an atomic snapshot or automatic updates while the panel remains open. It has no
+standalone viewer binding.
+
+The stock detail panel preserves successful Item information when ledger loading
+fails, and preserves successful ledger rows when Item loading fails. Errors and
+loading are separate for the two sections. It reads Item before requesting the
+ledger, allowing the ledger's normal Item ID resolution to reuse the freshly
+populated cache. With the same client/cache and a valid cache TTL, this avoids
+duplicate Item GETs on a cold or expired cache. Disabled, immediately expired,
+evicted or non-shared caches do not provide that deduplication guarantee; Item
+ID/name resolution and permission checks still apply.
 
 ## Purchasing (11) → doclist-viewer / invoice-viewer
 

@@ -1,16 +1,12 @@
-/** Inline detail panel for a stock line — shows item info, recent movements, and navigation */
+/** Chi tiết mặt hàng, chuyển động gần đây và điều hướng theo dòng kho đang chọn. */
 
 import { useEffect, useState } from "react";
 import type { App } from "@modelcontextprotocol/ext-apps";
 import { colors, fonts, styles } from "~/shared/theme";
 import { InfoField } from "~/shared/InfoField";
 import { ActionButton } from "~/shared/ActionButton";
-import { extractToolResultText } from "~/shared/refresh";
-import {
-  buildStockMovementsRequest,
-  parseStockMovements,
-} from "~/shared/stock-movements";
-import type { StockMovement } from "~/shared/stock-movements";
+import { loadStockDetails } from "~/shared/stock-movements";
+import type { StockDetailsState } from "~/shared/stock-movements";
 
 const TOOL_CALL_TIMEOUT_MS = 10_000;
 
@@ -20,69 +16,27 @@ export function StockDetailPanel({ app, itemCode, warehouse, onClose }: {
   warehouse: string;
   onClose: () => void;
 }) {
-  const [itemData, setItemData] = useState<Record<string, unknown> | null>(
-    null,
-  );
-  const [movements, setMovements] = useState<StockMovement[] | null>(
-    null,
-  );
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [loadedIdentity, setLoadedIdentity] = useState<string | null>(null);
+  const [details, setDetails] = useState<
+    { identity: string; state: StockDetailsState } | null
+  >(null);
   const identity = JSON.stringify([itemCode, warehouse]);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setItemData(null);
-    setMovements(null);
-    setError(null);
-    (async () => {
-      try {
-        const request = buildStockMovementsRequest(itemCode, warehouse);
-        const [itemRes, moveRes] = await Promise.all([
-          app.callServerTool({
-            name: "erpnext_item_get",
-            arguments: { name: itemCode },
-          }, { timeout: TOOL_CALL_TIMEOUT_MS }),
-          app.callServerTool({
-            name: request.toolName,
-            arguments: request.arguments,
-          }, { timeout: TOOL_CALL_TIMEOUT_MS }),
-        ]);
-        if (cancelled) return;
-        setMovements(parseStockMovements(moveRes, itemCode, warehouse));
-        if (itemRes.isError) {
-          throw new Error(
-            extractToolResultText(itemRes) || "Item request failed",
-          );
-        } else {
-          const t = extractToolResultText(itemRes);
-          if (t) {
-            const p = JSON.parse(t);
-            setItemData(p.data ?? p);
-          }
-        }
-      } catch (cause) {
-        if (!cancelled) {
-          setError(
-            cause instanceof Error
-              ? cause.message
-              : "Stock details request failed",
-          );
-        }
-      }
-      if (!cancelled) {
-        setLoadedIdentity(identity);
-        setLoading(false);
-      }
-    })();
+    void loadStockDetails(
+      (request) =>
+        app.callServerTool(request, { timeout: TOOL_CALL_TIMEOUT_MS }),
+      itemCode,
+      warehouse,
+      () => !cancelled,
+      (state) => setDetails({ identity, state }),
+    );
     return () => {
       cancelled = true;
     };
   }, [app, itemCode, warehouse, identity]);
 
-  if (loading || loadedIdentity !== identity) {
+  if (!details || details.identity !== identity || details.state.itemLoading) {
     return (
       <div
         style={{
@@ -101,6 +55,9 @@ export function StockDetailPanel({ app, itemCode, warehouse, onClose }: {
       </div>
     );
   }
+
+  const { itemData, movements, itemError, movementsError, movementsLoading } =
+    details.state;
 
   return (
     <div
@@ -143,6 +100,11 @@ export function StockDetailPanel({ app, itemCode, warehouse, onClose }: {
       </div>
 
       {/* Item info */}
+      {itemError && (
+        <div role="alert" style={{ color: colors.error, marginBottom: 10 }}>
+          Item: {itemError}
+        </div>
+      )}
       {itemData && (
         <div
           style={{
@@ -175,9 +137,17 @@ export function StockDetailPanel({ app, itemCode, warehouse, onClose }: {
       )}
 
       {/* Recent movements */}
-      {error && (
+      {movementsLoading && (
+        <div
+          role="status"
+          style={{ color: colors.text.muted, marginBottom: 10 }}
+        >
+          Loading recent movements…
+        </div>
+      )}
+      {movementsError && (
         <div role="alert" style={{ color: colors.error, marginBottom: 10 }}>
-          {error}
+          {movementsError}
         </div>
       )}
       {movements?.length === 0 && (

@@ -85,7 +85,7 @@ export const inventoryTools: ErpNextTool[] = [
         ], ["is_cancelled", "=", 0]],
         order_by: "posting_date desc, posting_time desc, name desc",
         limit,
-      });
+      }, { skipCache: true });
       return { data: rows };
     },
   },

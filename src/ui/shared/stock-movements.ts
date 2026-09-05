@@ -14,6 +14,82 @@ export interface StockMovement {
   stock_uom: string;
 }
 
+export interface StockDetailsState {
+  itemData: Record<string, unknown> | null;
+  movements: StockMovement[] | null;
+  itemError: string | null;
+  movementsError: string | null;
+  itemLoading: boolean;
+  movementsLoading: boolean;
+}
+
+export type StockDetailsCall = (
+  request: { name: string; arguments: Record<string, unknown> },
+) => Promise<ToolResultPayload>;
+
+export async function loadStockDetails(
+  callTool: StockDetailsCall,
+  itemCode: string,
+  warehouse: string,
+  isCurrent: () => boolean,
+  publish: (state: StockDetailsState) => void,
+): Promise<void> {
+  const state: StockDetailsState = {
+    itemData: null,
+    movements: null,
+    itemError: null,
+    movementsError: null,
+    itemLoading: true,
+    movementsLoading: true,
+  };
+  if (!isCurrent()) return;
+  publish({ ...state });
+
+  // Đọc Item trước để resolveItem của ledger có thể dùng cache vừa làm nóng.
+  // Lỗi Item không được chặn phần ledger có thể đọc độc lập.
+  try {
+    const itemRes = await callTool({
+      name: "erpnext_item_get",
+      arguments: { name: itemCode },
+    });
+    if (!isCurrent()) return;
+    const text = extractToolResultText(itemRes);
+    if (itemRes.isError) throw new Error(text || "Item request failed");
+    const payload: unknown = text ? JSON.parse(text) : null;
+    const data = payload && typeof payload === "object" && "data" in payload
+      ? payload.data
+      : payload;
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      throw new Error("Invalid item payload");
+    }
+    state.itemData = data as Record<string, unknown>;
+  } catch (cause) {
+    state.itemError = cause instanceof Error
+      ? cause.message
+      : "Item request failed";
+  }
+  if (!isCurrent()) return;
+  state.itemLoading = false;
+  publish({ ...state });
+
+  try {
+    const request = buildStockMovementsRequest(itemCode, warehouse);
+    const moveRes = await callTool({
+      name: request.toolName,
+      arguments: request.arguments,
+    });
+    if (!isCurrent()) return;
+    state.movements = parseStockMovements(moveRes, itemCode, warehouse);
+  } catch (cause) {
+    state.movementsError = cause instanceof Error
+      ? cause.message
+      : "Stock movements request failed";
+  }
+  if (isCurrent()) {
+    publish({ ...state, movementsLoading: false });
+  }
+}
+
 export function buildStockMovementsRequest(
   itemCode: string,
   warehouse: string,
