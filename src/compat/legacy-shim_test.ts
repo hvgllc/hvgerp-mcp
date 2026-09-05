@@ -394,6 +394,40 @@ for (
   });
 }
 
+Deno.test("aborted batch keeps completed write and never forwards later entries", async () => {
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  let calls = 0;
+  globalThis.fetch = async (_input, init) => {
+    calls += 1;
+    if (calls === 1) {
+      controller.abort(new DOMException("private abort detail", "AbortError"));
+      return Response.json({ jsonrpc: "2.0", id: 1, result: { saved: true } });
+    }
+    assert(init?.signal?.aborted);
+    throw init.signal.reason;
+  };
+  try {
+    const request = new Request(
+      partialPost([batchWrite(1), batchWrite(2), batchWrite(3)]),
+      { signal: controller.signal },
+    );
+    const response = await handleShimRequest(request, {
+      upstream: "http://private-upstream:7654",
+    });
+    assertEquals(response.status, 502);
+    const replies = await response.json();
+    assertEquals(replies.map((reply: { id: number }) => reply.id), [1, 2, 3]);
+    assertEquals(replies[0].result, { saved: true });
+    assert(replies[1].error.message.includes("Outcome unknown"));
+    assert(replies[2].error.message.includes("Not executed"));
+    assert(!JSON.stringify(replies).includes("private"));
+    assertEquals(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 Deno.test("single forwarding exception retains existing rejection contract", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => partialFailure("network");
