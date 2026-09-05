@@ -17,14 +17,24 @@ function canonicalArguments(value: unknown): unknown {
 }
 
 export function kanbanRequestIdentity(
-  board: KanbanBoardData,
+  board: KanbanBoardData | null,
   request: KanbanRefreshRequestData,
 ): string {
+  // Khớp các giá trị mặc định do handler get_board bổ sung, không đổi request.
+  const args = request.arguments;
+  const identityArguments = request.toolName === "erpnext_kanban_get_board"
+    ? {
+      ...args,
+      doctype: String(args.doctype ?? ""),
+      limit: Math.floor(Number(args.limit ?? 50)),
+      offset: Math.max(0, Number(args.offset ?? 0)),
+    }
+    : args;
   return JSON.stringify([
-    board.boardId,
-    board.doctype,
+    board?.boardId ?? null,
+    board?.doctype ?? null,
     request.toolName,
-    canonicalArguments(request.arguments),
+    canonicalArguments(identityArguments),
   ]);
 }
 
@@ -43,9 +53,9 @@ export interface KanbanRefreshGate {
 
 export function canRequestBoardRefresh(
   gate: KanbanRefreshGate,
-  options: { ignoreInterval?: boolean } = {},
+  options: { ignoreInterval?: boolean; allowWithoutBoard?: boolean } = {},
 ): boolean {
-  if (!gate.board || !gate.request) {
+  if ((!gate.board && !options.allowWithoutBoard) || !gate.request) {
     return false;
   }
 

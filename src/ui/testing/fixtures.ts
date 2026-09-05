@@ -197,6 +197,13 @@ export const TOOL_NAMES: Record<Viewer, string> = {
   "kanban-viewer": "erpnext_kanban_get_board",
 };
 
+export function captureHostBoard(board: KanbanBoardData) {
+  return {
+    arguments: structuredClone(board.refreshArguments),
+    board: structuredClone(board),
+  };
+}
+
 export function boardFixture(identity: "A" | "B" = "A"): KanbanBoardData {
   return {
     boardId: "task-board",

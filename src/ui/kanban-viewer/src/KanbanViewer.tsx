@@ -1016,7 +1016,16 @@ function BoardView({
 }
 
 function parseBoard(text: string): KanbanBoardData {
-  return JSON.parse(text) as KanbanBoardData;
+  const board = JSON.parse(text) as KanbanBoardData;
+  if (
+    !board || typeof board.boardId !== "string" ||
+    typeof board.doctype !== "string" ||
+    !board.refreshArguments || typeof board.refreshArguments !== "object" ||
+    Array.isArray(board.refreshArguments) ||
+    !Array.isArray(board.cards) || !Array.isArray(board.columns) ||
+    !Array.isArray(board.allowedTransitions)
+  ) throw new Error("Invalid kanban payload");
+  return board;
 }
 
 type ToolResultPayload = {
@@ -1046,6 +1055,7 @@ export function KanbanViewer() {
   const boardRef = useRef<KanbanBoardData | null>(null);
   const draggedCardIdRef = useRef<string | null>(null);
   const draggingRef = useRef(false);
+  const moveErrorRef = useRef<string | null>(null);
   const controllerRef = useRef<
     ReturnType<typeof createBoardRefreshController> | null
   >(null);
@@ -1064,6 +1074,7 @@ export function KanbanViewer() {
       apply(board) {
         boardRef.current = board;
         hydrateBoard(board);
+        if (moveErrorRef.current) setError(moveErrorRef.current);
       },
       gate: () => ({
         visibilityState: typeof document === "undefined"
@@ -1154,6 +1165,7 @@ export function KanbanViewer() {
         if (snapshot) {
           updateBoard(rollbackMoveFailure(snapshot, { errorMessage: message }));
         }
+        moveErrorRef.current = message;
         setError(message);
         setLiveMessage(message);
       } else {
@@ -1169,6 +1181,7 @@ export function KanbanViewer() {
               rollbackMoveFailure(snapshot, { errorMessage: message }),
             );
           }
+          moveErrorRef.current = message;
           setError(message);
           setLiveMessage(message);
         } else if (boardRef.current) {
@@ -1194,6 +1207,7 @@ export function KanbanViewer() {
           errorMessage: message,
         }));
       }
+      moveErrorRef.current = message;
       setError(message);
       setLiveMessage(message);
     } finally {
@@ -1237,6 +1251,7 @@ export function KanbanViewer() {
       toColumn,
       mutation: refreshController.beginMutation(),
     };
+    moveErrorRef.current = null;
 
     const shouldStartImmediately = !processingRef.current &&
       queueRef.current.length === 0;
@@ -1252,6 +1267,7 @@ export function KanbanViewer() {
 
   useEffect(() => {
     app.ontoolinput = (params: { arguments?: Record<string, unknown> }) => {
+      moveErrorRef.current = null;
       const toolName = app.getHostContext()?.toolInfo?.tool.name;
       refreshController.receiveInput(
         toolName && params.arguments
@@ -1269,16 +1285,17 @@ export function KanbanViewer() {
     };
 
     app.ontoolresult = (result: ToolResultPayload) => {
-      const text = extractTextContent(result);
-      if (!text) {
-        setError("No kanban payload received from tool result");
-        return;
-      }
-
       try {
+        if (result.isError) throw new Error(extractToolError(result));
+        const text = extractTextContent(result);
+        if (!text) {
+          throw new Error("No kanban payload received from tool result");
+        }
+        moveErrorRef.current = null;
         refreshController.receiveBoard(parseBoard(text));
         closeDetail();
       } catch (error) {
+        refreshController.failHost();
         setError(
           error instanceof Error
             ? error.message

@@ -31,6 +31,7 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
   let session = 0;
   let generation = 0;
   let waitingForHost = false;
+  let recoveringHost = false;
   let inFlight = false;
   let pending = false;
   let force = false;
@@ -43,9 +44,15 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
     board = next;
     ports.apply(next);
   }
+  function currentRequest() {
+    // Khi host lỗi, board cũ chỉ để hiển thị; retry phải theo input mới.
+    return recoveringHost
+      ? fallback
+      : resolveKanbanRefreshRequest(board, fallback);
+  }
   async function drain(): Promise<boolean> {
     if (!pending || waitingForHost || mutations.size > 0) return false;
-    const refresh = resolveKanbanRefreshRequest(board, fallback);
+    const refresh = currentRequest();
     const gate = ports.gate();
     if (
       ports.now() < retryAt || !gate.available || !canRequestBoardRefresh({
@@ -56,12 +63,14 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
         now: ports.now(),
         lastRefreshStartedAt: lastStarted,
         minIntervalMs: ports.minIntervalMs,
-      }, { ignoreInterval: force }) || !refresh || !board
+      }, { ignoreInterval: force, allowWithoutBoard: recoveringHost }) ||
+      !refresh
     ) return false;
     const captured = {
       session,
       generation,
-      identity: kanbanRequestIdentity(board, refresh),
+      recoveringHost,
+      identity: kanbanRequestIdentity(recoveringHost ? null : board, refresh),
     };
     const request = structuredClone(refresh);
     inFlight = true;
@@ -71,11 +80,13 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
     let failed = false;
     try {
       const next = await ports.read(request);
-      const currentRequest = resolveKanbanRefreshRequest(board, fallback);
+      const latestRequest = currentRequest();
       if (
         captured.session !== session || captured.generation !== generation ||
-        waitingForHost || mutations.size > 0 || !board || !currentRequest ||
-        captured.identity !== kanbanRequestIdentity(board, currentRequest) ||
+        waitingForHost || mutations.size > 0 || !latestRequest ||
+        captured.recoveringHost !== recoveringHost ||
+        captured.identity !==
+          kanbanRequestIdentity(recoveringHost ? null : board, latestRequest) ||
         ports.gate().dragging
       ) {
         pending = true;
@@ -85,12 +96,13 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
       // Response cùng lượt đọc không được âm thầm chuyển sang filter/trang khác.
       if (
         kanbanRequestIdentity(
-          next,
+          captured.recoveringHost ? null : next,
           resolveKanbanRefreshRequest(next, null)!,
         ) !== captured.identity
       ) {
         throw new Error("Board refresh response identity mismatch");
       }
+      recoveringHost = false;
       update(next);
       return true;
     } catch {
@@ -132,20 +144,36 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
     update,
     request,
     receiveBoard(next: KanbanBoardData) {
+      if (
+        (waitingForHost || recoveringHost) && fallback &&
+        kanbanRequestIdentity(null, fallback) !==
+          kanbanRequestIdentity(null, resolveKanbanRefreshRequest(next, null)!)
+      ) throw new Error("Host board response identity mismatch");
       session++;
       waitingForHost = false;
-      pending = inFlight || mutations.size > 0;
+      recoveringHost = false;
+      pending ||= inFlight || mutations.size > 0;
       force = pending;
       retryAt = 0;
       update(next);
+      void drain();
     },
     receiveInput(next: KanbanRefreshRequestData | null) {
       session++;
       waitingForHost = true;
+      recoveringHost = false;
       fallback = next ? structuredClone(next) : null;
-      pending = false;
-      force = false;
+      pending ||= inFlight || mutations.size > 0;
+      force = pending;
       retryAt = 0;
+    },
+    failHost() {
+      if (!waitingForHost && !recoveringHost) return;
+      waitingForHost = false;
+      recoveringHost = true;
+      pending = fallback !== null;
+      force = false;
+      retryAt = ports.now() + ports.minIntervalMs;
     },
     beginMutation,
     runDetailMutation<T>(
@@ -185,7 +213,7 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
       return pending;
     },
     get ready() {
-      return board !== null && !waitingForHost;
+      return board !== null && !waitingForHost && !recoveringHost;
     },
   };
 }

@@ -13,7 +13,7 @@ const payload = (value) => ({
   content: [{ type: "text", text: JSON.stringify(value) }],
 });
 
-function harness() {
+function harness({ initialBoard = true } = {}) {
   const slots = [];
   const effects = [];
   const calls = [];
@@ -162,9 +162,197 @@ function harness() {
     app.ontoolresult(payload(board));
     render();
   }
-  send(fixtures.boardFixture());
-  return { calls, render, send, fixtures };
+  if (initialBoard) send(fixtures.boardFixture());
+  return {
+    calls,
+    render,
+    send,
+    fixtures,
+    input: (args) => app.ontoolinput({ arguments: args }),
+    result: (value) => app.ontoolresult(value),
+  };
 }
+
+for (const scope of ["A", "B", "page"]) {
+  test(`fixture held host snapshot stays frozen ${scope}`, () => {
+    const h = harness();
+    const board = scope === "page"
+      ? h.fixtures.pagedBoardFixture(50)
+      : h.fixtures.boardFixture(scope);
+    const captured = h.fixtures.captureHostBoard(board);
+    const before = JSON.stringify(captured);
+    board.cards[0].columnId = "Changed";
+    board.refreshArguments.offset = 999;
+    assert.equal(JSON.stringify(captured), before);
+    captured.arguments.offset = 888;
+    assert.notEqual(captured.board.refreshArguments.offset, 888);
+  });
+}
+
+for (const failure of ["error", "empty", "json", "schema"]) {
+  for (const scope of ["project", "page", "doctype", "cold"]) {
+    test(`component failed host retries latest scope ${failure} ${scope}`, async () => {
+      const h = harness({ initialBoard: scope !== "cold" });
+      const a = h.fixtures.boardFixture();
+      const b = h.fixtures.boardFixture("B");
+      if (scope === "page") {
+        b.refreshArguments = { ...a.refreshArguments, offset: 50 };
+      }
+      if (scope === "doctype") {
+        b.doctype = "Issue";
+        b.boardId = "issue-board";
+        b.refreshArguments = { doctype: "Issue", status: "Open" };
+      }
+      h.input(b.refreshArguments);
+      h.result(
+        failure === "error"
+          ? { isError: true, ...payload(a) }
+          : failure === "empty"
+          ? { content: [] }
+          : failure === "json"
+          ? { content: [{ type: "text", text: "{" }] }
+          : payload({ wrong: true }),
+      );
+      assert.ok(
+        h.render().state.error,
+        "failed host result must become an error, not a board",
+      );
+      if (scope !== "cold") {
+        h.render().requestMove(a.cards[0], "Working", "Start");
+        assert.equal(
+          h.calls.length,
+          0,
+          "last good board must not accept moves while recovering",
+        );
+      }
+      const retry = h.render().requestBoardRefresh({ ignoreInterval: true });
+      assert.equal(h.calls.length, 1, "failed host input must be retryable");
+      assert.deepEqual(
+        JSON.parse(JSON.stringify(h.calls[0].request.arguments)),
+        JSON.parse(JSON.stringify(b.refreshArguments)),
+      );
+      h.calls[0].resolve(payload(b));
+      assert.equal(await retry, true);
+      assert.equal(h.render().state.board.doctype, b.doctype);
+      assert.deepEqual(
+        JSON.parse(JSON.stringify(h.render().state.board.refreshArguments)),
+        JSON.parse(JSON.stringify(b.refreshArguments)),
+      );
+    });
+  }
+}
+
+for (const failure of ["throw", "tool", "business"]) {
+  test(`component move failure remains visible after revalidation ${failure}`, async () => {
+    const h = harness();
+    h.render().requestMove(h.render().state.board.cards[0], "Working", "Start");
+    if (failure === "throw") h.calls[0].reject(new Error("Permission denied"));
+    else {h.calls[0].resolve(
+        failure === "tool"
+          ? { isError: true, ...payload({ message: "Permission denied" }) }
+          : payload({ ok: false, errorMessage: "Permission denied" }),
+      );}
+    await tick();
+    const message = h.render().state.error;
+    assert.ok(message);
+    assert.equal(h.calls.length, 2);
+    h.calls[1].resolve(payload(h.fixtures.boardFixture()));
+    await tick();
+    assert.equal(
+      h.render().state.error,
+      message,
+      "corrective read must retain the move error",
+    );
+    h.send(h.fixtures.boardFixture("B"));
+    assert.equal(
+      h.render().state.error,
+      null,
+      "new host session clears previous move error",
+    );
+  });
+}
+
+for (const failed of [false, true]) {
+  test(`component host snapshot after completed mutation still corrects failed=${failed}`, async () => {
+    const h = harness();
+    const a = h.fixtures.boardFixture();
+    h.render().requestMove(a.cards[0], "Working", "Start");
+    h.input(a.refreshArguments);
+    if (failed) h.calls[0].reject(new Error("Forbidden"));
+    else h.calls[0].resolve(payload({ ok: true }));
+    await tick();
+    assert.equal(h.calls.length, 1);
+    h.result(payload(a));
+    await tick();
+    assert.equal(
+      h.calls.length,
+      2,
+      "completed write still requires a corrective read after host snapshot",
+    );
+    const fresh = h.fixtures.boardFixture();
+    if (!failed) fresh.cards[0].columnId = "Working";
+    h.calls[1].resolve(payload(fresh));
+    await tick();
+    assert.equal(
+      h.render().state.board.cards[0].columnId,
+      failed ? "Open" : "Working",
+    );
+  });
+}
+
+for (const oldFails of [false, true]) {
+  test(`component failed host discards in-flight A oldFails=${oldFails}`, async () => {
+    const h = harness();
+    const old = h.render().requestBoardRefresh({ ignoreInterval: true });
+    const b = h.fixtures.boardFixture("B");
+    h.input(b.refreshArguments);
+    h.result({ isError: true, ...payload({ message: "B unavailable" }) });
+    await h.render().requestBoardRefresh({ ignoreInterval: true });
+    assert.equal(h.calls.length, 1);
+    if (oldFails) h.calls[0].reject(new Error("A unavailable"));
+    else h.calls[0].resolve(payload(h.fixtures.boardFixture()));
+    await old;
+    assert.equal(h.render().state.board.title, "Local board A");
+    assert.equal(h.calls.length, 2);
+    assert.equal(h.calls[1].request.arguments.project, "PROJECT-B");
+    h.calls[1].resolve(payload(b));
+    await tick();
+    assert.equal(h.render().state.board.title, "Local board B");
+    assert.equal(h.render().state.error, null);
+  });
+}
+
+test("component mismatched host payload does not unlock the old board", async () => {
+  const h = harness();
+  const b = h.fixtures.boardFixture("B");
+  h.input(b.refreshArguments);
+  h.result(payload(h.fixtures.boardFixture()));
+  assert.match(h.render().state.error, /identity mismatch/);
+  h.render().requestMove(h.render().state.board.cards[0], "Working", "Start");
+  assert.equal(h.calls.length, 0);
+  const retry = h.render().requestBoardRefresh({ ignoreInterval: true });
+  assert.equal(h.calls[0].request.arguments.project, "PROJECT-B");
+  h.calls[0].resolve(payload(b));
+  await retry;
+  assert.equal(h.render().state.board.title, "Local board B");
+});
+
+test("component a new explicit move clears the previous move failure", async () => {
+  const h = harness();
+  h.render().requestMove(h.render().state.board.cards[0], "Working", "Start");
+  h.calls[0].reject(new Error("Forbidden"));
+  await tick();
+  h.calls[1].resolve(payload(h.fixtures.boardFixture()));
+  await tick();
+  assert.ok(h.render().state.error);
+  h.render().requestMove(h.render().state.board.cards[0], "Working", "Start");
+  assert.equal(h.render().state.error, null);
+  h.calls[2].resolve(payload({ ok: true }));
+  await tick();
+  h.calls[3].resolve(payload(h.render().state.board));
+  await tick();
+  assert.equal(h.render().state.error, null);
+});
 
 function dragEvent() {
   const data = new Map();

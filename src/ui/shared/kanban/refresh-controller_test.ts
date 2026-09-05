@@ -8,6 +8,8 @@ import {
   rollbackMoveFailure,
 } from "./interactions.ts";
 import type { KanbanBoardData } from "./types.ts";
+import { kanbanTools } from "../../../tools/kanban.ts";
+import type { FrappeClient } from "../../../api/frappe-client.ts";
 
 function boardFixture(): KanbanBoardData {
   return {
@@ -46,7 +48,40 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function fixture() {
+for (
+  const input of [
+    { doctype: "Task" },
+    { doctype: "Issue", status: "Open" },
+    { doctype: "Opportunity", status: "Quotation" },
+    { doctype: "Task", project: "A", limit: 1.9, offset: -3 },
+  ]
+) {
+  Deno.test(`host input accepts real handler normalized defaults ${JSON.stringify(input)}`, async () => {
+    const actual = await kanbanTools[0].handler(input, {
+      client: { list: () => Promise.resolve([]) } as unknown as FrappeClient,
+    }) as KanbanBoardData;
+    const f = fixture();
+    f.controller.receiveInput({
+      toolName: "erpnext_kanban_get_board",
+      arguments: input,
+    });
+    f.controller.receiveBoard(actual);
+    assertEquals(f.controller.ready, true);
+    const cold = fixture(false);
+    cold.controller.receiveInput({
+      toolName: "erpnext_kanban_get_board",
+      arguments: input,
+    });
+    cold.controller.failHost();
+    const retry = cold.controller.request({ ignoreInterval: true });
+    assertEquals(cold.calls[0].request.arguments, input);
+    cold.calls[0].resolve(actual);
+    assertEquals(await retry, true);
+    assertEquals(cold.rendered, actual);
+  });
+}
+
+function fixture(initialBoard = true) {
   const calls: Array<
     ReturnType<typeof deferred<KanbanBoardData>> & {
       request: KanbanRefreshRequestData;
@@ -74,7 +109,7 @@ function fixture() {
     now: () => clock.now,
     minIntervalMs: 15_000,
   });
-  controller.receiveBoard(rendered);
+  if (initialBoard) controller.receiveBoard(rendered);
   function move(cardId = "TASK-A-1") {
     const token = controller.beginMutation();
     const move = {
@@ -109,6 +144,156 @@ function fixture() {
     },
   };
 }
+
+for (const oldFails of [false, true]) {
+  Deno.test(`failed host retries B without overlapping or applying A oldFails=${oldFails}`, async () => {
+    const f = fixture();
+    const old = f.controller.request();
+    const b = {
+      ...boardFixture(),
+      title: "Board B",
+      doctype: "Issue",
+      boardId: "issue-board",
+      refreshArguments: { doctype: "Issue", offset: 50 },
+    };
+    f.controller.receiveInput({
+      toolName: "erpnext_kanban_get_board",
+      arguments: b.refreshArguments,
+    });
+    f.controller.failHost();
+    assertEquals(f.controller.ready, false);
+    await f.controller.request({ ignoreInterval: true });
+    assertEquals(f.calls.length, 1);
+    if (oldFails) f.calls[0].reject(new Error("Old A failed"));
+    else f.calls[0].resolve(boardFixture());
+    await old;
+    assertEquals(f.rendered.title, "Board A");
+    assertEquals(f.calls.length, 2);
+    assertEquals(f.calls[1].request.arguments, b.refreshArguments);
+    f.calls[1].resolve(b);
+    await Promise.resolve();
+    assertEquals(f.rendered, b);
+    assertEquals(f.controller.ready, true);
+  });
+}
+
+Deno.test("failed host cold retry observes hidden, interval and read-error backoff", async () => {
+  const f = fixture(false);
+  f.controller.receiveInput({
+    toolName: "erpnext_kanban_get_board",
+    arguments: boardFixture().refreshArguments,
+  });
+  f.controller.failHost();
+  await f.controller.drain();
+  await f.controller.request();
+  assertEquals(f.calls.length, 0);
+  f.clock.now += 15_000;
+  f.gate.visibilityState = "hidden";
+  await f.controller.request();
+  assertEquals(f.calls.length, 0);
+  f.gate.visibilityState = "visible";
+  const retry = f.controller.request();
+  f.calls[0].reject(new Error("Retry failed"));
+  await retry;
+  await f.controller.drain();
+  assertEquals(f.calls.length, 1);
+  assertEquals(f.controller.ready, false);
+  f.clock.now += 15_000;
+  const again = f.controller.request();
+  f.calls[1].resolve(boardFixture());
+  assertEquals(await again, true);
+  assertEquals(f.controller.ready, true);
+});
+
+Deno.test("failed host cannot fall back to A when input request is missing", async () => {
+  const f = fixture();
+  f.controller.receiveInput(null);
+  f.controller.failHost();
+  await f.controller.request({ ignoreInterval: true });
+  assertEquals(f.calls.length, 0);
+  assertEquals(f.controller.ready, false);
+  f.controller.receiveBoard(boardFixture());
+  assertEquals(f.controller.ready, true);
+  f.calls[0]?.resolve(boardFixture());
+  await Promise.resolve();
+});
+
+Deno.test("recovery rejects an old scope response and a newer host session wins", async () => {
+  const f = fixture();
+  const b = {
+    ...boardFixture(),
+    title: "Board B",
+    refreshArguments: { doctype: "Task", project: "B" },
+  };
+  f.controller.receiveInput({
+    toolName: "erpnext_kanban_get_board",
+    arguments: b.refreshArguments,
+  });
+  f.controller.failHost();
+  const wrong = f.controller.request({ ignoreInterval: true });
+  f.calls[0].resolve(boardFixture());
+  assertEquals(await wrong, false);
+  assertEquals(f.rendered.title, "Board A");
+  assertEquals(f.controller.ready, false);
+  const retry = f.controller.request({ ignoreInterval: true });
+  const c = {
+    ...boardFixture(),
+    title: "Board C",
+    refreshArguments: { doctype: "Task", project: "C" },
+  };
+  f.controller.receiveInput({
+    toolName: "erpnext_kanban_get_board",
+    arguments: c.refreshArguments,
+  });
+  f.controller.receiveBoard(c);
+  f.calls[1].resolve(b);
+  await retry;
+  assertEquals(f.rendered.title, "Board C");
+  assertEquals(f.calls[2].request.arguments, c.refreshArguments);
+  f.calls[2].resolve(c);
+  await Promise.resolve();
+});
+
+for (const hidden of [false, true]) {
+  Deno.test(`host snapshot retains a completed write pending refresh hidden=${hidden}`, async () => {
+    const f = fixture();
+    const mutation = f.move();
+    f.controller.receiveInput({
+      toolName: "erpnext_kanban_get_board",
+      arguments: boardFixture().refreshArguments,
+    });
+    f.finish(mutation.token);
+    f.gate.visibilityState = hidden ? "hidden" : "visible";
+    f.controller.receiveBoard(boardFixture());
+    assertEquals(f.calls.length, hidden ? 0 : 1);
+    if (hidden) {
+      assertEquals(f.controller.pending, true);
+      f.gate.visibilityState = "visible";
+      void f.controller.drain();
+    }
+    const fresh = boardFixture();
+    fresh.cards[0].columnId = "Working";
+    f.calls[0].resolve(fresh);
+    await Promise.resolve();
+    assertEquals(f.rendered.cards[0].columnId, "Working");
+    assertEquals(f.controller.pending, false);
+  });
+}
+
+Deno.test("unsolicited host snapshot preserves a completed mutation blocked by drag", async () => {
+  const f = fixture();
+  f.gate.dragging = true;
+  const mutation = f.move();
+  f.succeed(mutation);
+  f.controller.receiveBoard(boardFixture());
+  assertEquals(f.controller.pending, true);
+  assertEquals(f.calls.length, 0);
+  f.gate.dragging = false;
+  void f.controller.drain();
+  assertEquals(f.calls.length, 1);
+  f.calls[0].resolve(boardFixture());
+  await Promise.resolve();
+});
 
 Deno.test("board controller rejects pre-move snapshot and drains one final read", async () => {
   const f = fixture();

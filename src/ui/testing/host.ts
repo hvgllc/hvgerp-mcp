@@ -4,6 +4,7 @@ import {
 } from "@modelcontextprotocol/ext-apps/app-bridge";
 import {
   boardFixture,
+  captureHostBoard,
   createDetailFixtureStore,
   malformedViewerFixture,
   pagedBoardFixture,
@@ -427,6 +428,54 @@ successButton.onclick = () => {
     record({ outcome: "send-error", message: String(error) })
   );
 };
+if (viewer === "kanban-viewer" && scenario === "board-race") {
+  let nextHostId = 1;
+  let holdingHost = false;
+  for (const [label, index] of [["A", 0], ["B", 1], ["trang 50", 3]] as const) {
+    const button = document.createElement("button");
+    button.textContent = `Giữ host ${label}`;
+    button.onclick = () => {
+      if (holdingHost) return;
+      holdingHost = true;
+      board = boards[index];
+      const captured = captureHostBoard(board);
+      const hostId = nextHostId++;
+      void bridge.sendToolInput({ arguments: captured.arguments }).then(() => {
+        record({ outcome: "host-input-held", hostId, ...captured });
+        const row = document.createElement("li");
+        row.textContent = `Host #${hostId} ${label} `;
+        for (const kind of ["success", "error", "malformed"] as const) {
+          const release = document.createElement("button");
+          release.textContent = `Host #${hostId} ${kind}`;
+          release.onclick = () => {
+            const reply = kind === "success"
+              ? result(captured.board)
+              : kind === "error"
+              ? failure(`Local host error #${hostId}`)
+              : {
+                isError: false,
+                content: [{ type: "text" as const, text: "{" }],
+              };
+            row.remove();
+            void bridge.sendToolResult(reply).then(() => {
+              holdingHost = false;
+              record({ outcome: `host-${kind}-released`, hostId, reply });
+            }).catch((error: unknown) => {
+              holdingHost = false;
+              record({ outcome: "send-error", hostId, message: String(error) });
+            });
+          };
+          row.append(release);
+        }
+        pendingList.append(row);
+      }).catch((error: unknown) => {
+        holdingHost = false;
+        record({ outcome: "send-error", hostId, message: String(error) });
+      });
+    };
+    boardButton.after(button);
+  }
+}
 if (dateFixture) {
   const malformedButton = document.createElement("button");
   malformedButton.textContent = "Gửi ngày sai kiểu";
