@@ -27,6 +27,171 @@ function fixture(options: {
   };
 }
 
+for (const parent of ["Sales Order", "Sales Invoice", "Warehouse"] as const) {
+  for (const unicode of [false, true]) {
+    Deno.test(`complete scoped ${parent} paginates all chunks with actual ${unicode ? "Unicode" : "ordinary"} request budgets`, async () => {
+      const owners = Array.from(
+        { length: 3 },
+        (_, i) =>
+          `OWNER-${i}-${unicode ? "Kho hàng 東京/&".repeat(60) : "local"}`,
+      );
+      const child = parent === "Warehouse" ? "Bin" : `${parent} Item`;
+      const field = parent === "Warehouse" ? "warehouse" : "parent";
+      const offsets = new Map<string, number[]>();
+      const original = globalThis.fetch;
+      globalThis.fetch = async (input) => {
+        const url = new URL(String(input));
+        assert((url.pathname + url.search).length <= 6000);
+        const doctype = decodeURIComponent(
+          url.pathname.replace("/api/resource/", ""),
+        );
+        if (doctype === "Company/Vietnam Company") {
+          return Response.json({
+            data: { name: "Vietnam Company", default_currency: "VND" },
+          });
+        }
+        const filters = JSON.parse(url.searchParams.get("filters")!);
+        if (doctype === parent) {
+          assert(
+            filters.some((f: unknown) =>
+              JSON.stringify(f) ===
+                JSON.stringify(["company", "=", "Vietnam Company"])
+            ),
+          );
+          return Response.json({ data: owners.map((name) => ({ name })) });
+        }
+        assertEquals(doctype, child);
+        const scope = filters.find((f: unknown[]) =>
+          f[0] === field
+        )[2] as string[];
+        if (parent !== "Warehouse") {
+          assert(
+            filters.some((f: unknown) =>
+              JSON.stringify(f) === JSON.stringify(["parenttype", "=", parent])
+            ),
+          );
+        }
+        const key = JSON.stringify(scope);
+        const offset = Number(url.searchParams.get("limit_start"));
+        const limit = Number(url.searchParams.get("limit"));
+        assertEquals(limit, 1000);
+        assertEquals(
+          url.searchParams.get("order_by"),
+          "modified desc, name asc",
+        );
+        offsets.set(key, [...(offsets.get(key) ?? []), offset]);
+        const rows = scope.flatMap((owner) =>
+          Array.from(
+            { length: 1001 },
+            (_, i) => ({
+              name: `${owners.indexOf(owner)}-${String(i).padStart(5, "0")}`,
+              [field]: owner,
+              parenttype: parent,
+              modified: `2026-09-05 12:00:0${owners.indexOf(owner)}`,
+              actual_qty: 1,
+            }),
+          )
+        );
+        rows.sort((a, b) =>
+          a.modified < b.modified
+            ? 1
+            : a.modified > b.modified
+            ? -1
+            : a.name.localeCompare(b.name)
+        );
+        return Response.json({ data: rows.slice(offset, offset + limit) });
+      };
+      try {
+        const context = await resolveAnalyticsContext({
+          client: new FrappeClient({
+            baseUrl: "https://fixture.invalid",
+            apiKey: "fixture",
+            apiSecret: "fixture",
+            retries: 0,
+          }),
+        }, { company: "Vietnam Company" });
+        const result = parent === "Warehouse"
+          ? await context.listAllBins({ fields: ["actual_qty"] })
+          : await context.listAllItems(parent, {
+            fields: ["actual_qty"],
+            filters: [["docstatus", "=", 1]],
+          });
+        assertEquals(result.length, 3003);
+        assertEquals(new Set(result.map((row) => row.name)).size, 3003);
+        assertEquals(result[0].modified, "2026-09-05 12:00:02");
+        assertEquals(result.at(-1)!.modified, "2026-09-05 12:00:00");
+        if (unicode) assert(offsets.size > 1);
+        for (const [key, pages] of offsets) {
+          const count = JSON.parse(key).length * 1001;
+          assertEquals(
+            pages,
+            Array.from(
+              { length: Math.floor(count / 1000) + 1 },
+              (_, i) => i * 1000,
+            ),
+          );
+        }
+      } finally {
+        globalThis.fetch = original;
+      }
+    });
+  }
+}
+
+for (
+  const failure of [
+    "permission",
+    "wrong-owner",
+    "wrong-parenttype",
+    "repeat",
+    "missing-name",
+  ]
+) {
+  Deno.test(`complete child reads reject later ${failure} rather than returning partial aggregates`, async () => {
+    const denied = new Error("Child page permission denied");
+    let pages = 0;
+    const context = await resolveAnalyticsContext(
+      fixture({
+        list: async (doctype, options) => {
+          if (doctype === "Sales Order") return [{ name: "SO-1" }];
+          pages++;
+          if (pages > 1) {
+            if (failure === "permission") {
+              throw denied;
+            }
+            return [{
+              name: failure === "repeat"
+                ? "ROW-0"
+                : failure === "missing-name"
+                ? ""
+                : "LATER",
+              parent: failure === "wrong-owner" ? "FOREIGN" : "SO-1",
+              parenttype: failure === "wrong-parenttype"
+                ? "Sales Invoice"
+                : "Sales Order",
+            }];
+          }
+          assertEquals(options?.limit, 1000);
+          return Array.from(
+            { length: 1000 },
+            (_, i) => ({
+              name: `ROW-${i}`,
+              parent: "SO-1",
+              parenttype: "Sales Order",
+            }),
+          );
+        },
+      }),
+      { company: "Vietnam Company" },
+    );
+    const error = await assertRejects(() =>
+      context.listAllItems("Sales Order", { fields: ["base_amount"] })
+    );
+    if (failure === "permission") assertEquals(error, denied);
+    assertEquals(pages, 2);
+  });
+}
+
 for (const source of ["Sales Order", "Sales Invoice", "Warehouse"] as const) {
   for (const total of [0, 1000, 1001, 2000]) {
     Deno.test(`ownership discovery ${source} exhausts ${total} names before global top N`, async () => {
@@ -635,4 +800,86 @@ Deno.test("analytics scope stable merge keeps the global cap when sort values ti
   const rows = await context.listBins({ limit: 2 });
   assert(requests > 1);
   assertEquals(rows.map((row) => row.name), names.slice(0, 2));
+});
+
+Deno.test("complete scope enforces one shared 1000 request budget across 1001 empty chunks", async () => {
+  const names = Array.from(
+    { length: 1001 },
+    (_, i) => `WH-${i}-${"東京".repeat(250)}`,
+  );
+  let ownershipReads = 0;
+  let binReads = 0;
+  const context = await resolveAnalyticsContext(
+    fixture({
+      list: async (doctype, options) => {
+        if (doctype === "Warehouse") {
+          ownershipReads++;
+          const offset = options!.limit_start!;
+          return names.slice(offset, offset + options!.limit!).map((name) => ({
+            name,
+          }));
+        }
+        assertEquals(doctype, "Bin");
+        binReads++;
+        return [];
+      },
+    }),
+    { company: "Vietnam Company" },
+  );
+  await assertRejects(
+    () => context.listAllBins({ fields: ["actual_qty"] }),
+    Error,
+    "1000 request safety limit",
+  );
+  assertEquals(ownershipReads, 2);
+  assertEquals(binReads, 1000);
+});
+
+Deno.test("Item UOM rejects 1001 encoded chunks before sending any lookup", async () => {
+  let reads = 0;
+  const names = Array.from(
+    { length: 1001 },
+    (_, i) => `ITEM-${i}-${"東京".repeat(250)}`,
+  );
+  await assertRejects(
+    () =>
+      listAnalyticsItemUnits(
+        fixture({
+          list: async () => {
+            reads++;
+            return [];
+          },
+        }),
+        names,
+      ),
+    Error,
+    "safety budget",
+  );
+  assertEquals(reads, 0);
+});
+
+Deno.test("complete scoped rows reject duplicate identities across disjoint warehouse chunks", async () => {
+  const names = ["WH-A", "WH-B"].map((name) => `${name}-${"東京".repeat(250)}`);
+  const context = await resolveAnalyticsContext(
+    fixture({
+      list: async (doctype, options) => {
+        if (doctype === "Warehouse") return names.map((name) => ({ name }));
+        const chunk = options!.filters!.find((filter) =>
+          filter[0] === "warehouse"
+        )![2] as string[];
+        assertEquals(chunk.length, 1);
+        return [{
+          name: "DUPLICATE",
+          warehouse: chunk[0],
+          modified: "2026-09-05 12:00:00",
+        }];
+      },
+    }),
+    { company: "Vietnam Company" },
+  );
+  await assertRejects(
+    () => context.listAllBins({}),
+    Error,
+    "duplicate row across scope chunks",
+  );
 });

@@ -36,6 +36,43 @@ const arInvoice = {
   party_account: "Receivables - VND",
 };
 
+for (const count of [0, 999, 1000, 1001, 2001, 100000, 100001]) {
+  Deno.test(`receivable report validates the complete ${count} row result without local truncation`, async () => {
+    let calls = 0;
+    const ctx = makeCtx(async () => {
+      calls++;
+      return {
+        columns: [],
+        result: Array.from(
+          { length: count },
+          (_, i) => ({ ...arInvoice, voucher_no: `INV-${i}`, outstanding: 1 }),
+        ),
+      };
+    });
+    if (count > 100000) {
+      await assertRejects(
+        () =>
+          receivableInvoiceRows(ctx, "Vietnam Company", "VND", "2026-09-05"),
+        Error,
+        "100000 row safety limit",
+      );
+    } else {
+      const result = await receivableInvoiceRows(
+        ctx,
+        "Vietnam Company",
+        "VND",
+        "2026-09-05",
+      );
+      assertEquals(result.length, count);
+      assertEquals(
+        result.reduce((sum, row) => sum + row.outstanding_amount, 0),
+        count,
+      );
+    }
+    assertEquals(calls, 1);
+  });
+}
+
 Deno.test("receivable invoice rows lock company currency and avoid Prepared Report writes", async () => {
   const ctx = makeCtx(async (method, args, options) => {
     assertEquals(method, "frappe.desk.query_report.run");
