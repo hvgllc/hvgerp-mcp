@@ -1,0 +1,131 @@
+src/runtime.deno.ts(11,35): error TS2307: Cannot find module 'node:async_hooks' or its corresponding type declarations.
+src/runtime.deno.ts(17,10): error TS2304: Cannot find name 'Deno'.
+src/runtime.deno.ts(23,16): error TS2304: Cannot find name 'Deno'.
+src/runtime.deno.ts(28,5): error TS2304: Cannot find name 'Deno'.
+src/runtime.deno.ts(37,23): error TS2304: Cannot find name 'Deno'.
+src/runtime.deno.ts(48,10): error TS2304: Cannot find name 'Deno'.
+src/runtime.deno.ts(51,37): error TS2534: A function returning 'never' cannot have a reachable end point.
+src/runtime.deno.ts(52,3): error TS2304: Cannot find name 'Deno'.
+src/runtime.deno.ts(56,3): error TS2304: Cannot find name 'Deno'.
+src/runtime.deno.ts(56,36): error TS2503: Cannot find namespace 'Deno'.
+src/runtime.node.ts(12,53): error TS2307: Cannot find module 'node:fs' or its corresponding type declarations.
+src/runtime.node.ts(13,26): error TS2307: Cannot find module 'node:fs/promises' or its corresponding type declarations.
+src/runtime.node.ts(14,35): error TS2307: Cannot find module 'node:async_hooks' or its corresponding type declarations.
+src/runtime.node.ts(20,10): error TS2580: Cannot find name 'process'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node`.
+src/runtime.node.ts(51,10): error TS2580: Cannot find name 'process'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node`.
+src/runtime.node.ts(54,37): error TS2534: A function returning 'never' cannot have a reachable end point.
+src/runtime.node.ts(55,3): error TS2580: Cannot find name 'process'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node`.
+src/runtime.node.ts(59,3): error TS2580: Cannot find name 'process'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node`.
+src/runtime.ts(42,18): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.
+src/runtime.ts(43,18): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.
+src/ui/chart-viewer/src/ChartViewer.tsx(452,13): error TS2322: Type '((entry: Record<string, unknown>) => void) | undefined' is not assignable to type 'BarMouseEvent | undefined'.
+  Type '(entry: Record<string, unknown>) => void' is not assignable to type 'BarMouseEvent'.
+    Types of parameters 'entry' and 'data' are incompatible.
+      Type 'BarRectangleItem' is not assignable to type 'Record<string, unknown>'.
+        Index signature for type 'string' is missing in type 'BarRectangleItem'.
+src/ui/chart-viewer/src/ChartViewer.tsx(498,13): error TS2322: Type '((entry: Record<string, unknown>) => void) | undefined' is not assignable to type 'BarMouseEvent | undefined'.
+  Type '(entry: Record<string, unknown>) => void' is not assignable to type 'BarMouseEvent'.
+    Types of parameters 'entry' and 'data' are incompatible.
+      Type 'BarRectangleItem' is not assignable to type 'Record<string, unknown>'.
+        Index signature for type 'string' is missing in type 'BarRectangleItem'.
+src/ui/chart-viewer/src/ChartViewer.tsx(747,10): error TS2769: No overload matches this call.
+  Overload 2 of 2, '(outsideProps: Props<any, any>): ReactElement<any, string | JSXElementConstructor<any>>', gave the following error.
+    Type '({ name, percent }: { name: string; percent: number; }) => string' is not assignable to type 'PieLabel | undefined'.
+      Type '({ name, percent }: { name: string; percent: number; }) => string' is not assignable to type '(props: PieLabelRenderProps) => ReactNode | ReactElement<SVGElement, string | JSXElementConstructor<any>>'.
+        Types of parameters '__0' and 'props' are incompatible.
+          Type 'PieLabelRenderProps' is not assignable to type '{ name: string; percent: number; }'.
+            Types of property 'name' are incompatible.
+              Type 'string | undefined' is not assignable to type 'string'.
+                Type 'undefined' is not assignable to type 'string'.
+  Overload 2 of 2, '(outsideProps: Props<any, any>): ReactElement<any, string | JSXElementConstructor<any>>', gave the following error.
+    Type '((entry: Record<string, unknown>) => void) | undefined' is not assignable to type '((data: PieSectorDataItem, index: number, e: MouseEvent<SVGGraphicsElement, MouseEvent>) => void) | undefined'.
+      Type '(entry: Record<string, unknown>) => void' is not assignable to type '(data: PieSectorDataItem, index: number, e: MouseEvent<SVGGraphicsElement, MouseEvent>) => void'.
+        Types of parameters 'entry' and 'data' are incompatible.
+          Type 'PieSectorDataItem' is not assignable to type 'Record<string, unknown>'.
+            Index signature for type 'string' is missing in type 'PieSectorDataItem'.
+src/ui/chart-viewer/src/ChartViewer.tsx(770,11): error TS2322: Type '(value: number) => string' is not assignable to type 'Formatter<ValueType, NameType> & ((value: ValueType, name: NameType, item: TooltipPayloadEntry, index: number, payload: TooltipPayload) => ReactNode | [...])'.
+  Type '(value: number) => string' is not assignable to type 'Formatter<ValueType, NameType>'.
+    Types of parameters 'value' and 'value' are incompatible.
+      Type 'ValueType | undefined' is not assignable to type 'number'.
+        Type 'undefined' is not assignable to type 'number'.
+src/ui/invoice-viewer/src/components/ItemDetailPanel.tsx(147,11): error TS2322: Type 'unknown' is not assignable to type 'ReactNode'.
+src/ui/invoice-viewer/src/components/ItemDetailPanel.tsx(150,11): error TS2322: Type 'unknown' is not assignable to type 'ReactNode'.
+src/ui/invoice-viewer/src/components/ItemDetailPanel.tsx(153,11): error TS2322: Type 'unknown' is not assignable to type 'ReactNode'.
+src/ui/mod.ts(12,53): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.
+src/ui/shared/kanban/interactions_test.ts(1,30): error TS2307: Cannot find module '@std/assert' or its corresponding type declarations.
+src/ui/shared/kanban/interactions_test.ts(10,8): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.
+src/ui/shared/kanban/interactions_test.ts(36,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/kanban/interactions_test.ts(53,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/kanban/interactions_test.ts(79,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/kanban/interactions_test.ts(102,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/kanban/interactions_test.ts(126,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/kanban/layout_test.ts(1,30): error TS2307: Cannot find module '@std/assert' or its corresponding type declarations.
+src/ui/shared/kanban/layout_test.ts(2,67): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.
+src/ui/shared/kanban/layout_test.ts(4,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/kanban/layout_test.ts(10,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/kanban/presentation.ts(3,68): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.
+src/ui/shared/kanban/presentation_test.ts(1,30): error TS2307: Cannot find module '@std/assert' or its corresponding type declarations.
+src/ui/shared/kanban/presentation_test.ts(3,42): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.
+src/ui/shared/kanban/presentation_test.ts(9,8): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.
+src/ui/shared/kanban/presentation_test.ts(35,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/kanban/presentation_test.ts(49,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/kanban/presentation_test.ts(63,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/kanban/presentation_test.ts(70,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/kanban/refresh_test.ts(1,30): error TS2307: Cannot find module '@std/assert' or its corresponding type declarations.
+src/ui/shared/kanban/refresh_test.ts(6,8): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.
+src/ui/shared/kanban/refresh_test.ts(53,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/kanban/refresh_test.ts(57,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/kanban/refresh_test.ts(64,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/kanban/refresh_test.ts(73,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/kanban/refresh_test.ts(80,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/kanban/refresh_test.ts(90,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/kanban/refresh_test.ts(95,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/kanban/state_test.ts(1,30): error TS2307: Cannot find module '@std/assert' or its corresponding type declarations.
+src/ui/shared/kanban/state_test.ts(2,62): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.
+src/ui/shared/kanban/state_test.ts(28,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/kanban/state_test.ts(40,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/kanban/state_test.ts(54,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/kanban/state_test.ts(66,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/kanban/state_test.ts(87,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/kanban/state_test.ts(100,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/presentation_test.ts(1,30): error TS2307: Cannot find module '@std/assert' or its corresponding type declarations.
+src/ui/shared/presentation_test.ts(2,38): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.
+src/ui/shared/presentation_test.ts(4,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/presentation_test.ts(19,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/presentation_test.ts(26,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/refresh_test.ts(1,30): error TS2307: Cannot find module '@std/assert' or its corresponding type declarations.
+src/ui/shared/refresh_test.ts(9,8): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.
+src/ui/shared/refresh_test.ts(30,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/refresh_test.ts(34,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/refresh_test.ts(42,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/refresh_test.ts(49,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/refresh_test.ts(67,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/refresh_test.ts(71,1): error TS2304: Cannot find name 'Deno'.
+src/ui/shared/refresh_test.ts(84,1): error TS2304: Cannot find name 'Deno'.
+src/ui/stock-viewer/src/components/StockDetailPanel.tsx(133,11): error TS2322: Type 'unknown' is not assignable to type 'ReactNode'.
+src/ui/stock-viewer/src/components/StockDetailPanel.tsx(136,11): error TS2322: Type 'unknown' is not assignable to type 'ReactNode'.
+src/ui/stock-viewer/src/components/StockDetailPanel.tsx(139,11): error TS2322: Type 'unknown' is not assignable to type 'ReactNode'.
+src/ui/viewer-resource-paths_test.ts(1,38): error TS2307: Cannot find module '@std/assert' or its corresponding type declarations.
+src/ui/viewer-resource-paths_test.ts(2,39): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.
+src/ui/viewer-resource-paths_test.ts(4,1): error TS2304: Cannot find name 'Deno'.
+src/ui/viewer-resource-paths_test.ts(18,1): error TS2304: Cannot find name 'Deno'.
+src/ui/viewer-resource-paths_test.ts(33,1): error TS2304: Cannot find name 'Deno'.
+src/ui/viewer-resource-paths_test.ts(48,1): error TS2304: Cannot find name 'Deno'.
+src/ui/viewer-resource-paths_test.ts(58,1): error TS2304: Cannot find name 'Deno'.
+src/ui/viewer-resource-paths_test.ts(64,24): error TS2304: Cannot find name 'Deno'.
+src/ui/viewer-resource-paths_test.ts(84,1): error TS2304: Cannot find name 'Deno'.
+src/ui/viewer-resource-paths_test.ts(88,24): error TS2304: Cannot find name 'Deno'.
+src/ui/viewer-resource-paths_test.ts(100,1): error TS2304: Cannot find name 'Deno'.
+src/ui/viewer-resource-paths_test.ts(101,24): error TS2304: Cannot find name 'Deno'.
+src/ui/viewer_error_state_test.ts(1,24): error TS2307: Cannot find module '@std/assert' or its corresponding type declarations.
+src/ui/viewer_error_state_test.ts(24,1): error TS2304: Cannot find name 'Deno'.
+src/ui/viewer_error_state_test.ts(26,26): error TS2304: Cannot find name 'Deno'.
+src/ui/viewer_handshake_test.ts(1,38): error TS2307: Cannot find module '@std/assert' or its corresponding type declarations.
+src/ui/viewer_handshake_test.ts(81,1): error TS2304: Cannot find name 'Deno'.
+src/ui/viewer_handshake_test.ts(84,26): error TS2304: Cannot find name 'Deno'.
+src/ui/viewer_handshake_test.ts(94,1): error TS2304: Cannot find name 'Deno'.
+src/ui/viewer_handshake_test.ts(98,28): error TS2304: Cannot find name 'Deno'.
+src/ui/viewer_handshake_test.ts(103,28): error TS2304: Cannot find name 'Deno'.
+src/ui/viewers_test.ts(1,38): error TS2307: Cannot find module '@std/assert' or its corresponding type declarations.
+src/ui/viewers_test.ts(2,28): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.
+src/ui/viewers_test.ts(4,1): error TS2304: Cannot find name 'Deno'.

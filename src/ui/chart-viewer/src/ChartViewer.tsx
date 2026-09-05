@@ -450,8 +450,7 @@ function VerticalBarChart(
             animationDuration={0}
             cursor={onDataClick ? "pointer" : undefined}
             onClick={onDataClick
-              ? (entry: Record<string, unknown>) =>
-                onDataClick(String(entry.name ?? ""))
+              ? (_entry, index) => onDataClick(data.labels[index] ?? "")
               : undefined}
           />
         ))}
@@ -496,8 +495,7 @@ function HorizontalBarChart(
             animationDuration={0}
             cursor={onDataClick ? "pointer" : undefined}
             onClick={onDataClick
-              ? (entry: Record<string, unknown>) =>
-                onDataClick(String(entry.name ?? ""))
+              ? (_entry, index) => onDataClick(data.labels[index] ?? "")
               : undefined}
           />
         ))}
@@ -752,14 +750,13 @@ function PieDonutChart(
           outerRadius={90}
           paddingAngle={isDonut ? 2 : 1}
           dataKey="value"
-          label={({ name, percent }: { name: string; percent: number }) =>
-            `${name} ${(percent * 100).toFixed(0)}%`}
+          label={({ name, percent }) =>
+            `${name ?? ""} ${((percent ?? 0) * 100).toFixed(0)}%`}
           labelLine={{ stroke: "var(--text-faint)", strokeWidth: 1 }}
           animationDuration={0}
           cursor={onDataClick ? "pointer" : undefined}
           onClick={onDataClick
-            ? (entry: Record<string, unknown>) =>
-              onDataClick(String(entry.name ?? ""))
+            ? (entry) => onDataClick(String(entry.name ?? ""))
             : undefined}
         >
           {pieData.map((_, i) => (
@@ -767,7 +764,10 @@ function PieDonutChart(
           ))}
         </Pie>
         <Tooltip
-          formatter={(value: number) => fmtValue(value, data)}
+          formatter={(value) =>
+            typeof value === "number"
+              ? fmtValue(value, data)
+              : String(value ?? "")}
           animationDuration={0}
           contentStyle={{
             background: "var(--bg-elevated)",
