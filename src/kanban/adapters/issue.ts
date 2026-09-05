@@ -191,10 +191,9 @@ export const issueKanbanAdapter: KanbanAdapter = {
     return { allowed: true };
   },
   async executeMove(move: KanbanMoveRequest, ctx): Promise<KanbanMoveResult> {
-    const currentIssue = await ctx.client.get("Issue", move.cardId) as Record<
-      string,
-      unknown
-    >;
+    const currentIssue = await ctx.client.get("Issue", move.cardId, {
+      skipCache: true,
+    }) as Record<string, unknown>;
     const serverColumn = columnIdForIssueStatus(currentIssue.status);
 
     if (serverColumn !== move.fromColumn) {
@@ -231,8 +230,21 @@ export const issueKanbanAdapter: KanbanAdapter = {
       };
     }
 
+    const modified = currentIssue.modified;
+    if (typeof modified !== "string" || !modified.trim()) {
+      return {
+        ok: false,
+        cardId: move.cardId,
+        fromColumn: serverColumn,
+        toColumn: move.toColumn,
+        errorMessage:
+          "Cannot move Issue without a modified timestamp. Refresh the board and try again.",
+      };
+    }
+
     const serverIssue = await ctx.client.update("Issue", move.cardId, {
       status,
+      modified,
     }) as Record<string, unknown>;
 
     return {

@@ -17,6 +17,233 @@ import {
   setFrappeClient,
 } from "./frappe-client.ts";
 import { MemoryCache } from "../cache/memory.ts";
+import { taskKanbanAdapter } from "../kanban/adapters/task.ts";
+import { opportunityKanbanAdapter } from "../kanban/adapters/opportunity.ts";
+import { issueKanbanAdapter } from "../kanban/adapters/issue.ts";
+
+const guardedMoveCases = [
+  {
+    adapter: taskKanbanAdapter,
+    destination: "working",
+    status: "Working",
+    concurrentStatus: "Completed",
+  },
+  {
+    adapter: opportunityKanbanAdapter,
+    destination: "replied",
+    status: "Replied",
+    concurrentStatus: "Lost",
+  },
+  {
+    adapter: issueKanbanAdapter,
+    destination: "replied",
+    status: "Replied",
+    concurrentStatus: "Closed",
+  },
+];
+
+for (
+  const { adapter, destination, status, concurrentStatus } of guardedMoveCases
+) {
+  for (
+    const scenario of ["stale cache", "concurrent write", "success"] as const
+  ) {
+    Deno.test(`FrappeClient guarded ${adapter.doctype} move - ${scenario}`, async () => {
+      const originalFetch = globalThis.fetch;
+      const cache = new MemoryCache();
+      const client = makeClient({ cache, retries: 0 });
+      const initialModified = "2026-09-05 10:00:00.000001";
+      const nextModified = "2026-09-05 10:00:00.000002";
+      let serverDocument = {
+        name: "MOVE-001",
+        status: "Open",
+        modified: initialModified,
+      };
+      const requests: { method: string; data?: Record<string, unknown> }[] = [];
+      let reads = 0;
+      globalThis.fetch = async (url, init) => {
+        assertEquals(
+          String(url),
+          `http://localhost:8000/api/resource/${adapter.doctype}/MOVE-001`,
+        );
+        const method = init?.method ?? "GET";
+        if (method === "GET") {
+          requests.push({ method });
+          reads++;
+          const snapshot = { ...serverDocument };
+          if (scenario === "concurrent write" && reads === 2) {
+            serverDocument = {
+              ...serverDocument,
+              status: concurrentStatus,
+              modified: nextModified,
+            };
+          }
+          return Response.json({ data: snapshot });
+        }
+        assertEquals(method, "PUT");
+        const { data } = JSON.parse(String(init?.body));
+        requests.push({ method, data });
+        // Không có token thì fixture cho ghi, để test phát hiện PUT không được bảo vệ.
+        if (
+          data.modified !== undefined &&
+          data.modified !== serverDocument.modified
+        ) {
+          return Response.json({
+            exc_type: "TimestampMismatchError",
+            exception: "Document changed",
+          }, { status: 417 });
+        }
+        serverDocument = { ...serverDocument, ...data, modified: nextModified };
+        return Response.json({ data: serverDocument });
+      };
+      try {
+        await client.get(adapter.doctype, "MOVE-001");
+        await client.get(adapter.doctype, "MOVE-001");
+        assertEquals(reads, 1);
+        cache.set(`list:${adapter.doctype}:cached`, [serverDocument], 60000);
+        if (scenario === "stale cache") {
+          serverDocument = {
+            ...serverDocument,
+            status,
+            modified: nextModified,
+          };
+        }
+        const move = {
+          doctype: adapter.doctype,
+          cardId: "MOVE-001",
+          fromColumn: "open",
+          toColumn: destination,
+        };
+        if (scenario === "concurrent write") {
+          const error = await assertRejects(
+            () => adapter.executeMove(move, { client }),
+            FrappeAPIError,
+          );
+          assertEquals(error.status, 417);
+          assertEquals(error.body, {
+            exc_type: "TimestampMismatchError",
+            exception: "Document changed",
+          });
+          assertEquals(serverDocument, {
+            name: "MOVE-001",
+            status: concurrentStatus,
+            modified: nextModified,
+          });
+          assertEquals(requests, [
+            { method: "GET" },
+            { method: "GET" },
+            { method: "PUT", data: { status, modified: initialModified } },
+          ]);
+        } else {
+          const result = await adapter.executeMove(move, { client });
+          assertEquals(reads, 2);
+          assertEquals(result.ok, scenario === "success");
+          if (scenario === "stale cache") {
+            assertEquals(result.fromColumn, destination);
+            assertEquals(requests, [{ method: "GET" }, { method: "GET" }]);
+          } else {
+            assertEquals(result.serverCard?.columnId, destination);
+            assertEquals(requests[2], {
+              method: "PUT",
+              data: { status, modified: initialModified },
+            });
+            assertEquals(
+              cache.get(`get:${adapter.doctype}:MOVE-001`),
+              undefined,
+            );
+            assertEquals(
+              cache.get(`list:${adapter.doctype}:cached`),
+              undefined,
+            );
+            assertEquals(
+              (await client.get(adapter.doctype, "MOVE-001")).modified,
+              nextModified,
+            );
+            assertEquals(reads, 3);
+          }
+        }
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  }
+}
+
+for (const { adapter, destination } of guardedMoveCases) {
+  for (const method of ["GET", "PUT"]) {
+    for (const status of [0, 403, 500]) {
+      Deno.test(`FrappeClient guarded ${adapter.doctype} move - preserves ${method} error ${status}`, async () => {
+        const originalFetch = globalThis.fetch;
+        const requests: string[] = [];
+        const body = {
+          exc_type: status === 403 ? "PermissionError" : "ValidationError",
+          message: "Move rejected",
+        };
+        globalThis.fetch = async (_url, init) => {
+          const actualMethod = init?.method ?? "GET";
+          requests.push(actualMethod);
+          if (actualMethod === method) {
+            if (status === 0) throw new TypeError("Network unavailable");
+            return Response.json(body, { status });
+          }
+          return Response.json({
+            data: {
+              name: "MOVE-001",
+              status: "Open",
+              modified: "2026-09-05 10:00:00.000001",
+            },
+          });
+        };
+        try {
+          const error = await assertRejects(() =>
+            adapter.executeMove({
+              doctype: adapter.doctype,
+              cardId: "MOVE-001",
+              fromColumn: "open",
+              toColumn: destination,
+            }, { client: makeClient({ retries: 0 }) }), FrappeAPIError);
+          assertEquals(error.status, status);
+          if (status !== 0) assertEquals(error.body, body);
+          assertEquals(requests, method === "GET" ? ["GET"] : ["GET", "PUT"]);
+        } finally {
+          globalThis.fetch = originalFetch;
+        }
+      });
+    }
+  }
+  for (
+    const transition of [
+      { fromColumn: "unknown", toColumn: destination },
+      { fromColumn: "open", toColumn: "unknown" },
+    ]
+  ) {
+    Deno.test(`FrappeClient guarded ${adapter.doctype} move - rejects ${JSON.stringify(transition)}`, async () => {
+      const originalFetch = globalThis.fetch;
+      const requests: string[] = [];
+      globalThis.fetch = async (_url, init) => {
+        requests.push(init?.method ?? "GET");
+        return Response.json({
+          data: {
+            name: "MOVE-001",
+            status: "Open",
+            modified: "2026-09-05 10:00:00.000001",
+          },
+        });
+      };
+      try {
+        const result = await adapter.executeMove({
+          doctype: adapter.doctype,
+          cardId: "MOVE-001",
+          ...transition,
+        }, { client: makeClient() });
+        assertEquals(result.ok, false);
+        assertEquals(requests, ["GET"]);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  }
+}
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 

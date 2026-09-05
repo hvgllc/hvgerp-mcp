@@ -2,6 +2,37 @@ import { assert, assertEquals } from "@std/assert";
 import { issueKanbanAdapter } from "./issue.ts";
 import type { ErpNextToolContext } from "../../tools/types.ts";
 
+for (const modified of [undefined, null, "", "   ", 42]) {
+  Deno.test(
+    "issue kanban adapter - rejects missing modified " +
+      JSON.stringify(modified),
+    async () => {
+      let writes = 0;
+      const ctx: ErpNextToolContext = {
+        client: {
+          get: async (_doctype: string, _name: string, options: unknown) => {
+            assertEquals(options, { skipCache: true });
+            return { name: "MOVE-001", status: "Open", modified };
+          },
+          update: async () => {
+            writes++;
+            return {};
+          },
+        } as unknown as ErpNextToolContext["client"],
+      };
+      const result = await issueKanbanAdapter.executeMove({
+        doctype: "Issue",
+        cardId: "MOVE-001",
+        fromColumn: "open",
+        toColumn: "resolved",
+      }, ctx);
+      assertEquals(result.ok, false);
+      assert(result.errorMessage?.includes("modified"));
+      assertEquals(writes, 0);
+    },
+  );
+}
+
 Deno.test("issue kanban adapter - exposes Issue columns and filters", () => {
   const columns = issueKanbanAdapter.getColumns();
   const allowedTransitions = issueKanbanAdapter.getAllowedTransitions();
@@ -80,6 +111,7 @@ Deno.test("issue kanban adapter - executes an allowed move through Issue update"
         name: "ISS-2026-00001",
         subject: "Shipment damaged in transit",
         status: "Open",
+        modified: "2026-09-05 10:00:00.000001",
         customer: "Acme Corp",
         raised_by: "alice@example.com",
       }),
@@ -112,7 +144,10 @@ Deno.test("issue kanban adapter - executes an allowed move through Issue update"
 
   assertEquals(capturedDoctype, "Issue");
   assertEquals(capturedName, "ISS-2026-00001");
-  assertEquals(capturedData, { status: "Resolved" });
+  assertEquals(capturedData, {
+    status: "Resolved",
+    modified: "2026-09-05 10:00:00.000001",
+  });
   assertEquals(result.ok, true);
   assertEquals(result.serverCard?.columnId, "resolved");
 });
