@@ -746,3 +746,28 @@ Gate trước commit: validator 25/25 và **153 passed, 0 failed, 0 skipped** g�
 subprocess khi cold và 2 khi warm, 84 historicalReads ở cả hai lượt. Callback
 Git error/output vẫn bypass cache và không làm nhiễm lượt sau. Clean-history
 gate sẽ chạy trên commit thật; không dùng kết quả local này thay phép kiểm đó.
+
+### Gate Git thật sau commit
+
+Implementation binding được lưu tại `db2f31fa0b332a7919e02b48f227ae1a6adf9b9e`.
+Test history bổ sung tại `930f0b6b49b59c0de02a222e7c5140ef191b6b2a`. Trên commit
+sạch này, `node --test plans/test-validator.mjs plans/test-history.mjs` đạt
+**156 passed, 0 failed, 0 skipped**: 153 validator và ba Git history test.
+Positive clone một nhánh kiểm thêm ancestry của mọi definition_commit; ca âm sáu
+reviewed HEAD lịch sử thiếu vẫn được giữ nguyên.
+
+Ca âm definition dùng clone sạch của parent trước b9d6d02 và xác nhận cat-file
+không đọc được b9d6d02. Sau đó chép nguyên cây plans từ db2f31f thật vào working
+tree biệt lập, không tạo commit/blob Git hoặc metadata approval giả. Validator
+trước guard từ b9d6d02 trả exit 0 sai; validator hiện tại trả exit 1 với đúng 27
+diagnostic: một lỗi Git ref và hai lỗi definition/approval cho từng 13 DONE.
+Fetch riêng ref b9d6d02 bằng transport local, không đổi HEAD/source/metadata,
+làm validator đạt 25/25. Repository tạm được dọn sau test. Phần overlay được ghi
+rõ, không gọi working tree sau overlay là clean checkout đã commit.
+
+Format toàn plans 60 file, lint ba helper, validator 25/25 và diff check đạt.
+Đối chiếu Git xác nhận 13 plan cùng manifest giữ nguyên byte so với b9d6d02; 13
+evidence chỉ thêm bốn field definition, tất cả byte còn lại giữ nguyên. Source
+ngoài plans vẫn bằng main 67a7bc4, không chạy lại app build trong lượt B và
+không suy từ helper gate ra CI JSR thật. Không sửa workspace root, AGENTS,
+dependency, version, publish hoặc GitHub; parent tiếp tục fresh review và CI.
