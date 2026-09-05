@@ -1057,6 +1057,16 @@ async function discardBatchResponse(response: Response): Promise<void> {
   }
 }
 
+function batchErrorType(error: unknown): string {
+  // Chỉ xuất nhãn cố định; message/stack/name tùy ý có thể chứa dữ liệu ERP.
+  if (error instanceof SyntaxError) return "invalid_json";
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return "aborted";
+  }
+  if (error instanceof TypeError) return "type_error";
+  return "unknown";
+}
+
 /**
  * Trần cho một sự kiện SSE đang gom dở, tính bằng ký tự.
  *
@@ -1951,6 +1961,12 @@ export async function handleShimRequest(
       // Single request vẫn dùng hợp đồng lỗi ở entrypoint. Batch cần giữ từng
       // kết quả đã biết; không thử lại để đoán một write đã commit hay chưa.
       if (!Array.isArray(parsed)) throw error;
+      console.error("[shim] batch upstream failure", {
+        phase: forwarding ? "forward" : "authorization",
+        entryIndex: index,
+        upstreamStatus: receivedResponse?.status ?? null,
+        errorType: batchErrorType(error),
+      });
       status = receivedResponse !== undefined && receivedResponse.status >= 400
         ? receivedResponse.status
         : 502;

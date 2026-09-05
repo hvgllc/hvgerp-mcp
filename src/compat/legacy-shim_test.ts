@@ -42,6 +42,155 @@ function partialPost(messages: unknown[]): Request {
 
 type PartialFailure = "network" | "json" | "body" | "html" | "401" | "403";
 
+for (const notification of [false, true]) {
+  for (
+    const failure of ["network", "json", "json-401", "body", "abort", "unknown"]
+  ) {
+    Deno.test(`batch diagnostics sanitize ${failure} notification=${notification}`, async () => {
+      const originalFetch = globalThis.fetch;
+      const originalError = console.error;
+      const logs: unknown[][] = [];
+      const marker = "PRIVATE_DIAGNOSTIC_FIXTURE";
+      let calls = 0;
+      console.error = (...args: unknown[]) => logs.push(args);
+      globalThis.fetch = async () => {
+        calls += 1;
+        if (calls === 1) {
+          return Response.json({ jsonrpc: "2.0", id: 1, result: {} });
+        }
+        if (failure === "network") throw new TypeError(marker);
+        if (failure === "abort") throw new DOMException(marker, "AbortError");
+        if (failure === "unknown") throw { name: marker, message: marker };
+        const body = failure === "body"
+          ? new ReadableStream({
+            start(controller) {
+              controller.error(new Error(marker));
+            },
+          })
+          : `{${marker}`;
+        return new Response(body, {
+          status: failure === "json-401" ? 401 : 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      };
+      try {
+        const req = partialPost([
+          batchWrite(1),
+          { ...batchWrite(notification ? undefined : 2), params: { marker } },
+          batchWrite(3),
+        ]);
+        req.headers.set("Authorization", `Bearer ${marker}`);
+        const response = await handleShimRequest(req, {
+          upstream: `http://upstream.example/${marker}`,
+        });
+        const text = await response.text();
+        assert(!text.includes(marker));
+        const expectedType = failure.startsWith("json")
+          ? "invalid_json"
+          : failure === "network"
+          ? "type_error"
+          : failure === "abort"
+          ? "aborted"
+          : "unknown";
+        assertEquals(logs, [[
+          "[shim] batch upstream failure",
+          {
+            phase: "forward",
+            entryIndex: 1,
+            upstreamStatus: failure === "json-401"
+              ? 401
+              : failure === "json" || failure === "body"
+              ? 200
+              : null,
+            errorType: expectedType,
+          },
+        ]]);
+        assert(!JSON.stringify(logs).includes(marker));
+        assertEquals(calls, 2);
+        assertEquals(response.status, failure === "json-401" ? 401 : 502);
+        const replies = JSON.parse(text);
+        assertEquals(
+          replies.map((reply: { id: number }) => reply.id),
+          notification ? [1, 3] : [1, 2, 3],
+        );
+        assertEquals(replies[0].result, {});
+      } finally {
+        console.error = originalError;
+        globalThis.fetch = originalFetch;
+      }
+    });
+  }
+}
+
+for (
+  const local of [
+    { jsonrpc: "2.0", id: 2 },
+    { jsonrpc: "2.0", id: 2, method: "ping" },
+    { jsonrpc: "2.0", id: 2, method: "tools/call", params: [] },
+  ]
+) {
+  Deno.test(`batch diagnostics sanitize authorization ${local.method ?? "missing"}`, async () => {
+    const originalFetch = globalThis.fetch;
+    const originalError = console.error;
+    const logs: unknown[][] = [];
+    const marker = "PRIVATE_AUTH_DIAGNOSTIC_FIXTURE";
+    let calls = 0;
+    console.error = (...args: unknown[]) => logs.push(args);
+    globalThis.fetch = async () => {
+      if (++calls === 1) return new Response(null, { status: 202 });
+      throw new TypeError(marker);
+    };
+    try {
+      const response = await handleShimRequest(
+        partialPost([batchWrite(), local, batchWrite(3)]),
+        { upstream: `http://upstream.example/${marker}` },
+      );
+      assertEquals(logs, [["[shim] batch upstream failure", {
+        phase: "authorization",
+        entryIndex: 1,
+        upstreamStatus: null,
+        errorType: "type_error",
+      }]]);
+      const text = await response.text();
+      assert(!text.includes(marker));
+      assert(!JSON.stringify(logs).includes(marker));
+      assert(text.includes("Not executed: authorization unavailable"));
+      assertEquals(response.status, 502);
+      assertEquals(calls, 2);
+    } finally {
+      console.error = originalError;
+      globalThis.fetch = originalFetch;
+    }
+  });
+}
+
+Deno.test("batch diagnostics stay silent on success and single request rejection", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalError = console.error;
+  const logs: unknown[][] = [];
+  console.error = (...args: unknown[]) => logs.push(args);
+  try {
+    globalThis.fetch = async () =>
+      Response.json({ jsonrpc: "2.0", id: 1, result: {} });
+    const response = await handleShimRequest(partialPost([batchWrite(1)]), {
+      upstream: "http://upstream.example",
+    });
+    await response.text();
+    assertEquals(logs, []);
+    globalThis.fetch = async () => {
+      throw new TypeError("private fixture");
+    };
+    await assertRejects(() =>
+      handleShimRequest(legacyPost(batchWrite(1)), {
+        upstream: "http://upstream.example",
+      }), TypeError);
+    assertEquals(logs, []);
+  } finally {
+    console.error = originalError;
+    globalThis.fetch = originalFetch;
+  }
+});
+
 function partialFailure(kind: PartialFailure): Response {
   if (kind === "network") {
     throw new Error("http://private-upstream:7654/secret");
