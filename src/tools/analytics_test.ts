@@ -246,13 +246,13 @@ Deno.test("analytics currency - multiple companies require explicit company", as
   assertEquals(financialReads, 0);
 });
 
-/** Generate an ISO date N months back from today, day 15 — keeps tests robust
- *  against the system clock (the analytics tools window-filter from `now`). */
-function relativeMonth(monthsBack: number, day = 15): string {
+/** Fixture mặc định ở đầu tháng UTC, không vô tình nằm sau ngày báo cáo. */
+function relativeMonth(monthsBack: number, day = 1): string {
   const d = new Date();
-  d.setDate(day);
-  d.setMonth(d.getMonth() - monthsBack);
-  return d.toISOString().split("T")[0];
+  return new Date(
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - monthsBack, day),
+  )
+    .toISOString().slice(0, 10);
 }
 
 // ── Mock FrappeClient ─────────────────────────────────────────────────────────
@@ -363,6 +363,7 @@ function completeDatasetClient(datasets: Record<string, any[]>) {
           if (operator === ">=") return row[field] >= value;
           if (operator === "<=") return row[field] <= value;
           if (operator === ">") return row[field] > value;
+          if (operator === "<") return row[field] < value;
           if (operator === "in") return value.includes(row[field]);
           throw new Error(`Unsupported fixture filter: ${operator}`);
         });
@@ -380,6 +381,383 @@ function completeDatasetClient(datasets: Record<string, any[]>) {
     },
   });
   return { client, calls };
+}
+
+async function withAnalyticsClock(
+  run: (advance: () => void) => Promise<void>,
+  instant = "2026-09-04T18:30:00Z",
+) {
+  const OriginalDate = globalThis.Date;
+  // Site UTC+7 đã sang ngày 05, nhưng UTC và host UTC-7 vẫn ở ngày 04.
+  let now = OriginalDate.parse(instant);
+  globalThis.Date = new Proxy(OriginalDate, {
+    construct: (target, args) =>
+      Reflect.construct(target, args.length ? args : [now]),
+    get: (target, property) =>
+      property === "now" ? () => now : Reflect.get(target, property),
+  });
+  try {
+    await run(() => now += 40 * 86400000);
+  } finally {
+    globalThis.Date = OriginalDate;
+  }
+}
+
+function datedAnalyticsFixture(
+  datasets: Record<string, any[]>,
+  advance: () => void,
+  zone = "Asia/Ho_Chi_Minh",
+) {
+  const fixture = completeDatasetClient(datasets);
+  const list = fixture.client.list.bind(fixture.client);
+  const queries: { doctype: string; filters: any[] }[] = [];
+  let zoneReads = 0;
+  fixture.client.callMethod = async () => {
+    zoneReads++;
+    return { time_zone: zone } as any;
+  };
+  fixture.client.list = async (doctype, options) => {
+    queries.push({ doctype, filters: options?.filters ?? [] });
+    const rows = await list(doctype, options);
+    advance();
+    return rows as any;
+  };
+  return { ...fixture, queries, zoneReads: () => zoneReads };
+}
+
+const DATE_WINDOW_ORDERS = [
+  ["2026-03-31", 900],
+  ["2026-04-01", 10],
+  ["2026-08-01", 20],
+  ["2026-08-31", 30],
+  ["2026-09-01", 40],
+  ["2026-09-05", 50],
+  ["2026-09-06", 900],
+  ["2026-10-01", 900],
+].map(([transaction_date, base_grand_total], index) => ({
+  name: `DATE-ORDER-${index}`,
+  company: "Vietnam Company",
+  customer_name: "Customer",
+  docstatus: 1,
+  transaction_date,
+  base_grand_total,
+}));
+
+for (
+  const scenario of [
+    {
+      now: "2025-12-31T18:30:00Z",
+      zone: "Asia/Ho_Chi_Minh",
+      today: "2026-01-01",
+      start: "2026-01-01",
+      previousStart: "2025-12-01",
+      previousEnd: "2025-12-31",
+      future: "2026-01-02",
+      label: "Jan 26",
+    },
+    {
+      now: "2024-03-01T02:30:00Z",
+      zone: "America/Los_Angeles",
+      today: "2024-02-29",
+      start: "2024-02-01",
+      previousStart: "2024-01-01",
+      previousEnd: "2024-01-31",
+      future: "2024-03-01",
+      label: "Feb 24",
+    },
+    {
+      now: "2024-02-29T18:30:00Z",
+      zone: "Asia/Ho_Chi_Minh",
+      today: "2024-03-01",
+      start: "2024-03-01",
+      previousStart: "2024-02-01",
+      previousEnd: "2024-02-29",
+      future: "2024-03-02",
+      label: "Mar 24",
+    },
+  ]
+) {
+  Deno.test(`analytics site window - calendar boundary ${scenario.today} in ${scenario.zone}`, async () => {
+    for (
+      const toolName of [
+        "erpnext_kpi_orders",
+        "erpnext_kpi_revenue",
+        "erpnext_revenue_trend",
+      ]
+    ) {
+      await withAnalyticsClock(async (advance) => {
+        const rows = [
+          scenario.previousStart,
+          scenario.previousEnd,
+          scenario.today,
+          scenario.future,
+        ].map((transaction_date, index) => ({
+          name: `BOUNDARY-${index}`,
+          company: "Vietnam Company",
+          docstatus: 1,
+          transaction_date,
+          base_grand_total: 10,
+          customer_name: "Customer",
+        }));
+        const fixture = datedAnalyticsFixture(
+          { "Sales Order": rows },
+          advance,
+          scenario.zone,
+        );
+        const result = await getTool(toolName).handler({
+          company: "Vietnam Company",
+          months: 1,
+        }, makeCtx(fixture.client)) as any;
+        if (toolName === "erpnext_kpi_orders") {
+          assertEquals(result.value, 1);
+          assertEquals(result.delta, -50);
+          assertEquals(fixture.queries[1].filters.slice(0, 2), [
+            ["transaction_date", ">=", scenario.previousStart],
+            ["transaction_date", "<=", scenario.previousEnd],
+          ]);
+        } else if (toolName === "erpnext_kpi_revenue") {
+          assertEquals(result.value, 10);
+          assertEquals(result.sparkline.slice(-2), [20, 10]);
+        } else {
+          assertEquals(result.labels, [scenario.label]);
+          assertEquals(result.datasets[0].values, [10]);
+        }
+        assert(
+          fixture.queries[0].filters.some(([f, op, value]) =>
+            f === "transaction_date" && op === "<=" && value === scenario.today
+          ),
+        );
+        assertEquals(fixture.zoneReads(), 1);
+      }, scenario.now);
+    }
+  });
+}
+
+Deno.test("analytics site window - revenue keeps bounds across a midnight and complete pages", async () => {
+  await withAnalyticsClock(async (advance) => {
+    const fixture = datedAnalyticsFixture({
+      "Sales Order": [
+        ...Array.from(
+          { length: 1001 },
+          (_, i) => ({
+            name: `PAGE-${i}`,
+            company: "Vietnam Company",
+            transaction_date: "2026-09-05",
+            docstatus: 1,
+            base_grand_total: 2,
+          }),
+        ),
+        {
+          name: "FUTURE",
+          company: "Vietnam Company",
+          transaction_date: "2026-09-06",
+          docstatus: 1,
+          base_grand_total: 999999,
+        },
+      ],
+    }, advance);
+    const result = await getTool("erpnext_kpi_revenue").handler({
+      company: "Vietnam Company",
+    }, makeCtx(fixture.client)) as any;
+    assertEquals(result.value, 2002);
+    assertEquals(fixture.calls.map((c) => c.offset), [0, 1000]);
+    assertEquals(fixture.queries[0].filters, fixture.queries[1].filters);
+    assertEquals(fixture.zoneReads(), 1);
+  });
+});
+
+for (
+  const toolName of [
+    "erpnext_kpi_orders",
+    "erpnext_kpi_revenue",
+    "erpnext_revenue_trend",
+    "erpnext_sales_funnel",
+  ]
+) {
+  Deno.test(`analytics site window - ${toolName} preserves timezone fallback and read errors`, async () => {
+    await withAnalyticsClock(async () => {
+      const fixture = datedAnalyticsFixture({}, () => {});
+      const methods: string[] = [];
+      fixture.client.callMethod = async (method) => {
+        methods.push(method);
+        throw new Error("Local timezone permission denied");
+      };
+      await getTool(toolName).handler({
+        company: "Vietnam Company",
+        period: "this_month",
+      }, makeCtx(fixture.client));
+      assertEquals(methods, [
+        "frappe.client.get_value",
+        "frappe.client.get_time_zone",
+      ]);
+      const first = fixture.queries[0];
+      assert(
+        first.filters.some(([field, op, value]) =>
+          first.doctype === "Lead"
+            ? field === "creation" && op === "<" &&
+              value === "2026-09-05 00:00:00"
+            : field === "transaction_date" && op === "<=" &&
+              value === "2026-09-04"
+        ),
+      );
+      const denied = new Error("Local analytics read denied");
+      fixture.client.list = async () => {
+        throw denied;
+      };
+      assertEquals(
+        await assertRejects(() =>
+          getTool(toolName).handler({
+            company: "Vietnam Company",
+            period: "this_month",
+          }, makeCtx(fixture.client))
+        ),
+        denied,
+      );
+      assertEquals(methods.length, 4);
+    });
+  });
+}
+
+for (const group of ["kpi", "total", "customer"]) {
+  Deno.test(`analytics site window - revenue ${group} excludes future and buckets date text`, async () => {
+    await withAnalyticsClock(async (advance) => {
+      const fixture = datedAnalyticsFixture({
+        "Sales Order": DATE_WINDOW_ORDERS,
+      }, advance);
+      const result = await getTool(
+        group === "kpi" ? "erpnext_kpi_revenue" : "erpnext_revenue_trend",
+      ).handler(
+        { company: "Vietnam Company", months: 6, group_by: group },
+        makeCtx(fixture.client),
+      ) as any;
+      const values = group === "kpi"
+        ? result.sparkline
+        : result.datasets[0].values;
+      assertEquals(values, [10, 0, 0, 0, 50, 90]);
+      if (group === "kpi") {
+        assertEquals(result.value, 90);
+        assertEquals(result.delta, 80);
+      } else {
+        assertEquals(result.labels, [
+          "Apr 26",
+          "May 26",
+          "Jun 26",
+          "Jul 26",
+          "Aug 26",
+          "Sep 26",
+        ]);
+      }
+      assertEquals(fixture.queries[0].filters, [
+        ["transaction_date", ">=", "2026-04-01"],
+        ["transaction_date", "<=", "2026-09-05"],
+        ["docstatus", "!=", 2],
+        ["company", "=", "Vietnam Company"],
+      ]);
+      assertEquals(fixture.zoneReads(), 1);
+    });
+  });
+}
+
+Deno.test("analytics site window - orders compares site MTD with the whole previous month", async () => {
+  await withAnalyticsClock(async (advance) => {
+    const fixture = datedAnalyticsFixture(
+      { "Sales Order": DATE_WINDOW_ORDERS },
+      advance,
+    );
+    const result = await getTool("erpnext_kpi_orders").handler(
+      {},
+      makeCtx(fixture.client),
+    ) as any;
+    assertEquals(result.value, 2);
+    assertEquals(result.delta, 0);
+    assertEquals(fixture.queries.map((q) => q.filters), [
+      [["transaction_date", ">=", "2026-09-01"], [
+        "transaction_date",
+        "<=",
+        "2026-09-05",
+      ], ["docstatus", "!=", 2]],
+      [["transaction_date", ">=", "2026-08-01"], [
+        "transaction_date",
+        "<=",
+        "2026-08-31",
+      ], ["docstatus", "!=", 2]],
+    ]);
+    assertEquals(fixture.zoneReads(), 1);
+  });
+});
+
+for (
+  const [period, start] of [
+    ["this_month", "2026-09-01"],
+    ["this_quarter", "2026-07-01"],
+    ["this_year", "2026-01-01"],
+    ["all", null],
+  ] as const
+) {
+  Deno.test(`analytics site window - funnel ${period} keeps Date and Datetime boundaries`, async () => {
+    await withAnalyticsClock(async (advance) => {
+      const dates = start
+        ? ["2025-12-31", start, "2026-09-05", "2026-09-06"]
+        : ["2025-12-31", "2026-09-01", "2026-09-05", "2026-09-06"];
+      const datasets = Object.fromEntries(
+        ["Lead", "Opportunity", "Quotation", "Sales Order"].map((
+          doctype,
+        ) => [
+          doctype,
+          dates.map((date, index) => ({
+            name: `${doctype}-${index}`,
+            company: "Vietnam Company",
+            docstatus: 1,
+            transaction_date: date,
+            creation: `${date} ${index === 2 ? "23:59:59.999999" : "00:00:00"}`,
+            base_grand_total: 10,
+            base_opportunity_amount: 10,
+          })),
+        ]),
+      );
+      const fixture = datedAnalyticsFixture(datasets, advance);
+      const result = await getTool("erpnext_sales_funnel").handler({
+        company: "Vietnam Company",
+        period,
+      }, makeCtx(fixture.client)) as any;
+      assertEquals(
+        result.stages.map((s: any) => s.count),
+        Array(4).fill(start ? 2 : 4),
+      );
+      for (const query of fixture.queries) {
+        assertEquals(
+          query.filters.filter(([field]) =>
+            field !== "creation" && field !== "transaction_date"
+          ),
+          query.doctype === "Lead"
+            ? []
+            : query.doctype === "Opportunity"
+            ? [["company", "=", "Vietnam Company"]]
+            : [["docstatus", "!=", 2], ["company", "=", "Vietnam Company"]],
+        );
+        const dateFilters = query.filters.filter(([field]) =>
+          field === "creation" || field === "transaction_date"
+        );
+        assertEquals(
+          dateFilters,
+          !start
+            ? []
+            : query.doctype === "Lead"
+            ? [["creation", ">=", `${start} 00:00:00`], [
+              "creation",
+              "<",
+              "2026-09-06 00:00:00",
+            ]]
+            : [["transaction_date", ">=", start], [
+              "transaction_date",
+              "<=",
+              "2026-09-05",
+            ]],
+        );
+      }
+      assertEquals(fixture.zoneReads(), start ? 1 : 0);
+    });
+  });
 }
 
 Deno.test("complete treemap rejects 1001 ownership chunks with a measured whole-tool request budget", async () => {

@@ -22,6 +22,7 @@ import {
 } from "./query-report.ts";
 import { listCompleteAnalytics } from "./analytics-pagination.ts";
 import { siteToday } from "./site-date.ts";
+import { analyticsDateWindow, analyticsMonthIndex } from "./analytics-dates.ts";
 import {
   analyticsNumber,
   companyAnalyticsTool,
@@ -344,49 +345,34 @@ export const analyticsTools: ErpNextTool[] = [
         },
       },
     },
-    handler: async (input, _ctx, context) => {
+    handler: async (input, ctx, context) => {
       const { currency } = context;
       const monthsBack = (input.months as number) ?? 6;
       const chartType = (input.type as string) ?? "line";
       const groupBy = (input.group_by as string) ?? "total";
 
-      // Build date range
-      const now = new Date();
-      const startDate = new Date(
-        now.getFullYear(),
-        now.getMonth() - monthsBack + 1,
-        1,
-      );
-      const startStr = startDate.toISOString().split("T")[0];
+      const window = analyticsDateWindow(await siteToday(ctx), monthsBack);
 
       const orders = await context.listAllDocuments("Sales Order", {
         fields: ["customer_name", "base_grand_total", "transaction_date"],
-        filters: [["transaction_date", ">=", startStr], ["docstatus", "!=", 2]],
+        filters: [
+          ["transaction_date", ">=", window.start],
+          ["transaction_date", "<=", window.end],
+          ["docstatus", "!=", 2],
+        ],
         order_by: "transaction_date asc",
       });
 
-      // Build month labels
-      const months: string[] = [];
-      for (let m = 0; m < monthsBack; m++) {
-        const d = new Date(
-          now.getFullYear(),
-          now.getMonth() - monthsBack + 1 + m,
-          1,
-        );
-        months.push(
-          `${d.toLocaleString("en", { month: "short" })} ${
-            d.getFullYear().toString().slice(2)
-          }`,
-        );
-      }
+      const months = window.labels;
 
       if (groupBy === "customer") {
         // Multi-line: one dataset per customer
         const byCustomerMonth: Record<string, number[]> = {};
         for (const order of orders) {
-          const d = new Date(order.transaction_date as string);
-          const mIdx = (d.getFullYear() - startDate.getFullYear()) * 12 +
-            d.getMonth() - startDate.getMonth();
+          const mIdx = analyticsMonthIndex(
+            order.transaction_date as string,
+            window.monthKeys,
+          );
           if (mIdx < 0 || mIdx >= monthsBack) continue;
           const cust = (order.customer_name as string) ?? "Unknown";
           if (!byCustomerMonth[cust]) {
@@ -427,9 +413,10 @@ export const analyticsTools: ErpNextTool[] = [
       // Single line: total revenue per month
       const monthlyTotals = new Array(monthsBack).fill(0);
       for (const order of orders) {
-        const d = new Date(order.transaction_date as string);
-        const mIdx = (d.getFullYear() - startDate.getFullYear()) * 12 +
-          d.getMonth() - startDate.getMonth();
+        const mIdx = analyticsMonthIndex(
+          order.transaction_date as string,
+          window.monthKeys,
+        );
         if (mIdx >= 0 && mIdx < monthsBack) {
           monthlyTotals[mIdx] += analyticsNumber(order, "base_grand_total");
         }
@@ -993,17 +980,16 @@ export const analyticsTools: ErpNextTool[] = [
       "with delta % vs previous month and sparkline of last 6 months.",
     category: "analytics",
     inputSchema: { type: "object", properties: {} },
-    handler: async (_input, _ctx, context) => {
+    handler: async (_input, ctx, context) => {
       const { currency } = context;
-      const now = new Date();
+      const window = analyticsDateWindow(await siteToday(ctx), 6);
       // Đọc đủ cửa sổ sáu tháng bằng các trang hữu hạn trước khi chia theo tháng.
-      const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
-      const sinceStr = sixMonthsAgo.toISOString().split("T")[0];
 
       const allOrders = await context.listAllDocuments("Sales Order", {
         fields: ["base_grand_total", "transaction_date"],
         filters: [
-          ["transaction_date", ">=", sinceStr],
+          ["transaction_date", ">=", window.start],
+          ["transaction_date", "<=", window.end],
           ["docstatus", "!=", 2],
         ],
       });
@@ -1011,11 +997,10 @@ export const analyticsTools: ErpNextTool[] = [
       // Bucket into 6 monthly bins
       const sparkline: number[] = [0, 0, 0, 0, 0, 0];
       for (const o of allOrders) {
-        const d = new Date(o.transaction_date as string);
-        // Month index: 0 = oldest (5 months ago), 5 = current month
-        const monthDiff = (now.getFullYear() - d.getFullYear()) * 12 +
-          (now.getMonth() - d.getMonth());
-        const idx = 5 - monthDiff;
+        const idx = analyticsMonthIndex(
+          o.transaction_date as string,
+          window.monthKeys,
+        );
         if (idx >= 0 && idx < 6) {
           sparkline[idx] += analyticsNumber(o, "base_grand_total");
         }
@@ -1097,14 +1082,7 @@ export const analyticsTools: ErpNextTool[] = [
     category: "analytics",
     inputSchema: { type: "object", properties: {} },
     handler: async (_input, ctx) => {
-      const now = new Date();
-      const thisMonthStart = `${now.getFullYear()}-${
-        String(now.getMonth() + 1).padStart(2, "0")
-      }-01`;
-      const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
-      const lastMonthStartStr = lastMonthStart.toISOString().split("T")[0];
-      const lastMonthEndStr = lastMonthEnd.toISOString().split("T")[0];
+      const window = analyticsDateWindow(await siteToday(ctx));
 
       const currentOrders = await listCompleteAnalytics(
         ctx.client.list.bind(ctx.client),
@@ -1112,7 +1090,8 @@ export const analyticsTools: ErpNextTool[] = [
         {
           fields: ["name"],
           filters: [
-            ["transaction_date", ">=", thisMonthStart],
+            ["transaction_date", ">=", window.start],
+            ["transaction_date", "<=", window.end],
             ["docstatus", "!=", 2],
           ],
         },
@@ -1125,8 +1104,8 @@ export const analyticsTools: ErpNextTool[] = [
         {
           fields: ["name"],
           filters: [
-            ["transaction_date", ">=", lastMonthStartStr],
-            ["transaction_date", "<=", lastMonthEndStr],
+            ["transaction_date", ">=", window.previousStart],
+            ["transaction_date", "<=", window.previousEnd],
             ["docstatus", "!=", 2],
           ],
         },
@@ -1286,27 +1265,34 @@ export const analyticsTools: ErpNextTool[] = [
     handler: async (_input, ctx, context) => {
       const { currency } = context;
       const period = (_input.period as string) ?? "all";
-      const now = new Date();
-      let sinceDate: string | null = null;
-      if (period === "this_month") {
-        sinceDate = `${now.getFullYear()}-${
-          String(now.getMonth() + 1).padStart(2, "0")
-        }-01`;
-      } else if (period === "this_quarter") {
-        const qMonth = Math.floor(now.getMonth() / 3) * 3 + 1;
-        sinceDate = `${now.getFullYear()}-${
-          String(qMonth).padStart(2, "0")
-        }-01`;
-      } else if (period === "this_year") {
-        sinceDate = `${now.getFullYear()}-01-01`;
-      }
+      const finitePeriod = ["this_month", "this_quarter", "this_year"].includes(
+        period,
+      );
+      const window = finitePeriod
+        ? analyticsDateWindow(await siteToday(ctx))
+        : null;
+      const sinceDate = window
+        ? period === "this_quarter"
+          ? window.quarterStart
+          : period === "this_year"
+          ? window.yearStart
+          : window.start
+        : null;
 
       // Leads use "creation", the rest use "transaction_date"
-      const leadFilters: FrappeFilter[] = sinceDate
-        ? [["creation", ">=", sinceDate]]
+      const leadFilters: FrappeFilter[] = sinceDate && window
+        ? [["creation", ">=", `${sinceDate} 00:00:00`], [
+          "creation",
+          "<",
+          `${window.nextDay} 00:00:00`,
+        ]]
         : [];
-      const txnFilters: FrappeFilter[] = sinceDate
-        ? [["transaction_date", ">=", sinceDate]]
+      const txnFilters: FrappeFilter[] = sinceDate && window
+        ? [["transaction_date", ">=", sinceDate], [
+          "transaction_date",
+          "<=",
+          window.end,
+        ]]
         : [];
       const submittedTxnFilters: FrappeFilter[] = [
         ...txnFilters,
