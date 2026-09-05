@@ -1,6 +1,7 @@
 /** Doclist Viewer helpers */
 
 import { formatNumber } from "~/shared/theme";
+import { serializeCsv } from "../../shared/csv.ts";
 
 export const STATUS_FIELDS = new Set(["status", "docstatus", "workflow_state"]);
 export const HIDDEN_FIELDS = new Set([
@@ -89,24 +90,17 @@ export function exportCsv(
   rows: Record<string, unknown>[],
   doctype?: string,
 ) {
-  const header = columns.join(",");
-  const body = rows.map((row) =>
-    columns.map((col) => {
-      const v = formatCell(row[col]);
-      return v.includes(",") || v.includes('"')
-        ? `"${v.replace(/"/g, '""')}"`
-        : v;
-    }).join(",")
-  ).join("\n");
-
-  const csv = `${header}\n${body}`;
-  const blob = new Blob([csv], { type: "text/csv" });
+  const csv = serializeCsv(columns, rows);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
   a.download = `${doctype ?? "export"}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+  try {
+    a.click();
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
 }
 
 /** Resolve a dot-path like "metadata.invoiceId" on an object */
