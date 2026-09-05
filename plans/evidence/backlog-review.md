@@ -375,3 +375,12 @@ trước lượt này. So sâu manifest root chỉ đổi record 010/011/015/017
 baseline 016/022 giữ nguyên. Mười artifact 009, kể cả bảy PNG, khớp byte giữa
 backlog và root. Delta quản trị này chỉ ở plans, commit local do agent quản trị
 tạo; push/review tiếp do parent quyết định.
+
+Reviewer độc lập APPROVE delta quản trị tại
+`dbbf2c28aa5c811171436c81877fcae41eeb2e17`, xác nhận tám file plans không giảm
+tiêu chí, scope mở đúng phần đã duyệt, trạng thái/phụ thuộc và baseline riêng
+root/backlog được giữ. Reviewer tự chạy validator 25/25, format 51 file và diff
+check đạt. Parent đọc toàn delta và tự chạy lại validator 25/25, regression
+81/81, format 51 file, lint hai script, diff check và so source ngoài plans với
+main 99b1fa3: đều exit 0. Root validator cũng đạt, source vẫn d2c5305. Phần thêm
+này chỉ lưu review/gate; CI và Codex review tiếp theo phải kiểm HEAD được push.
