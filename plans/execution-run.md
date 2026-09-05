@@ -245,3 +245,22 @@ Tổng trạng thái: 8 DONE, 1 BLOCKED (002), 5 IN_PROGRESS (005, 011, 012, 017
 ghi chú các kế hoạch đang chạy và mọi nội dung journal cũ. Không reset/pull
 root, sửa file người dùng, nâng dependency, push, reply hoặc merge PR trong lượt
 quản trị này.
+
+## Gate sau sửa provenance
+
+Commit local `7f6b1ddc4e3a8707d3fc3b3effafd63e731ce325` đã chạy
+`node --test plans/test-history.mjs`: 2 passed, 0 failed, 0 skipped. Ca xanh
+clone HEAD một nhánh bằng Git transport local, validator 25/25 và ancestry mọi
+sourceRef/reviewed/completed đều đạt; ca âm clone revision thật 2442505 vẫn
+thiếu đúng sáu reviewed HEAD và từ chối đủ bảy DONE. Không dùng objects chia sẻ
+hoặc nhánh executor để tạo kết quả xanh. Repository tạm của hai test đã được
+dọn; source/worktree gốc không bị sửa.
+
+Regression validator 81/81, validator 25/25, format 53 file, lint ba script,
+diff check và so source ngoài plans với main 341cba4: đều đạt. Root validator
+25/25, format 54 file, lint ba script đạt. Không chạy history gate hoặc
+regression phụ thuộc source mới ở root d2c5305. Manifest root giữ nguyên byte;
+hash 002/quyền, 005/011/017, 016/022 và ba file người dùng không đổi. Journal
+root giữ nguyên prefix nội dung, chỉ append tiến độ/gate. Không có app build,
+dependency install, push/reply hoặc merge PR. Delta mới vẫn cần fresh review và
+CI do parent quản lý; không dùng APPROVE cũ của 0af23a9 thay thế.
