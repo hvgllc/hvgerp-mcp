@@ -32,6 +32,10 @@ import { env } from "../runtime.ts";
 import type { Cache } from "../cache/types.ts";
 import { MemoryCache } from "../cache/memory.ts";
 import { createCache, getCache, getCacheTtlMs } from "../cache/cache.ts";
+import {
+  bumpInvalidationGeneration,
+  getInvalidationGeneration,
+} from "../cache/invalidation-generation.ts";
 import { currentCaller } from "./caller-context.ts";
 
 /**
@@ -551,12 +555,15 @@ export class FrappeClient {
     params.set("as_dict", "1");
 
     const query = params.toString() ? `?${params.toString()}` : "";
+    const generation = getInvalidationGeneration(this.cache, doctype);
     const res = await this.request<FrappeListResponse<T>>(
       "GET",
       `/api/resource/${encodeURIComponent(doctype)}${query}`,
     );
     const docs = res.data ?? [];
-    this.cache.set(cacheKey, docs, getCacheTtlMs());
+    if (generation === getInvalidationGeneration(this.cache, doctype)) {
+      this.cache.set(cacheKey, docs, getCacheTtlMs());
+    }
     return docs;
   }
 
@@ -580,13 +587,16 @@ export class FrappeClient {
       if (cached !== undefined) return cached;
     }
 
+    const generation = getInvalidationGeneration(this.cache, doctype);
     const res = await this.request<FrappeDocResponse<T>>(
       "GET",
       `/api/resource/${encodeURIComponent(doctype)}/${
         encodeURIComponent(name)
       }`,
     );
-    this.cache.set(cacheKey, res.data, getCacheTtlMs());
+    if (generation === getInvalidationGeneration(this.cache, doctype)) {
+      this.cache.set(cacheKey, res.data, getCacheTtlMs());
+    }
     return res.data;
   }
 
@@ -607,6 +617,8 @@ export class FrappeClient {
    */
   invalidate(doctype: string, name?: string): void {
     const clear = (cache: Cache): void => {
+      // Chặn cả read đang bay: xóa các entry đã có không ngăn response cũ ghi lại.
+      bumpInvalidationGeneration(cache, doctype);
       cache.deleteByPrefix(`list:${doctype}:`);
       cache.deleteByPrefix(`resolve:miss:${doctype}:`);
       if (name) cache.delete(`get:${doctype}:${name}`);
