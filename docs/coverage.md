@@ -52,31 +52,36 @@ is not: it reads four doctypes outside whatever surface was requested.
 
 ### Accounting (8 tools)
 
-| Tool                           | DocType       | Operations                                             | UI Viewer      |
-| ------------------------------ | ------------- | ------------------------------------------------------ | -------------- |
-| `erpnext_account_list`         | Account       | List chart of accounts + filters (root_type, is_group) | doclist-viewer |
-| `erpnext_journal_entry_list`   | Journal Entry | List + filters (voucher_type, dates)                   | doclist-viewer |
-| `erpnext_journal_entry_get`    | Journal Entry | Get by name (with accounts)                            | -              |
-| `erpnext_journal_entry_create` | Journal Entry | Create (voucher_type + balanced accounts)              | -              |
-| `erpnext_payment_entry_list`   | Payment Entry | List + filters (type, party, dates)                    | doclist-viewer |
-| `erpnext_payment_entry_get`    | Payment Entry | Get by name (with references)                          | -              |
+| Tool                           | DocType                    | Operations                                                                                     | UI Viewer      |
+| ------------------------------ | -------------------------- | ---------------------------------------------------------------------------------------------- | -------------- |
+| `erpnext_account_list`         | Account                    | List chart of accounts + filters (root_type, is_group)                                         | doclist-viewer |
+| `erpnext_journal_entry_list`   | Journal Entry              | List + filters (voucher_type, dates)                                                           | doclist-viewer |
+| `erpnext_journal_entry_get`    | Journal Entry              | Get by name (with accounts)                                                                    | -              |
+| `erpnext_journal_entry_create` | Journal Entry              | Create (voucher_type + balanced accounts)                                                      | -              |
+| `erpnext_payment_entry_list`   | Payment Entry              | List + filters (type, party, dates)                                                            | doclist-viewer |
+| `erpnext_payment_entry_get`    | Payment Entry              | Get by name (with references)                                                                  | -              |
+| `erpnext_gl_entry_list`        | GL Entry                   | Read posted ledger rows; cancelled entries excluded by default                                 | doclist-viewer |
+| `erpnext_financial_report`     | Standard financial reports | Read an allowlisted ERPNext report under caller permissions, without queuing a Prepared Report | -              |
 
 ### HR (15 tools)
 
-| Tool                               | DocType           | Operations                                         | UI Viewer      |
-| ---------------------------------- | ----------------- | -------------------------------------------------- | -------------- |
-| `erpnext_employee_list`            | Employee          | List + filters (department, status, company)       | doclist-viewer |
-| `erpnext_employee_get`             | Employee          | Get by ID                                          | -              |
-| `erpnext_attendance_list`          | Attendance        | List + filters (employee, status, dates)           | doclist-viewer |
-| `erpnext_leave_application_list`   | Leave Application | List + filters (employee, status, type)            | doclist-viewer |
-| `erpnext_leave_application_get`    | Leave Application | Get by name                                        | -              |
-| `erpnext_leave_application_create` | Leave Application | Create (employee, type, dates, reason)             | -              |
-| `erpnext_salary_slip_list`         | Salary Slip       | List + filters (employee, status, dates)           | doclist-viewer |
-| `erpnext_salary_slip_get`          | Salary Slip       | Get by name (with earnings/deductions)             | -              |
-| `erpnext_payroll_entry_list`       | Payroll Entry     | List + filters (company, status)                   | doclist-viewer |
-| `erpnext_expense_claim_list`       | Expense Claim     | List + filters (employee, status, approval_status) | doclist-viewer |
-| `erpnext_expense_claim_create`     | Expense Claim     | Create (employee + expenses[] child table)         | -              |
-| `erpnext_leave_balance`            | Leave Allocation  | Get allocations by employee (docstatus=1)          | doclist-viewer |
+| Tool                               | DocType                       | Operations                                                                                                                                   | UI Viewer      |
+| ---------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| `erpnext_employee_list`            | Employee                      | List + filters (department, status, company)                                                                                                 | doclist-viewer |
+| `erpnext_employee_get`             | Employee                      | Get by ID                                                                                                                                    | -              |
+| `erpnext_attendance_list`          | Attendance                    | List + filters (employee, status, dates)                                                                                                     | doclist-viewer |
+| `erpnext_leave_application_list`   | Leave Application             | List + filters (employee, status, type)                                                                                                      | doclist-viewer |
+| `erpnext_leave_application_get`    | Leave Application             | Get by name                                                                                                                                  | -              |
+| `erpnext_leave_application_create` | Leave Application             | Create (employee, type, dates, reason)                                                                                                       | -              |
+| `erpnext_salary_slip_list`         | Salary Slip                   | List + filters (employee, status, dates)                                                                                                     | doclist-viewer |
+| `erpnext_salary_slip_get`          | Salary Slip                   | Get by name (with earnings/deductions)                                                                                                       | -              |
+| `erpnext_payroll_entry_list`       | Payroll Entry                 | List + filters (company, status)                                                                                                             | doclist-viewer |
+| `erpnext_expense_claim_list`       | Expense Claim                 | List + filters (employee, status, approval_status)                                                                                           | doclist-viewer |
+| `erpnext_expense_claim_create`     | Expense Claim                 | Create (employee + expenses[] child table)                                                                                                   | -              |
+| `erpnext_leave_balance`            | Leave Allocation              | Get allocations by employee (docstatus=1)                                                                                                    | doclist-viewer |
+| `erpnext_employee_checkin_list`    | Employee Checkin              | Read raw punches by employee, log type and date range                                                                                        | doclist-viewer |
+| `erpnext_attendance_day_get`       | Attendance / Employee Checkin | Read one employee-day and repair blockers; requires hvg_workspace                                                                            | -              |
+| `erpnext_attendance_day_fix`       | Attendance / Employee Checkin | Mutate punches and rebuild Attendance; cancelling submitted Attendance requires confirm_cancel_attendance; reason and hvg_workspace required | -              |
 
 ### Project (9 tools)
 

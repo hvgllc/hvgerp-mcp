@@ -95,31 +95,36 @@ operations. It has no standalone viewer binding.
 
 ## Accounting (8) → doclist-viewer
 
-| Tool                           | DocType       | Operations                                                  |
-| ------------------------------ | ------------- | ----------------------------------------------------------- |
-| `erpnext_account_list`         | Account       | Chart of accounts + filters (root_type, is_group, disabled) |
-| `erpnext_journal_entry_list`   | Journal Entry | List + filters (voucher_type, dates)                        |
-| `erpnext_journal_entry_get`    | Journal Entry | Get with accounts                                           |
-| `erpnext_journal_entry_create` | Journal Entry | Create (voucher_type + balanced accounts)                   |
-| `erpnext_payment_entry_list`   | Payment Entry | List + filters (type, party, dates)                         |
-| `erpnext_payment_entry_get`    | Payment Entry | Get with references                                         |
+| Tool                           | DocType                    | Operations                                                                                                                       |
+| ------------------------------ | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `erpnext_account_list`         | Account                    | Chart of accounts + filters (root_type, is_group, disabled)                                                                      |
+| `erpnext_journal_entry_list`   | Journal Entry              | List + filters (voucher_type, dates)                                                                                             |
+| `erpnext_journal_entry_get`    | Journal Entry              | Get with accounts                                                                                                                |
+| `erpnext_journal_entry_create` | Journal Entry              | Create (voucher_type + balanced accounts)                                                                                        |
+| `erpnext_payment_entry_list`   | Payment Entry              | List + filters (type, party, dates)                                                                                              |
+| `erpnext_payment_entry_get`    | Payment Entry              | Get with references                                                                                                              |
+| `erpnext_gl_entry_list`        | GL Entry                   | Read posted ledger rows by account, party, voucher, company and dates; cancelled rows excluded by default                        |
+| `erpnext_financial_report`     | Standard financial reports | Read an allowlisted ERPNext report under caller permissions; returns columns, rows and summary without queuing a Prepared Report |
 
 ## HR (15) → doclist-viewer
 
-| Tool                               | DocType           | Operations                                   |
-| ---------------------------------- | ----------------- | -------------------------------------------- |
-| `erpnext_employee_list`            | Employee          | List + filters (department, status, company) |
-| `erpnext_employee_get`             | Employee          | Get by ID                                    |
-| `erpnext_attendance_list`          | Attendance        | List + filters (employee, status, dates)     |
-| `erpnext_leave_application_list`   | Leave Application | List + filters                               |
-| `erpnext_leave_application_get`    | Leave Application | Get by name                                  |
-| `erpnext_leave_application_create` | Leave Application | Create (employee, type, dates, reason)       |
-| `erpnext_salary_slip_list`         | Salary Slip       | List + filters (employee, status, dates)     |
-| `erpnext_salary_slip_get`          | Salary Slip       | Get with earnings/deductions                 |
-| `erpnext_payroll_entry_list`       | Payroll Entry     | List + filters (company, status)             |
-| `erpnext_expense_claim_list`       | Expense Claim     | List + filters                               |
-| `erpnext_expense_claim_create`     | Expense Claim     | Create (employee + expenses[])               |
-| `erpnext_leave_balance`            | Leave Allocation  | Get allocations by employee                  |
+| Tool                               | DocType                       | Operations                                                                                                                                                               |
+| ---------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `erpnext_employee_list`            | Employee                      | List + filters (department, status, company)                                                                                                                             |
+| `erpnext_employee_get`             | Employee                      | Get by ID                                                                                                                                                                |
+| `erpnext_attendance_list`          | Attendance                    | List + filters (employee, status, dates)                                                                                                                                 |
+| `erpnext_leave_application_list`   | Leave Application             | List + filters                                                                                                                                                           |
+| `erpnext_leave_application_get`    | Leave Application             | Get by name                                                                                                                                                              |
+| `erpnext_leave_application_create` | Leave Application             | Create (employee, type, dates, reason)                                                                                                                                   |
+| `erpnext_salary_slip_list`         | Salary Slip                   | List + filters (employee, status, dates)                                                                                                                                 |
+| `erpnext_salary_slip_get`          | Salary Slip                   | Get with earnings/deductions                                                                                                                                             |
+| `erpnext_payroll_entry_list`       | Payroll Entry                 | List + filters (company, status)                                                                                                                                         |
+| `erpnext_expense_claim_list`       | Expense Claim                 | List + filters                                                                                                                                                           |
+| `erpnext_expense_claim_create`     | Expense Claim                 | Create (employee + expenses[])                                                                                                                                           |
+| `erpnext_leave_balance`            | Leave Allocation              | Get allocations by employee                                                                                                                                              |
+| `erpnext_employee_checkin_list`    | Employee Checkin              | Read raw punches by employee, log type and date range                                                                                                                    |
+| `erpnext_attendance_day_get`       | Attendance / Employee Checkin | Read one employee-day, shift, punches and repair blockers; requires hvg_workspace                                                                                        |
+| `erpnext_attendance_day_fix`       | Attendance / Employee Checkin | Mutate one employee-day: add/correct punches and rebuild Attendance; cancelling a submitted record requires confirm_cancel_attendance; reason and hvg_workspace required |
 
 ## Project (9) → doclist-viewer
 
