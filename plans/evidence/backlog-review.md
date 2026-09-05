@@ -1221,3 +1221,31 @@ Chỉ thay validator, selftests và mục evidence này. Không sửa AGENTS, jo
 plan/manifest/approval hoặc source ứng dụng; không mạng ngoài Git transport
 local của history gate, không push/GitHub/Browser/build. Delta sửa REVISE cần
 review độc lập mới, không tự tạo APPROVE.
+
+Reviewer độc lập APPROVE toàn delta d97f092 + 3f8c9c8 so với 5a36319 tại HEAD
+`d96148906c0299b953b051714a848642c145b6c9`, tree
+`93ee282e2cb0e8397a0d83c0f111b34024ba8d3d`, report blob
+`6c2d6c5871f2ffb3c785f12d9af2614df2cf06d9`. Reviewer tự tái hiện red 6/18 trên
+4f83fff, green focused 24 và full 273; kiểm 245 selftests cũ nguyên byte,
+history helper và metadata không đổi. Validator 25, fmt 75, lint 3, diff check
+đạt. Parent đọc toàn diff helper/tests và chạy lại 273 self/history cùng các
+gate đó đều đạt. Approval áp cho cú pháp giới hạn đã nêu, không mở rộng thành
+cam kết phân tích toàn bộ CommonMark hoặc approval metadata chưa review.
+
+## Đối chiếu finding 3940727088 về đúng SHA remote
+
+Review 5121375631 ghi Reviewed commit 5a3631946c nhưng mô tả ancestry của
+051daf1d296c9b4b835c44088dfd935397d30176. API commit của HEAD remote thật
+`5a3631946c188eace908ea252ea80581603f7f62` cho parent
+`76dc06d07d801f50e38e7919f631bb3d151136d6`, không phải main 7d4546b làm parent
+duy nhất. Parent fetch rồi fast-forward clone trực tiếp một nhánh từ GitHub tới
+5a36319: validator 25 và history 4 đạt; b9d6d02 và bb78ace đều còn là ancestor.
+Đã trả lời tại discussion3940743803, không sửa các approval hợp lệ.
+
+Quy tắc `plans/AGENTS.md` blob `7c24cfc6cb953064097151c4b60fa7684674ac38` được
+reviewer độc lập APPROVE riêng. Phải đối chiếu SHA remote và parent chính SHA
+đó; không lấy checkout khác SHA để kết luận nhánh thật mất history. Nếu actual
+HEAD hoặc merge main mất pinned refs, vẫn báo lỗi và chặn DONE. Negative history
+tests vẫn bắt buộc; PR 25 giữ merge commit, không squash/rebase. Reviewer kiểm
+rule, format và parent Git local; chứng cứ GitHub/remote clone là của parent,
+không gán cho reviewer.

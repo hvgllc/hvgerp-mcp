@@ -35,3 +35,13 @@ Checkout shallow phải fetch đầy đủ history trước. PR25 giữ provenan
 commit, không squash/rebase làm mất các reviewed revision đã ghim. Workspace
 root cố ý giữ source d2c5305 cùng plans untracked không thay worktree đã commit
 cho gate history này.
+
+Khi review ancestry, đối chiếu đúng SHA head của PR từ remote và parent Git của
+SHA đó. Không dùng commit squash hoặc checkout tổng hợp có SHA khác làm chứng cứ
+rằng nhánh remote đã mất provenance. Hai lượt review gần đây ghi Reviewed commit
+là 8436a48/5a36319 nhưng kiểm ancestry của 8818303/051daf1 khác SHA; clone trực
+tiếp một nhánh từ GitHub ở hai HEAD thật vẫn qua validator/history. Đây không
+phải ngoại lệ bỏ kiểm: nếu chính HEAD remote hoặc merge main thật mất các pinned
+refs thì vẫn phải báo lỗi và giữ DONE bị chặn. Các negative history tests về
+squash/missing ref tiếp tục bắt buộc; không rebind approval hợp lệ chỉ để phù
+hợp một checkout tổng hợp đã làm mất ancestry.

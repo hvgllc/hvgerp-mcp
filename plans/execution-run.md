@@ -717,3 +717,54 @@ backlog, GitHub, commit hoặc push.
 - Tiến độ hiện tại: 21 DONE, 016 IN_PROGRESS, 002/021 BLOCKED, 022 TODO. Root
   application vẫn giữ d2c5305; hash ba file cá nhân không đổi. Không release,
   Publish, bump version, nâng dependency hoặc tác động production.
+
+## Cập nhật sau 13:01 UTC ngày 2026-09-05
+
+- PR 25 đã push HEAD 5a3631946c188eace908ea252ea80581603f7f62. CI Test
+  33967629348 đạt đúng HEAD, JSR thật với 1440/0/4 ở Tests và release preflight.
+  Finding đường dẫn được trả lời tại discussion3940698537; đang chờ Codex tự
+  review sau push, không gửi mention trùng vòng.
+- Reviewer độc lập xác nhận factual preflight 021: evidence blob
+  112484cede0dfd24eae8c491677d7b7a2fd504f4, plan
+  6cc19fb68102bb2557301c9f3a5948caf3a08a4d và README
+  97ba4ed280d20f5bf5cd68d141a5dec1d8228e5f. Tự kiểm bảng package, 91 entries
+  khớp, tám khác biệt, hash và runtime; không phải approval graph/npm hoặc
+  implementation. Không có quyền mới từ kết quả review này.
+- PR 44 CI 33967214881 đạt đúng 7a343df85d: JSR thật, 1466/0/4 hai lần, release
+  preflight OK. Codex review5121342899 tìm P2 discussion3940692305: assign/save
+  đồng thời cùng board vẫn có thể hydrate detail cũ vì mutation currentness chỉ
+  so session. Parent xác nhận code và giao executor sửa riêng hàng đợi detail
+  theo tài liệu, không làm mất semantics queued move.
+- 016 tiếp tục IN_PROGRESS, chưa merge. Sau fix cần regression, review độc lập,
+  Browser chồng thao tác và CI/Codex đúng HEAD mới. Không dùng CI xanh của HEAD
+  cũ làm bằng chứng bản sửa chưa chạy.
+
+## Cập nhật sau 13:30 UTC ngày 2026-09-05
+
+- PR 44 đã sửa hàng đợi detail tại 1f54272, được reviewer độc lập APPROVE tại
+  0ef90d2. Red 18 assertion đúng nguyên nhân; green Node 55, Kanban 94 và full
+  1470/0/4. Parent chạy Browser chồng assign/save/unassign, lỗi write/readback
+  và đổi board: 22 records, 5 PNG; reviewer khác APPROVE artifacts tại 4946d2c.
+  Các lượt setup timeout và tab đã đóng được ghi là thăm dò, không tính PASS.
+- HEAD push 1f3bd8d0828402659f41821185c322c57606b19e có Test 33968765221 đạt:
+  tải JSR 0.25.0 thật, 1470/0/4 ở Tests và preflight, release-check OK. Finding
+  detail được trả lời tại discussion3940747527. Không Publish hoặc đổi version.
+- Codex review5121409928 trên đúng 1f3bd8d còn ba P2: failed host result không
+  thoát waitingForHost (3940762436), move error bị hydrate xóa quá sớm
+  (3940762437), receiveBoard làm mất pending mutation refresh (3940762440).
+  Parent xác nhận code và giao executor sửa kèm real red/green. 016 tiếp tục
+  IN_PROGRESS, chưa merge; CI xanh không thay clean review.
+- PR 25 review5121375631 ghi 5a36319 nhưng finding ancestry3940727088 kiểm
+  commit 051daf1 khác SHA. Parent đối chiếu API parent của 5a36319 là 76dc06d,
+  clone trực tiếp remote một nhánh ở 5a36319 đạt validator 25 và history 4;
+  b9d6d02 và bb78ace vẫn là ancestor. Đã trả lời tại discussion3940743803. Quy
+  tắc plans/AGENTS.md blob 7c24cfc6cb953064097151c4b60fa7684674ac38 được
+  reviewer độc lập APPROVE riêng: bắt đúng SHA, không bỏ negative history gate.
+- Hai P2 Markdown 3940727090/3940727091 được sửa local tại d97f092, report
+  4f83fff: red 18 lỗi cùng 7 control; green 245 selftests và 4 history. Reviewer
+  độc lập REVISE vì regex label tham lam ăn tới dấu ]: trong title, khiến cả
+  đường dẫn tuyệt đối, traversal và thiếu file bị bỏ kiểm. Bản này chưa push;
+  executor đang sửa boundary và thêm regression. Không coi 249 tests xanh là
+  bằng chứng đã hết finding.
+- Tổng vẫn 21 DONE, 016 IN_PROGRESS, 002/021 BLOCKED, 022 TODO. Chưa có quyền
+  thay framework/release cho 002 hoặc chốt graph/npm/native lock cho 021.
