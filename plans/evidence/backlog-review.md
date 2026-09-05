@@ -74,3 +74,33 @@ Toàn bộ chín finding trong bảng được sửa tại commit
 
 PR vẫn cần Codex review sạch trên HEAD mới và CI đúng HEAD, không lấy gate tài
 liệu local thay CI ứng dụng. Chưa push hoặc trả lời review trong lượt executor.
+
+## Review bổ sung: nguồn build đã stage
+
+Reviewer xác nhận `git diff --exit-code -- <paths>` không bắt thay đổi đã stage.
+Bổ sung assertion contract yêu cầu chính lệnh
+`git diff --exit-code HEAD -- shim.ts src/compat/legacy-shim.ts Dockerfile.shim`:
+trước sửa kế hoạch, test riêng exit 1 vì thiếu HEAD; sau sửa phải exit 0. Lệnh
+mới so working tree với commit, bao gồm staged và unstaged. Đây là kiểm contract
+kế hoạch, không phải tuyên bố đã chạy image shim hoặc fixture Git staging.
+
+Sau sửa: test validator 30/30, validator 25/25, format 40 file, lint hai script
+với config local và diff check đều exit 0. SHA lock vẫn nguyên sau các gate này.
+
+## Workaround local của nhánh backlog
+
+Parent chạy Deno gate nhưng thiếu `deno.nojsr.json`, nên lần đó dừng trước khi
+kiểm source. Đã đọc lại hướng dẫn workaround được duyệt và tạo artifact ignored
+trong đúng worktree backlog, không tải hoặc nâng dependency:
+
+- `deno.nojsr.json`: lấy config hiện tại, chỉ thay imports; Node deepEqual sau
+  bỏ imports đạt.
+- Vendor 58 file từ npm cache @casys/mcp-server 0.25.0, nằm ngoài node_modules;
+  chép text bằng apply_patch, `diff -qr` với cache không có khác biệt.
+- Lockfile từ donor worktree trước, SHA-256 đúng
+  `f32268af50c10ba06223c9a0b7f2d7092555ffa90172cd573ecf8d3feb2d882a`.
+- `git check-ignore -v` xác nhận cả config, vendor và lock được ignore; không
+  thay manifest hoặc dependency tracked.
+- Không chạy build/test ứng dụng trong lúc parent build UI. Parent tiếp tục gate
+  Deno bằng config local và --sloppy-imports --frozen; CI JSR thật vẫn bắt buộc
+  trên HEAD cuối.

@@ -292,3 +292,9 @@ test("011 requires actual shim container verification and source label", () => {
   assert(text.includes("org.opencontainers.image.revision"));
   assert(!text.includes("không dựng\nDocker"));
 });
+test("011 proves both staged and unstaged build sources match HEAD", () => {
+  const text = readFileSync(resolve(repoRoot, fileFor(11)), "utf8");
+  assert(text.includes(
+    "git diff --exit-code HEAD -- shim.ts src/compat/legacy-shim.ts Dockerfile.shim",
+  ));
+});

@@ -160,8 +160,10 @@ không credential thật. Fixture mở upstream giả ở `127.0.0.1:17655`, g�
 batch như bước 1-3. Mỗi ca reset trạng thái, assertion timeout hữu hạn và đóng
 server/stream trong finally; có ca control initialize hoặc ping thành công.
 
-Chạy `git diff --exit-code -- shim.ts src/compat/legacy-shim.ts Dockerfile.shim`
-để chắc source build đã nằm trong commit local đang gắn nhãn. Sau đó:
+Chạy
+`git diff --exit-code HEAD -- shim.ts src/compat/legacy-shim.ts Dockerfile.shim`
+để kiểm cả staged lẫn unstaged so với commit local đang gắn nhãn. Chỉ tiếp tục
+khi source build khớp HEAD, không coi riêng index sạch là đủ. Sau đó:
 
 ```bash
 docker build -f Dockerfile.shim --build-arg VCS_REF="$(git rev-parse HEAD)" -t hvgerp-shim-plan011:local .
