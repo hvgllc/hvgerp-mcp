@@ -494,6 +494,52 @@ Deno.test("erpnext_doc_assign - requires assign_to", async () => {
 
 // ── erpnext_doc_unassign ────────────────────────────────────────────────────
 
+for (const action of ["assign", "unassign"] as const) {
+  Deno.test(`erpnext_doc_${action} - invalidates before a failing post-mutation get`, async () => {
+    const events: unknown[] = [];
+    let committed = false;
+    const original = new Error("read failed");
+    const client = makeMockClient({
+      list: async () => [{ name: "user@example.com", enabled: 1 }],
+      get: async (_doctype: string, _name: string, options?: unknown) => {
+        if (!committed) return { name: "TASK-001" };
+        events.push(["get", options]);
+        throw original;
+      },
+      callMethod: async () => {
+        events.push("mutation");
+        committed = true;
+        return [{ name: "TODO-001", owner: "user@example.com" }, {
+          name: "TODO-002",
+          owner: "other@example.com",
+        }];
+      },
+      invalidate: (...args: unknown[]) => events.push(["invalidate", ...args]),
+    });
+    const error = await assertRejects(
+      () =>
+        getTool(`erpnext_doc_${action}`).handler({
+          doctype: "Task",
+          name: "TASK-001",
+          assign_to: "user@example.com",
+        }, { client }),
+      Error,
+      `${
+        action === "assign" ? "assignment" : "unassignment"
+      } succeeded, but re-fetching the document failed: read failed`,
+    );
+    assertEquals(error.cause, original);
+    assertEquals(events, [
+      "mutation",
+      ["invalidate", "Task", "TASK-001"],
+      ["invalidate", "ToDo"],
+      ["invalidate", "ToDo", "TODO-001"],
+      ["invalidate", "ToDo", "TODO-002"],
+      ["get", { skipCache: true }],
+    ]);
+  });
+}
+
 Deno.test("erpnext_doc_unassign - removes through the native API and returns remaining", async () => {
   let removeArgs: Record<string, unknown> = {};
   const result = await getTool("erpnext_doc_unassign").handler(
