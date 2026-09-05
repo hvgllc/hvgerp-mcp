@@ -20,7 +20,12 @@ hết khi đã thực sự xử lý.
 
 ## Hiện trạng và chứng cứ
 
-`src/ui/kanban-viewer/src/KanbanViewer.tsx:1127`:
+Sau khi 009 merge tại 99b1fa3, đọc lại requestBoardRefresh và processQueue xác
+nhận hai câu lệnh lỗi vẫn nguyên byte, chỉ chuyển dòng từ 1127/1224 sang
+1131/1228. Hai record cập nhật sourceRef 99b1fa3; tiêu chí và thuật toán cần sửa
+của 016 không thay đổi. Identity detail của 009 không phải board generation.
+
+`src/ui/kanban-viewer/src/KanbanViewer.tsx:1131`:
 
 <!-- evidence: src/ui/kanban-viewer/src/KanbanViewer.tsx -->
 
@@ -29,7 +34,7 @@ hết khi đã thực sự xử lý.
       updateBoard(parseBoard(text));
 ```
 
-`src/ui/kanban-viewer/src/KanbanViewer.tsx:1224`:
+`src/ui/kanban-viewer/src/KanbanViewer.tsx:1228`:
 
 <!-- evidence: src/ui/kanban-viewer/src/KanbanViewer.tsx -->
 

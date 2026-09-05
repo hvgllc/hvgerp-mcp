@@ -300,6 +300,7 @@
       "src/ui/shared/kanban/detail-session.ts",
       "src/ui/shared/kanban/detail-session_test.ts",
       "src/ui/testing/fixtures.ts",
+      "src/ui/testing/host.ts",
       "plans/evidence/009/"
     ],
     "newFiles": [
@@ -552,15 +553,15 @@
     "evidence": [
       {
         "path": "src/ui/kanban-viewer/src/KanbanViewer.tsx",
-        "line": 1127,
+        "line": 1131,
         "code": "      updateBoard(parseBoard(text));",
-        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
+        "sourceRef": "99b1fa319590e60730faabdb033a5b48a44e1862"
       },
       {
         "path": "src/ui/kanban-viewer/src/KanbanViewer.tsx",
-        "line": 1224,
+        "line": 1228,
         "code": "      } else if (refreshAfterMutationRef.current) {\n        refreshAfterMutationRef.current = false;\n        void requestBoardRefresh({ ignoreInterval: true });",
-        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
+        "sourceRef": "99b1fa319590e60730faabdb033a5b48a44e1862"
       }
     ]
   },

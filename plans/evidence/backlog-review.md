@@ -286,3 +286,24 @@ reason sai kiểu/vị trí: tổng 81/81 xanh. Fixture chỉ đổi dữ liệu
 nhớ, không sửa artifact, source hoặc Git history. Các ca chủ ý hợp lệ gồm STALE
 có lý do, docs-only/squash với blob khớp, newFiles/dependency-created; ghi chú
 unrelated vẫn qua. Các mốc này chưa thay review fresh của delta mới.
+
+Delta sáu finding đã commit local `6929657`, sau đó tích hợp main 009 bằng merge
+`856784f` từ `99b1fa319590e60730faabdb033a5b48a44e1862`. Validator ngay sau
+merge đỏ bốn snippet: hai của 009 đã được sửa và hai vị trí trong 016. Đọc toàn
+evidence 009, so Git object scope 10 path giữa final HEAD 306a8ae và merge:
+khớp, tree cùng d731bed. 009 DONE theo PR30/CI/Codex thật ghi tại
+[009.md](009.md); binding dùng đúng report snapshot lịch sử. Scope host.ts và
+ghi chú trước execute từ root được đưa vào plan/manifest backlog, không ghi
+root.
+
+Đọc requestBoardRefresh/processQueue xác nhận lỗi 016 vẫn nguyên byte, chỉ
+chuyển dòng 1127/1224 sang 1131/1228. Refresh hai sourceRef thành 99b1fa3 và
+citation tương ứng, không miễn drift hoặc đổi tiêu chí. 017 không drift nên giữ
+baseline cũ. 005 và 011 không được đánh DONE trong lượt này.
+
+Gate bản tích hợp: validator 25/25, regression 81/81, format 51 file, lint hai
+script và diff check exit 0; source ngoài plans bằng main 99b1fa3. Không chạy
+app build, ERPNext, push hoặc reply. Root chưa nhận delta sáu
+finding/integration vì parent yêu cầu chờ fresh review; khi sync phải giữ
+005/011 IN_PROGRESS, 002 permission và journal mới, cùng baseline 016/022 của
+source local d2c5305.

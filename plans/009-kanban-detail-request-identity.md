@@ -9,7 +9,7 @@
 - Mục audit: 9; loại: `bug`.
 - Ưu tiên: P1; công sức: M; rủi ro sửa: vừa; không hủy mutation đã gửi.
 - Phụ thuộc: `007`.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `TODO`.
+- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `DONE`.
 - Độ tin cậy: cao qua luồng code; chưa tái hiện browser.
 
 Khi lưu/assign A rồi đóng và mở B trước response A, hydrate-detail không kiểm
@@ -18,6 +18,15 @@ ghi nhận chính xác nhưng tuyệt đối không thay nội dung, error hoặ
 Đóng rồi mở lại cùng ID cũng phải là phiên mới.
 
 ## Hiện trạng và chứng cứ
+
+Đối chiếu trước thực thi tại main `0cf6a69`: source Kanban trong scope chưa đổi
+so với `d2c5305`. Fixture mới đến từ 007 đã merge PR #27; parent đã đọc toàn bộ
+fixtures.ts và host.ts. Host detail-race hiện chỉ giữ GET, không hỗ trợ
+doc_update/assign/unassign hoặc lưu state detail sau write, nên chưa đủ cho
+chuỗi save race bắt buộc. Mở scope tối thiểu thêm testing/host.ts để tạo phản
+hồi mutation đúng contract, giữ theo ID và state riêng từng DocType/name; không
+sửa host để tự bỏ phản hồi cũ thay cho guard trong viewer. Giữ nguyên các
+scenario khác và không kết nối ERPNext.
 
 `src/ui/shared/kanban/state.ts:68`:
 
@@ -74,6 +83,8 @@ Các file được sửa khi thực thi:
 - `src/ui/shared/kanban/detail-session.ts` (tạo mới)
 - `src/ui/shared/kanban/detail-session_test.ts` (tạo mới)
 - `src/ui/testing/fixtures.ts`
+- `src/ui/testing/host.ts` (chỉ bổ sung fixture/state và deferred detail
+  mutations)
 - `plans/evidence/009/` (tạo mới)
 - `plans/README.md`
 - `plans/evidence/009.md`
@@ -85,9 +96,9 @@ nâng dependency. Định danh, chuỗi lỗi và commit bằng tiếng Anh; ph�
 tiếng Việt có dấu, không dùng ký tự U+2014.
 
 Trước khi sửa, chạy `git status --short`,
-`git diff --stat d2c5305..HEAD -- src/ui/kanban-viewer/src/KanbanViewer.tsx src/ui/kanban-viewer/src/DetailModal.tsx src/ui/shared/kanban/state.ts src/ui/shared/kanban/state_test.ts src/ui/shared/kanban/useKanbanBoard.ts src/ui/shared/kanban/detail-session.ts src/ui/shared/kanban/detail-session_test.ts src/ui/testing/fixtures.ts`
+`git diff --stat d2c5305..HEAD -- src/ui/kanban-viewer/src/KanbanViewer.tsx src/ui/kanban-viewer/src/DetailModal.tsx src/ui/shared/kanban/state.ts src/ui/shared/kanban/state_test.ts src/ui/shared/kanban/useKanbanBoard.ts src/ui/shared/kanban/detail-session.ts src/ui/shared/kanban/detail-session_test.ts src/ui/testing/fixtures.ts src/ui/testing/host.ts`
 và
-`git diff -- src/ui/kanban-viewer/src/KanbanViewer.tsx src/ui/kanban-viewer/src/DetailModal.tsx src/ui/shared/kanban/state.ts src/ui/shared/kanban/state_test.ts src/ui/shared/kanban/useKanbanBoard.ts src/ui/shared/kanban/detail-session.ts src/ui/shared/kanban/detail-session_test.ts src/ui/testing/fixtures.ts`.
+`git diff -- src/ui/kanban-viewer/src/KanbanViewer.tsx src/ui/kanban-viewer/src/DetailModal.tsx src/ui/shared/kanban/state.ts src/ui/shared/kanban/state_test.ts src/ui/shared/kanban/useKanbanBoard.ts src/ui/shared/kanban/detail-session.ts src/ui/shared/kanban/detail-session_test.ts src/ui/testing/fixtures.ts src/ui/testing/host.ts`.
 Bảo toàn thay đổi có sẵn. Nếu phụ thuộc đã thực thi, đối chiếu diff và làm mới
 kế hoạch này theo code mới trước khi sửa; sai khác chưa giải thích được là điều
 kiện dừng.
@@ -169,14 +180,14 @@ bổ sung thao tác browser và trạng thái sau response cũ.
 
 ## Tiêu chí hoàn tất
 
-- [ ] Mọi completion detail gắn token, reducer và modal từ chối completion không
+- [x] Mọi completion detail gắn token, reducer và modal từ chối completion không
       còn phù hợp.
-- [ ] Regression tests và typecheck/UI build qua; browser kiểm đúng chuỗi race
+- [x] Regression tests và typecheck/UI build qua; browser kiểm đúng chuỗi race
       có bằng chứng.
-- [ ] Không gây mất dấu mutation đã thành công khi UI bỏ response cũ.
-- [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
+- [x] Không gây mất dấu mutation đã thành công khi UI bỏ response cũ.
+- [x] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
-- [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/009.md`, cập
+- [x] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/009.md`, cập
       nhật trạng thái ở `plans/README.md`. Không ghi giá trị bí mật.
 
 ## Điều kiện dừng

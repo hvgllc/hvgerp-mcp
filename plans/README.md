@@ -40,7 +40,7 @@ là ước lượng công sức/rủi ro sửa, không phải cam kết thời h
 | 006 | [Tổng hợp đủ dữ liệu trước khi tạo KPI và top N](006-complete-analytics-aggregates.md)              | P1      | L / vừa; lượng truy vấn và ngữ nghĩa tổng                 | 005           | TODO     |
 | 007 | [Thiết lập typecheck thực cho mã browser](007-browser-typecheck-gate.md)                            | P1      | M / thấp; không nới strict                                | không         | DONE     |
 | 008 | [Xuất CSV đúng cấu trúc và giữ văn bản là văn bản](008-safe-csv-export.md)                          | P1      | S / thấp; cần giữ kiểu số                                 | 007           | DONE     |
-| 009 | [Chỉ áp kết quả bất đồng bộ vào đúng phiên mở thẻ](009-kanban-detail-request-identity.md)           | P1      | M / vừa; không hủy mutation đã gửi                        | 007           | TODO     |
+| 009 | [Chỉ áp kết quả bất đồng bộ vào đúng phiên mở thẻ](009-kanban-detail-request-identity.md)           | P1      | M / vừa; không hủy mutation đã gửi                        | 007           | DONE     |
 | 010 | [Kiểm trạng thái Kanban bằng dữ liệu mới và bảo vệ ghi](010-kanban-conflict-protection.md)          | P1      | M / vừa; phụ thuộc hợp đồng optimistic locking của Frappe | không         | TODO     |
 | 011 | [Giữ kết quả batch đã thực thi khi upstream ném lỗi](011-shim-partial-batch-errors.md)              | P1      | M / vừa; semantics JSON-RPC batch                         | không         | TODO     |
 | 012 | [Không tái nạp snapshot cũ sau cache invalidation](012-cache-inflight-invalidation.md)              | P1      | M / vừa; phối hợp cache nhiều caller                      | không         | TODO     |
