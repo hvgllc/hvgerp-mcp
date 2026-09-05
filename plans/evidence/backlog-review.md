@@ -922,3 +922,25 @@ diagnostic trước/sau cùng fixture nên không lấy lỗi thiếu metadata l
 Không sửa workspace root, definition/manifest/README hoặc 17 report approval.
 Không push, trả lời GitHub, Browser, release hoặc publish. Delta helper mới cần
 review độc lập và vòng Codex/CI tiếp do parent điều phối.
+
+# Kiểm chứng bổ sung sau khi main nhận 015
+
+Parent xác nhận reviewer độc lập APPROVE helper tại
+`f4618e5cb7d87407b5e38cd472d1029c3de75e57`. Các definition 013/025 được review
+tại `7fcfc9da79bfd5344e1b5e75de0d08e96bf83c3e`; definition 015 được review tại
+`a4b41f160170289759a2f9022d3ec22ff2645242`. Đây là approval bổ sung sau
+implementation, không viết lại lịch sử approval. Reviewer kiểm scope, tiêu chí,
+sáu trường provenance và artifact 015 đúng byte; các binding cũ không thay đổi.
+Metadata hiện ghi 18 DONE, 3 IN_PROGRESS, 1 BLOCKED và 3 TODO; không coi các
+quyền framework/dependency chưa trả lời là đã duyệt.
+
+Gate tại HEAD `35b91d98cef5047cbc86a99d5a8a24b50347df87`, tree
+`63f14c7a96e22a1f7109d3ca09a9490f83d39743`: 187 helper/history tests pass, 0
+failed/skip; validator 25/25; format 71 file, lint 3 helper; full Deno frozen
+1363 passed, 0 failed, 4 ignored; server check, UI typecheck, UI build 7 viewer,
+Node build/syntax và pack dry-run đúng 10 file/7 HTML đạt. Build hoàn tất trước
+full tests. Worktree sạch. Executor gate là tác giả helper, nên kết quả gate này
+không thay thế review độc lập đã nêu trên. Probe tên lock ban đầu bị ENOENT;
+kiểm lại đúng `deno.lock` có SHA-256
+`f32268af50c10ba06223c9a0b7f2d7092555ffa90172cd573ecf8d3feb2d882a`. Không
+publish hoặc nâng dependency.
