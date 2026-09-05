@@ -24,6 +24,7 @@ function makeMockClient(overrides: Record<string, AnyFn> = {}): FrappeClient {
     }),
     delete: async () => {},
     callMethod: async () => [],
+    invalidate: () => {},
     ...overrides,
   } as unknown as FrappeClient;
 }
