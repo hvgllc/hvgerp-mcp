@@ -1,0 +1,550 @@
+{
+  "sourceCommit": "183c6a3c45c120194ba5549e0f90bdf9369660ce",
+  "reportHead": "fbcb09ecc310dfa5c8b200dfaf8de1d96b459e97",
+  "kanbanHtmlSha256": "8bf912036dcf75c07d89c500a6988b9e57cca95b98eb3b0d7b7691f3f7bdb03a",
+  "url": "http://127.0.0.1:5178/testing/host.html?viewer=kanban-viewer&scenario=board-race",
+  "result": "FAIL: missing optional host toolInfo prevents recovery",
+  "notes": [
+    "First record is exploratory setup: unsupported generic-role trace selector timed out; initial read1 cancelled while setting up.",
+    "After explicit reset, host B error at 13:54:29.978 and final observation at 13:58:43.043 show zero received RPC requests. Clicking old A move sent no mutation.",
+    "Host document visibility was visible; iframe contentDocument was unavailable in that read-only lookup, so it does not prove iframe visibility. Console warn/error list was empty.",
+    "Expected retry assertion and locator waits failed; these are not PASS. No page state, event, timer or timeout was modified.",
+    "Screenshot was viewed by parent. QA tab closed and Vite stopped before executor correction."
+  ],
+  "records": [
+    {
+      "label": "setup-exploratory-selector-timeout",
+      "at": "2026-09-05T13:53:40.032Z",
+      "dom": "- heading \"Host kiểm thử local HVGERP\" [level=1]\n- paragraph: Chỉ dùng fixture local. Không kết nối ERPNext hoặc đọc credential.\n- text: Viewer\n- combobox \"Viewer\":\n  - option \"invoice-viewer\"\n  - option \"stock-viewer\"\n  - option \"doclist-viewer\"\n  - option \"chart-viewer\"\n  - option \"kpi-viewer\"\n  - option \"funnel-viewer\"\n  - option \"kanban-viewer\" [selected]\n- text: Kịch bản\n- combobox \"Kịch bản\":\n  - option \"smoke\"\n  - option \"csv\"\n  - option \"detail-race\"\n  - option \"board-race\" [selected]\n  - option \"initial-error\"\n  - option \"refresh-error\"\n  - option \"malformed-payload\"\n  - option \"sales-order-date\"\n  - option \"quotation-date\"\n  - option \"stock-movements\"\n  - option \"stock-permission\"\n  - option \"stock-malformed\"\n  - option \"stock-race\"\n- text: Biểu đồ\n- combobox \"Biểu đồ\":\n  - option \"bar\" [selected]\n  - option \"horizontal-bar\"\n  - option \"pie\"\n  - option \"donut\"\n- button \"Đặt lại\"\n- button \"Gửi board B\"\n- button \"Giữ host trang 50\"\n- button \"Giữ host B\"\n- button \"Giữ host A\"\n- button \"Gửi trang 50\"\n- button \"Gửi trang 0\"\n- button \"Gửi board A\"\n- button \"Gửi lại dữ liệu thành công\"\n- status: Đã kết nối\n- iframe [id=\"viewer-frame\"]:\n  - generic: H\n  - generic: Havi Group\n  - generic: ERP · OPERATIONS\n  - generic: Local board A\n  - generic: 2 cards · Task · move tool erpnext_kanban_move_card\n  - generic: Open\n  - generic: \"2\"\n  - article:\n    - button \"Task A one\"\n    - button \"Move Task A one to Start\": Start\n  - article:\n    - button \"Task A two\"\n    - button \"Move Task A two to Start\": Start\n  - generic: Working\n  - generic: \"0\"\n  - generic: Completed\n  - generic: \"0\"\n- heading \"Yêu cầu đang giữ\" [level=2]\n- paragraph: Chọn đúng ID để trả kết quả theo thứ tự mong muốn. Viewer giữ timeout thật.\n- list:\n  - text: \"#2 erpnext_kanban_get_board {\\\"doctype\\\":\\\"Task\\\",\\\"project\\\":\\\"PROJECT-A\\\"}\"\n  - 'button \"Trả kết quả #2\"'\n  - 'button \"Trả lỗi #2\"'\n",
+      "trace": [
+        {
+          "outcome": "initialized",
+          "scenario": "board-race",
+          "viewer": "kanban-viewer"
+        },
+        {
+          "outcome": "tool-input"
+        },
+        {
+          "boardId": "task-board",
+          "outcome": "tool-result",
+          "refreshArguments": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "viewer": "kanban-viewer"
+        },
+        {
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "id": 1,
+          "outcome": "received",
+          "tool": "erpnext_kanban_get_board"
+        },
+        {
+          "id": 1,
+          "outcome": "held"
+        },
+        {
+          "id": 1,
+          "outcome": "cancelled"
+        },
+        {
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "id": 2,
+          "outcome": "received",
+          "tool": "erpnext_kanban_get_board"
+        },
+        {
+          "id": 2,
+          "outcome": "held"
+        }
+      ]
+    },
+    {
+      "label": "host-error-reset",
+      "at": "2026-09-05T13:54:29.346Z",
+      "dom": "- heading \"Host kiểm thử local HVGERP\" [level=1]\n- paragraph: Chỉ dùng fixture local. Không kết nối ERPNext hoặc đọc credential.\n- text: Viewer\n- combobox \"Viewer\":\n  - option \"invoice-viewer\"\n  - option \"stock-viewer\"\n  - option \"doclist-viewer\"\n  - option \"chart-viewer\"\n  - option \"kpi-viewer\"\n  - option \"funnel-viewer\"\n  - option \"kanban-viewer\" [selected]\n- text: Kịch bản\n- combobox \"Kịch bản\":\n  - option \"smoke\"\n  - option \"csv\"\n  - option \"detail-race\"\n  - option \"board-race\" [selected]\n  - option \"initial-error\"\n  - option \"refresh-error\"\n  - option \"malformed-payload\"\n  - option \"sales-order-date\"\n  - option \"quotation-date\"\n  - option \"stock-movements\"\n  - option \"stock-permission\"\n  - option \"stock-malformed\"\n  - option \"stock-race\"\n- text: Biểu đồ\n- combobox \"Biểu đồ\":\n  - option \"bar\" [selected]\n  - option \"horizontal-bar\"\n  - option \"pie\"\n  - option \"donut\"\n- button \"Đặt lại\"\n- button \"Gửi board B\"\n- button \"Giữ host trang 50\"\n- button \"Giữ host B\"\n- button \"Giữ host A\"\n- button \"Gửi trang 50\"\n- button \"Gửi trang 0\"\n- button \"Gửi board A\"\n- button \"Gửi lại dữ liệu thành công\"\n- status: Đã kết nối\n- iframe [id=\"viewer-frame\"]:\n  - generic: H\n  - generic: Havi Group\n  - generic: ERP · OPERATIONS\n  - generic: Local board A\n  - generic: 2 cards · Task · move tool erpnext_kanban_move_card\n  - generic: Open\n  - generic: \"2\"\n  - article:\n    - button \"Task A one\"\n    - button \"Move Task A one to Start\": Start\n  - article:\n    - button \"Task A two\"\n    - button \"Move Task A two to Start\": Start\n  - generic: Working\n  - generic: \"0\"\n  - generic: Completed\n  - generic: \"0\"\n- heading \"Yêu cầu đang giữ\" [level=2]\n- paragraph: Chọn đúng ID để trả kết quả theo thứ tự mong muốn. Viewer giữ timeout thật.\n- list\n",
+      "trace": [
+        {
+          "outcome": "initialized",
+          "scenario": "board-race",
+          "viewer": "kanban-viewer"
+        },
+        {
+          "outcome": "tool-input"
+        },
+        {
+          "boardId": "task-board",
+          "outcome": "tool-result",
+          "refreshArguments": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "viewer": "kanban-viewer"
+        }
+      ]
+    },
+    {
+      "label": "host-error-B-visible",
+      "at": "2026-09-05T13:54:29.978Z",
+      "dom": "- heading \"Host kiểm thử local HVGERP\" [level=1]\n- paragraph: Chỉ dùng fixture local. Không kết nối ERPNext hoặc đọc credential.\n- text: Viewer\n- combobox \"Viewer\":\n  - option \"invoice-viewer\"\n  - option \"stock-viewer\"\n  - option \"doclist-viewer\"\n  - option \"chart-viewer\"\n  - option \"kpi-viewer\"\n  - option \"funnel-viewer\"\n  - option \"kanban-viewer\" [selected]\n- text: Kịch bản\n- combobox \"Kịch bản\":\n  - option \"smoke\"\n  - option \"csv\"\n  - option \"detail-race\"\n  - option \"board-race\" [selected]\n  - option \"initial-error\"\n  - option \"refresh-error\"\n  - option \"malformed-payload\"\n  - option \"sales-order-date\"\n  - option \"quotation-date\"\n  - option \"stock-movements\"\n  - option \"stock-permission\"\n  - option \"stock-malformed\"\n  - option \"stock-race\"\n- text: Biểu đồ\n- combobox \"Biểu đồ\":\n  - option \"bar\" [selected]\n  - option \"horizontal-bar\"\n  - option \"pie\"\n  - option \"donut\"\n- button \"Đặt lại\"\n- button \"Gửi board B\"\n- button \"Giữ host trang 50\"\n- button \"Giữ host B\"\n- button \"Giữ host A\"\n- button \"Gửi trang 50\"\n- button \"Gửi trang 0\"\n- button \"Gửi board A\"\n- button \"Gửi lại dữ liệu thành công\"\n- status: Đã kết nối\n- iframe [id=\"viewer-frame\"]:\n  - generic: H\n  - generic: Havi Group\n  - generic: ERP · OPERATIONS\n  - generic: Local board A\n  - generic: 2 cards · Task · move tool erpnext_kanban_move_card\n  - generic: \"Local host error #1\"\n  - generic: Open\n  - generic: \"2\"\n  - article:\n    - button \"Task A one\"\n    - button \"Move Task A one to Start\": Start\n  - article:\n    - button \"Task A two\"\n    - button \"Move Task A two to Start\": Start\n  - generic: Working\n  - generic: \"0\"\n  - generic: Completed\n  - generic: \"0\"\n- heading \"Yêu cầu đang giữ\" [level=2]\n- paragraph: Chọn đúng ID để trả kết quả theo thứ tự mong muốn. Viewer giữ timeout thật.\n- list\n",
+      "trace": [
+        {
+          "outcome": "initialized",
+          "scenario": "board-race",
+          "viewer": "kanban-viewer"
+        },
+        {
+          "outcome": "tool-input"
+        },
+        {
+          "boardId": "task-board",
+          "outcome": "tool-result",
+          "refreshArguments": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "viewer": "kanban-viewer"
+        },
+        {
+          "arguments": {
+            "doctype": "Task",
+            "project": "PROJECT-B"
+          },
+          "board": {
+            "allowedTransitions": [
+              {
+                "allowed": true,
+                "fromColumn": "Open",
+                "label": "Start",
+                "toColumn": "Working"
+              },
+              {
+                "allowed": true,
+                "fromColumn": "Working",
+                "label": "Complete",
+                "toColumn": "Completed"
+              }
+            ],
+            "boardId": "task-board",
+            "capabilities": {
+              "canMoveCards": true
+            },
+            "cards": [
+              {
+                "accent": "#2563eb",
+                "columnId": "Open",
+                "id": "TASK-B-1",
+                "title": "Task B one"
+              },
+              {
+                "accent": "#2563eb",
+                "columnId": "Open",
+                "id": "TASK-B-2",
+                "title": "Task B two"
+              }
+            ],
+            "columns": [
+              {
+                "color": "#2563eb",
+                "count": 2,
+                "id": "Open",
+                "label": "Open"
+              },
+              {
+                "color": "#d97706",
+                "count": 0,
+                "id": "Working",
+                "label": "Working"
+              },
+              {
+                "color": "#15803d",
+                "count": 0,
+                "id": "Completed",
+                "label": "Completed"
+              }
+            ],
+            "doctype": "Task",
+            "generatedAt": "2026-09-05T00:00:00.000Z",
+            "moveToolName": "erpnext_kanban_move_card",
+            "pagination": {
+              "hasMore": false,
+              "limit": 20,
+              "loadedCount": 2,
+              "offset": 0,
+              "total": 2
+            },
+            "refreshArguments": {
+              "doctype": "Task",
+              "project": "PROJECT-B"
+            },
+            "title": "Local board B"
+          },
+          "hostId": 1,
+          "outcome": "host-input-held"
+        },
+        {
+          "hostId": 1,
+          "outcome": "host-error-released",
+          "reply": {
+            "content": [
+              {
+                "text": "Local host error #1",
+                "type": "text"
+              }
+            ],
+            "isError": true
+          }
+        }
+      ]
+    },
+    {
+      "label": "host-error-B-focus-retry",
+      "at": "2026-09-05T13:54:48.101Z",
+      "dom": "- heading \"Host kiểm thử local HVGERP\" [level=1]\n- paragraph: Chỉ dùng fixture local. Không kết nối ERPNext hoặc đọc credential.\n- text: Viewer\n- combobox \"Viewer\":\n  - option \"invoice-viewer\"\n  - option \"stock-viewer\"\n  - option \"doclist-viewer\"\n  - option \"chart-viewer\"\n  - option \"kpi-viewer\"\n  - option \"funnel-viewer\"\n  - option \"kanban-viewer\" [selected]\n- text: Kịch bản\n- combobox \"Kịch bản\":\n  - option \"smoke\"\n  - option \"csv\"\n  - option \"detail-race\"\n  - option \"board-race\" [selected]\n  - option \"initial-error\"\n  - option \"refresh-error\"\n  - option \"malformed-payload\"\n  - option \"sales-order-date\"\n  - option \"quotation-date\"\n  - option \"stock-movements\"\n  - option \"stock-permission\"\n  - option \"stock-malformed\"\n  - option \"stock-race\"\n- text: Biểu đồ\n- combobox \"Biểu đồ\":\n  - option \"bar\" [selected]\n  - option \"horizontal-bar\"\n  - option \"pie\"\n  - option \"donut\"\n- button \"Đặt lại\"\n- button \"Gửi board B\"\n- button \"Giữ host trang 50\"\n- button \"Giữ host B\"\n- button \"Giữ host A\"\n- button \"Gửi trang 50\"\n- button \"Gửi trang 0\"\n- button \"Gửi board A\"\n- button \"Gửi lại dữ liệu thành công\"\n- status: Đã kết nối\n- iframe [active] [id=\"viewer-frame\"]:\n  - generic: H\n  - generic: Havi Group\n  - generic: ERP · OPERATIONS\n  - generic: Local board A\n  - generic: 2 cards · Task · move tool erpnext_kanban_move_card\n  - generic: \"Local host error #1\"\n  - generic: Open\n  - generic: \"2\"\n  - article:\n    - button \"Task A one\"\n    - button \"Move Task A one to Start\" [active]: Start\n  - article:\n    - button \"Task A two\"\n    - button \"Move Task A two to Start\": Start\n  - generic: Working\n  - generic: \"0\"\n  - generic: Completed\n  - generic: \"0\"\n- heading \"Yêu cầu đang giữ\" [level=2]\n- paragraph: Chọn đúng ID để trả kết quả theo thứ tự mong muốn. Viewer giữ timeout thật.\n- list\n",
+      "trace": [
+        {
+          "outcome": "initialized",
+          "scenario": "board-race",
+          "viewer": "kanban-viewer"
+        },
+        {
+          "outcome": "tool-input"
+        },
+        {
+          "boardId": "task-board",
+          "outcome": "tool-result",
+          "refreshArguments": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "viewer": "kanban-viewer"
+        },
+        {
+          "arguments": {
+            "doctype": "Task",
+            "project": "PROJECT-B"
+          },
+          "board": {
+            "allowedTransitions": [
+              {
+                "allowed": true,
+                "fromColumn": "Open",
+                "label": "Start",
+                "toColumn": "Working"
+              },
+              {
+                "allowed": true,
+                "fromColumn": "Working",
+                "label": "Complete",
+                "toColumn": "Completed"
+              }
+            ],
+            "boardId": "task-board",
+            "capabilities": {
+              "canMoveCards": true
+            },
+            "cards": [
+              {
+                "accent": "#2563eb",
+                "columnId": "Open",
+                "id": "TASK-B-1",
+                "title": "Task B one"
+              },
+              {
+                "accent": "#2563eb",
+                "columnId": "Open",
+                "id": "TASK-B-2",
+                "title": "Task B two"
+              }
+            ],
+            "columns": [
+              {
+                "color": "#2563eb",
+                "count": 2,
+                "id": "Open",
+                "label": "Open"
+              },
+              {
+                "color": "#d97706",
+                "count": 0,
+                "id": "Working",
+                "label": "Working"
+              },
+              {
+                "color": "#15803d",
+                "count": 0,
+                "id": "Completed",
+                "label": "Completed"
+              }
+            ],
+            "doctype": "Task",
+            "generatedAt": "2026-09-05T00:00:00.000Z",
+            "moveToolName": "erpnext_kanban_move_card",
+            "pagination": {
+              "hasMore": false,
+              "limit": 20,
+              "loadedCount": 2,
+              "offset": 0,
+              "total": 2
+            },
+            "refreshArguments": {
+              "doctype": "Task",
+              "project": "PROJECT-B"
+            },
+            "title": "Local board B"
+          },
+          "hostId": 1,
+          "outcome": "host-input-held"
+        },
+        {
+          "hostId": 1,
+          "outcome": "host-error-released",
+          "reply": {
+            "content": [
+              {
+                "text": "Local host error #1",
+                "type": "text"
+              }
+            ],
+            "isError": true
+          }
+        }
+      ]
+    },
+    {
+      "label": "host-error-B-exploratory-after-focus",
+      "at": "2026-09-05T13:55:00.054Z",
+      "dom": "- heading \"Host kiểm thử local HVGERP\" [level=1]\n- paragraph: Chỉ dùng fixture local. Không kết nối ERPNext hoặc đọc credential.\n- text: Viewer\n- combobox \"Viewer\":\n  - option \"invoice-viewer\"\n  - option \"stock-viewer\"\n  - option \"doclist-viewer\"\n  - option \"chart-viewer\"\n  - option \"kpi-viewer\"\n  - option \"funnel-viewer\"\n  - option \"kanban-viewer\" [selected]\n- text: Kịch bản\n- combobox \"Kịch bản\":\n  - option \"smoke\"\n  - option \"csv\"\n  - option \"detail-race\"\n  - option \"board-race\" [selected]\n  - option \"initial-error\"\n  - option \"refresh-error\"\n  - option \"malformed-payload\"\n  - option \"sales-order-date\"\n  - option \"quotation-date\"\n  - option \"stock-movements\"\n  - option \"stock-permission\"\n  - option \"stock-malformed\"\n  - option \"stock-race\"\n- text: Biểu đồ\n- combobox \"Biểu đồ\":\n  - option \"bar\" [selected]\n  - option \"horizontal-bar\"\n  - option \"pie\"\n  - option \"donut\"\n- button \"Đặt lại\"\n- button \"Gửi board B\"\n- button \"Giữ host trang 50\"\n- button \"Giữ host B\"\n- button \"Giữ host A\"\n- button \"Gửi trang 50\"\n- button \"Gửi trang 0\"\n- button \"Gửi board A\"\n- button \"Gửi lại dữ liệu thành công\"\n- status: Đã kết nối\n- iframe [active] [id=\"viewer-frame\"]:\n  - generic: H\n  - generic: Havi Group\n  - generic: ERP · OPERATIONS\n  - generic: Local board A\n  - generic: 2 cards · Task · move tool erpnext_kanban_move_card\n  - generic: \"Local host error #1\"\n  - generic: Open\n  - generic: \"2\"\n  - article:\n    - button \"Task A one\"\n    - button \"Move Task A one to Start\" [active]: Start\n  - article:\n    - button \"Task A two\"\n    - button \"Move Task A two to Start\": Start\n  - generic: Working\n  - generic: \"0\"\n  - generic: Completed\n  - generic: \"0\"\n- heading \"Yêu cầu đang giữ\" [level=2]\n- paragraph: Chọn đúng ID để trả kết quả theo thứ tự mong muốn. Viewer giữ timeout thật.\n- list\n",
+      "trace": [
+        {
+          "outcome": "initialized",
+          "scenario": "board-race",
+          "viewer": "kanban-viewer"
+        },
+        {
+          "outcome": "tool-input"
+        },
+        {
+          "boardId": "task-board",
+          "outcome": "tool-result",
+          "refreshArguments": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "viewer": "kanban-viewer"
+        },
+        {
+          "arguments": {
+            "doctype": "Task",
+            "project": "PROJECT-B"
+          },
+          "board": {
+            "allowedTransitions": [
+              {
+                "allowed": true,
+                "fromColumn": "Open",
+                "label": "Start",
+                "toColumn": "Working"
+              },
+              {
+                "allowed": true,
+                "fromColumn": "Working",
+                "label": "Complete",
+                "toColumn": "Completed"
+              }
+            ],
+            "boardId": "task-board",
+            "capabilities": {
+              "canMoveCards": true
+            },
+            "cards": [
+              {
+                "accent": "#2563eb",
+                "columnId": "Open",
+                "id": "TASK-B-1",
+                "title": "Task B one"
+              },
+              {
+                "accent": "#2563eb",
+                "columnId": "Open",
+                "id": "TASK-B-2",
+                "title": "Task B two"
+              }
+            ],
+            "columns": [
+              {
+                "color": "#2563eb",
+                "count": 2,
+                "id": "Open",
+                "label": "Open"
+              },
+              {
+                "color": "#d97706",
+                "count": 0,
+                "id": "Working",
+                "label": "Working"
+              },
+              {
+                "color": "#15803d",
+                "count": 0,
+                "id": "Completed",
+                "label": "Completed"
+              }
+            ],
+            "doctype": "Task",
+            "generatedAt": "2026-09-05T00:00:00.000Z",
+            "moveToolName": "erpnext_kanban_move_card",
+            "pagination": {
+              "hasMore": false,
+              "limit": 20,
+              "loadedCount": 2,
+              "offset": 0,
+              "total": 2
+            },
+            "refreshArguments": {
+              "doctype": "Task",
+              "project": "PROJECT-B"
+            },
+            "title": "Local board B"
+          },
+          "hostId": 1,
+          "outcome": "host-input-held"
+        },
+        {
+          "hostId": 1,
+          "outcome": "host-error-released",
+          "reply": {
+            "content": [
+              {
+                "text": "Local host error #1",
+                "type": "text"
+              }
+            ],
+            "isError": true
+          }
+        }
+      ]
+    },
+    {
+      "label": "missing-host-tool-info-no-recovery",
+      "at": "2026-09-05T13:58:43.043Z",
+      "dom": "- heading \"Host kiểm thử local HVGERP\" [level=1]\n- paragraph: Chỉ dùng fixture local. Không kết nối ERPNext hoặc đọc credential.\n- text: Viewer\n- combobox \"Viewer\":\n  - option \"invoice-viewer\"\n  - option \"stock-viewer\"\n  - option \"doclist-viewer\"\n  - option \"chart-viewer\"\n  - option \"kpi-viewer\"\n  - option \"funnel-viewer\"\n  - option \"kanban-viewer\" [selected]\n- text: Kịch bản\n- combobox \"Kịch bản\":\n  - option \"smoke\"\n  - option \"csv\"\n  - option \"detail-race\"\n  - option \"board-race\" [selected]\n  - option \"initial-error\"\n  - option \"refresh-error\"\n  - option \"malformed-payload\"\n  - option \"sales-order-date\"\n  - option \"quotation-date\"\n  - option \"stock-movements\"\n  - option \"stock-permission\"\n  - option \"stock-malformed\"\n  - option \"stock-race\"\n- text: Biểu đồ\n- combobox \"Biểu đồ\":\n  - option \"bar\" [selected]\n  - option \"horizontal-bar\"\n  - option \"pie\"\n  - option \"donut\"\n- button \"Đặt lại\"\n- button \"Gửi board B\"\n- button \"Giữ host trang 50\"\n- button \"Giữ host B\"\n- button \"Giữ host A\"\n- button \"Gửi trang 50\"\n- button \"Gửi trang 0\"\n- button \"Gửi board A\"\n- button \"Gửi lại dữ liệu thành công\"\n- status: Đã kết nối\n- iframe [active] [id=\"viewer-frame\"]:\n  - generic: H\n  - generic: Havi Group\n  - generic: ERP · OPERATIONS\n  - generic: Local board A\n  - generic: 2 cards · Task · move tool erpnext_kanban_move_card\n  - generic: \"Local host error #1\"\n  - generic: Open\n  - generic: \"2\"\n  - article:\n    - button \"Task A one\"\n    - button \"Move Task A one to Start\" [active]: Start\n  - article:\n    - button \"Task A two\"\n    - button \"Move Task A two to Start\": Start\n  - generic: Working\n  - generic: \"0\"\n  - generic: Completed\n  - generic: \"0\"\n- heading \"Yêu cầu đang giữ\" [level=2]\n- paragraph: Chọn đúng ID để trả kết quả theo thứ tự mong muốn. Viewer giữ timeout thật.\n- list\n",
+      "trace": [
+        {
+          "outcome": "initialized",
+          "scenario": "board-race",
+          "viewer": "kanban-viewer"
+        },
+        {
+          "outcome": "tool-input"
+        },
+        {
+          "boardId": "task-board",
+          "outcome": "tool-result",
+          "refreshArguments": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "viewer": "kanban-viewer"
+        },
+        {
+          "arguments": {
+            "doctype": "Task",
+            "project": "PROJECT-B"
+          },
+          "board": {
+            "allowedTransitions": [
+              {
+                "allowed": true,
+                "fromColumn": "Open",
+                "label": "Start",
+                "toColumn": "Working"
+              },
+              {
+                "allowed": true,
+                "fromColumn": "Working",
+                "label": "Complete",
+                "toColumn": "Completed"
+              }
+            ],
+            "boardId": "task-board",
+            "capabilities": {
+              "canMoveCards": true
+            },
+            "cards": [
+              {
+                "accent": "#2563eb",
+                "columnId": "Open",
+                "id": "TASK-B-1",
+                "title": "Task B one"
+              },
+              {
+                "accent": "#2563eb",
+                "columnId": "Open",
+                "id": "TASK-B-2",
+                "title": "Task B two"
+              }
+            ],
+            "columns": [
+              {
+                "color": "#2563eb",
+                "count": 2,
+                "id": "Open",
+                "label": "Open"
+              },
+              {
+                "color": "#d97706",
+                "count": 0,
+                "id": "Working",
+                "label": "Working"
+              },
+              {
+                "color": "#15803d",
+                "count": 0,
+                "id": "Completed",
+                "label": "Completed"
+              }
+            ],
+            "doctype": "Task",
+            "generatedAt": "2026-09-05T00:00:00.000Z",
+            "moveToolName": "erpnext_kanban_move_card",
+            "pagination": {
+              "hasMore": false,
+              "limit": 20,
+              "loadedCount": 2,
+              "offset": 0,
+              "total": 2
+            },
+            "refreshArguments": {
+              "doctype": "Task",
+              "project": "PROJECT-B"
+            },
+            "title": "Local board B"
+          },
+          "hostId": 1,
+          "outcome": "host-input-held"
+        },
+        {
+          "hostId": 1,
+          "outcome": "host-error-released",
+          "reply": {
+            "content": [
+              {
+                "text": "Local host error #1",
+                "type": "text"
+              }
+            ],
+            "isError": true
+          }
+        }
+      ]
+    }
+  ]
+}
