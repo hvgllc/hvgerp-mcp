@@ -197,9 +197,9 @@ function definitionApproved(field, entry, planBody) {
     return false;
   }
 }
-function approved(body, entry, planBody) {
+function reportFields(body) {
   const metadata = body.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1];
-  const field = (key) => {
+  return (key) => {
     const lines = metadata?.split(/\r?\n/).filter((line) =>
       new RegExp("^\\s*" + key + "\\s*:").test(line)
     );
@@ -207,6 +207,65 @@ function approved(body, entry, planBody) {
       ? lines[0].match(new RegExp("^" + key + ": (.+)$"))?.[1]
       : undefined;
   };
+}
+let indexCache;
+function trackedArtifacts() {
+  if (indexCache !== undefined) return indexCache;
+  try {
+    const output = execFileSync("git", ["ls-files", "--stage", "-z"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    indexCache = output.split("\0").filter(Boolean).map((line) => {
+      const [header, path] = line.split("\t");
+      const [mode, oid, stage] = header.split(" ");
+      return [path, { mode, oid, stage }];
+    });
+  } catch {
+    fail("Cannot read Git index for completion artifacts");
+    indexCache = null;
+  }
+  return indexCache;
+}
+function unchangedArtifacts(path, artifacts) {
+  const tracked = trackedArtifacts()?.filter(([name]) =>
+    path.endsWith("/") ? name.startsWith(path) : name === path
+  );
+  if (!tracked || tracked.length !== artifacts.length) return false;
+  const expected = new Map(artifacts);
+  if (
+    !tracked.every(([name, object]) => {
+      const approved = expected.get(name);
+      return object.stage === "0" && approved?.oid === object.oid &&
+        approved.mode === object.mode;
+    })
+  ) return false;
+  // Không nhận file thừa kể cả untracked/ignored; thư mục rỗng không phải Git artifact.
+  function files(current) {
+    const stat = lstatSync(resolve(repoRoot, current));
+    if (!stat.isDirectory()) return [current];
+    return readdirSync(resolve(repoRoot, current)).flatMap((name) =>
+      files(current.replace(/\/$/, "") + "/" + name)
+    );
+  }
+  try {
+    const names = files(path);
+    if (!sameSet(names, [...expected.keys()])) return false;
+    return names.every((name) => {
+      const current = resolve(repoRoot, name);
+      const stat = lstatSync(current);
+      const object = expected.get(name);
+      return stat.isFile() &&
+        (stat.mode & 0o111 ? "100755" : "100644") === object.mode &&
+        blobId(readFileSync(current)) === object.oid;
+    });
+  } catch {
+    return false;
+  }
+}
+function approved(body, entry, planBody) {
+  const field = reportFields(body);
   const id = String(entry.id).padStart(3, "0");
   const validDefinition = definitionApproved(field, entry, planBody);
   if (!validDefinition) {
@@ -232,6 +291,29 @@ function approved(body, entry, planBody) {
     const report = scopedObject(tree, reportPath);
     if (!report || report.oid !== field(key)) return false;
   }
+  if (validDefinition) {
+    const ref = field("definition_commit");
+    const report = scopedObject(gitTree(ref), reportPath);
+    const snapshot = report && evidenceSource(reportPath, ref);
+    if (snapshot === undefined || !report || blobId(snapshot) !== report.oid) {
+      return false;
+    }
+    const original = reportFields(snapshot);
+    for (
+      const key of [
+        "review_verdict",
+        "plan_id",
+        "reviewed_commit",
+        "completed_commit",
+        "reviewed_evidence_blob",
+        "completed_evidence_blob",
+      ]
+    ) {
+      if (original(key) === undefined || original(key) !== field(key)) {
+        return false;
+      }
+    }
+  }
   for (const path of entry.scope) {
     const before = scopedObject(reviewTree, path),
       after = scopedObject(completionTree, path);
@@ -245,13 +327,7 @@ function approved(body, entry, planBody) {
           name.startsWith(path) && object.type === "blob"
         )
         : [[path, after]];
-      for (const [name, object] of artifacts) {
-        const current = resolve(repoRoot, name);
-        if (!existsSync(current) || !lstatSync(current).isFile()) return false;
-        const data = readFileSync(current);
-        const oid = blobId(data);
-        if (oid !== object.oid) return false;
-      }
+      if (!unchangedArtifacts(path, artifacts)) return false;
     }
   }
   return validDefinition;
@@ -347,10 +423,25 @@ for (const entry of manifest) {
     "plans/README.md",
     "plans/evidence/" + String(entry.id).padStart(3, "0") + ".md",
   ];
-  const scopeItems = [
-    ...scopeSection.matchAll(/^- `([^`]+)`([^\n]*(?:\n[ \t]+[^\n]*)*)/gm),
-  ]
-    .filter((match) => !administrativeFiles.includes(match[1]));
+  const scopeItems = [];
+  const bulletStarts = [...scopeSection.matchAll(
+    /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+[^\n]*$/gm,
+  )];
+  if (bulletStarts.some(([line]) => !/^- `[^`\n]+`(?:[ \t]|$)/.test(line))) {
+    fail(entry.file + ": malformed scope file bullet");
+  }
+  for (
+    const bullet of scopeSection.matchAll(
+      /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+[^\n]*(?:\n[ \t]+(?![-*+][ \t]|\d+[.)][ \t])[^\n]*)*/gm,
+    )
+  ) {
+    const item = bullet[0].match(/^- `([^`\n]+)`(\s*\([\s\S]*\))?[ \t]*$/);
+    if (!item) {
+      fail(entry.file + ": malformed scope file bullet");
+    } else if (!administrativeFiles.includes(item[1])) {
+      scopeItems.push([item[0], item[1], item[2] ?? ""]);
+    }
+  }
   const planScope = scopeItems.map((match) => match[1]);
   const planNewFiles = scopeItems.filter((match) =>
     /^\s*\(tạo\s+mới(?:\)|;)/.test(match[2])

@@ -193,6 +193,145 @@ function definitionField(key, value) {
       ),
   };
 }
+function assertAdditionalFailure(replacements, pattern, gitOutput) {
+  const before = run();
+  const after = run(replacements, [], {}, gitOutput);
+  assert.equal(before.thrown, undefined);
+  assert.equal(after.thrown, undefined);
+  const added = after.messages.filter((message) =>
+    !before.messages.includes(message)
+  );
+  assert.match(added.join("\n"), pattern);
+  return after;
+}
+test("PR25 approval cannot be retargeted to the real definition commit and report", () => {
+  const report = "plans/evidence/001.md";
+  const blob = execFileSync(
+    "git",
+    ["rev-parse", definitionRef + ":" + report],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+    },
+  ).trim();
+  assertAdditionalFailure({
+    [report]: (text) =>
+      text
+        .replace(/^reviewed_commit:.*$/m, "reviewed_commit: " + definitionRef)
+        .replace(/^completed_commit:.*$/m, "completed_commit: " + definitionRef)
+        .replace(
+          /^reviewed_evidence_blob:.*$/m,
+          "reviewed_evidence_blob: " + blob,
+        )
+        .replace(
+          /^completed_evidence_blob:.*$/m,
+          "completed_evidence_blob: " + blob,
+        ),
+  }, /001.*reviewer approval evidence/);
+});
+test("PR25 artifact directory rejects a newly tracked file", () => {
+  const blob = execFileSync(
+    "git",
+    ["rev-parse", "HEAD:plans/evidence/007.md"],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+    },
+  ).trim();
+  assertAdditionalFailure(
+    {},
+    /007.*reviewer approval evidence/,
+    (args, output) => {
+      if (args[0] === "ls-files") {
+        return output + "100644 " + blob + " 0\tplans/evidence/007/extra.txt\0";
+      }
+      return output;
+    },
+  );
+});
+for (
+  const key of [
+    "review_verdict",
+    "plan_id",
+    "reviewed_commit",
+    "completed_commit",
+    "reviewed_evidence_blob",
+    "completed_evidence_blob",
+  ]
+) {
+  for (const change of ["missing", "duplicate"]) {
+    test(
+      "PR25 immutable implementation field " + key + " rejects " + change,
+      () => {
+        assertAdditionalFailure({
+          "plans/evidence/001.md": (text) =>
+            text.replace(
+              new RegExp("^(" + key + ":.*)$", "m"),
+              change === "missing" ? "" : "$1\n$1",
+            ),
+        }, /001.*reviewer approval evidence/);
+      },
+    );
+  }
+}
+test("PR25 approval reads the immutable definition report and verifies its blob", () => {
+  let read = false;
+  assertAdditionalFailure(
+    {},
+    /001.*reviewer approval evidence/,
+    (args, output) => {
+      if (
+        args[0] === "show" &&
+        args[1] === definitionRef + ":plans/evidence/001.md"
+      ) {
+        read = true;
+        return output + "\nUnapproved historical report edit\n";
+      }
+      return output;
+    },
+  );
+  assert(read);
+});
+test("PR25 artifact index failure is not a successful completion check", () => {
+  assertAdditionalFailure({}, /Cannot read Git index/, (args, output) => {
+    if (args[0] === "ls-files") throw new Error("Index read denied");
+    return output;
+  });
+});
+for (
+  const bullet of [
+    "- src/tools/analytics.ts",
+    "* src/tools/analytics.ts",
+    "  - src/tools/analytics.ts",
+    "1. src/tools/analytics.ts",
+    "- `src/tools/analytics.ts",
+    "- `src/tools/analytics.ts` unparenthesized qualifier",
+  ]
+) {
+  test("PR25 scope rejects malformed file bullet: " + bullet, () => {
+    const setup = stale(
+      20,
+      "Scope parser fixture explicitly uses non-DONE state",
+    );
+    const path = manifest.find((entry) => entry.id === 20).scope[0];
+    const before = run(setup);
+    const after = run(compose(setup, {
+      [fileFor(20)]: (text) => text.replace("- " + tick + path + tick, bullet),
+      "plans/manifest.json": editManifest((entries) => {
+        const entry = entries.find((item) => item.id === 20);
+        entry.scope = entry.scope.filter((value) => value !== path);
+        entry.newFiles = entry.newFiles.filter((value) => value !== path);
+      }),
+    }));
+    assert.equal(before.thrown, undefined);
+    assert.equal(after.thrown, undefined);
+    assert.match(
+      after.messages.filter((message) => !before.messages.includes(message))
+        .join("\n"),
+      /020.*malformed scope file bullet/,
+    );
+  });
+}
 test("DONE definition rejects synchronized scope removal", () => {
   invalid({
     [fileFor(1)]: (text) => text.replace("- `src/auth/config.ts`\n", ""),

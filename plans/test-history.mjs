@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
+  chmodSync,
   copyFileSync,
+  lstatSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -62,6 +65,59 @@ function clone(source, destination) {
 function validate(directory) {
   return run(directory, process.execPath, ["plans/validate-plans.mjs"]);
 }
+
+test("completion artifacts reject real index and working-tree additions without fake approvals", () => {
+  isolated((directory) => {
+    const checkout = join(directory, "artifacts");
+    clone(repoRoot, checkout);
+    const baseline = validate(checkout);
+    assert.equal(baseline.status, 0, baseline.stderr || baseline.stdout);
+    const extra = "plans/evidence/007/unreviewed.txt";
+    const extraPath = join(checkout, extra);
+    const reject = () => {
+      const result = validate(checkout);
+      assert.equal(result.status, 1);
+      assert.deepEqual(result.stderr.trim().split("\n"), [
+        "007-browser-typecheck-gate.md: DONE requires reviewer approval evidence",
+      ]);
+    };
+    writeFileSync(extraPath, "Unreviewed artifact fixture\n");
+    git(checkout, ["add", "--", extra]);
+    reject();
+    git(checkout, ["restore", "--staged", "--", extra]);
+    reject();
+    git(checkout, ["add", "--", extra]);
+    // File đã stage nhưng bị xóa ở working tree vẫn phải được kiểm trong index.
+    rmSync(extraPath);
+    reject();
+    git(checkout, ["restore", "--staged", "--", extra]);
+    const image =
+      git(checkout, ["ls-files", "--", "plans/evidence/007/browser"])
+        .split("\n")[0];
+    const imagePath = join(checkout, image);
+    const originalMode = lstatSync(imagePath).mode;
+    chmodSync(imagePath, originalMode ^ 0o100);
+    reject();
+    chmodSync(imagePath, originalMode);
+    symlinkSync(imagePath, extraPath);
+    reject();
+    rmSync(extraPath);
+    const excludes = join(checkout, ".git/info/exclude");
+    const originalExcludes = readFileSync(excludes, "utf8");
+    writeFileSync(excludes, originalExcludes + "\n" + extra + "\n");
+    writeFileSync(extraPath, "Ignored but unreviewed artifact\n");
+    assert.equal(git(checkout, ["check-ignore", "--", extra]), extra);
+    reject();
+    rmSync(extraPath);
+    writeFileSync(excludes, originalExcludes);
+    const outside = join(checkout, "plans/evidence/007-extra.txt");
+    writeFileSync(outside, "Outside the approved directory boundary\n");
+    const restored = validate(checkout);
+    assert.equal(restored.status, 0, restored.stderr || restored.stdout);
+    rmSync(outside);
+    assert.equal(git(checkout, ["status", "--porcelain"]), "");
+  });
+});
 
 test("committed plan provenance survives a clean single-branch clone", () => {
   assert.equal(
