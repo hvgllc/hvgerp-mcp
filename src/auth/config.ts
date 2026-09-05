@@ -57,7 +57,9 @@ function unquote(value: string): string {
 
 function optionalEnvValue(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
-  return trimmed ? unquote(trimmed) : undefined;
+  if (!trimmed) return undefined;
+  const unquoted = unquote(trimmed);
+  return unquoted.trim() ? unquoted : undefined;
 }
 
 /**
@@ -68,6 +70,9 @@ export function loadAuthConfig(): AuthConfig | null {
   const single = optionalEnvValue(env("MCP_AUTH_TOKEN"));
   const multi = env("MCP_AUTH_TOKENS");
   const jwksUrl = optionalEnvValue(env("MCP_OAUTH_JWKS_URL"));
+  const audience = optionalEnvValue(env("MCP_OAUTH_AUDIENCE"));
+  const issuer = optionalEnvValue(env("MCP_OAUTH_ISSUER"));
+  const resource = optionalEnvValue(env("MCP_AUTH_RESOURCE"));
 
   const tokens = new Set<string>();
   if (single) tokens.add(single);
@@ -78,14 +83,38 @@ export function loadAuthConfig(): AuthConfig | null {
     }
   }
 
-  if (tokens.size === 0 && !jwksUrl) return null;
+  const oauthConfigured = Boolean(jwksUrl || audience || issuer);
+  if (oauthConfigured) {
+    const requiredOAuthValues = [
+      ["MCP_OAUTH_JWKS_URL", jwksUrl],
+      ["MCP_OAUTH_AUDIENCE", audience],
+      ["MCP_OAUTH_ISSUER", issuer],
+      ["MCP_AUTH_RESOURCE", resource],
+    ] as const;
+    for (const [name, value] of requiredOAuthValues) {
+      if (!value) {
+        throw new Error(
+          `[hvgerp-mcp] ${name} is required when OAuth configuration is present`,
+        );
+      }
+    }
+  }
+
+  if (tokens.size === 0 && !oauthConfigured) {
+    if (resource) {
+      throw new Error(
+        "[hvgerp-mcp] MCP_AUTH_RESOURCE requires a static token or OAuth configuration",
+      );
+    }
+    return null;
+  }
 
   return {
     tokens,
-    resource: optionalEnvValue(env("MCP_AUTH_RESOURCE")),
+    resource,
     jwksUrl,
-    audience: optionalEnvValue(env("MCP_OAUTH_AUDIENCE")),
-    issuer: optionalEnvValue(env("MCP_OAUTH_ISSUER")),
+    audience,
+    issuer,
   };
 }
 

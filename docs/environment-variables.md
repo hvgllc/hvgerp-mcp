@@ -77,13 +77,21 @@ stdio deployments.
 `MCP_AUTH_RESOURCE` is required whenever any other variable in this group is
 set.
 
+OAuth configuration is all-or-nothing: setting any of `MCP_OAUTH_JWKS_URL`,
+`MCP_OAUTH_AUDIENCE`, or `MCP_OAUTH_ISSUER` requires all three plus
+`MCP_AUTH_RESOURCE`. A partial OAuth configuration is rejected at HTTP startup
+even when a valid static token is also configured. Setting `MCP_AUTH_RESOURCE`
+without either a static token or OAuth configuration is also rejected. Leaving
+the entire group unset keeps the intentional unauthenticated HTTP mode; stdio
+transport does not read this group.
+
 | Variable             | Type                     | Default | Required | Notes                                                                                                                                                                               |
 | -------------------- | ------------------------ | ------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `MCP_AUTH_TOKEN`     | string                   | —       | No       | Single static bearer token accepted on HTTP requests.                                                                                                                               |
 | `MCP_AUTH_TOKENS`    | string (comma-separated) | —       | No       | Multiple static bearer tokens, parsed by splitting on commas. Combined with `MCP_AUTH_TOKEN` if both are set.                                                                       |
 | `MCP_OAUTH_JWKS_URL` | string (URL)             | —       | No       | JWKS endpoint for OAuth 2.0 JWT validation. When set, `MCP_OAUTH_ISSUER`, `MCP_OAUTH_AUDIENCE`, and `MCP_AUTH_RESOURCE` are all required.                                           |
-| `MCP_OAUTH_AUDIENCE` | string                   | —       | No       | Expected `aud` claim in incoming JWTs. Required alongside `MCP_OAUTH_JWKS_URL`.                                                                                                     |
-| `MCP_OAUTH_ISSUER`   | string                   | —       | No       | Expected `iss` claim / OIDC issuer. Required alongside `MCP_OAUTH_JWKS_URL`.                                                                                                        |
+| `MCP_OAUTH_AUDIENCE` | string                   | -       | No       | Expected `aud` claim in incoming JWTs. Setting it enables OAuth intent and requires the complete OAuth group.                                                                       |
+| `MCP_OAUTH_ISSUER`   | string                   | -       | No       | Expected `iss` claim / OIDC issuer. Setting it enables OAuth intent and requires the complete OAuth group.                                                                          |
 | `MCP_AUTH_RESOURCE`  | string (URL)             | —       | No       | Public URL of this server's MCP endpoint (e.g. `https://mcp.example.com/mcp`), used to emit RFC 9728 Protected Resource Metadata. Required whenever any auth variable above is set. |
 
 ---

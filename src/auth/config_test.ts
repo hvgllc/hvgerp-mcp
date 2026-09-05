@@ -68,6 +68,12 @@ Deno.test("loadAuthConfig: strips surrounding double quotes from MCP_AUTH_TOKEN"
   assertEquals(config?.tokens.has('"abc123"'), false);
 });
 
+Deno.test("loadAuthConfig: preserves whitespace inside a quoted non-empty token", () => {
+  using _ = withEnv({ MCP_AUTH_TOKEN: '" abc123 "' });
+  const config = loadAuthConfig();
+  assertEquals(config?.tokens.has(" abc123 "), true);
+});
+
 Deno.test("loadAuthConfig: strips surrounding single quotes from MCP_AUTH_TOKENS entries", () => {
   using _ = withEnv({ MCP_AUTH_TOKENS: "'tok-a','tok-b'" });
   const config = loadAuthConfig();
@@ -91,6 +97,128 @@ Deno.test("loadAuthConfig: strips quotes from OAuth config values", () => {
   assertEquals(config?.resource, "https://mcp.example.com");
   assertEquals(config?.audience, "hvgerp-mcp");
   assertEquals(config?.issuer, "https://auth.example.com");
+});
+
+const completeOAuthEnv = {
+  MCP_OAUTH_JWKS_URL: "https://auth.example.com/.well-known/jwks.json",
+  MCP_OAUTH_AUDIENCE: "hvgerp-mcp",
+  MCP_OAUTH_ISSUER: "https://auth.example.com",
+  MCP_AUTH_RESOURCE: "https://mcp.example.com",
+};
+
+for (const staticToken of [false, true]) {
+  const mode = staticToken ? "with a static token" : "without a static token";
+
+  for (
+    const missing of [
+      "MCP_OAUTH_JWKS_URL",
+      "MCP_OAUTH_AUDIENCE",
+      "MCP_OAUTH_ISSUER",
+      "MCP_AUTH_RESOURCE",
+    ] as const
+  ) {
+    Deno.test(`loadAuthConfig: rejects OAuth missing ${missing} ${mode}`, () => {
+      const vars: Record<string, string> = { ...completeOAuthEnv };
+      delete vars[missing];
+      if (staticToken) vars.MCP_AUTH_TOKEN = "static-token";
+
+      using _ = withEnv(vars);
+      assertThrows(() => loadAuthConfig(), Error, missing);
+    });
+  }
+
+  Deno.test(`loadAuthConfig: rejects issuer-only OAuth ${mode}`, () => {
+    using _ = withEnv({
+      MCP_OAUTH_ISSUER: "https://auth.example.com",
+      ...(staticToken ? { MCP_AUTH_TOKEN: "static-token" } : {}),
+    });
+    assertThrows(() => loadAuthConfig(), Error, "MCP_OAUTH_JWKS_URL");
+  });
+
+  Deno.test(`loadAuthConfig: rejects audience-only OAuth ${mode}`, () => {
+    using _ = withEnv({
+      MCP_OAUTH_AUDIENCE: "hvgerp-mcp",
+      ...(staticToken ? { MCP_AUTH_TOKEN: "static-token" } : {}),
+    });
+    assertThrows(() => loadAuthConfig(), Error, "MCP_OAUTH_JWKS_URL");
+  });
+
+  Deno.test(`loadAuthConfig: rejects issuer and audience without JWKS ${mode}`, () => {
+    using _ = withEnv({
+      MCP_OAUTH_ISSUER: "https://auth.example.com",
+      MCP_OAUTH_AUDIENCE: "hvgerp-mcp",
+      ...(staticToken ? { MCP_AUTH_TOKEN: "static-token" } : {}),
+    });
+    assertThrows(() => loadAuthConfig(), Error, "MCP_OAUTH_JWKS_URL");
+  });
+}
+
+for (const staticToken of [false, true]) {
+  const mode = staticToken ? "with a static token" : "without a static token";
+  for (
+    const field of [
+      "MCP_OAUTH_JWKS_URL",
+      "MCP_OAUTH_AUDIENCE",
+      "MCP_OAUTH_ISSUER",
+    ] as const
+  ) {
+    for (
+      const [form, value] of [
+        ["empty", ""],
+        ["whitespace", "   "],
+        ["quoted empty", '""'],
+        ["quoted whitespace", "'   '"],
+      ] as const
+    ) {
+      Deno.test(`loadAuthConfig: treats ${form} ${field} as missing ${mode}`, () => {
+        using _ = withEnv({
+          ...completeOAuthEnv,
+          [field]: value,
+          ...(staticToken ? { MCP_AUTH_TOKEN: "static-token" } : {}),
+        });
+        assertThrows(() => loadAuthConfig(), Error, field);
+      });
+    }
+  }
+}
+
+Deno.test("loadAuthConfig: returns null when all OAuth values normalize to empty", () => {
+  using _ = withEnv({
+    MCP_OAUTH_JWKS_URL: '""',
+    MCP_OAUTH_AUDIENCE: "   ",
+    MCP_OAUTH_ISSUER: "'   '",
+  });
+  assertEquals(loadAuthConfig(), null);
+});
+
+Deno.test("loadAuthConfig: keeps static-only auth when all OAuth values normalize to empty", () => {
+  using _ = withEnv({
+    MCP_AUTH_TOKEN: "static-token",
+    MCP_AUTH_RESOURCE: "https://mcp.example.com",
+    MCP_OAUTH_JWKS_URL: '""',
+    MCP_OAUTH_AUDIENCE: "   ",
+    MCP_OAUTH_ISSUER: "'   '",
+  });
+  const config = loadAuthConfig();
+  assertEquals(config?.tokens.has("static-token"), true);
+  assertEquals(config?.jwksUrl, undefined);
+  assertEquals(config?.audience, undefined);
+  assertEquals(config?.issuer, undefined);
+});
+
+Deno.test("loadAuthConfig: rejects resource-only auth when all OAuth values normalize to empty", () => {
+  using _ = withEnv({
+    MCP_AUTH_RESOURCE: "https://mcp.example.com",
+    MCP_OAUTH_JWKS_URL: '""',
+    MCP_OAUTH_AUDIENCE: "   ",
+    MCP_OAUTH_ISSUER: "'   '",
+  });
+  assertThrows(() => loadAuthConfig(), Error, "MCP_AUTH_RESOURCE");
+});
+
+Deno.test("loadAuthConfig: rejects MCP_AUTH_RESOURCE without an auth mode", () => {
+  using _ = withEnv({ MCP_AUTH_RESOURCE: "https://mcp.example.com" });
+  assertThrows(() => loadAuthConfig(), Error, "MCP_AUTH_RESOURCE");
 });
 
 // ── buildAuthProvider ─────────────────────────────────────────────────────────
