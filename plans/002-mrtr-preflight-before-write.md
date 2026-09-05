@@ -10,7 +10,7 @@
 - Ưu tiên: P1; công sức: L; rủi ro sửa: vừa; thay ranh giới phân giải và thực
   thi.
 - Phụ thuộc: không.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
+- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `BLOCKED`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 runWithLinkDisambiguation chạy handler với args gốc trước khi kiểm
@@ -127,6 +127,12 @@ riêng khi một lỗi có sẵn ngoài phạm vi chặn toàn repo, nhưng ph�
 toàn repo là bị chặn.
 
 ## Các bước
+
+Đã gặp điều kiện dừng framework 0.25.0: token chỉ ký args, không ký câu hỏi và
+identifier ban đầu. Executor cùng reviewer độc lập xác minh bảy regression đỏ.
+Chưa sửa implementation; xem [evidence/002.md](evidence/002.md). Cần người dùng
+cho phép mở hợp đồng framework hoặc application challenge state trước khi tiếp
+tục. Không thu hẹp rubric hoặc tự từ chối mọi array retry hợp lệ.
 
 Goal đã cho phép thực thi và commit trong worktree riêng từ main 013a1cf. Drift
 check source lúc giao việc không có thay đổi so với d2c5305. Parent quản lý

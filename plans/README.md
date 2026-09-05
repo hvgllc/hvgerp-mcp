@@ -4,9 +4,10 @@ Soạn ngày 2026-09-05 từ audit `improve deep`, mốc source `d2c5305`. Đã 
 22/22 phát hiện và 3/3 hướng phát triển. Đây là sản phẩm tư vấn: 25 kế hoạch đã
 được viết và review. Ngày 2026-09-05, người dùng đã yêu cầu thực thi toàn bộ và
 chấp thuận worktree Git tạo thủ công. Trạng thái thực thi nằm ở bảng bên dưới;
-DONE chỉ áp dụng cho kết quả đã được reviewer duyệt trong worktree riêng, không
-tự động có nghĩa đã merge vào main. Riêng 001 và 024 đã merge qua PR #23 ngày
-2026-09-05 tại commit 013a1cf. Chi tiết ở [execution-run.md](execution-run.md).
+Theo goal hiện tại, DONE chỉ áp dụng khi đủ tiêu chí, review, CI bắt buộc và đã
+merge vào main. Mục 001 và 024 đã merge qua PR #23 tại commit 013a1cf; mục 004
+đã merge qua PR #24 tại commit fbe9528. Chi tiết ở
+[execution-run.md](execution-run.md).
 
 ## Cách sử dụng và phạm vi
 
@@ -19,8 +20,8 @@ lập thiết kế, không xây tính năng.
 Lượt soạn trước chỉ ghi trong `plans/`. Đợt execute hiện tại cho phép executor
 sửa đúng phạm vi và commit trong worktree riêng; advisor giữ vai trò review.
 Source của main, phiên bản và `execution-notes.md` cá nhân ở gốc vẫn giữ nguyên.
-Push, workflow và merge PR #23 đã được người dùng chấp thuận riêng. Không tự
-publish hoặc tác động production. Kết quả từng lệnh phải được ghi trong
+Goal đã cho phép commit, push, PR, workflow Test và merge sau đủ các gate. Không
+tự publish hoặc tác động production. Kết quả từng lệnh phải được ghi trong
 evidence, không suy ra đã chạy thành công từ bảng lệnh kế hoạch.
 
 ## Danh mục và thứ tự thực thi
@@ -29,33 +30,33 @@ evidence, không suy ra đã chạy thành công từ bảng lệnh kế hoạch
 là độ bền, tái lập và tài liệu; P3 là khảo sát sản phẩm. S/M/L và LOW/MED/HIGH
 là ước lượng công sức/rủi ro sửa, không phải cam kết thời hạn.
 
-| ID  | Kế hoạch                                                                                            | Ưu tiên | Công sức / rủi ro                                         | Phụ thuộc     | Thực thi    |
-| --- | --------------------------------------------------------------------------------------------------- | ------- | --------------------------------------------------------- | ------------- | ----------- |
-| 001 | [Từ chối cấu hình OAuth chưa đầy đủ](001-reject-partial-oauth.md)                                   | P1      | S / thấp; giữ chế độ không auth chủ động                  | không         | DONE        |
-| 002 | [Kiểm câu trả lời MRTR trước mọi thao tác ghi](002-mrtr-preflight-before-write.md)                  | P1      | L / vừa; thay ranh giới phân giải và thực thi             | không         | IN_PROGRESS |
-| 003 | [Trả dữ liệu mới sau giao và bỏ giao việc](003-assignment-cache-invalidation.md)                    | P1      | S / thấp; ảnh hưởng cache hit                             | không         | TODO        |
-| 004 | [Áp timeout cho toàn bộ phản hồi ERPNext](004-response-body-timeout.md)                             | P1      | S / thấp; giữ chính sách không retry write                | không         | IN_PROGRESS |
-| 005 | [Tính analytics trong company và đồng tiền xác định](005-analytics-currency-context.md)             | P1      | L / vừa; thay ý nghĩa số tiền đang hiển thị sai           | không         | TODO        |
-| 006 | [Tổng hợp đủ dữ liệu trước khi tạo KPI và top N](006-complete-analytics-aggregates.md)              | P1      | L / vừa; lượng truy vấn và ngữ nghĩa tổng                 | 005           | TODO        |
-| 007 | [Thiết lập typecheck thực cho mã browser](007-browser-typecheck-gate.md)                            | P1      | M / thấp; không nới strict                                | không         | TODO        |
-| 008 | [Xuất CSV đúng cấu trúc và giữ văn bản là văn bản](008-safe-csv-export.md)                          | P1      | S / thấp; cần giữ kiểu số                                 | 007           | TODO        |
-| 009 | [Chỉ áp kết quả bất đồng bộ vào đúng phiên mở thẻ](009-kanban-detail-request-identity.md)           | P1      | M / vừa; không hủy mutation đã gửi                        | 007           | TODO        |
-| 010 | [Kiểm trạng thái Kanban bằng dữ liệu mới và bảo vệ ghi](010-kanban-conflict-protection.md)          | P1      | M / vừa; phụ thuộc hợp đồng optimistic locking của Frappe | không         | TODO        |
-| 011 | [Giữ kết quả batch đã thực thi khi upstream ném lỗi](011-shim-partial-batch-errors.md)              | P1      | M / vừa; semantics JSON-RPC batch                         | không         | TODO        |
-| 012 | [Không tái nạp snapshot cũ sau cache invalidation](012-cache-inflight-invalidation.md)              | P1      | M / vừa; phối hợp cache nhiều caller                      | không         | TODO        |
-| 013 | [Dùng ngày site cho cửa sổ analytics](013-analytics-site-date-windows.md)                           | P1      | M / thấp; sửa cận thời gian                               | 005, 006      | TODO        |
-| 014 | [Áp include_drafts nhất quán cho sales chart](014-sales-chart-draft-filter.md)                      | P1      | S / thấp; lọc cùng business population                    | 005, 006, 013 | TODO        |
-| 015 | [Hiện đúng chuyển động theo mặt hàng và kho](015-stock-item-movement-query.md)                      | P1      | M / vừa; đổi nguồn đọc lịch sử                            | 007           | TODO        |
-| 016 | [Bỏ snapshot board cũ và giữ refresh sau mutation](016-kanban-refresh-generation.md)                | P1      | M / vừa; phối hợp queue và optimistic updates             | 007, 009      | TODO        |
-| 017 | [Hiển thị lỗi tải đầu và giữ dữ liệu khi refresh lỗi](017-viewer-initial-error-state.md)            | P1      | M / MED                                                   | 007           | TODO        |
-| 018 | [Giới hạn số entry và thu hồi cache hết hạn](018-bound-memory-cache.md)                             | P2      | M / MED                                                   | không         | TODO        |
-| 019 | [Tách giá trị cache khỏi đối tượng bên ghi](019-cache-write-value-isolation.md)                     | P2      | S / LOW                                                   | 018           | TODO        |
-| 020 | [Đồng bộ schema trạng thái Kanban và giới hạn tháng doanh thu](020-align-tool-schema-boundaries.md) | P2      | M / MED                                                   | 014           | TODO        |
-| 021 | [Khóa đầu vào dependency của bản build](021-reproducible-build-inputs.md)                           | P2      | L / HIGH                                                  | không         | TODO        |
-| 022 | [Sửa hướng dẫn release và chính sách hỗ trợ lỗi thời](022-release-security-documentation.md)        | P2      | S / LOW                                                   | 021           | TODO        |
-| 023 | [Khảo sát thiết kế dòng thời gian biến động tồn kho](023-stock-ledger-timeline-design.md)           | P3      | M / LOW                                                   | 015           | TODO        |
-| 024 | [Khảo sát kiểm tra điều kiện khởi tạo ERPNext](024-setup-readiness-design.md)                       | P3      | M / LOW                                                   | không         | DONE        |
-| 025 | [Khảo sát hồ sơ khách hàng tổng hợp](025-customer-360-design.md)                                    | P3      | M / LOW                                                   | 005, 006      | TODO        |
+| ID  | Kế hoạch                                                                                            | Ưu tiên | Công sức / rủi ro                                         | Phụ thuộc     | Thực thi |
+| --- | --------------------------------------------------------------------------------------------------- | ------- | --------------------------------------------------------- | ------------- | -------- |
+| 001 | [Từ chối cấu hình OAuth chưa đầy đủ](001-reject-partial-oauth.md)                                   | P1      | S / thấp; giữ chế độ không auth chủ động                  | không         | DONE     |
+| 002 | [Kiểm câu trả lời MRTR trước mọi thao tác ghi](002-mrtr-preflight-before-write.md)                  | P1      | L / vừa; thay ranh giới phân giải và thực thi             | không         | BLOCKED  |
+| 003 | [Trả dữ liệu mới sau giao và bỏ giao việc](003-assignment-cache-invalidation.md)                    | P1      | S / thấp; ảnh hưởng cache hit                             | không         | TODO     |
+| 004 | [Áp timeout cho toàn bộ phản hồi ERPNext](004-response-body-timeout.md)                             | P1      | S / thấp; giữ chính sách không retry write                | không         | DONE     |
+| 005 | [Tính analytics trong company và đồng tiền xác định](005-analytics-currency-context.md)             | P1      | L / vừa; thay ý nghĩa số tiền đang hiển thị sai           | không         | TODO     |
+| 006 | [Tổng hợp đủ dữ liệu trước khi tạo KPI và top N](006-complete-analytics-aggregates.md)              | P1      | L / vừa; lượng truy vấn và ngữ nghĩa tổng                 | 005           | TODO     |
+| 007 | [Thiết lập typecheck thực cho mã browser](007-browser-typecheck-gate.md)                            | P1      | M / thấp; không nới strict                                | không         | TODO     |
+| 008 | [Xuất CSV đúng cấu trúc và giữ văn bản là văn bản](008-safe-csv-export.md)                          | P1      | S / thấp; cần giữ kiểu số                                 | 007           | TODO     |
+| 009 | [Chỉ áp kết quả bất đồng bộ vào đúng phiên mở thẻ](009-kanban-detail-request-identity.md)           | P1      | M / vừa; không hủy mutation đã gửi                        | 007           | TODO     |
+| 010 | [Kiểm trạng thái Kanban bằng dữ liệu mới và bảo vệ ghi](010-kanban-conflict-protection.md)          | P1      | M / vừa; phụ thuộc hợp đồng optimistic locking của Frappe | không         | TODO     |
+| 011 | [Giữ kết quả batch đã thực thi khi upstream ném lỗi](011-shim-partial-batch-errors.md)              | P1      | M / vừa; semantics JSON-RPC batch                         | không         | TODO     |
+| 012 | [Không tái nạp snapshot cũ sau cache invalidation](012-cache-inflight-invalidation.md)              | P1      | M / vừa; phối hợp cache nhiều caller                      | không         | TODO     |
+| 013 | [Dùng ngày site cho cửa sổ analytics](013-analytics-site-date-windows.md)                           | P1      | M / thấp; sửa cận thời gian                               | 005, 006      | TODO     |
+| 014 | [Áp include_drafts nhất quán cho sales chart](014-sales-chart-draft-filter.md)                      | P1      | S / thấp; lọc cùng business population                    | 005, 006, 013 | TODO     |
+| 015 | [Hiện đúng chuyển động theo mặt hàng và kho](015-stock-item-movement-query.md)                      | P1      | M / vừa; đổi nguồn đọc lịch sử                            | 007           | TODO     |
+| 016 | [Bỏ snapshot board cũ và giữ refresh sau mutation](016-kanban-refresh-generation.md)                | P1      | M / vừa; phối hợp queue và optimistic updates             | 007, 009      | TODO     |
+| 017 | [Hiển thị lỗi tải đầu và giữ dữ liệu khi refresh lỗi](017-viewer-initial-error-state.md)            | P1      | M / MED                                                   | 007           | TODO     |
+| 018 | [Giới hạn số entry và thu hồi cache hết hạn](018-bound-memory-cache.md)                             | P2      | M / MED                                                   | không         | TODO     |
+| 019 | [Tách giá trị cache khỏi đối tượng bên ghi](019-cache-write-value-isolation.md)                     | P2      | S / LOW                                                   | 018           | TODO     |
+| 020 | [Đồng bộ schema trạng thái Kanban và giới hạn tháng doanh thu](020-align-tool-schema-boundaries.md) | P2      | M / MED                                                   | 014           | TODO     |
+| 021 | [Khóa đầu vào dependency của bản build](021-reproducible-build-inputs.md)                           | P2      | L / HIGH                                                  | không         | TODO     |
+| 022 | [Sửa hướng dẫn release và chính sách hỗ trợ lỗi thời](022-release-security-documentation.md)        | P2      | S / LOW                                                   | 021           | TODO     |
+| 023 | [Khảo sát thiết kế dòng thời gian biến động tồn kho](023-stock-ledger-timeline-design.md)           | P3      | M / LOW                                                   | 015           | TODO     |
+| 024 | [Khảo sát kiểm tra điều kiện khởi tạo ERPNext](024-setup-readiness-design.md)                       | P3      | M / LOW                                                   | không         | DONE     |
+| 025 | [Khảo sát hồ sơ khách hàng tổng hợp](025-customer-360-design.md)                                    | P3      | M / LOW                                                   | 005, 006      | TODO     |
 
 Thứ tự số 001 → 025 là một thứ tự hợp lệ không có chu trình. Chỉ bắt đầu kế
 hoạch phụ thuộc sau khi các mục được nêu đạt DONE và chứng cứ đã được đối chiếu.

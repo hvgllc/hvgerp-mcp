@@ -9,7 +9,7 @@
 - Mục audit: 4; loại: `bug`.
 - Ưu tiên: P1; công sức: S; rủi ro sửa: thấp; giữ chính sách không retry write.
 - Phụ thuộc: không.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
+- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `DONE`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 requestOnce clearTimeout ngay khi fetch có response, trước response.text. Body
@@ -101,6 +101,10 @@ toàn repo là bị chặn.
 
 ## Các bước
 
+Đã hoàn tất và merge qua PR #24 tại fbe9528 sau review độc lập, Codex sạch và CI
+JSR thật. Bằng chứng: [evidence/004.md](evidence/004.md). Các lệnh và giới hạn
+baseline bên trên là lịch sử trước thực thi.
+
 Goal đã cho phép thực thi và commit trong worktree riêng từ main 013a1cf. Drift
 check source lúc giao việc không có thay đổi so với d2c5305. Parent quản lý
 index, review, push, PR, CI và merge. Local được dùng workaround đã duyệt với
@@ -148,12 +152,12 @@ bằng 1.
 
 ## Tiêu chí hoàn tất
 
-- [ ] Body chậm không thể tồn tại vô hạn ngoài timeoutMs.
-- [ ] FrappeAPIError và số lần retry đúng loại lỗi/phương thức; mọi gate server
+- [x] Body chậm không thể tồn tại vô hạn ngoài timeoutMs.
+- [x] FrappeAPIError và số lần retry đúng loại lỗi/phương thức; mọi gate server
       đạt.
-- [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
+- [x] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
-- [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/004.md`, cập
+- [x] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/004.md`, cập
       nhật trạng thái ở `plans/README.md`. Không ghi giá trị bí mật.
 
 ## Điều kiện dừng

@@ -18,15 +18,29 @@ Cập nhật goal tự động ngày 2026-09-05: đã được phép commit, pus
 merge các kế hoạch sau khi đạt review và gate. Goal vẫn giữ đủ 25 mục; không
 release/publish, không tự nâng dependency hoặc đổi production.
 
-- 002 đang IN_PROGRESS: executor goal_execute_002 tại
-  /private/tmp/hvgerp-goal.BTKxiY/002, branch
+- 002 BLOCKED: hai reviewer xác nhận cần mở hợp đồng challenge metadata.
+  Regression 27 đạt, 7 lỗi đúng mutation; chưa sửa implementation hoặc commit
+  test đỏ. Chi tiết và quyết định cần thêm ở evidence/002.md. Worktree của
+  executor goal_execute_002 tại /private/tmp/hvgerp-goal.BTKxiY/002, branch
   advisor/002-mrtr-preflight-before-write.
-- 004 đang IN_PROGRESS: executor goal_execute_004 tại
-  /private/tmp/hvgerp-goal.BTKxiY/004, branch advisor/004-response-body-timeout.
+- 004 DONE: PR #24 merge fbe9528, CI Test 33944266419 thành công, Codex sạch,
+  review độc lập APPROVE; xem evidence/004.md. Worktree của executor
+  goal_execute_004 tại /private/tmp/hvgerp-goal.BTKxiY/004, branch
+  advisor/004-response-body-timeout.
 - Hai worktree từ main 013a1cf; source thuộc scope chưa drift so với d2c5305.
 - Worktree lưu backlog: /private/tmp/hvgerp-goal.BTKxiY/backlog, branch
   advisor/goal-backlog; chỉ lưu plans, không copy file cá nhân ở gốc.
-- Tổng hiện tại: 2 DONE, 2 IN_PROGRESS, 21 TODO. Phần bên dưới lưu lịch sử.
+- Tổng hiện tại: 3 DONE, 1 BLOCKED, 21 TODO. Phần bên dưới lưu lịch sử.
+
+## Tiến độ lưu backlog
+
+- Commit lưu backlog 26a89f6 và sửa review 0a44372, chỉ có plans.
+- Review độc lập APPROVE sau khi bỏ lời dẫn khỏi bản lưu executor 001 để toàn
+  file khớp Git blob gốc, không chỉ phần cuối. Validator 25/25 và sáu phản chứng
+  đều đạt. Chưa suy ra các mục TODO đã hoàn tất.
+- Main local vẫn d2c5305 với file cá nhân, không pull đè. Remote main hiện
+  fbe9528; tree merge PR #24 bằng tree HEAD đã review và CI:
+  fae4ebc07e19cd7e09ee2257f7298cf26c2a4de3.
 
 ## Lịch sử trước goal tự động
 
