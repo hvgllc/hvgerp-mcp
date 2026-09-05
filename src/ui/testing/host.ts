@@ -4,7 +4,7 @@ import {
 } from "@modelcontextprotocol/ext-apps/app-bridge";
 import {
   boardFixture,
-  detailFixture,
+  createDetailFixtureStore,
   SCENARIOS,
   TOOL_NAMES,
   toolArguments,
@@ -61,8 +61,61 @@ function failure(message: string) {
 }
 type FixtureResult = ReturnType<typeof result> | ReturnType<typeof failure>;
 const boards = [boardFixture("A"), boardFixture("B")];
+const details = createDetailFixtureStore();
+const detailMutations = new Set([
+  "erpnext_doc_update",
+  "erpnext_doc_assign",
+  "erpnext_doc_unassign",
+]);
 let board = boards[0];
 let nextId = 1;
+
+function detailMutation(
+  name: string,
+  args: Record<string, unknown>,
+  apply = false,
+): FixtureResult {
+  if (typeof args.doctype !== "string" || typeof args.name !== "string") {
+    return failure("Missing local document identity");
+  }
+  const doc = details.get(args.doctype, args.name);
+  let assignment: object | undefined;
+  if (name === "erpnext_doc_update") {
+    if (
+      !args.data || typeof args.data !== "object" || Array.isArray(args.data)
+    ) return failure("Missing local update data");
+    Object.assign(doc, args.data);
+  } else {
+    if (typeof args.assign_to !== "string") {
+      return failure("Missing local assignee");
+    }
+    const current = JSON.parse(String(doc._assign ?? "[]")) as string[];
+    const assignees = name === "erpnext_doc_assign"
+      ? [...new Set([...current, args.assign_to])]
+      : current.filter((entry) => entry !== args.assign_to);
+    doc._assign = JSON.stringify(assignees);
+    const todos = assignees.map((owner) => ({
+      owner,
+      name: `TODO-${args.name}-${owner}`,
+    }));
+    assignment = name === "erpnext_doc_assign"
+      ? { notify_user: true, assignees: [args.assign_to], todos }
+      : { removed: args.assign_to, remaining: todos };
+  }
+  if (apply) {
+    details.set(args.doctype, args.name, doc);
+    for (const entry of boards) {
+      if (entry.doctype !== args.doctype) continue;
+      const card = entry.cards.find((candidate) => candidate.id === args.name);
+      if (card && typeof doc.subject === "string") card.title = doc.subject;
+    }
+  }
+  return result({
+    data: doc,
+    message: "Local mutation succeeded",
+    ...(assignment ? { assignment } : {}),
+  });
+}
 
 function responseFor(
   name: string,
@@ -83,7 +136,12 @@ function responseFor(
     );
   }
   if (name === "erpnext_doc_get" && viewer === "kanban-viewer") {
-    return result(detailFixture(String(args.name)));
+    return result({
+      data: details.get(String(args.doctype), String(args.name)),
+    });
+  }
+  if (detailMutations.has(name) && viewer === "kanban-viewer") {
+    return detailMutation(name, args);
   }
   if (name === "erpnext_user_list" && viewer === "kanban-viewer") {
     return result({
@@ -162,8 +220,9 @@ bridge.oncalltool = async (params, extra) => {
   const id = nextId++;
   const args = params.arguments ?? {};
   record({ id, tool: params.name, args, outcome: "received" });
-  const held =
-    (scenario === "detail-race" && params.name === "erpnext_doc_get") ||
+  const held = (scenario === "detail-race" &&
+    (params.name === "erpnext_doc_get" ||
+      detailMutations.has(params.name))) ||
     (scenario === "board-race" &&
       (params.name === "erpnext_kanban_get_board" ||
         params.name === "erpnext_kanban_move_card"));
@@ -185,9 +244,15 @@ bridge.oncalltool = async (params, extra) => {
     }
   }
   if (!held) {
+    const completedReply = detailMutations.has(params.name) && !reply.isError
+      ? detailMutation(params.name, args, true)
+      : reply;
     applySuccessfulMove();
-    record({ id, outcome: reply.isError ? "error-result" : "resolved" });
-    return reply;
+    record({
+      id,
+      outcome: completedReply.isError ? "error-result" : "resolved",
+    });
+    return completedReply;
   }
   return await new Promise<FixtureResult>((resolve) => {
     const row = document.createElement("li");
@@ -202,6 +267,9 @@ bridge.oncalltool = async (params, extra) => {
       if (settled) return;
       settled = true;
       if (!value.isError) applySuccessfulMove();
+      if (!value.isError && detailMutations.has(params.name)) {
+        value = detailMutation(params.name, args, true);
+      }
       extra.signal.removeEventListener("abort", aborted);
       row.remove();
       record({ id, outcome });

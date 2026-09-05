@@ -214,10 +214,10 @@ export function viewerFixture(
   }
 }
 
-export function detailFixture(name: string): object {
+export function detailFixture(name: string, doctype = "Task") {
   return {
     data: {
-      doctype: "Task",
+      doctype,
       name,
       subject: `Detail ${name}`,
       status: "Open",
@@ -225,6 +225,25 @@ export function detailFixture(name: string): object {
       priority: "Medium",
       modified: GENERATED_AT,
       _assign: "[]",
+    },
+  };
+}
+
+export function createDetailFixtureStore() {
+  const documents = new Map<string, Record<string, unknown>>();
+  const key = (doctype: string, name: string) =>
+    JSON.stringify([doctype, name]);
+  return {
+    get(doctype: string, name: string): Record<string, unknown> {
+      return structuredClone(
+        documents.get(key(doctype, name)) ?? detailFixture(name, doctype).data,
+      );
+    },
+    set(doctype: string, name: string, doc: Record<string, unknown>) {
+      documents.set(
+        key(doctype, name),
+        structuredClone({ ...doc, doctype, name }),
+      );
     },
   };
 }
