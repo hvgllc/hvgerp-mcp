@@ -1,0 +1,292 @@
+# Kế hoạch 021: Khóa đầu vào dependency của bản build
+
+> Đây là kế hoạch giao cho agent thực thi sau này. Đọc trọn file, kiểm chứng
+> từng bước và cập nhật hàng 021 trong `plans/README.md`; không coi việc tạo tài
+> liệu này là đã sửa lỗi.
+
+## Trạng thái và mục tiêu
+
+- Mục audit: 21; loại: `dx`.
+- Ưu tiên: P2; công sức: L; rủi ro sửa: HIGH.
+- Phụ thuộc: không.
+- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `BLOCKED`.
+- Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
+
+deno.lock bị bỏ qua và Node build tạo workspace mới rồi npm install các khoảng
+phiên bản. Cùng commit chưa đủ để tái lập graph dependency. Cần lockfile được
+theo dõi cho cả đường Deno và Node, giữ nguyên phiên bản đã được chấp thuận.
+
+## Hiện trạng và chứng cứ
+
+`.gitignore:1`:
+
+<!-- evidence: .gitignore -->
+
+<!-- deno-fmt-ignore -->
+```text
+node_modules/
+deno.lock
+dist-node/
+```
+
+`scripts/build-node.sh:65`:
+
+<!-- evidence: scripts/build-node.sh -->
+
+<!-- deno-fmt-ignore -->
+```text
+  "devDependencies": {
+    "esbuild": "^0.25.12",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.2"
+  },
+```
+
+`scripts/build-node.sh:80`:
+
+<!-- evidence: scripts/build-node.sh -->
+
+<!-- deno-fmt-ignore -->
+```text
+pushd "$DIST_DIR" >/dev/null
+npm install --no-fund --no-audit
+```
+
+`.github/workflows/publish.yml:74`:
+
+<!-- evidence: .github/workflows/publish.yml -->
+
+<!-- deno-fmt-ignore -->
+```text
+        run: npm install -g npm@latest
+```
+
+## Quy ước cần giữ
+
+Server dùng TypeScript Deno ESM, import tương đối có `.ts`, `import type` cho
+kiểu. API nền tảng chỉ qua runtime adapter; giữ nguyên schema và hình dạng phản
+hồi công khai trừ phần bổ sung được nêu rõ. Test colocated, lỗi được truyền rõ
+ràng, không nuốt lỗi.
+
+Mẫu test có sẵn tại `src/tools/assignment_test.ts` dùng `Deno.test` và
+`@std/assert`, ví dụ:
+
+```typescript
+Deno.test("prepareAssignment returns undefined without assign_to", () => {
+  assertEquals(prepareAssignment({}, "tool"), undefined);
+});
+```
+
+Test dùng mock client hoặc fetch giả, không gọi ERPNext thật trong suite chính.
+
+## Phạm vi và Git
+
+Các file được sửa khi thực thi:
+
+- `.gitignore`
+- `deno.lock` (tạo mới)
+- `scripts/build-node.sh`
+- `scripts/node-build/package.json` (tạo mới)
+- `scripts/node-build/package-lock.json` (tạo mới)
+- `scripts/release-check.sh`
+- `.github/workflows/publish.yml`
+- `.github/workflows/test.yml` (pin runtime của gate Test cùng cấu hình build)
+- `CONTRIBUTING.md`
+- `scripts/verify-reproducible-build.mjs` (tạo mới)
+- `plans/evidence/021/` (tạo mới)
+- `plans/README.md`
+- `plans/evidence/021.md`
+
+Ngoài phạm vi: Không nâng dependency, không bỏ UI package-lock.json, không chạy
+npm publish, không đổi runtime baseline hoặc sửa generated bundle bằng tay.
+Không sửa dữ liệu production, credential, `execution-notes.md` ở gốc; không bump
+version hay tự nâng dependency. Định danh, chuỗi lỗi và commit bằng tiếng Anh;
+phần giải thích tiếng Việt có dấu, không dùng ký tự U+2014.
+
+Trước khi sửa, chạy `git status --short`,
+`git diff --stat d2c5305..HEAD -- .gitignore deno.lock scripts/build-node.sh scripts/node-build/package.json scripts/node-build/package-lock.json scripts/release-check.sh .github/workflows/publish.yml .github/workflows/test.yml CONTRIBUTING.md scripts/verify-reproducible-build.mjs`
+và
+`git diff -- .gitignore deno.lock scripts/build-node.sh scripts/node-build/package.json scripts/node-build/package-lock.json scripts/release-check.sh .github/workflows/publish.yml .github/workflows/test.yml CONTRIBUTING.md scripts/verify-reproducible-build.mjs`.
+Bảo toàn thay đổi có sẵn. Nếu phụ thuộc đã thực thi, đối chiếu diff và làm mới
+kế hoạch này theo code mới trước khi sửa; sai khác chưa giải thích được là điều
+kiện dừng.
+
+Nhánh đề xuất: `advisor/021-reproducible-build-inputs`. Không commit, push, mở
+PR hoặc merge nếu chưa có chỉ thị thực thi tương ứng; commit dự kiến
+`build: lock dependency graphs for release builds`.
+
+## Lệnh xác minh
+
+| Mục đích          | Lệnh                                                                       | Kết quả mong đợi                                        |
+| ----------------- | -------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Test trọng tâm    | `bash -n scripts/build-node.sh && bash -n scripts/release-check.sh`        | exit 0; hai script hợp lệ về cú pháp, chưa kiểm hành vi |
+| Kiểu server       | `deno check mod.ts server.ts`                                              | exit 0                                                  |
+| Test hồi quy      | `deno test --allow-all src/`                                               | exit 0                                                  |
+| Lint              | `deno lint`                                                                | exit 0                                                  |
+| Format            | `deno fmt --check`                                                         | exit 0                                                  |
+| UI và Node bundle | `deno task ui:install && deno task ui:build && bash scripts/build-node.sh` | exit 0; đủ 7 viewer; kiểm tra bundle như bước cuối      |
+
+Baseline lúc tư vấn: lint qua; format toàn repo chỉ vướng file cá nhân chưa theo
+dõi ở gốc; UI typecheck có lỗi; Deno test/check thiếu JSR cache. Các lệnh trên
+là gate cần đạt khi thực thi, chưa phải kết quả đã đạt. Không tải/nâng
+dependency để lách lỗi, không xóa hoặc giảm test. Nếu dependency đã khai báo
+chưa có, báo rõ nhu cầu cài đúng lockfile và quyền mạng; với UI dùng
+`deno task ui:install` khi được phép. Có thể xác minh format các file trong diff
+riêng khi một lỗi có sẵn ngoài phạm vi chặn toàn repo, nhưng phải ghi trạng thái
+toàn repo là bị chặn.
+
+## Các bước
+
+Preflight ngày 2026-09-05 đã ghi tại [evidence/021.md](evidence/021.md). Đã có
+runtime Node 20/22, nhưng graph gián tiếp, npm CLI và quyền thu native JSR lock
+chưa được chốt. Dừng ở bước 1, chưa triển khai hoặc hoàn tất mục này.
+
+### Bước 1: Chốt graph đang được chấp thuận
+
+Đọc import map, UI lock và graph Node đã có nếu tồn tại. Lập bảng
+package/version/resolved/integrity cho đường build hiện tại trong evidence021.
+Không dùng latest để khởi tạo lock. Nếu chưa có graph đủ chứng cứ, dừng xin chấp
+thuận các phiên bản chính xác cần khóa. Ghi nhận graph JSR và npm có thể khác
+cách đóng gói, không mặc định byte bằng nhau.
+
+Chốt cả phiên bản npm CLI chính xác từ nguồn có chứng cứ và được người dùng chấp
+thuận, không chỉ dependency của project. npm đi kèm Node 20/22 đã tải không mặc
+nhiên là phiên bản dùng để trusted publishing. Nếu chưa được duyệt phiên bản npm
+đáp ứng môi trường Publish, dừng ở preflight, không tự cài latest hoặc coi việc
+pin graph là quyền nâng package manager.
+
+Chốt cả hai phiên bản Node đầy đủ `MAJOR.MINOR.PATCH`, không chỉ major 20/22.
+Ghi chúng cùng npm CLI vào cấu hình build được Git theo dõi trong
+scripts/node-build/package.json, làm nguồn duy nhất cho verifier, build, release
+preflight và workflow. Hai binary 20.20.2/22.23.2 đã được phép tải để kiểm chứng
+không tự trở thành phiên bản release được duyệt. Chưa có quyết định chính xác
+thì tiếp tục BLOCKED, không lấy phiên bản ambient làm expected value.
+
+**Kiểm tra:**
+`git ls-files deno.lock src/ui/package-lock.json && git check-ignore deno.lock`
+→ baseline: UI lock được theo dõi, deno.lock đang bị ignore; bảng phiên bản có
+nguồn hoặc mục này bị chặn rõ.
+
+### Bước 2: Dùng lockfile trong đường build mặc định
+
+Bỏ ignore deno.lock, tạo lock bằng graph đã chốt. Tạo
+scripts/node-build/package.json cùng lock cho build-time dependencies và
+@casys/mcp-server. Build copy hai file vào workspace trung gian rồi npm ci,
+không npm install giải khoảng phiên bản. Metadata npm phát hành vẫn lấy từ
+deno.json như hiện tại; không vô tình xuất package build nội bộ.
+MCP_SERVER_OVERRIDE vẫn là nhánh thử nghiệm được ghi rõ không tái lập, không
+được dùng trong Publish chuẩn. CI kiểm lock frozen đúng CLI Deno đang hỗ trợ,
+không đoán flag.
+
+Thay npm@latest trong Publish bằng npm CLI đã chốt. Build mặc định, verifier,
+release preflight và Publish phải dùng cùng phiên bản chính xác; kiểm phiên bản
+trước khi cài/build và lỗi rõ nếu khác. Ghi version trong evidence của hai build
+sạch, không chỉ so hai build dùng chung ambient npm. Không chạy Publish để xác
+minh thay đổi này.
+
+Pin Node đầy đủ theo cấu hình đã duyệt ở Test và publish-npm; bỏ selector nổi
+`22` ở các đường build đó. Verifier, build mặc định và release preflight phải
+kiểm exact version trước install/build, kể cả khi workflow đã dùng setup-node.
+Không tự ghi đè expected version bằng kết quả `node --version`. Runtime Node 20
+dùng cho smoke cũng phải đúng phiên bản đầy đủ riêng đã chốt; việc pin build
+toolchain không đổi baseline hỗ trợ công khai Node 20+ của package.
+
+**Kiểm tra:**
+`bash -n scripts/build-node.sh && bash -n scripts/release-check.sh` → exit 0;
+diff chỉ đổi cơ chế lấy dependency, không đổi phiên bản đã chốt.
+
+### Bước 3: Tạo và chạy gate tái lập độc lập
+
+Tạo scripts/verify-reproducible-build.mjs, CLI bắt buộc nhận cả
+`--node20 <đường dẫn binary Node 20>` và `--node22 <đường dẫn binary Node 22>`.
+Không có runtime mặc định. Kiểm riêng từng binary bằng `--version`, so toàn bộ
+`MAJOR.MINOR.PATCH` với hai giá trị đã duyệt trong cấu hình Git. Bắt buộc major
+tương ứng là 20 và 22, nhưng cùng major mà khác minor/patch vẫn exit 1 trước
+install/build; thiếu path, đảo hai path, hai path cùng major hoặc major khác
+cũng bị từ chối. Ghi path thực, expected version và actual version mỗi binary
+trong evidence; chỉ dùng binary có sẵn, không tự tải hoặc cài runtime. Script
+tạo hai thư mục tạm bằng mkdtemp, copy snapshot source hiện tại kể cả sửa chưa
+commit: allowlist src/, scripts/, deno.json, deno.lock, server.ts, mod.ts,
+README.md, LICENSE nếu có; loại node_modules, src/ui/dist, .env*, .git,
+dist-node và mọi symlink thoát repo. Không dùng git archive HEAD vì sẽ bỏ sửa
+chưa commit. Trong mỗi workspace chạy npm ci cho UI, build7viewer, bash
+scripts/build-node.sh; thu npm ls --all --json trước và sau build. Chuẩn hóa
+đường dẫn tuyệt đối, so tên/version/resolved/integrity từ lock và graph, so toàn
+bộ nội dung package tại dist-node/bin. Dùng npm pack --dry-run --json để lấy tập
+path đóng gói, rồi so path, mode, kích thước và SHA-256 của từng file, bao gồm
+bundle, package.json và cả bảy HTML dưới ui-dist. Từ chối thiếu/thừa file hoặc
+path/symlink thoát package; chỉ chuẩn hóa metadata vận chuyển không thuộc nội
+dung như timestamp hoặc gzip header nếu kiểm tarball. Không chỉ so file list
+hoặc hash bundle, vì UI được copy riêng và resources/list không chứng minh byte
+HTML bằng nhau. Bất kỳ nội dung hoặc mode khác phải fail, không tự bỏ trường để
+lách. Dùng Node 22 đã xác minh cho hai build; mỗi bundle đầu ra phải được chạy
+smoke riêng bằng cả Node 20 và Node 22, thành ma trận hai bundle x hai runtime.
+Không suy từ một runtime ra runtime kia. Chạy bundle stdio: môi trường allowlist
+tối thiểu, tắt cache warming, URL loopback không có ERP và credential giả; gửi
+initialize, notifications/initialized, tools/list và resources/list, kiểm
+JSON-RPC responses, version từ manifest, đúng7resource viewer, không gọi tool
+ERP. Timeout5giây và cleanup child bắt buộc. Script in vị trí evidence/temporary
+roots, không xóa worktree user; chỉ cleanup đúng thư mục do nó vừa tạo sau khi
+lưu báo cáo. Thêm --self-test với fixture graph bằng/khác, hash khác và runtime
+không hỗ trợ để chứng minh gate có thể fail. Có negative control chỉ đổi byte
+một HTML nhưng giữ nguyên bundle, tên file và số resource; thêm ca thiếu/thừa
+file hoặc mode khác. Các ca này phải bị từ chối, còn hai package đầy đủ bằng
+nhau phải được chấp nhận. release:check vẫn là gate một build riêng, không gọi
+nó là bằng chứng hai build.
+
+**Kiểm tra:**
+`node scripts/verify-reproducible-build.mjs --self-test && node scripts/verify-reproducible-build.mjs --node20 "$NODE20_BINARY" --node22 "$NODE22_BINARY"`
+→ self-test đạt; gate chính exit0 với hai graph và manifest nội dung của toàn bộ
+file đóng gói giống nhau, gồm SHA-256 của từng HTML, và đủ bốn smoke đạt.
+`NODE20_BINARY` và `NODE22_BINARY` là hai path đã đối chiếu bằng lệnh version,
+không tự suy từ Node đang chạy helper. BLOCKED khi thiếu một trong hai binary;
+release:check chạy riêng cũng phải đạt.
+
+## Kiểm thử
+
+- Lock không khớp manifest phải làm build thất bại.
+- Cùng source/lock hai build có graph giống nhau; không tải phiên bản mới do
+  khoảng semver.
+- Normal Publish không nhận override; đường override vẫn phục vụ kiểm thử có
+  đánh dấu.
+- npm pack không đưa host testing007 hoặc build manifests nội bộ vào package.
+- Chỉ đổi một HTML, hoặc thiếu/thừa file/mode khác, làm phép so package thất bại
+  dù bundle và resources/list vẫn bằng nhau. Lưu manifest nội dung của cả hai
+  package trong evidence, không chỉ in kết luận pass.
+- Helper --self-test bắt graph/hash khác và runtime26; không dùng successful
+  single build thay so sánh hai build.
+- Self-test từ chối thiếu một path, hai path cùng major, đảo path20/22 và ghi rõ
+  ma trận hai bundle x Node20/22; không dùng kết quả Node26 để qua gate.
+- Self-test từ chối Node đúng major nhưng khác patch hoặc minor ở từng binary;
+  control đúng cả hai exact version phải qua. Kiểm cấu hình workflow Test,
+  Publish và preflight không dùng selector nổi hoặc expected value lấy từ máy.
+
+## Tiêu chí hoàn tất
+
+- [ ] Deno và Node build đều dùng lock được theo dõi.
+- [ ] npm CLI có phiên bản chính xác đã được duyệt, dùng nhất quán ở build,
+      verifier, release preflight và Publish; sai phiên bản bị chặn trước build.
+- [ ] Node 20 và 22 có phiên bản đầy đủ đã duyệt trong cấu hình Git; verifier,
+      build, Test, release preflight và Publish dùng đúng phiên bản tương ứng,
+      sai minor/patch cũng bị chặn trước install/build.
+- [ ] Hai build sạch có graph và byte/mode của toàn bộ file đóng gói bằng nhau,
+      gồm bảy HTML; bốn smoke runtime20/22 có chứng cứ; release:check đạt.
+- [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
+      hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
+- [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/021.md`, cập
+      nhật trạng thái ở `plans/README.md`. Không ghi giá trị bí mật.
+
+## Điều kiện dừng
+
+- Cần chọn hoặc nâng một phiên bản chưa được chấp thuận.
+- Thiếu mạng/runtime để xác minh bundle hoặc chưa giải thích được graph khác
+  nhau.
+- Source không còn khớp chứng cứ mà diff của phụ thuộc không giải thích được;
+  hoặc cần sửa ngoài phạm vi.
+- Thiếu quyền/công cụ/chứng cứ bắt buộc sau các cách kiểm tra hợp lệ; không đánh
+  dấu DONE bằng dữ liệu giả thay cho môi trường bắt buộc.
+
+## Bảo trì
+
+Cập nhật dependency sau này phải có phê duyệt và diff lock riêng; release-check
+phải phát hiện manifest/lock drift.
