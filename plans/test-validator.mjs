@@ -1121,6 +1121,57 @@ test("Markdown reference resolves the same relative name from its own directory"
   assert.equal(result.thrown, undefined);
   assert.equal(result.exitCode, 0, result.messages.join("\n"));
 });
+for (const label of ["report", "report\\]suffix"]) {
+  for (
+    const title of [
+      '"Title [inner]: #local-anchor"',
+      "'Title [inner]: #local-anchor'",
+      "(Title [inner]: #local-anchor)",
+    ]
+  ) {
+    for (
+      const target of [
+        "/etc/passwd",
+        "../../../outside-plan.md",
+        "missing-reference.md",
+        "../../README.md",
+      ]
+    ) {
+      test(`Markdown reference title boundary ${label} ${target} ${title}`, () => {
+        const report = "plans/evidence/backlog-review.md";
+        const resolved = resolve(repoRoot, dirname(report), target);
+        const missing = target === "missing-reference.md";
+        const valid = target === "../../README.md";
+        const result = run(
+          {
+            [report]: (text) =>
+              text +
+              `\n[executor][${label}]\n\n[${label}]: ${target} ${title}\n`,
+          },
+          missing ? [relative(repoRoot, resolved)] : [],
+          valid || missing ? {} : { [relative(repoRoot, resolved)]: "file" },
+        );
+        assert.equal(result.thrown, undefined);
+        if (valid) {
+          assert.equal(result.exitCode, 0, result.messages.join("\n"));
+          assert.equal(result.existenceChecks.includes(resolved), true);
+        } else {
+          assert.equal(
+            result.exitCode,
+            1,
+            "Validator accepted the title instead of the destination",
+          );
+          assert.deepEqual(result.messages, [
+            `evidence/backlog-review.md: ${
+              missing ? "link hỏng" : "unsafe Markdown link"
+            } ${target}`,
+          ]);
+          assert.equal(result.existenceChecks.includes(resolved), missing);
+        }
+      });
+    }
+  }
+}
 for (
   const definition of [
     "[report]:\n  missing-reference.md",

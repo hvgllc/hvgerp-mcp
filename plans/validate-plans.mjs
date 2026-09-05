@@ -627,8 +627,11 @@ for (const filePath of planFiles(planRoot)) {
     const targets = [...body.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)]
       .map((match) => match[1]);
     // Kiểm mọi definition, kể cả chưa dùng; không phụ thuộc kiểu full/collapsed/shortcut.
+    // Label dừng ở ] không escape, không được ăn sang chuỗi ]: trong title.
     for (
-      const definition of body.matchAll(/^[ \t]*\[[^\r\n]+\]:([^\r\n]*)$/gm)
+      const definition of body.matchAll(
+        /^[ \t]*\[(?:\\[^\r\n]|[^\[\]\\\r\n])+\]:([^\r\n]*)$/gm,
+      )
     ) {
       const destination = definition[1].trim().match(
         /^(?:<([^<>]*)>|([^\s<>]+))(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^)]*\)))?$/,
