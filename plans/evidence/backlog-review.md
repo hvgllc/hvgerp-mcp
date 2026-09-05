@@ -1179,3 +1179,45 @@ toàn bộ 224 ca cũ. Chỉ dùng Git transport local, không cần mạng.
 
 Không push, trả lời GitHub, chạy application build, Browser, Publish hoặc thay
 dependency. Đây là evidence executor, không phải approval độc lập của delta mới.
+
+## Sửa REVISE: label reference ăn sang title
+
+Reviewer độc lập phát hiện lỗi mới được đưa vào ở helper
+`4f83fff8847f93da34db3af7a5bc6b5980ca2dec`: phần regex label greedy đi tới chuỗi
+`]:` trong title, biến fragment của title thành destination. Destination thực là
+absolute, traversal hoặc file thiếu vì vậy có thể bị bỏ kiểm như anchor. Không
+dùng kết quả green hoặc review trước đó để phủ nhận finding này.
+
+Source sửa: `3f8c9c8dd217c3fb9a855c1850151cde237179fb`. Regex label nay chỉ nhận
+ký tự thuộc label và cặp escape, kết thúc ở dấu `]` không escape. Destination và
+title được tách sau delimiter đó bằng bộ kiểm hiện hữu. Title chứa `]:` không
+thể trở thành label hoặc thay đích link; label chứa `\]` vẫn được nhận. Không
+đổi guard path/lookup, checklist, approval, ancestry hoặc cú pháp giới hạn đã
+nêu ở mục trước.
+
+Red thực chạy khi production helper còn nguyên 4f83fff:
+
+```sh
+node --test --test-name-pattern='Markdown reference title boundary' plans/test-validator.mjs
+```
+
+Kết quả 6 passed, 18 failed. Mười tám negative có destination unsafe/missing đều
+bị helper cũ nhận sai với exit 0, không phải lỗi import/exception hoặc thiếu
+Git. Sáu control destination tồn tại hợp lệ vẫn qua. Ma trận 24 ca gồm bốn đích
+(absolute, traversal, missing, valid), ba kiểu delimiter title (nháy kép, nháy
+đơn, ngoặc tròn) và hai label (thường, có escaped closing bracket). Title trong
+mọi ca chứa `]:` trước fragment anchor.
+
+Sau sửa: 24/24 focused và 269/269 selftests; giữ nguyên 245 ca trước sửa.
+Negative yêu cầu đúng diagnostic của destination thực; unsafe phải bị chặn trước
+lookup, missing phải được lookup rồi báo thiếu. File unsafe được khai báo tồn
+tại trong VM để test không lệ thuộc filesystem máy; không đọc file hệ thống.
+Validator đạt 25/25, format toàn plans 75 file, lint ba helper và diff check
+đạt. Sau commit source sạch, bốn clean-history tests đạt, giữ nguyên helper
+history và provenance merges. Tổng self/history là 273 ca, giữ đủ 249 ca trước
+sửa.
+
+Chỉ thay validator, selftests và mục evidence này. Không sửa AGENTS, journal,
+plan/manifest/approval hoặc source ứng dụng; không mạng ngoài Git transport
+local của history gate, không push/GitHub/Browser/build. Delta sửa REVISE cần
+review độc lập mới, không tự tạo APPROVE.
