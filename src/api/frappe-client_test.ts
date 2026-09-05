@@ -612,6 +612,225 @@ Deno.test("FrappeClient - throws FrappeAPIError on HTTP 500 (POST not retried)",
 
 // ── Retry / backoff ───────────────────────────────────────────────────────────
 
+function mockPendingResponse(beforeHeaders = false) {
+  const original = globalThis.fetch;
+  const started = Promise.withResolvers<void>();
+  const signals: AbortSignal[] = [];
+  const cleanups: Array<() => void> = [];
+  let disposed = false;
+  globalThis.fetch = (_url, init) => {
+    if (disposed) return Promise.reject(new Error("Fixture cleanup"));
+    const signal = init?.signal;
+    if (!signal) throw new Error("Missing request signal");
+    signals.push(signal);
+    if (beforeHeaders) {
+      return new Promise<Response>((_resolve, reject) => {
+        const abort = () => reject(signal.reason);
+        signal.addEventListener("abort", abort, { once: true });
+        cleanups.push(() => {
+          signal.removeEventListener("abort", abort);
+          reject(new Error("Fixture cleanup"));
+        });
+        started.resolve();
+      });
+    }
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const abort = () => controller.error(signal.reason);
+        signal.addEventListener("abort", abort, { once: true });
+        cleanups.push(() => {
+          signal.removeEventListener("abort", abort);
+          controller.error(new Error("Fixture cleanup"));
+        });
+        started.resolve();
+      },
+    });
+    return Promise.resolve(new Response(stream));
+  };
+  return {
+    started: started.promise,
+    signals,
+    async restore(pending: Promise<unknown>) {
+      disposed = true;
+      for (const cleanup of cleanups) cleanup();
+      try {
+        await pending;
+      } finally {
+        globalThis.fetch = original;
+      }
+    },
+  };
+}
+
+const timeoutOperations = [
+  {
+    name: "GET",
+    run: (client: FrappeClient) => client.get("Customer", "CUST-001"),
+  },
+  {
+    name: "POST",
+    run: (client: FrappeClient) => client.create("Customer", {}),
+  },
+  {
+    name: "PUT",
+    run: (client: FrappeClient) => client.update("Customer", "CUST-001", {}),
+  },
+  {
+    name: "multipart",
+    run: (client: FrappeClient) =>
+      client.uploadFile({
+        attachedToDoctype: "Customer",
+        attachedToName: "CUST-001",
+        fileName: "test.txt",
+        contentBase64: "dGVzdA==",
+      }),
+  },
+];
+
+for (
+  const scenario of [
+    {
+      status: 200,
+      contentType: "application/json",
+      body: '{"data":{"name":"CUST-001"}}',
+    },
+    {
+      status: 403,
+      contentType: "application/json",
+      body: '{"message":"Permission denied"}',
+    },
+    {
+      status: 503,
+      contentType: "application/json",
+      body: '{"message":"Unavailable"}',
+    },
+    { status: 502, contentType: "text/html", body: "<html>Bad gateway</html>" },
+    {
+      status: 500,
+      contentType: "application/json",
+      body: "<html>Invalid JSON</html>",
+    },
+  ]
+) {
+  Deno.test(`FrappeClient body - preserves status ${scenario.status} and ${scenario.contentType}`, async () => {
+    const original = globalThis.fetch;
+    let signal: AbortSignal | null | undefined;
+    globalThis.fetch = (_url, init) => {
+      signal = init?.signal;
+      return Promise.resolve(
+        new Response(scenario.body, {
+          status: scenario.status,
+          headers: { "content-type": scenario.contentType, "retry-after": "7" },
+        }),
+      );
+    };
+    try {
+      const client = makeClient({ retries: 0, timeoutMs: 20 });
+      if (scenario.status === 200) {
+        assertEquals(await client.get("Customer", "CUST-001"), {
+          name: "CUST-001",
+        });
+      } else {
+        const error = await assertRejects(
+          () => client.get("Customer", "CUST-001"),
+          FrappeAPIError,
+        );
+        assertEquals(error.status, scenario.status);
+        assertEquals(error.retryAfterMs, 7000);
+        assertEquals(
+          error.body,
+          scenario.body.startsWith("{")
+            ? JSON.parse(scenario.body)
+            : scenario.body,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      assertEquals(signal?.aborted, false);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+}
+
+for (const beforeHeaders of [true, false]) {
+  for (const retries of [0, 1]) {
+    for (const operation of timeoutOperations) {
+      Deno.test(`FrappeClient timeout - ${operation.name} ${beforeHeaders ? "headers" : "body"} retries=${retries}`, async () => {
+        const fixture = mockPendingResponse(beforeHeaders);
+        const client = makeClient({
+          timeoutMs: 20,
+          retries,
+          retryBackoffMs: 0,
+        });
+        const pending = operation.run(client).then(
+          () => ({ error: undefined }),
+          (error: unknown) => ({ error }),
+        );
+        let watchdog: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await fixture.started;
+          const outcome = await Promise.race([
+            pending,
+            new Promise<never>((_resolve, reject) => {
+              watchdog = setTimeout(
+                () =>
+                  reject(
+                    new Error("Request did not time out before body release"),
+                  ),
+                1000,
+              );
+            }),
+          ]);
+          assertEquals(outcome.error instanceof FrappeAPIError, true);
+          assertEquals((outcome.error as FrappeAPIError).status, 408);
+          assertEquals(
+            fixture.signals.length,
+            operation.name === "GET" ? retries + 1 : 1,
+          );
+          assertEquals(fixture.signals.every((signal) => signal.aborted), true);
+        } finally {
+          clearTimeout(watchdog);
+          await fixture.restore(pending);
+        }
+      });
+    }
+  }
+}
+
+for (const operation of timeoutOperations) {
+  Deno.test(`FrappeClient stream error - ${operation.name} preserves retry policy`, async () => {
+    const original = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = () => {
+      calls++;
+      return Promise.resolve(
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              setTimeout(
+                () => controller.error(new TypeError("Body connection closed")),
+                0,
+              );
+            },
+          }),
+        ),
+      );
+    };
+    try {
+      const client = makeClient({ retries: 1, retryBackoffMs: 0 });
+      const error = await assertRejects(
+        () => operation.run(client),
+        FrappeAPIError,
+        "Body connection closed",
+      );
+      assertEquals(error.status, 0);
+      assertEquals(calls, operation.name === "GET" ? 2 : 1);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+}
+
 Deno.test("FrappeClient retry - GET 503 succeeds on second attempt", async () => {
   const restore = mockFetch([
     { status: 503, body: { message: "Service Unavailable" } },
