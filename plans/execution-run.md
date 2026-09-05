@@ -768,3 +768,46 @@ backlog, GitHub, commit hoặc push.
   bằng chứng đã hết finding.
 - Tổng vẫn 21 DONE, 016 IN_PROGRESS, 002/021 BLOCKED, 022 TODO. Chưa có quyền
   thay framework/release cho 002 hoặc chốt graph/npm/native lock cho 021.
+
+## Cập nhật sau 13:41 UTC ngày 2026-09-05
+
+- Reviewer độc lập APPROVE helper tại d96148906c0299b953b051714a848642c145b6c9,
+  report blob 6c2d6c5871f2ffb3c785f12d9af2614df2cf06d9. Tự tái hiện title red
+  6/18 và green 24; full 273/273, giữ đủ tests cũ. Parent cũng chạy 273 ca,
+  validator 25, fmt 75, lint 3 và kiểm diff. Không còn lỗi title đã được báo.
+- Đã tích hợp rule ancestry được duyệt và journal, commit/push PR 25 HEAD
+  72fb6a728c4eec38b24b15c69d51dbac9b66e92a. Source ngoài plans bằng byte với
+  main 7d4546b. Sau commit sạch chạy lại đủ 273 self/history đạt. Test
+  33969575813 đã dispatch, Codex tự review sau push đang được theo dõi. Hai P2
+  được trả lời tại discussion3940790382 và discussion3940790470.
+- PR 44 executor tái hiện 21 lỗi trên 1f3bd8d. Parent kiểm thêm hợp đồng thật:
+  host input chỉ bắt buộc doctype, server thêm normalized limit/offset vào
+  refreshArguments. Yêu cầu regression giữ minimal input hợp lệ khi thêm guard
+  host identity, không chỉ so fixture đã có đầy đủ default. Chưa push source
+  vòng này, vẫn cần review độc lập và Browser.
+
+## Cập nhật sau 14:10 UTC ngày 2026-09-05
+
+- PR 25 Test 33969575813 đạt đúng 72fb6a7, JSR thật, 1440/0/4 hai lượt và
+  release-check OK. Review 5121477739 có P1 ancestry dùng d399 khác SHA và P2 kế
+  hoạch 021 thiếu exact Node versions. Parent xác minh lại remote clone ở
+  72fb6a7 đạt validator/history, API parent là d961489; trả lời P1 tại
+  discussion3940853839, giữ yêu cầu merge commit.
+- P2 kế hoạch đã sửa local tại 6dbdb9e, reviewer độc lập APPROVE ba blob được
+  ghi trong evidence/021.md. Exact Node versions phải được duyệt trong cấu hình
+  Git chung; Test/Publish/build/preflight/verifier phải dùng hoặc kiểm đúng,
+  thêm negative minor/patch. Không chọn phiên bản hoặc sửa workflow thực; 021
+  vẫn BLOCKED. Parent và reviewer chạy đủ 273 self/history đạt.
+- PR 44 source 183c6a3 và report fbcb09e có 1482 tests xanh nhưng Browser tìm
+  host thiếu optional toolInfo không retry; reviewer tìm thêm mở detail A lúc
+  recovery B. Hai gap được sửa tại 9a277d3, report 5865cad; reviewer APPROVE
+  source/report sau red 20 lỗi cùng 9 control và green Node 112, Kanban 106,
+  full 1482/0/4. Report đã đính chính claim detail cũ, không hồi tố PASS.
+- Parent Browser mới trên HTML b696de68: recovery B/page50, discard read A, giữ
+  move error qua fast refresh, pending sau host gap success/failure, cold start
+  và detail B đạt. Lưu 6 records trước sửa, 44 sau sửa và 8 PNG tại commit
+  b33d874; reviewer artifact đang kiểm. Các timeout thăm dò và live announcement
+  ẩn còn text cũ được ghi rõ. Tab QA đã đóng, Vite đã dừng; chưa push vòng này.
+- Tổng vẫn 21 DONE; 016 chưa merge, 002/021 chờ quyền và 022 phụ thuộc 021.
+  Không release, Publish, bump version hoặc nâng dependency. Ba file cá nhân ở
+  root vẫn giữ hash trước đó; source ứng dụng root không được sửa.

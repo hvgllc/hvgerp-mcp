@@ -1249,3 +1249,14 @@ HEAD hoặc merge main mất pinned refs, vẫn báo lỗi và chặn DONE. Nega
 tests vẫn bắt buộc; PR 25 giữ merge commit, không squash/rebase. Reviewer kiểm
 rule, format và parent Git local; chứng cứ GitHub/remote clone là của parent,
 không gán cho reviewer.
+
+## Đối chiếu finding 3940823895 trên HEAD 72fb6a7
+
+Review 5121477739 ghi Reviewed commit 72fb6a728c nhưng finding lại kiểm
+d3990b6c544b3e40d5cf862f26cfb93639bc1bfb. API HEAD remote thật
+`72fb6a728c4eec38b24b15c69d51dbac9b66e92a` trả parent
+`d96148906c0299b953b051714a848642c145b6c9`. Parent fetch và fast-forward clone
+trực tiếp một nhánh từ GitHub tới 72fb6a7: hai pinned refs b9d6d02/bb78ace là
+ancestor, validator 25 và history 4 đạt. Reply discussion3940853839 yêu cầu kiểm
+đúng SHA, giữ rule hiện có và không rebind approval sang checkout khác. Không
+suy đoán ai tạo d399 hoặc bỏ kiểm ancestry thật sau merge.
