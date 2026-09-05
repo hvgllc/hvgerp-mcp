@@ -90,6 +90,7 @@ Các file được sửa khi thực thi:
 - `scripts/node-build/package-lock.json` (tạo mới)
 - `scripts/release-check.sh`
 - `.github/workflows/publish.yml`
+- `.github/workflows/test.yml` (pin runtime của gate Test cùng cấu hình build)
 - `CONTRIBUTING.md`
 - `scripts/verify-reproducible-build.mjs` (tạo mới)
 - `plans/evidence/021/` (tạo mới)
@@ -103,9 +104,9 @@ version hay tự nâng dependency. Định danh, chuỗi lỗi và commit bằng
 phần giải thích tiếng Việt có dấu, không dùng ký tự U+2014.
 
 Trước khi sửa, chạy `git status --short`,
-`git diff --stat d2c5305..HEAD -- .gitignore deno.lock scripts/build-node.sh scripts/node-build/package.json scripts/node-build/package-lock.json scripts/release-check.sh .github/workflows/publish.yml CONTRIBUTING.md scripts/verify-reproducible-build.mjs`
+`git diff --stat d2c5305..HEAD -- .gitignore deno.lock scripts/build-node.sh scripts/node-build/package.json scripts/node-build/package-lock.json scripts/release-check.sh .github/workflows/publish.yml .github/workflows/test.yml CONTRIBUTING.md scripts/verify-reproducible-build.mjs`
 và
-`git diff -- .gitignore deno.lock scripts/build-node.sh scripts/node-build/package.json scripts/node-build/package-lock.json scripts/release-check.sh .github/workflows/publish.yml CONTRIBUTING.md scripts/verify-reproducible-build.mjs`.
+`git diff -- .gitignore deno.lock scripts/build-node.sh scripts/node-build/package.json scripts/node-build/package-lock.json scripts/release-check.sh .github/workflows/publish.yml .github/workflows/test.yml CONTRIBUTING.md scripts/verify-reproducible-build.mjs`.
 Bảo toàn thay đổi có sẵn. Nếu phụ thuộc đã thực thi, đối chiếu diff và làm mới
 kế hoạch này theo code mới trước khi sửa; sai khác chưa giải thích được là điều
 kiện dừng.
@@ -154,6 +155,13 @@ nhiên là phiên bản dùng để trusted publishing. Nếu chưa được duy
 đáp ứng môi trường Publish, dừng ở preflight, không tự cài latest hoặc coi việc
 pin graph là quyền nâng package manager.
 
+Chốt cả hai phiên bản Node đầy đủ `MAJOR.MINOR.PATCH`, không chỉ major 20/22.
+Ghi chúng cùng npm CLI vào cấu hình build được Git theo dõi trong
+scripts/node-build/package.json, làm nguồn duy nhất cho verifier, build, release
+preflight và workflow. Hai binary 20.20.2/22.23.2 đã được phép tải để kiểm chứng
+không tự trở thành phiên bản release được duyệt. Chưa có quyết định chính xác
+thì tiếp tục BLOCKED, không lấy phiên bản ambient làm expected value.
+
 **Kiểm tra:**
 `git ls-files deno.lock src/ui/package-lock.json && git check-ignore deno.lock`
 → baseline: UI lock được theo dõi, deno.lock đang bị ignore; bảng phiên bản có
@@ -176,6 +184,13 @@ trước khi cài/build và lỗi rõ nếu khác. Ghi version trong evidence c�
 sạch, không chỉ so hai build dùng chung ambient npm. Không chạy Publish để xác
 minh thay đổi này.
 
+Pin Node đầy đủ theo cấu hình đã duyệt ở Test và publish-npm; bỏ selector nổi
+`22` ở các đường build đó. Verifier, build mặc định và release preflight phải
+kiểm exact version trước install/build, kể cả khi workflow đã dùng setup-node.
+Không tự ghi đè expected version bằng kết quả `node --version`. Runtime Node 20
+dùng cho smoke cũng phải đúng phiên bản đầy đủ riêng đã chốt; việc pin build
+toolchain không đổi baseline hỗ trợ công khai Node 20+ của package.
+
 **Kiểm tra:**
 `bash -n scripts/build-node.sh && bash -n scripts/release-check.sh` → exit 0;
 diff chỉ đổi cơ chế lấy dependency, không đổi phiên bản đã chốt.
@@ -184,12 +199,14 @@ diff chỉ đổi cơ chế lấy dependency, không đổi phiên bản đã ch
 
 Tạo scripts/verify-reproducible-build.mjs, CLI bắt buộc nhận cả
 `--node20 <đường dẫn binary Node 20>` và `--node22 <đường dẫn binary Node 22>`.
-Không có runtime mặc định. Kiểm riêng từng binary bằng `--version`, bắt buộc
-major tương ứng chính xác là 20 và 22; thiếu path, đảo hai path, hai path cùng
-major hoặc major khác phải exit 1 trước build. Ghi path thực và version mỗi
-binary trong evidence; chỉ dùng binary có sẵn, không tự tải hoặc cài runtime.
-Script tạo hai thư mục tạm bằng mkdtemp, copy snapshot source hiện tại kể cả sửa
-chưa commit: allowlist src/, scripts/, deno.json, deno.lock, server.ts, mod.ts,
+Không có runtime mặc định. Kiểm riêng từng binary bằng `--version`, so toàn bộ
+`MAJOR.MINOR.PATCH` với hai giá trị đã duyệt trong cấu hình Git. Bắt buộc major
+tương ứng là 20 và 22, nhưng cùng major mà khác minor/patch vẫn exit 1 trước
+install/build; thiếu path, đảo hai path, hai path cùng major hoặc major khác
+cũng bị từ chối. Ghi path thực, expected version và actual version mỗi binary
+trong evidence; chỉ dùng binary có sẵn, không tự tải hoặc cài runtime. Script
+tạo hai thư mục tạm bằng mkdtemp, copy snapshot source hiện tại kể cả sửa chưa
+commit: allowlist src/, scripts/, deno.json, deno.lock, server.ts, mod.ts,
 README.md, LICENSE nếu có; loại node_modules, src/ui/dist, .env*, .git,
 dist-node và mọi symlink thoát repo. Không dùng git archive HEAD vì sẽ bỏ sửa
 chưa commit. Trong mỗi workspace chạy npm ci cho UI, build7viewer, bash
@@ -240,12 +257,18 @@ release:check chạy riêng cũng phải đạt.
   single build thay so sánh hai build.
 - Self-test từ chối thiếu một path, hai path cùng major, đảo path20/22 và ghi rõ
   ma trận hai bundle x Node20/22; không dùng kết quả Node26 để qua gate.
+- Self-test từ chối Node đúng major nhưng khác patch hoặc minor ở từng binary;
+  control đúng cả hai exact version phải qua. Kiểm cấu hình workflow Test,
+  Publish và preflight không dùng selector nổi hoặc expected value lấy từ máy.
 
 ## Tiêu chí hoàn tất
 
 - [ ] Deno và Node build đều dùng lock được theo dõi.
 - [ ] npm CLI có phiên bản chính xác đã được duyệt, dùng nhất quán ở build,
       verifier, release preflight và Publish; sai phiên bản bị chặn trước build.
+- [ ] Node 20 và 22 có phiên bản đầy đủ đã duyệt trong cấu hình Git; verifier,
+      build, Test, release preflight và Publish dùng đúng phiên bản tương ứng,
+      sai minor/patch cũng bị chặn trước install/build.
 - [ ] Hai build sạch có graph và byte/mode của toàn bộ file đóng gói bằng nhau,
       gồm bảy HTML; bốn smoke runtime20/22 có chứng cứ; release:check đạt.
 - [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là

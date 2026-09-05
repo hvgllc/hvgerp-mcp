@@ -691,6 +691,7 @@
       "scripts/node-build/package-lock.json",
       "scripts/release-check.sh",
       ".github/workflows/publish.yml",
+      ".github/workflows/test.yml",
       "CONTRIBUTING.md",
       "scripts/verify-reproducible-build.mjs",
       "plans/evidence/021/"
