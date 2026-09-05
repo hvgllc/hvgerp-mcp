@@ -208,20 +208,98 @@ test("historical evidence fails when Git object is missing", () => {
   assert(result.historicalReads.includes("deadbee:src/auth/config.ts"));
   assert.match(result.messages.join("\n") + String(result.thrown), /deadbee/);
 });
-test("TODO detects current source drift independently of historical source", () => {
-  const entry = manifest.find((item) =>
-    readFileSync(resolve(planRoot, item.file), "utf8")
-      .includes("Trạng thái thực thi: " + tick + "TODO" + tick)
-  );
-  assert(entry, "The fixture requires a TODO plan with current evidence");
-  const evidence = entry.evidence[0];
-  invalid({
+// Tự dựng TODO từ Git HEAD, không lấy trạng thái backlog thật làm tiền đề.
+function assertCurrentSourceDrift(base = {}) {
+  const entry = manifest.find((item) => item.id === 1);
+  assert(entry);
+  const sourceRef = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  }).trim();
+  const evidences = entry.evidence.map((original) => {
+    const current = execFileSync("git", [
+      "show",
+      sourceRef + ":" + original.path,
+    ], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+    const lines = current.split("\n");
+    const line = lines.findIndex((value) => value.trim().length > 0) + 1;
+    assert(line > 0);
+    return { path: original.path, line, code: lines[line - 1], sourceRef };
+  });
+  const evidence = evidences[0];
+  const fixture = status(entry.id, "TODO");
+  const changeStatus = fixture[fileFor(entry.id)];
+  fixture[fileFor(entry.id)] = (text) => {
+    let changed = changeStatus(text).replace(/- \[[xX]\]/g, "- [ ]");
+    for (const [index, original] of entry.evidence.entries()) {
+      changed = changed.replace(
+        tick + original.path + ":" + original.line + tick,
+        tick + evidences[index].path + ":" + evidences[index].line + tick,
+      );
+    }
+    let index = 0;
+    return changed.replace(
+      /<!-- evidence: ([^\n]+) -->\s*(?:<!-- deno-fmt-ignore -->\s*)?[\u0060]{3}[^\n]*\n[\s\S]*?\n[\u0060]{3}/g,
+      (_block, path) => {
+        const excerpt = evidences[index++];
+        assert.equal(path, excerpt.path);
+        return "<!-- evidence: " + path + " -->\n\n" + tick.repeat(3) +
+          "text\n" + excerpt.code + "\n" + tick.repeat(3);
+      },
+    );
+  };
+  fixture["plans/manifest.json"] = editManifest((entries) => {
+    entries.find((item) => item.id === entry.id).evidence = evidences;
+  });
+  const replacements = { ...base };
+  for (const [path, change] of Object.entries(fixture)) {
+    replacements[path] = (text) => change(base[path] ? base[path](text) : text);
+  }
+  const baseline = run(replacements);
+  assert.equal(baseline.exitCode, 0, baseline.messages.join("\n"));
+  assert.equal(baseline.thrown, undefined);
+  assert(baseline.historicalReads.includes(sourceRef + ":" + evidence.path));
+  const result = invalid({
+    ...replacements,
     [evidence.path]: (text) => {
       const lines = text.split("\n");
       lines[evidence.line - 1] += " INVALID_CURRENT_SOURCE";
       return lines.join("\n");
     },
   }, new RegExp(String(entry.id).padStart(3, "0") + ".*current source drift"));
+  assert.deepEqual(result.messages, [
+    entry.file + ": current source drift " + evidence.path + ":" +
+    evidence.line,
+  ]);
+  assert(result.historicalReads.includes(sourceRef + ":" + evidence.path));
+}
+test("TODO detects current source drift independently of historical source", () => {
+  assertCurrentSourceDrift();
+});
+test("current source drift regression works without TODO plans in the backlog", () => {
+  const base = {
+    "plans/README.md": (text) =>
+      text.replace(/\|\s*TODO\s*\|$/gm, "| BLOCKED |"),
+  };
+  for (const entry of manifest) {
+    base[fileFor(entry.id)] = (text) =>
+      text.replace(
+        "Trạng thái thực thi: " + tick + "TODO" + tick,
+        "Trạng thái thực thi: " + tick + "BLOCKED" + tick,
+      );
+    assert(
+      !base[fileFor(entry.id)](
+        readFileSync(resolve(planRoot, entry.file), "utf8"),
+      ).includes("Trạng thái thực thi: " + tick + "TODO" + tick),
+    );
+  }
+  const baseline = run(base);
+  assert.equal(baseline.exitCode, 0, baseline.messages.join("\n"));
+  assert.equal(baseline.thrown, undefined);
+  assertCurrentSourceDrift(base);
 });
 test("DONE still verifies exact historical source", () => {
   invalid({
