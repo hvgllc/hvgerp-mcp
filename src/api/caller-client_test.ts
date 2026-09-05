@@ -87,6 +87,156 @@ const STATIC_ENV = {
 
 const listBody = () => ({ data: [{ name: "TASK-001", subject: "First" }] });
 
+for (const readKind of ["get", "list"] as const) {
+  for (const skipCache of [false, true]) {
+    Deno.test(`caller peer inflight ${readKind} skipCache=${skipCache} cannot refill after another caller writes`, async () => {
+      await withEnv(
+        { ...STATIC_ENV, MCP_CACHE_ENABLED: undefined },
+        async () => {
+          const originalFetch = globalThis.fetch;
+          const reader = {
+            accessToken: "reader-token",
+            principal: "reader@example.com",
+          };
+          const writer = {
+            accessToken: "writer-token",
+            principal: "writer@example.com",
+          };
+          const started = Promise.withResolvers<void>();
+          const deferred = Promise.withResolvers<Response>();
+          const calls: { method: string; authorization: string | null }[] = [];
+          let reads = 0;
+          const value = (revision: number) =>
+            readKind === "get"
+              ? { name: "TASK-001", revision, visibleTo: "reader" }
+              : [{ name: "TASK-001", revision, visibleTo: "reader" }];
+          const read = (bypass = false) =>
+            runWithCaller(
+              reader,
+              () =>
+                readKind === "get"
+                  ? getFrappeClient().get("Task", "TASK-001", {
+                    skipCache: bypass,
+                  })
+                  : getFrappeClient().list("Task", {}, { skipCache: bypass }),
+            );
+          globalThis.fetch = async (_input, init) => {
+            const method = init?.method ?? "GET";
+            calls.push({
+              method,
+              authorization: new Headers(init?.headers).get("Authorization"),
+            });
+            if (method !== "GET") {
+              return Response.json({
+                data: { name: "TASK-001", visibleTo: "writer" },
+              });
+            }
+            if (++reads === 1) {
+              started.resolve();
+              return await deferred.promise;
+            }
+            return Response.json({ data: value(1) });
+          };
+          let pending: ReturnType<typeof read> | undefined;
+          try {
+            pending = read(skipCache);
+            await started.promise;
+            await runWithCaller(
+              writer,
+              () =>
+                getFrappeClient().update("Task", "TASK-001", {
+                  subject: "new",
+                }),
+            );
+            deferred.resolve(Response.json({ data: value(0) }));
+            assertEquals(await pending, value(0));
+            assertEquals(await read(), value(1));
+            assertEquals(await read(), value(1));
+            assertEquals(calls, [
+              { method: "GET", authorization: "HVGKeycloak reader-token" },
+              { method: "PUT", authorization: "HVGKeycloak writer-token" },
+              { method: "GET", authorization: "HVGKeycloak reader-token" },
+            ]);
+          } finally {
+            deferred.resolve(Response.json({ data: value(0) }));
+            try {
+              await pending;
+            } finally {
+              globalThis.fetch = originalFetch;
+            }
+          }
+        },
+      );
+    });
+  }
+}
+
+Deno.test("evicted caller inflight read cannot populate the replacement caller cache", async () => {
+  await withEnv({ ...STATIC_ENV, MCP_CACHE_ENABLED: undefined }, async () => {
+    const originalFetch = globalThis.fetch;
+    const deferred = Promise.withResolvers<Response>();
+    const started = Promise.withResolvers<void>();
+    const reader = {
+      accessToken: "reader-token",
+      principal: "reader@example.com",
+    };
+    const writer = {
+      accessToken: "writer-token",
+      principal: "writer@example.com",
+    };
+    let reads = 0;
+    const previousClient = runWithCaller(reader, () => getFrappeClient());
+    globalThis.fetch = async (_input, init) => {
+      if (init?.method !== "GET") {
+        return Response.json({ data: { name: "TASK-001", revision: 1 } });
+      }
+      if (++reads === 1) {
+        started.resolve();
+        return await deferred.promise;
+      }
+      return Response.json({ data: { name: "TASK-001", revision: 1 } });
+    };
+    let pending: Promise<unknown> | undefined;
+    try {
+      pending = runWithCaller(
+        reader,
+        () => previousClient.get("Task", "TASK-001"),
+      );
+      await started.promise;
+      for (let index = 0; index < 64; index += 1) {
+        runWithCaller({
+          accessToken: `fixture-${index}`,
+          principal: `fixture-${index}@example.com`,
+        }, () => getFrappeClient());
+      }
+      await runWithCaller(
+        writer,
+        () => getFrappeClient().update("Task", "TASK-001", {}),
+      );
+      deferred.resolve(
+        Response.json({ data: { name: "TASK-001", revision: 0 } }),
+      );
+      assertEquals(await pending, { name: "TASK-001", revision: 0 });
+      const replacement = runWithCaller(reader, () => getFrappeClient());
+      assert(replacement !== previousClient);
+      const read = () =>
+        runWithCaller(reader, () => getFrappeClient().get("Task", "TASK-001"));
+      assertEquals(await read(), { name: "TASK-001", revision: 1 });
+      assertEquals(await read(), { name: "TASK-001", revision: 1 });
+      assertEquals(reads, 2);
+    } finally {
+      deferred.resolve(
+        Response.json({ data: { name: "TASK-001", revision: 0 } }),
+      );
+      try {
+        await pending;
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    }
+  });
+});
+
 for (const action of ["assign", "unassign"] as const) {
   Deno.test(`caller clients - native ${action} clears the peer's target and ToDo caches`, async () => {
     await withEnv({ ...STATIC_ENV, MCP_CACHE_ENABLED: undefined }, async () => {

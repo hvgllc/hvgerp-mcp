@@ -85,6 +85,8 @@ Deno.serve({ port, hostname }, async (req) => {
     });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    // Lỗi từng entry của batch đã được tổng hợp trong library. Catch này chỉ
+    // còn giữ hợp đồng lỗi cho single request và lỗi trước khi bắt đầu batch.
     // Chi tiết chỉ đi vào log của người vận hành. Thông điệp của `fetch` mang
     // nguyên URL upstream, tức tên service và cổng nội bộ; người gọi chưa xác
     // thực nào cũng chạm được nhánh này nên không trả nó ra ngoài dây.
