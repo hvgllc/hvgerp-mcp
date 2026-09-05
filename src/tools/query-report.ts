@@ -12,6 +12,7 @@
  */
 
 import type { ErpNextToolContext } from "./types.ts";
+import { ANALYTICS_MAX_ROWS } from "./analytics-pagination.ts";
 
 /**
  * Các báo cáo tài chính chuẩn được phép chạy qua tool.
@@ -189,6 +190,11 @@ export async function receivableInvoiceRows(
     based_on_payment_terms: 0,
     group_by_party: 0,
   });
+  if (report.result.length > ANALYTICS_MAX_ROWS) {
+    throw new Error(
+      `Accounts Receivable exceeds the ${ANALYTICS_MAX_ROWS} row safety limit; no partial balance will be reported.`,
+    );
+  }
   const invoices: ReceivableInvoiceRow[] = [];
   const voucherKeys = new Set<string>();
   for (const row of report.result) {

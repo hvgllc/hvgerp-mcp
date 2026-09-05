@@ -45,7 +45,6 @@ import { fonts, formatCurrency, formatNumber } from "~/shared/theme";
 import { ErpNextBrandHeader } from "~/shared/ErpNextBrand";
 import {
   canRequestUiRefresh,
-  extractToolResultText,
   normalizeUiRefreshFailureMessage,
   resolveUiRefreshRequest,
   type ToolResultPayload,
@@ -64,86 +63,16 @@ const TOOL_CALL_TIMEOUT_MS = 10_000;
 // Types — Universal ChartData format
 // ============================================================================
 
-type ChartType =
-  | "bar"
-  | "horizontal-bar"
-  | "stacked-bar"
-  | "line"
-  | "area"
-  | "stacked-area"
-  | "composed"
-  | "pie"
-  | "donut"
-  | "radar"
-  | "scatter"
-  | "treemap";
-
-interface Dataset {
-  label: string;
-  values: number[];
-  color?: string;
-  /** For composed charts: override type per dataset */
-  type?: "bar" | "line" | "area";
-  /** Stack group name (datasets with same stack are stacked together) */
-  stack?: string;
-  /** For dual-axis: "left" (default) or "right" */
-  yAxisId?: "left" | "right";
-  /** Line/area: show dots? Default true for line, false for area */
-  showDots?: boolean;
-  /** Line style: "solid" | "dashed". Default "solid" */
-  strokeStyle?: "solid" | "dashed";
-}
-
-interface ScatterPoint {
-  x: number;
-  y: number;
-  z?: number; // bubble size
-  label?: string;
-}
-
-interface ScatterSeries {
-  label: string;
-  color?: string;
-  points: ScatterPoint[];
-}
-
-interface TreeNode {
-  name: string;
-  value?: number;
-  color?: string;
-  children?: TreeNode[];
-}
-
-interface ChartData {
-  title: string;
-  subtitle?: string;
-  type?: ChartType;
-  /** X-axis labels (categories or time points) */
-  labels: string[];
-  /** Data series */
-  datasets: Dataset[];
-  /** Value unit suffix (e.g. "units", "kg") */
-  unit?: string;
-  /** Currency code for formatting (e.g. "EUR") */
-  currency?: string;
-  /** ISO timestamp */
-  generatedAt?: string;
-  /** Axis labels */
-  xAxisLabel?: string;
-  yAxisLabel?: string;
-  /** Show right Y axis (for dual-axis charts) */
-  showRightAxis?: boolean;
-  rightAxisLabel?: string;
-  /** Scatter-specific data */
-  scatterData?: ScatterSeries[];
-  /** Treemap-specific data */
-  treeData?: TreeNode[];
-  /** Height override (default varies by type) */
-  height?: number;
-  refreshRequest?: UiRefreshRequestData;
-  /** sendMessage template when clicking a data point — {label} is replaced with the clicked label */
-  _drillDown?: string;
-}
+import {
+  consumeViewerResult,
+  getErrorPresentation,
+} from "~/shared/presentation";
+import type {
+  ChartData,
+  Dataset,
+  ScatterSeries,
+  TreeNode,
+} from "~/shared/presentation";
 
 // ============================================================================
 // Color palette — real hex (CSS vars don't work in SVG fill)
@@ -1224,31 +1153,20 @@ export function ChartViewer() {
   const refreshInFlightRef = useRef(false);
   const lastRefreshStartedAtRef = useRef(0);
 
-  function hydrateData(nextData: ChartData) {
-    dataRef.current = nextData;
-    refreshRequestRef.current = resolveUiRefreshRequest(
-      nextData,
-      refreshRequestRef.current,
-    );
-    setData(nextData);
-  }
-
   function consumeToolResult(result: ToolResultPayload): boolean {
-    const text = extractToolResultText(result);
-    if (!text) return false;
-
-    try {
-      const parsed = JSON.parse(text) as ChartData;
-      hydrateData(parsed);
-      setError(null);
-      setLoading(false);
-      return true;
-    } catch (cause) {
-      console.error("Parse error:", cause);
-      setError("Failed to parse chart payload");
-      setLoading(false);
-      return false;
-    }
+    const next = consumeViewerResult("chart", result, {
+      data: dataRef.current,
+      refreshRequest: refreshRequestRef.current,
+      error: null,
+      loading: false,
+    });
+    setLoading(next.loading);
+    setError(next.error);
+    if (next.error) return false;
+    dataRef.current = next.data;
+    refreshRequestRef.current = next.refreshRequest;
+    setData(next.data);
+    return true;
   }
 
   async function requestRefresh(options: { ignoreInterval?: boolean } = {}) {
@@ -1285,17 +1203,7 @@ export function ChartViewer() {
         arguments: request.arguments,
       }, { timeout: TOOL_CALL_TIMEOUT_MS });
 
-      if (result.isError) {
-        setError("Refresh failed");
-        return false;
-      }
-
-      if (!consumeToolResult(result)) {
-        setError("Refresh returned no data");
-        return false;
-      }
-
-      return true;
+      return consumeToolResult(result);
     } catch (cause) {
       setError(normalizeUiRefreshFailureMessage(cause));
       return false;
@@ -1339,6 +1247,17 @@ export function ChartViewer() {
     };
   }, []);
 
+  const { blockingError, inlineError } = getErrorPresentation({ data, error });
+  if (blockingError) {
+    return (
+      <div
+        role="alert"
+        style={{ padding: 32, color: "var(--error)", fontFamily: fonts.sans }}
+      >
+        {blockingError}
+      </div>
+    );
+  }
   if (loading) return <LoadingSkeleton />;
 
   if (!data) {
@@ -1361,7 +1280,7 @@ export function ChartViewer() {
   return (
     <ChartContent
       data={data}
-      error={error}
+      error={inlineError}
       refreshing={refreshing}
       onRefresh={() => void requestRefresh({ ignoreInterval: true })}
     />

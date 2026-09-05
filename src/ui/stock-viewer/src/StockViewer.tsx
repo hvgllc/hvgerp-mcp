@@ -7,14 +7,8 @@
  * @module lib/erpnext/src/ui/stock-viewer
  */
 
-import {
-  CSSProperties,
-  Fragment,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { App } from "@modelcontextprotocol/ext-apps";
 import {
   colors,
@@ -26,7 +20,6 @@ import {
 import { ErpNextBrandFooter, ErpNextBrandHeader } from "~/shared/ErpNextBrand";
 import {
   canRequestUiRefresh,
-  extractToolResultText,
   normalizeUiRefreshFailureMessage,
   resolveUiRefreshRequest,
   type ToolResultPayload,
@@ -47,32 +40,16 @@ const TOOL_CALL_TIMEOUT_MS = 10_000;
 // Types
 // ============================================================================
 
-interface StockEntry {
-  item_code: string;
-  warehouse: string;
-  actual_qty: number;
-  reserved_qty?: number;
-  projected_qty?: number;
-  valuation_rate?: number;
-  stock_value?: number;
-}
-
-interface StockData {
-  /**
-   * Total Bin rows matching the query, or `null` when the server could not
-   * establish one. Never fall back to the page length here: a page is what got
-   * returned, and printing it as the total is a lie precisely when the list IS
-   * truncated.
-   */
-  count: number | null;
-  /** Why `count` is null, when it is. */
-  count_error?: string;
-  data: StockEntry[];
-  refreshRequest?: UiRefreshRequestData;
-}
-
-type SortKey = keyof StockEntry;
-type SortDir = "asc" | "desc";
+import {
+  consumeViewerResult,
+  getErrorPresentation,
+} from "~/shared/presentation";
+import type {
+  SortDir,
+  SortKey,
+  StockData,
+  StockEntry,
+} from "~/shared/presentation";
 
 // ============================================================================
 // Loading Skeleton
@@ -207,10 +184,6 @@ function QtyBadge({ qty }: { qty: number }) {
   );
 }
 
-function extractTextContent(result: ToolResultPayload): string | null {
-  return extractToolResultText(result);
-}
-
 // ============================================================================
 // Main Component
 // ============================================================================
@@ -225,36 +198,20 @@ export function StockViewer() {
   const refreshInFlightRef = useRef(false);
   const lastRefreshStartedAtRef = useRef(0);
 
-  function hydrateData(nextData: StockData) {
-    dataRef.current = nextData;
-    refreshRequestRef.current = resolveUiRefreshRequest(
-      nextData,
-      refreshRequestRef.current,
-    );
-    setData(nextData);
-  }
-
   function consumeToolResult(result: ToolResultPayload): boolean {
-    if (result.isError) {
-      const text = extractTextContent(result);
-      setError(text ?? "Tool returned an error");
-      setLoading(false);
-      return false;
-    }
-    const text = extractTextContent(result);
-    if (!text) return false;
-
-    try {
-      const parsed = JSON.parse(text) as StockData;
-      hydrateData(parsed);
-      setError(null);
-      setLoading(false);
-      return true;
-    } catch {
-      setError("Failed to parse stock payload");
-      setLoading(false);
-      return false;
-    }
+    const next = consumeViewerResult("stock", result, {
+      data: dataRef.current,
+      refreshRequest: refreshRequestRef.current,
+      error: null,
+      loading: false,
+    });
+    setLoading(next.loading);
+    setError(next.error);
+    if (next.error) return false;
+    dataRef.current = next.data;
+    refreshRequestRef.current = next.refreshRequest;
+    setData(next.data);
+    return true;
   }
 
   async function requestRefresh(options: { ignoreInterval?: boolean } = {}) {
@@ -291,17 +248,7 @@ export function StockViewer() {
         arguments: request.arguments,
       }, { timeout: TOOL_CALL_TIMEOUT_MS });
 
-      if (result.isError) {
-        setError("Refresh failed");
-        return false;
-      }
-
-      if (!consumeToolResult(result)) {
-        setError("Refresh returned no data");
-        return false;
-      }
-
-      return true;
+      return consumeToolResult(result);
     } catch (cause) {
       setError(normalizeUiRefreshFailureMessage(cause));
       return false;
@@ -345,6 +292,7 @@ export function StockViewer() {
     };
   }, []);
 
+  const { blockingError, inlineError } = getErrorPresentation({ data, error });
   return (
     <div
       style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}
@@ -352,14 +300,20 @@ export function StockViewer() {
     >
       <ErpNextBrandHeader />
       <div style={{ flex: 1 }}>
-        {loading
+        {blockingError
+          ? (
+            <div role="alert" style={{ padding: 24, color: colors.error }}>
+              {blockingError}
+            </div>
+          )
+          : loading
           ? <LoadingSkeleton />
           : !data
           ? <StockEmptyState />
           : (
             <StockContent
               data={data}
-              error={error}
+              error={inlineError}
               refreshing={refreshing}
               onRefresh={() => void requestRefresh({ ignoreInterval: true })}
             />

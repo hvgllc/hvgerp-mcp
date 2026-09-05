@@ -11,6 +11,9 @@ export const SCENARIOS = [
   "board-race",
   "initial-error",
   "refresh-error",
+  "malformed-payload",
+  "sales-order-date",
+  "quotation-date",
 ] as const;
 export type Scenario = typeof SCENARIOS[number];
 export const GENERATED_AT = "2026-09-05T00:00:00.000Z";
@@ -83,6 +86,40 @@ export function toolArguments(viewer: Viewer): Record<string, unknown> {
   return {};
 }
 
+export function transactionDateFixture(
+  kind: "sales-order-date" | "quotation-date",
+) {
+  const order = kind === "sales-order-date";
+  const name = order ? "SO-LOCAL-DATE" : "QTN-LOCAL-DATE";
+  return {
+    refreshRequest: {
+      toolName: order ? "erpnext_sales_order_get" : "erpnext_quotation_get",
+      arguments: { name },
+    },
+    data: {
+      name,
+      doctype: order ? "Sales Order" : "Quotation",
+      ...(order
+        ? { customer: "CUSTOMER-LOCAL" }
+        : { quotation_to: "Customer", party_name: "CUSTOMER-LOCAL" }),
+      customer_name: "Local Customer",
+      transaction_date: order ? "2026-09-03" : "2026-09-04",
+      status: "Draft",
+      docstatus: 0,
+      currency: "USD",
+      grand_total: 30,
+      net_total: 30,
+      items: [{
+        item_code: "ITEM-LOCAL",
+        item_name: "Local Item",
+        qty: 2,
+        rate: 15,
+        amount: 30,
+      }],
+    },
+  };
+}
+
 export function viewerFixture(
   viewer: Viewer,
   chartType: "bar" | "horizontal-bar" | "pie" | "donut" = "bar",
@@ -111,6 +148,17 @@ export function viewerFixture(
             qty: 2,
             rate: 15,
             amount: 30,
+          }, {
+            item_code: null,
+            item_name: "Local service without item code",
+            qty: 1,
+            rate: 0,
+            amount: 0,
+          }, {
+            item_name: "Local service with omitted item code",
+            qty: 1,
+            rate: 0,
+            amount: 0,
           }],
         },
       };
@@ -227,6 +275,27 @@ export function detailFixture(name: string, doctype = "Task") {
       _assign: "[]",
     },
   };
+}
+
+export function malformedViewerFixture(viewer: Viewer): object {
+  const payload = viewerFixture(viewer);
+  switch (viewer) {
+    case "invoice-viewer":
+      return {
+        ...payload,
+        data: { name: "INV-BROKEN", items: "not an array" },
+      };
+    case "stock-viewer":
+      return { ...payload, data: [null] };
+    case "chart-viewer":
+      return { ...payload, datasets: [{ label: "Broken", values: [null] }] };
+    case "kpi-viewer":
+      return { ...payload, sparkline: [0, "not a number"] };
+    case "funnel-viewer":
+      return { ...payload, stages: [null] };
+    default:
+      return { invalid: true };
+  }
 }
 
 export function createDetailFixtureStore() {

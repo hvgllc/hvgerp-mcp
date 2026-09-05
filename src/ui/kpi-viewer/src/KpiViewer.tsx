@@ -18,7 +18,6 @@ import { fonts, formatCurrency, formatNumber } from "~/shared/theme";
 import { ErpNextBrandHeader } from "~/shared/ErpNextBrand";
 import {
   canRequestUiRefresh,
-  extractToolResultText,
   normalizeUiRefreshFailureMessage,
   resolveUiRefreshRequest,
   type ToolResultPayload,
@@ -37,25 +36,11 @@ const TOOL_CALL_TIMEOUT_MS = 10_000;
 // Types
 // ============================================================================
 
-interface KpiData {
-  label: string;
-  value: number;
-  formattedValue?: string;
-  unit?: string;
-  currency?: string;
-  delta?: number;
-  deltaLabel?: string;
-  trend?: "up" | "down" | "flat";
-  trendIsGood?: boolean;
-  sparkline?: number[];
-  color?: string;
-  icon?: string;
-  refreshRequest?: UiRefreshRequestData;
-  /** sendMessage text when clicking the big number (drill into exceptions) */
-  _drillDown?: string;
-  /** sendMessage text when clicking the sparkline (drill into trend) */
-  _trendDrillDown?: string;
-}
+import {
+  consumeViewerResult,
+  getErrorPresentation,
+} from "~/shared/presentation";
+import type { KpiData } from "~/shared/presentation";
 
 // ============================================================================
 // Sparkline — pure SVG polyline
@@ -385,31 +370,20 @@ export function KpiViewer() {
   const refreshInFlightRef = useRef(false);
   const lastRefreshStartedAtRef = useRef(0);
 
-  function hydrateData(nextData: KpiData) {
-    dataRef.current = nextData;
-    refreshRequestRef.current = resolveUiRefreshRequest(
-      nextData,
-      refreshRequestRef.current,
-    );
-    setData(nextData);
-  }
-
   function consumeToolResult(result: ToolResultPayload): boolean {
-    const text = extractToolResultText(result);
-    if (!text) return false;
-
-    try {
-      const parsed = JSON.parse(text) as KpiData;
-      hydrateData(parsed);
-      setError(null);
-      setLoading(false);
-      return true;
-    } catch (cause) {
-      console.error("Parse error:", cause);
-      setError("Failed to parse KPI payload");
-      setLoading(false);
-      return false;
-    }
+    const next = consumeViewerResult("kpi", result, {
+      data: dataRef.current,
+      refreshRequest: refreshRequestRef.current,
+      error: null,
+      loading: false,
+    });
+    setLoading(next.loading);
+    setError(next.error);
+    if (next.error) return false;
+    dataRef.current = next.data;
+    refreshRequestRef.current = next.refreshRequest;
+    setData(next.data);
+    return true;
   }
 
   async function requestRefresh(options: { ignoreInterval?: boolean } = {}) {
@@ -446,17 +420,7 @@ export function KpiViewer() {
         arguments: request.arguments,
       }, { timeout: TOOL_CALL_TIMEOUT_MS });
 
-      if (result.isError) {
-        setError("Refresh failed");
-        return false;
-      }
-
-      if (!consumeToolResult(result)) {
-        setError("Refresh returned no data");
-        return false;
-      }
-
-      return true;
+      return consumeToolResult(result);
     } catch (cause) {
       setError(normalizeUiRefreshFailureMessage(cause));
       return false;
@@ -500,6 +464,17 @@ export function KpiViewer() {
     };
   }, []);
 
+  const { blockingError, inlineError } = getErrorPresentation({ data, error });
+  if (blockingError) {
+    return (
+      <div
+        role="alert"
+        style={{ padding: 32, color: "var(--error)", fontFamily: fonts.sans }}
+      >
+        {blockingError}
+      </div>
+    );
+  }
   if (loading) return <LoadingSkeleton />;
 
   if (!data) {
@@ -521,7 +496,7 @@ export function KpiViewer() {
   return (
     <KpiContent
       data={data}
-      error={error}
+      error={inlineError}
       refreshing={refreshing}
       onRefresh={() => void requestRefresh({ ignoreInterval: true })}
     />

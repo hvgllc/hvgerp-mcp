@@ -20,6 +20,7 @@ import {
   receivableInvoiceRows,
   runQueryReport,
 } from "./query-report.ts";
+import { listCompleteAnalytics } from "./analytics-pagination.ts";
 import { siteToday } from "./site-date.ts";
 import {
   analyticsNumber,
@@ -103,25 +104,29 @@ export const analyticsTools: ErpNextTool[] = [
         filters.push(["warehouse", "=", input.warehouse as string]);
       }
 
-      // Bin has no item_group field — resolve the group to its item codes and
-      // filter in memory (the code set can exceed a sane "in" filter size).
+      // Bin không có item_group; đọc đủ Item rồi lọc bằng tập mã trong bộ nhớ.
       let allowedItems: Set<string> | null = null;
       if (input.item_group) {
-        const groupItems = await ctx.client.list("Item", {
-          fields: ["name"],
-          filters: [["item_group", "=", input.item_group as string]],
-          limit: 1000,
-        });
+        const groupItems = await listCompleteAnalytics(
+          ctx.client.list.bind(ctx.client),
+          "Item",
+          {
+            fields: ["name"],
+            filters: [["item_group", "=", input.item_group as string]],
+          },
+        );
         allowedItems = new Set(groupItems.map((i) => i.name as string));
       }
 
-      const bins = await ctx.client.list("Bin", {
-        fields: ["item_code", "warehouse", "actual_qty"],
-        filters,
-        // widen the fetch when filtering by group in memory, then slice below
-        limit: allowedItems ? 1000 : limit,
-        order_by: "actual_qty desc",
-      });
+      const bins = await listCompleteAnalytics(
+        ctx.client.list.bind(ctx.client),
+        "Bin",
+        {
+          fields: ["item_code", "warehouse", "actual_qty"],
+          filters,
+          order_by: "actual_qty desc",
+        },
+      );
 
       // Aggregate by item_code (sum across warehouses if no filter)
       const byItem: Record<string, { qty: number }> = {};
@@ -129,7 +134,7 @@ export const analyticsTools: ErpNextTool[] = [
         const item = bin.item_code as string;
         if (allowedItems && !allowedItems.has(item)) continue;
         if (!byItem[item]) byItem[item] = { qty: 0 };
-        byItem[item].qty += Number(bin.actual_qty) || 0;
+        byItem[item].qty += analyticsNumber(bin, "actual_qty");
       }
 
       const sorted = Object.entries(byItem)
@@ -202,10 +207,9 @@ export const analyticsTools: ErpNextTool[] = [
 
       if (groupBy === "status") {
         // Get invoice counts + amounts by status — fetch more to cover all statuses
-        const invoices = await context.listDocuments("Sales Invoice", {
+        const invoices = await context.listAllDocuments("Sales Invoice", {
           fields: ["name", "status", "base_grand_total"],
           filters: [["docstatus", "!=", 2]], // exclude cancelled
-          limit: 500,
           order_by: "modified desc",
         });
 
@@ -231,10 +235,9 @@ export const analyticsTools: ErpNextTool[] = [
 
       if (groupBy === "item") {
         // Fetch invoice items (Sales Invoice Item child table)
-        const items = await context.listItems("Sales Invoice", {
+        const items = await context.listAllItems("Sales Invoice", {
           fields: ["item_code", "item_name", "base_amount"],
           filters: [["docstatus", "=", 1]],
-          limit: 500,
           order_by: "base_amount desc",
         });
 
@@ -271,10 +274,9 @@ export const analyticsTools: ErpNextTool[] = [
       }
 
       // Default: group by customer
-      const invoices = await context.listDocuments("Sales Invoice", {
+      const invoices = await context.listAllDocuments("Sales Invoice", {
         fields: ["customer", "customer_name", "base_grand_total"],
         filters,
-        limit: 500,
         order_by: "modified desc",
       });
 
@@ -357,10 +359,9 @@ export const analyticsTools: ErpNextTool[] = [
       );
       const startStr = startDate.toISOString().split("T")[0];
 
-      const orders = await context.listDocuments("Sales Order", {
+      const orders = await context.listAllDocuments("Sales Order", {
         fields: ["customer_name", "base_grand_total", "transaction_date"],
         filters: [["transaction_date", ">=", startStr], ["docstatus", "!=", 2]],
-        limit: 1000,
         order_by: "transaction_date asc",
       });
 
@@ -484,10 +485,9 @@ export const analyticsTools: ErpNextTool[] = [
       const chartType = (input.type as string) ?? "stacked-bar";
       const limit = normalizeLimit((input.limit as number) ?? 8);
 
-      const orders = await context.listDocuments("Sales Order", {
+      const orders = await context.listAllDocuments("Sales Order", {
         fields: ["customer_name", "status", "base_grand_total"],
         filters: [["docstatus", "!=", 2]],
-        limit: 500,
         order_by: "modified desc",
       });
 
@@ -591,10 +591,9 @@ export const analyticsTools: ErpNextTool[] = [
     handler: async (input, _ctx, context) => {
       const { currency } = context;
       const limit = normalizeLimit((input.limit as number) ?? 8);
-      const orders = await context.listDocuments("Sales Order", {
+      const orders = await context.listAllDocuments("Sales Order", {
         fields: ["customer_name", "base_grand_total"],
         filters: [["docstatus", "!=", 2]],
-        limit: 500,
         order_by: "modified desc",
       });
 
@@ -670,10 +669,9 @@ export const analyticsTools: ErpNextTool[] = [
       const groupBy = (input.group_by as string) ?? "item";
       const limit = normalizeLimit((input.limit as number) ?? 15);
 
-      const bins = await context.listBins({
+      const bins = await context.listAllBins({
         fields: ["item_code", "warehouse", "stock_value"],
         filters: [["stock_value", ">", 0]],
-        limit: 500,
         order_by: "stock_value desc",
       });
 
@@ -793,16 +791,13 @@ export const analyticsTools: ErpNextTool[] = [
       ];
       const raw: Record<string, number[]> = {};
 
-      // Stock data — one Bin query per item, issued together rather than in
-      // sequence. A per-item query (rather than a single `in` filter) is
-      // deliberate: `limit` then applies per item, so an item fragmented across
-      // many warehouses cannot be truncated by a sibling item's rows.
+      // Mỗi item có một luồng phân trang Bin; tối đa tám item đã chốt ở schema.
+      // Đọc hết các kho của từng item trước khi chuẩn hóa các chiều so sánh.
       const binResults = await Promise.all(
         itemCodes.map((code) =>
-          context.listBins({
+          context.listAllBins({
             fields: ["actual_qty", "stock_value"],
             filters: [["item_code", "=", code]],
-            limit: 100,
           })
         ),
       );
@@ -810,7 +805,7 @@ export const analyticsTools: ErpNextTool[] = [
       itemCodes.forEach((code, i) => {
         const bins = binResults[i];
         const totalQty = bins.reduce(
-          (s, b) => s + (Number(b.actual_qty) || 0),
+          (s, b) => s + analyticsNumber(b, "actual_qty"),
           0,
         );
         const totalVal = bins.reduce(
@@ -821,10 +816,9 @@ export const analyticsTools: ErpNextTool[] = [
       });
 
       // Order data — fetch all, filter in memory (the item set can exceed a sane "in" filter size)
-      const soItems = await context.listItems("Sales Order", {
+      const soItems = await context.listAllItems("Sales Order", {
         fields: ["item_code", "qty", "base_amount"],
         filters: [["docstatus", "!=", 2]],
-        limit: 500,
       });
 
       const itemSet = new Set(itemCodes);
@@ -884,12 +878,15 @@ export const analyticsTools: ErpNextTool[] = [
       const limit = normalizeLimit((input.limit as number) ?? 30);
 
       // Get items with selling price
-      const items = await ctx.client.list("Item Price", {
-        fields: ["item_code", "price_list_rate", "currency", "uom"],
-        filters: [["selling", "=", 1]],
-        limit: 200,
-        order_by: "modified desc",
-      });
+      const items = await listCompleteAnalytics(
+        ctx.client.list.bind(ctx.client),
+        "Item Price",
+        {
+          fields: ["item_code", "price_list_rate", "currency", "uom"],
+          filters: [["selling", "=", 1]],
+          order_by: "modified desc",
+        },
+      );
 
       const priceMap: Record<string, Record<string, unknown>> = {};
       for (const ip of items) {
@@ -898,10 +895,9 @@ export const analyticsTools: ErpNextTool[] = [
       }
 
       // Get order quantities
-      const soItems = await context.listItems("Sales Order", {
+      const soItems = await context.listAllItems("Sales Order", {
         fields: ["item_code", "stock_qty"],
         filters: [["docstatus", "!=", 2]],
-        limit: 500,
       });
 
       const qtyMap: Record<string, number> = {};
@@ -1000,17 +996,16 @@ export const analyticsTools: ErpNextTool[] = [
     handler: async (_input, _ctx, context) => {
       const { currency } = context;
       const now = new Date();
-      // Single API call: fetch all orders from 6 months ago to today
+      // Đọc đủ cửa sổ sáu tháng bằng các trang hữu hạn trước khi chia theo tháng.
       const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
       const sinceStr = sixMonthsAgo.toISOString().split("T")[0];
 
-      const allOrders = await context.listDocuments("Sales Order", {
+      const allOrders = await context.listAllDocuments("Sales Order", {
         fields: ["base_grand_total", "transaction_date"],
         filters: [
           ["transaction_date", ">=", sinceStr],
           ["docstatus", "!=", 2],
         ],
-        limit: 5000,
       });
 
       // Bucket into 6 monthly bins
@@ -1111,25 +1106,31 @@ export const analyticsTools: ErpNextTool[] = [
       const lastMonthStartStr = lastMonthStart.toISOString().split("T")[0];
       const lastMonthEndStr = lastMonthEnd.toISOString().split("T")[0];
 
-      const currentOrders = await ctx.client.list("Sales Order", {
-        fields: ["name"],
-        filters: [
-          ["transaction_date", ">=", thisMonthStart],
-          ["docstatus", "!=", 2],
-        ],
-        limit: 1000,
-      });
+      const currentOrders = await listCompleteAnalytics(
+        ctx.client.list.bind(ctx.client),
+        "Sales Order",
+        {
+          fields: ["name"],
+          filters: [
+            ["transaction_date", ">=", thisMonthStart],
+            ["docstatus", "!=", 2],
+          ],
+        },
+      );
       const currentCount = currentOrders.length;
 
-      const prevOrders = await ctx.client.list("Sales Order", {
-        fields: ["name"],
-        filters: [
-          ["transaction_date", ">=", lastMonthStartStr],
-          ["transaction_date", "<=", lastMonthEndStr],
-          ["docstatus", "!=", 2],
-        ],
-        limit: 1000,
-      });
+      const prevOrders = await listCompleteAnalytics(
+        ctx.client.list.bind(ctx.client),
+        "Sales Order",
+        {
+          fields: ["name"],
+          filters: [
+            ["transaction_date", ">=", lastMonthStartStr],
+            ["transaction_date", "<=", lastMonthEndStr],
+            ["docstatus", "!=", 2],
+          ],
+        },
+      );
       const prevCount = prevOrders.length;
 
       const delta = prevCount > 0
@@ -1164,12 +1165,11 @@ export const analyticsTools: ErpNextTool[] = [
     inputSchema: { type: "object", properties: {} },
     handler: async (_input, _ctx, context) => {
       // Revenue from Sales Order Items (all non-cancelled)
-      const soItems = await context.listItems("Sales Order", {
+      const soItems = await context.listAllItems("Sales Order", {
         fields: ["item_code", "stock_qty", "base_amount"],
         filters: [
           ["docstatus", "!=", 2],
         ],
-        limit: 1000,
       });
 
       const revenue = soItems.reduce(
@@ -1186,10 +1186,9 @@ export const analyticsTools: ErpNextTool[] = [
       }
 
       // Fetch valuation rates
-      const bins = await context.listBins({
+      const bins = await context.listAllBins({
         fields: ["item_code", "valuation_rate"],
         filters: [["valuation_rate", ">", 0]],
-        limit: 500,
       });
 
       const valMap: Record<string, number> = {};
@@ -1318,25 +1317,21 @@ export const analyticsTools: ErpNextTool[] = [
       // so they go out together. Awaiting them in sequence cost four round-trips
       // to Frappe for one tool call.
       const [leads, opps, quots, orders] = await Promise.all([
-        ctx.client.list("Lead", {
+        listCompleteAnalytics(ctx.client.list.bind(ctx.client), "Lead", {
           fields: ["name"],
           filters: leadFilters,
-          limit: 500,
         }),
-        context.listDocuments("Opportunity", {
+        context.listAllDocuments("Opportunity", {
           fields: ["name", "base_opportunity_amount"],
           filters: txnFilters,
-          limit: 500,
         }),
-        context.listDocuments("Quotation", {
+        context.listAllDocuments("Quotation", {
           fields: ["name", "base_grand_total"],
           filters: submittedTxnFilters,
-          limit: 500,
         }),
-        context.listDocuments("Sales Order", {
+        context.listAllDocuments("Sales Order", {
           fields: ["name", "base_grand_total"],
           filters: submittedTxnFilters,
-          limit: 500,
         }),
       ]);
 
@@ -1569,7 +1564,7 @@ export const analyticsTools: ErpNextTool[] = [
       const needsCustomers = groupBy === "customer";
       const [siItems, bins, invoices] = await Promise.all([
         // Submitted Sales Invoice Items for revenue
-        context.listItems("Sales Invoice", {
+        context.listAllItems("Sales Invoice", {
           fields: [
             "parent",
             "item_code",
@@ -1578,21 +1573,18 @@ export const analyticsTools: ErpNextTool[] = [
             "stock_qty",
           ],
           filters: [["docstatus", "=", 1]],
-          limit: 500,
           order_by: "base_amount desc",
         }),
         // Bin for valuation_rate (cost per unit)
-        context.listBins({
+        context.listAllBins({
           fields: ["item_code", "valuation_rate"],
           filters: [["valuation_rate", ">", 0]],
-          limit: 500,
         }),
         // Invoices, to map parent invoice name to customer
         needsCustomers
-          ? context.listDocuments("Sales Invoice", {
+          ? context.listAllDocuments("Sales Invoice", {
             fields: ["name", "customer_name"],
             filters: [["docstatus", "=", 1]],
-            limit: 500,
           })
           : Promise.resolve([]),
       ]);

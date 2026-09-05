@@ -397,30 +397,54 @@ Lead counts still cover all visible Leads; subsequent stages belong to the
 selected company. Radar values remain normalized 0-100; its money dimensions
 name the currency without treating count dimensions as money.
 
-These changes do not make capped child/document queries complete. Their existing
-row limits remain, so large datasets can still be partial. Parent and Warehouse
-ownership discovery reads successive 1,000-name pages in name order, preserving
-company and document-status filters. It fails rather than returning partial
-scope on invalid/repeated names, a later-page error, or more than 100,000
-ownership names. These separate reads are not a transactional snapshot. Use
-authoritative ERPNext reports for complete financial statements; do not treat
-these charts as reconciliation totals.
+Analytics count/sum/ranking inputs are read to completion before aggregation and
+only then cut to the requested top N. This includes document and child rows, Bin
+rows across warehouses, item-group membership, selling prices, and all four
+independent funnel stages. Funnel ratios still compare independent sets, not a
+cohort of linked conversions. Public list tools keep their own pagination
+unchanged.
+
+Complete list reads use pages of 1,000, the existing explicit sort (otherwise
+`modified desc`), and a `name asc` tie-breaker. Offsets increase by 1,000; an
+exact multiple requires one final empty page. Invalid/oversized pages, missing
+or repeated names, permission failures and later-page failures raise errors,
+never a prefix total or a zero fallback. A read accepts at most 100,000 rows and
+1,000 page requests. All complete document/child/Bin reads within one company
+analytics context share those budgets, including concurrent radar reads and
+separate ownership-filter chunks. Standalone stock inputs, order count windows,
+Item Price and Lead reads each have the same per-read limits. Parent and
+Warehouse discovery separately retains its 100,000-name guard and 1,000-name
+pages, preserving company and document-status filters; Warehouse discovery is
+reused only within the current context. Accounts Receivable is one synchronous
+report, with a 100,000-row response guard and no local slicing.
+
+These are successive reads during the tool call, not an atomic transaction or an
+as-of snapshot. Existing client cache TTLs also apply. `generatedAt`, where
+present, is output-generation time, not proof that all pages share a database
+snapshot. Concurrent inserts, deletes or updates can move rows between pages;
+duplicate detection catches some changes but cannot detect every omission. Use
+authoritative ERPNext reports for reconciliation and rerun charts when
+underlying data is changing. Existing date windows and draft filters are
+unchanged.
 
 Ownership IDs are split by encoded request-target length (6,000 bytes for the
 API path and query, leaving headroom for a proxy prefix). A single ID plus the
 other query fields that cannot fit raises an error instead of being omitted.
-Each chunk reads at most the original row limit N, then results are merged and
-cut to N globally. This can read up to N times the number of chunks; it is not
-pagination or a completeness guarantee. Existing explicit numeric ordering is
-preserved; scoped reads without an order now explicitly use `modified desc`.
-Estimated gross-margin cost still uses the first positive Bin valuation in that
-ordered set. Equal sort values retain chunk order and then server order within
-the chunk, without promising equivalence to database tie ordering.
+Complete reads include the page fields, tie-breaker and worst-case offset in
+that budget, paginate every chunk, and preserve the global numeric/timestamp
+ordering without slicing the input. Estimated gross-margin cost still uses the
+first positive Bin valuation in that ordered set. Equal sort values retain chunk
+order, then server order within the chunk. Radar's automatic four-row selection
+and the price chart's raw Bin fallback remain presentation/scope limits, not
+claims of whole-site totals; they keep the prior global top-N chunk merge. Their
+selected radar items are subsequently aggregated fully.
 
 The Item stock-UOM lookup for price-vs-quantity uses the same 6,000-byte request
 budget, including fields, filters, order and limit. Every requested Item must be
 returned exactly once in its own chunk; missing, duplicate or unrelated rows
 raise an error. A failed chunk never produces a partial chart or stock fallback.
+The lookup rejects more than 100,000 requested IDs or 1,000 encoded chunks
+before sending requests.
 
 | Tool                        | Viewer | Description                                           |
 | --------------------------- | ------ | ----------------------------------------------------- |

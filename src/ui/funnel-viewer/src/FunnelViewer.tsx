@@ -8,7 +8,7 @@
  * @module lib/erpnext/src/ui/funnel-viewer
  */
 
-import { CSSProperties, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { App } from "@modelcontextprotocol/ext-apps";
 import {
   colors,
@@ -20,7 +20,6 @@ import {
 import { ErpNextBrandHeader } from "~/shared/ErpNextBrand";
 import {
   canRequestUiRefresh,
-  extractToolResultText,
   normalizeUiRefreshFailureMessage,
   resolveUiRefreshRequest,
   type ToolResultPayload,
@@ -39,23 +38,11 @@ const TOOL_CALL_TIMEOUT_MS = 10_000;
 // Types
 // ============================================================================
 
-interface FunnelStage {
-  label: string;
-  count: number;
-  value?: number;
-  color: string;
-  conversionRate?: number;
-  /** sendMessage text when clicking this stage (auto-injected by server) */
-  _drillDown?: string;
-}
-
-interface FunnelData {
-  title: string;
-  subtitle?: string;
-  stages: FunnelStage[];
-  currency?: string;
-  refreshRequest?: UiRefreshRequestData;
-}
+import {
+  consumeViewerResult,
+  getErrorPresentation,
+} from "~/shared/presentation";
+import type { FunnelData, FunnelStage } from "~/shared/presentation";
 
 // ============================================================================
 // Loading Skeleton
@@ -339,31 +326,20 @@ export function FunnelViewer() {
   const refreshInFlightRef = useRef(false);
   const lastRefreshStartedAtRef = useRef(0);
 
-  function hydrateData(nextData: FunnelData) {
-    dataRef.current = nextData;
-    refreshRequestRef.current = resolveUiRefreshRequest(
-      nextData,
-      refreshRequestRef.current,
-    );
-    setData(nextData);
-  }
-
   function consumeToolResult(result: ToolResultPayload): boolean {
-    const text = extractToolResultText(result);
-    if (!text) return false;
-
-    try {
-      const parsed = JSON.parse(text) as FunnelData;
-      hydrateData(parsed);
-      setError(null);
-      setLoading(false);
-      return true;
-    } catch (cause) {
-      console.error("Parse error:", cause);
-      setError("Failed to parse funnel payload");
-      setLoading(false);
-      return false;
-    }
+    const next = consumeViewerResult("funnel", result, {
+      data: dataRef.current,
+      refreshRequest: refreshRequestRef.current,
+      error: null,
+      loading: false,
+    });
+    setLoading(next.loading);
+    setError(next.error);
+    if (next.error) return false;
+    dataRef.current = next.data;
+    refreshRequestRef.current = next.refreshRequest;
+    setData(next.data);
+    return true;
   }
 
   async function requestRefresh(options: { ignoreInterval?: boolean } = {}) {
@@ -400,17 +376,7 @@ export function FunnelViewer() {
         arguments: request.arguments,
       }, { timeout: TOOL_CALL_TIMEOUT_MS });
 
-      if (result.isError) {
-        setError("Refresh failed");
-        return false;
-      }
-
-      if (!consumeToolResult(result)) {
-        setError("Refresh returned no data");
-        return false;
-      }
-
-      return true;
+      return consumeToolResult(result);
     } catch (cause) {
       setError(normalizeUiRefreshFailureMessage(cause));
       return false;
@@ -454,6 +420,7 @@ export function FunnelViewer() {
     };
   }, []);
 
+  const { blockingError, inlineError } = getErrorPresentation({ data, error });
   return (
     <div
       style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}
@@ -461,14 +428,20 @@ export function FunnelViewer() {
     >
       <ErpNextBrandHeader />
       <div style={{ flex: 1 }}>
-        {loading
+        {blockingError
+          ? (
+            <div role="alert" style={{ padding: 24, color: colors.error }}>
+              {blockingError}
+            </div>
+          )
+          : loading
           ? <LoadingSkeleton />
           : !data
           ? <FunnelEmptyState />
           : (
             <FunnelContent
               data={data}
-              error={error}
+              error={inlineError}
               refreshing={refreshing}
               onRefresh={() => void requestRefresh({ ignoreInterval: true })}
             />
@@ -515,7 +488,16 @@ function FunnelContent(
   }
 
   if (stages.length === 0) {
-    return <FunnelEmptyState />;
+    return (
+      <>
+        {error && (
+          <div role="alert" style={{ padding: 16, color: colors.error }}>
+            {error}
+          </div>
+        )}
+        <FunnelEmptyState />
+      </>
+    );
   }
 
   // Total conversion: first stage to last stage
