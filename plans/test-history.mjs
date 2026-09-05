@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+  copyFileSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
@@ -8,6 +14,8 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const historicalBrokenHead = "24425057594124b5b8485c900e555c66834c342a";
+const definitionSnapshot = "b9d6d02a9692c3efff11836b97d8cfbc69da1ec7";
+const boundDefinitionFixture = "db2f31fa0b332a7919e02b48f227ae1a6adf9b9e";
 const missingReviewedHeads = [
   "bb78ace761b7ae9b26900c8c80faad699a9adfa6",
   "ecc1b69d7d0f3c7a3310a5696097e2497b482a29",
@@ -146,5 +154,94 @@ test("historical squashed approval references fail in a real isolated checkout",
         line.endsWith(": DONE requires reviewer approval evidence")
       ));
     }
+  });
+});
+
+test("a real clone missing the approved definition ref fails until that ref is fetched", () => {
+  isolated((directory) => {
+    const seed = join(directory, "definition.git");
+    git(repoRoot, ["init", "--bare", "--initial-branch=regression", seed]);
+    const before = git(repoRoot, ["rev-parse", definitionSnapshot + "^"]);
+    git(seed, [
+      "fetch",
+      "--no-tags",
+      repoRoot,
+      before + ":refs/heads/regression",
+    ]);
+    const checkout = join(directory, "definition");
+    clone(seed, checkout);
+    assert.equal(git(checkout, ["rev-parse", "HEAD"]), before);
+    assert.equal(git(checkout, ["status", "--porcelain"]), "");
+    assert.equal(
+      run(checkout, "git", ["cat-file", "-t", definitionSnapshot]).status,
+      128,
+    );
+
+    // Chép nguyên snapshot đã commit và đã có approval thật, không tạo Git object.
+    // Chỉ validator lấy bản hiện tại để regression luôn kiểm implementation mới.
+    const archive = execFileSync("git", [
+      "archive",
+      "--format=tar",
+      boundDefinitionFixture,
+      "plans",
+    ], {
+      cwd: repoRoot,
+      maxBuffer: 32 * 1024 * 1024,
+      timeout: 30000,
+    });
+    const unpacked = spawnSync("tar", ["-xf", "-", "-C", checkout], {
+      input: archive,
+      encoding: "utf8",
+      timeout: 30000,
+    });
+    assert.ifError(unpacked.error);
+    assert.equal(unpacked.status, 0, unpacked.stderr);
+    writeFileSync(
+      join(checkout, "plans/validate-plans.mjs"),
+      execFileSync("git", [
+        "show",
+        definitionSnapshot + ":plans/validate-plans.mjs",
+      ], { cwd: repoRoot }),
+    );
+    const beforeGuard = validate(checkout);
+    assert.equal(
+      beforeGuard.status,
+      0,
+      beforeGuard.stderr || beforeGuard.stdout,
+    );
+    copyFileSync(
+      join(repoRoot, "plans/validate-plans.mjs"),
+      join(checkout, "plans/validate-plans.mjs"),
+    );
+    assert.equal(
+      run(checkout, "git", ["cat-file", "-t", definitionSnapshot]).status,
+      128,
+    );
+    const result = validate(checkout);
+    assert.equal(result.status, 1);
+    const failures = result.stderr.trim().split("\n");
+    const expected = ["Cannot read Git commit tree: " + definitionSnapshot];
+    const manifest = JSON.parse(
+      readFileSync(join(checkout, "plans/manifest.json"), "utf8"),
+    );
+    for (const entry of manifest) {
+      const body = readFileSync(join(checkout, "plans", entry.file), "utf8");
+      if (!body.includes("Trạng thái thực thi: `DONE`")) continue;
+      expected.push(
+        entry.file + ": DONE requires approved definition snapshot",
+      );
+      expected.push(entry.file + ": DONE requires reviewer approval evidence");
+    }
+    assert.equal(expected.length, 27);
+    assert.deepEqual(failures, expected);
+    git(checkout, [
+      "fetch",
+      "--no-tags",
+      repoRoot,
+      definitionSnapshot + ":refs/heads/approved-definition",
+    ]);
+    const restored = validate(checkout);
+    assert.equal(restored.status, 0, restored.stderr || restored.stdout);
+    assert.equal(git(checkout, ["rev-parse", "HEAD"]), before);
   });
 });

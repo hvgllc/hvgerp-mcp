@@ -144,7 +144,11 @@ Gate kiểm HEAD đã commit trong clone một nhánh `--no-local --no-tags`, kh
 nhờ objects của worktree gốc; yêu cầu plans tracked và sạch, không tải
 dependency hoặc gọi network ngoài Git transport local. Gate còn chạy revision
 lỗi thật 2442505 trong repository biệt lập và kiểm đúng sáu reviewed HEAD bị
-thiếu, tránh ca âm thất bại vì lý do khác. Các repository tạm được dọn sau test.
+thiếu, tránh ca âm thất bại vì lý do khác. Ca âm definition clone revision trước
+snapshot đã duyệt rồi chép nguyên bộ plans từ commit binding thật vào working
+tree biệt lập, không nhập Git objects của snapshot. Validator trước guard chấp
+nhận sai; validator hiện tại từ chối đúng ref thiếu. Chỉ fetch ref đó, không đổi
+source hay metadata, phải làm gate xanh. Các repository tạm được dọn sau test.
 Workspace root cố ý giữ source d2c5305 và plans untracked chỉ chạy
 validator/format; gate history phải chạy ở worktree thực thi đã commit, không
 dùng checkout root cũ thay cho HEAD PR.
