@@ -19,10 +19,11 @@ deno task check
 echo "[release-check] deno test --allow-all src/"
 deno test --allow-all src/
 
-echo "[release-check] npm ci && npm run build (src/ui)"
+echo "[release-check] npm ci && npm run typecheck && npm run build (src/ui)"
 (
   cd src/ui
   npm ci
+  npm run typecheck
   npm run build
 )
 

@@ -130,13 +130,16 @@ export function StockDetailPanel({ app, itemCode, warehouse, onClose }: {
             marginBottom: 10,
           }}
         >
-          {itemData.item_name && (
+          {typeof itemData.item_name === "string" &&
+            itemData.item_name !== "" && (
             <InfoField label="Name" value={String(itemData.item_name)} />
           )}
-          {itemData.item_group && (
+          {typeof itemData.item_group === "string" &&
+            itemData.item_group !== "" && (
             <InfoField label="Group" value={String(itemData.item_group)} />
           )}
-          {itemData.stock_uom && (
+          {typeof itemData.stock_uom === "string" &&
+            itemData.stock_uom !== "" && (
             <InfoField label="UOM" value={String(itemData.stock_uom)} />
           )}
           {itemData.standard_rate != null && (
