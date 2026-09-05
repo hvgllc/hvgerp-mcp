@@ -44,6 +44,7 @@ for (const kind of ["ordinary", "long", "Unicode"] as const) {
       if (path === "Item Price") {
         return Response.json({
           data: names.map((item_code, i) => ({
+            name: `PRICE-${i}`,
             item_code,
             currency: "VND",
             uom: "Unit",
@@ -324,7 +325,8 @@ function makeCompanyMockClient(
         return [{ name: "SINV-001" }];
       }
       const rows = await list(doctype, options);
-      return rows.map((row: Record<string, unknown>) => ({
+      return rows.map((row: Record<string, unknown>, index: number) => ({
+        name: `FIXTURE-${doctype}-${index}`,
         ...(doctype === "Bin" ? { warehouse: "W1" } : {}),
         ...(doctype.endsWith(" Item")
           ? { parent: "SINV-001", parenttype: doctype.slice(0, -5) }
@@ -343,6 +345,525 @@ function getTool(name: string) {
   const tool = analyticsTools.find((t) => t.name === name);
   if (!tool) throw new Error(`Tool not found: ${name}`);
   return tool;
+}
+
+function completeDatasetClient(datasets: Record<string, any[]>) {
+  const calls: { doctype: string; offset: number; size: number }[] = [];
+  const client = makeMockClient({
+    get: async (_doctype, name) => ({ name, default_currency: "VND" }),
+    list: async (doctype, options = {}) => {
+      const offset = options.limit_start ?? 0;
+      const size = options.limit ?? 20;
+      calls.push({ doctype, offset, size });
+      let rows = datasets[doctype] ?? [];
+      for (const [field, operator, value] of options.filters ?? []) {
+        rows = rows.filter((row) => {
+          if (operator === "=") return row[field] === value;
+          if (operator === "!=") return row[field] !== value;
+          if (operator === ">=") return row[field] >= value;
+          if (operator === "<=") return row[field] <= value;
+          if (operator === ">") return row[field] > value;
+          if (operator === "in") return value.includes(row[field]);
+          throw new Error(`Unsupported fixture filter: ${operator}`);
+        });
+      }
+      for (
+        const part of (options.order_by ?? "name asc").split(",").reverse()
+      ) {
+        const [field, direction] = part.trim().split(/\s+/);
+        rows = [...rows].sort((a, b) =>
+          (a[field] < b[field] ? -1 : a[field] > b[field] ? 1 : 0) *
+          (direction === "desc" ? -1 : 1)
+        );
+      }
+      return rows.slice(offset, offset + size);
+    },
+  });
+  return { client, calls };
+}
+
+Deno.test("complete treemap rejects 1001 ownership chunks with a measured whole-tool request budget", async () => {
+  const names = Array.from(
+    { length: 1001 },
+    (_, i) => `WH-${i}-${"東京".repeat(250)}`,
+  );
+  let companyReads = 0;
+  let ownershipReads = 0;
+  let binReads = 0;
+  const client = makeMockClient({
+    get: async (doctype, name) => {
+      assertEquals(doctype, "Company");
+      companyReads++;
+      return { name, default_currency: "VND" };
+    },
+    list: async (doctype, options) => {
+      if (doctype === "Warehouse") {
+        ownershipReads++;
+        assertEquals(options.filters, [["company", "=", "Vietnam Company"]]);
+        return names.slice(
+          options.limit_start,
+          options.limit_start + options.limit,
+        ).map((name) => ({ name }));
+      }
+      assertEquals(doctype, "Bin");
+      binReads++;
+      return [];
+    },
+  });
+  await assertRejects(
+    () =>
+      getTool("erpnext_stock_treemap").handler(
+        { company: "Vietnam Company" },
+        makeCtx(client),
+      ),
+    Error,
+    "1000 request safety limit",
+  );
+  assertEquals({ companyReads, ownershipReads, binReads }, {
+    companyReads: 1,
+    ownershipReads: 2,
+    binReads: 1000,
+  });
+});
+
+Deno.test("complete stock ranks across 1003 Bin rows before applying top one", async () => {
+  const fixture = completeDatasetClient({
+    Bin: [
+      { name: "BIN-A", item_code: "A", warehouse: "W1", actual_qty: 10 },
+      ...Array.from(
+        { length: 1000 },
+        (_, i) => ({
+          name: `BIN-OTHER-${i}`,
+          item_code: `OTHER-${i}`,
+          warehouse: "W1",
+          actual_qty: 1,
+        }),
+      ),
+      { name: "BIN-B-1", item_code: "B", warehouse: "W1", actual_qty: 6 },
+      { name: "BIN-B-2", item_code: "B", warehouse: "W2", actual_qty: 6 },
+    ],
+  });
+  const result = await getTool("erpnext_stock_chart").handler(
+    { limit: 1 },
+    makeCtx(fixture.client),
+  ) as any;
+  assertEquals(result.labels, ["B"]);
+  assertEquals(result.datasets[0].values, [12]);
+  assertEquals(fixture.calls, [{ doctype: "Bin", offset: 0, size: 1000 }, {
+    doctype: "Bin",
+    offset: 1000,
+    size: 1000,
+  }]);
+});
+
+Deno.test("complete order delta uses both complete monthly count windows", async () => {
+  const fixture = completeDatasetClient({
+    "Sales Order": [
+      ...Array.from(
+        { length: 2002 },
+        (_, i) => ({
+          name: `CURRENT-${i}`,
+          transaction_date: relativeMonth(0),
+          docstatus: 1,
+        }),
+      ),
+      ...Array.from(
+        { length: 1001 },
+        (_, i) => ({
+          name: `PREVIOUS-${i}`,
+          transaction_date: relativeMonth(1),
+          docstatus: 1,
+        }),
+      ),
+    ],
+  });
+  const result = await getTool("erpnext_kpi_orders").handler(
+    {},
+    makeCtx(fixture.client),
+  ) as any;
+  assertEquals(result.value, 2002);
+  assertEquals(result.delta, 100);
+  assertEquals(fixture.calls.map((call) => call.offset), [
+    0,
+    1000,
+    2000,
+    0,
+    1000,
+  ]);
+});
+
+for (const count of [0, 999, 1000, 1001, 2501, 5001]) {
+  Deno.test(`complete analytics counts and sums ${count} orders before presentation`, async () => {
+    const rows = Array.from({ length: count }, (_, i) => ({
+      name: `SO-${String(i).padStart(6, "0")}`,
+      company: "Vietnam Company",
+      docstatus: 1,
+      transaction_date: relativeMonth(0),
+      customer_name: "Customer",
+      base_grand_total: 2,
+      status: "Completed",
+    }));
+    const fixture = completeDatasetClient({ "Sales Order": rows });
+    const orders = await getTool("erpnext_kpi_orders").handler(
+      {},
+      makeCtx(fixture.client),
+    ) as any;
+    assertEquals(orders.value, count);
+    for (
+      const name of [
+        "erpnext_kpi_revenue",
+        "erpnext_revenue_trend",
+        "erpnext_order_breakdown",
+        "erpnext_revenue_vs_orders",
+      ]
+    ) {
+      const result = await getTool(name).handler({
+        company: "Vietnam Company",
+        type: "pie",
+      }, makeCtx(fixture.client)) as any;
+      const total = name === "erpnext_kpi_revenue"
+        ? result.value
+        : result.datasets[0].values.reduce(
+          (sum: number, value: number) => sum + value,
+          0,
+        );
+      assertEquals(total, count * 2, name);
+    }
+  });
+}
+
+Deno.test("complete stock aggregation ranks the sum across warehouses after item group lookup", async () => {
+  const items = Array.from(
+    { length: 1001 },
+    (_, i) => ({
+      name: `ITEM-${String(i).padStart(5, "0")}`,
+      item_group: "Group",
+    }),
+  );
+  const fixture = completeDatasetClient({
+    Item: items,
+    Bin: [
+      {
+        name: "BIN-1",
+        item_code: items[0].name,
+        warehouse: "W1",
+        actual_qty: 10,
+      },
+      {
+        name: "BIN-2",
+        item_code: items[1000].name,
+        warehouse: "W1",
+        actual_qty: 6,
+      },
+      {
+        name: "BIN-3",
+        item_code: items[1000].name,
+        warehouse: "W2",
+        actual_qty: 6,
+      },
+    ],
+  });
+  const result = await getTool("erpnext_stock_chart").handler({
+    item_group: "Group",
+    limit: 1,
+  }, makeCtx(fixture.client)) as any;
+  assertEquals(result.labels, [items[1000].name]);
+  assertEquals(result.datasets[0].values, [12]);
+});
+
+Deno.test("complete funnel counts all 501 records at each independent stage", async () => {
+  const datasets = Object.fromEntries(
+    ["Lead", "Opportunity", "Quotation", "Sales Order"].map((
+      doctype,
+    ) => [
+      doctype,
+      Array.from({ length: 501 }, (_, i) => ({
+        name: `${doctype}-${i}`,
+        company: "Vietnam Company",
+        docstatus: 1,
+        base_opportunity_amount: 3,
+        base_grand_total: 4,
+      })),
+    ]),
+  );
+  const fixture = completeDatasetClient(datasets);
+  const result = await getTool("erpnext_sales_funnel").handler({
+    company: "Vietnam Company",
+  }, makeCtx(fixture.client)) as any;
+  assertEquals(result.stages.map((stage: any) => stage.count), [
+    501,
+    501,
+    501,
+    501,
+  ]);
+  assertEquals(result.stages.slice(1).map((stage: any) => stage.value), [
+    1503,
+    2004,
+    2004,
+  ]);
+});
+
+Deno.test("complete sales, stock and profit aggregates retain 1001 child rows and warehouse costs", async () => {
+  const count = 1001;
+  const datasets = {
+    "Sales Invoice": Array.from(
+      { length: count },
+      (_, i) => ({
+        name: `INV-${i}`,
+        company: "Vietnam Company",
+        docstatus: 1,
+        customer: "CUSTOMER",
+        customer_name: "Customer",
+        status: "Paid",
+        base_grand_total: 10,
+      }),
+    ),
+    "Sales Invoice Item": Array.from(
+      { length: count },
+      (_, i) => ({
+        name: `SI-ROW-${i}`,
+        parent: "INV-1000",
+        parenttype: "Sales Invoice",
+        docstatus: 1,
+        item_code: "ITEM",
+        item_name: "Item",
+        base_amount: 10,
+        stock_qty: 1,
+      }),
+    ),
+    "Sales Order": [{ name: "SO-1", company: "Vietnam Company", docstatus: 1 }],
+    "Sales Order Item": Array.from(
+      { length: count },
+      (_, i) => ({
+        name: `SO-ROW-${i}`,
+        parent: "SO-1",
+        parenttype: "Sales Order",
+        docstatus: 1,
+        item_code: "ITEM",
+        base_amount: 10,
+        stock_qty: 1,
+      }),
+    ),
+    Warehouse: [{ name: "W1", company: "Vietnam Company" }, {
+      name: "W2",
+      company: "Vietnam Company",
+    }],
+    Bin: Array.from(
+      { length: count },
+      (_, i) => ({
+        name: `BIN-${i}`,
+        item_code: i === count - 1 ? "ITEM" : "OTHER",
+        warehouse: "W1",
+        modified: "2026-09-05 12:00:00",
+        actual_qty: 1,
+        stock_value: 5,
+        valuation_rate: 5,
+      }),
+    ),
+  };
+  const fixture = completeDatasetClient(datasets);
+  for (const group_by of ["customer", "item", "status"]) {
+    const result = await getTool("erpnext_sales_chart").handler({
+      company: "Vietnam Company",
+      group_by,
+    }, makeCtx(fixture.client)) as any;
+    assertEquals(result.datasets[0].values, [count * 10], group_by);
+  }
+  for (const group_by of ["customer", "item"]) {
+    const result = await getTool("erpnext_gross_profit").handler({
+      company: "Vietnam Company",
+      group_by,
+    }, makeCtx(fixture.client)) as any;
+    assertEquals(result.datasets[0].values, [count * 10], group_by);
+    assertEquals(result.datasets[1].values, [50], group_by);
+    if (group_by === "customer") assertEquals(result.labels, ["Customer"]);
+  }
+  const margin = await getTool("erpnext_kpi_gross_margin").handler({
+    company: "Vietnam Company",
+  }, makeCtx(fixture.client)) as any;
+  assertEquals(margin.value, 50);
+  for (const group_by of ["warehouse", "item"]) {
+    const result = await getTool("erpnext_stock_treemap").handler({
+      company: "Vietnam Company",
+      group_by,
+    }, makeCtx(fixture.client)) as any;
+    assertEquals(
+      result.treeData.reduce((sum: number, row: any) => sum + row.value, 0),
+      count * 5,
+    );
+  }
+});
+
+Deno.test("complete scatter reads a price beyond 1000 and sums every matching order line", async () => {
+  const fixture = completeDatasetClient({
+    "Item Price": Array.from({ length: 1001 }, (_, i) => ({
+      name: `PRICE-${String(i).padStart(5, "0")}`,
+      item_code: i === 1000 ? "TAIL" : `UNRELATED-${i}`,
+      selling: 1,
+      price_list_rate: 10,
+      currency: "VND",
+      uom: "Unit",
+      modified: "2026-09-05 12:00:00",
+    })),
+    "Sales Order": [{ name: "SO-1", company: "Vietnam Company", docstatus: 1 }],
+    "Sales Order Item": Array.from(
+      { length: 1001 },
+      (_, i) => ({
+        name: `SO-ROW-${i}`,
+        parent: "SO-1",
+        parenttype: "Sales Order",
+        docstatus: 1,
+        item_code: "TAIL",
+        stock_qty: 2,
+      }),
+    ),
+    Item: [{ name: "TAIL", stock_uom: "Unit" }],
+  });
+  const result = await getTool("erpnext_price_vs_qty").handler({
+    company: "Vietnam Company",
+    limit: 1,
+  }, makeCtx(fixture.client)) as any;
+  assertEquals(result.scatterData[0].points, [{
+    x: 10,
+    y: 2002,
+    label: "TAIL",
+  }]);
+  assertEquals(
+    fixture.calls.map(({ doctype, offset }) => ({ doctype, offset })),
+    [
+      { doctype: "Item Price", offset: 0 },
+      { doctype: "Item Price", offset: 1000 },
+      { doctype: "Sales Order", offset: 0 },
+      { doctype: "Sales Order Item", offset: 0 },
+      { doctype: "Sales Order Item", offset: 1000 },
+      { doctype: "Item", offset: 0 },
+    ],
+  );
+});
+
+Deno.test("complete radar keeps all 1001 Bin and order rows within its selected item scope", async () => {
+  const fixture = completeDatasetClient({
+    Warehouse: [{ name: "W1", company: "Vietnam Company" }],
+    Bin: [
+      ...Array.from(
+        { length: 1001 },
+        (_, i) => ({
+          name: `BIN-${i}`,
+          item_code: "A",
+          warehouse: "W1",
+          actual_qty: 1,
+          stock_value: 1,
+        }),
+      ),
+      {
+        name: "BIN-B",
+        item_code: "B",
+        warehouse: "W1",
+        actual_qty: 1001,
+        stock_value: 1001,
+      },
+    ],
+    "Sales Order": [{ name: "SO-1", company: "Vietnam Company", docstatus: 1 }],
+    "Sales Order Item": [
+      ...Array.from(
+        { length: 1001 },
+        (_, i) => ({
+          name: `ROW-${i}`,
+          parent: "SO-1",
+          parenttype: "Sales Order",
+          docstatus: 1,
+          item_code: "A",
+          base_amount: 1,
+        }),
+      ),
+      ...Array.from(
+        { length: 1001 },
+        (_, i) => ({
+          name: `ROW-B-${i}`,
+          parent: "SO-1",
+          parenttype: "Sales Order",
+          docstatus: 1,
+          item_code: "B",
+          base_amount: 1,
+        }),
+      ),
+    ],
+  });
+  const result = await getTool("erpnext_product_radar").handler({
+    company: "Vietnam Company",
+    items: ["A", "B"],
+  }, makeCtx(fixture.client)) as any;
+  assertEquals(result.datasets.map((row: any) => row.values), [[
+    100,
+    100,
+    100,
+    100,
+  ], [100, 100, 100, 100]]);
+  assertEquals(
+    fixture.calls.filter((call) => call.doctype === "Warehouse").length,
+    1,
+  );
+  assertEquals(
+    fixture.calls.filter((call) => call.doctype === "Bin").length,
+    3,
+  );
+  assertEquals(
+    fixture.calls.filter((call) => call.doctype === "Sales Order Item").length,
+    3,
+  );
+});
+
+for (
+  const tool of [
+    "erpnext_kpi_outstanding",
+    "erpnext_kpi_overdue",
+    "erpnext_ar_aging",
+  ]
+) {
+  Deno.test(`complete receivable report retains 1001 ledger rows for ${tool}`, async () => {
+    let reportCalls = 0;
+    const client = makeMockClient({
+      get: async (_doctype, name) => ({ name, default_currency: "VND" }),
+      callMethod: async (method, args, options) => {
+        if (method === "frappe.client.get_value") return { time_zone: "UTC" };
+        assertEquals(method, "frappe.desk.query_report.run");
+        assertEquals(options, { httpMethod: "GET" });
+        assertEquals(args.report_name, "Accounts Receivable");
+        assertEquals(args.ignore_prepared_report, true);
+        assertEquals(args.filters.company, "Vietnam Company");
+        reportCalls++;
+        return {
+          columns: [],
+          result: Array.from({ length: 1001 }, (_, i) => ({
+            voucher_type: "Sales Invoice",
+            voucher_no: `INV-${i}`,
+            party: "Customer",
+            party_account: "Receivables",
+            customer_name: "Customer",
+            currency: "VND",
+            outstanding: 2,
+            posting_date: "2020-01-01",
+            due_date: "2020-01-01",
+          })),
+        };
+      },
+    });
+    const result = await getTool(tool).handler(
+      { company: "Vietnam Company" },
+      makeCtx(client),
+    ) as any;
+    if (tool === "erpnext_kpi_outstanding") assertEquals(result.value, 2002);
+    else if (tool === "erpnext_kpi_overdue") assertEquals(result.value, 1001);
+    else {assertEquals(
+        result.datasets.reduce(
+          (sum: number, row: any) =>
+            sum + row.values.reduce((s: number, n: number) => s + n, 0),
+          0,
+        ),
+        2002,
+      );}
+    assertEquals(reportCalls, 1);
+  });
 }
 
 for (
@@ -804,13 +1325,26 @@ Deno.test("analytics VND matrix - scatter refuses currency and UOM mismatches in
 Deno.test("analytics VND matrix - scatter keeps the newest selected price and validates only relevant prices", async () => {
   const prices = [
     {
+      name: "PRICE-UNRELATED",
       item_code: "UNRELATED",
       currency: "USD",
       uom: "Unknown",
       price_list_rate: 999,
     },
-    { item_code: "ITEM-1", currency: "VND", uom: "Unit", price_list_rate: 0 },
-    { item_code: "ITEM-1", currency: "USD", uom: "Box", price_list_rate: 999 },
+    {
+      name: "PRICE-NEW",
+      item_code: "ITEM-1",
+      currency: "VND",
+      uom: "Unit",
+      price_list_rate: 0,
+    },
+    {
+      name: "PRICE-OLD",
+      item_code: "ITEM-1",
+      currency: "USD",
+      uom: "Box",
+      price_list_rate: 999,
+    },
   ];
   const { client } = makeVndAnalyticsClient({ priceRows: prices });
   const result = await getTool("erpnext_price_vs_qty").handler(
@@ -1007,18 +1541,21 @@ Deno.test("erpnext_stock_chart - returns bar chart data", async () => {
   const mockClient = makeMockClient({
     list: async () => [
       {
+        name: "BIN-A-W1",
         item_code: "ITEM-A",
         warehouse: "W1",
         actual_qty: 50,
         stock_value: 5000,
       },
       {
+        name: "BIN-B-W1",
         item_code: "ITEM-B",
         warehouse: "W1",
         actual_qty: 30,
         stock_value: 3000,
       },
       {
+        name: "BIN-A-W2",
         item_code: "ITEM-A",
         warehouse: "W2",
         actual_qty: 20,
@@ -1039,6 +1576,7 @@ Deno.test("erpnext_stock_chart - returns bar chart data", async () => {
 
 Deno.test("erpnext_stock_chart - uses horizontal-bar for many items", async () => {
   const items = Array.from({ length: 10 }, (_, i) => ({
+    name: `BIN-${i}`,
     item_code: `ITEM-${i}`,
     warehouse: "W1",
     actual_qty: 100 - i * 10,
@@ -1439,7 +1977,10 @@ Deno.test("erpnext_kpi_outstanding - sums outstanding invoices", async () => {
 
 Deno.test("erpnext_kpi_orders - counts orders this month", async () => {
   const mockClient = makeMockClient({
-    list: async () => [{ base_grand_total: 1000 }, { base_grand_total: 2000 }],
+    list: async () => [{ name: "SO-1", base_grand_total: 1000 }, {
+      name: "SO-2",
+      base_grand_total: 2000,
+    }],
   });
 
   const tool = getTool("erpnext_kpi_orders");

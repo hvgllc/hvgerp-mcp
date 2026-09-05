@@ -6,6 +6,16 @@ import type {
 import type { ErpNextTool, ErpNextToolContext } from "./types.ts";
 import { cellNumber } from "./query-report.ts";
 import { normalizeLimit } from "../api/frappe-client.ts";
+import {
+  ANALYTICS_MAX_REQUESTS,
+  ANALYTICS_MAX_ROWS,
+  completePageOptions,
+  listCompleteAnalytics,
+} from "./analytics-pagination.ts";
+import type {
+  AnalyticsReadBudget,
+  CompleteListOptions,
+} from "./analytics-pagination.ts";
 
 // Tính cả path và query đã encode, chừa khoảng đệm cho origin/prefix của proxy.
 const SCOPE_REQUEST_TARGET_BUDGET = 6000;
@@ -72,6 +82,13 @@ export async function listAnalyticsItemUnits(
     order_by: "name asc",
   });
   const chunks = chunkRequestNames("Item", names, queryOptions);
+  if (
+    names.length > ANALYTICS_MAX_ROWS || chunks.length > ANALYTICS_MAX_REQUESTS
+  ) {
+    throw new Error(
+      "Analytics Item UOM lookup exceeds its safety budget; no partial chart will be reported.",
+    );
+  }
   const result: FrappeDoc[] = [];
   for (const chunk of chunks) {
     const rows = await ctx.client.list("Item", queryOptions(chunk));
@@ -93,6 +110,30 @@ export async function listAnalyticsItemUnits(
   return result;
 }
 
+function sortScopedRows(rows: FrappeDoc[], sortField: string): FrappeDoc[] {
+  const candidates = rows.map((row) => {
+    let value: number | string;
+    if (sortField === "modified") {
+      const modified = row.modified;
+      if (
+        typeof modified !== "string" ||
+        !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?$/.test(modified)
+      ) {
+        throw new Error(
+          "Analytics scoped row has no valid modified timestamp for ordered merging.",
+        );
+      }
+      value = modified.includes(".")
+        ? modified.padEnd(26, "0")
+        : `${modified}.000000`;
+    } else value = analyticsNumber(row, sortField);
+    return { row, value };
+  });
+  // Sort ổn định: giá trị bằng nhau giữ thứ tự chunk rồi thứ tự server trong chunk.
+  candidates.sort((a, b) => a.value < b.value ? 1 : a.value > b.value ? -1 : 0);
+  return candidates.map(({ row }) => row);
+}
+
 async function listScoped(
   ctx: ErpNextToolContext,
   doctype: string,
@@ -101,6 +142,7 @@ async function listScoped(
   names: string[],
   verify: (row: FrappeDoc, allowed: Set<string>) => void,
   extraFilters: FrappeFilter[] = [],
+  completeBudget?: AnalyticsReadBudget,
 ): Promise<FrappeDoc[]> {
   const limit = normalizeLimit(options.limit ?? 20);
   if (options.limit_start !== undefined && options.limit_start !== 0) {
@@ -125,7 +167,42 @@ async function listScoped(
     limit,
     order_by: orderBy,
   });
-  const chunks = chunkRequestNames(doctype, names, queryOptions);
+  const chunks = chunkRequestNames(
+    doctype,
+    names,
+    (chunk) =>
+      completeBudget
+        ? completePageOptions(queryOptions(chunk), ANALYTICS_MAX_ROWS)
+        : queryOptions(chunk),
+  );
+
+  if (completeBudget) {
+    const result: FrappeDoc[] = [];
+    const seen = new Set<string>();
+    for (const chunk of chunks) {
+      const allowed = new Set(chunk);
+      const rows = await listCompleteAnalytics(
+        async (type, page) => {
+          const rows = await ctx.client.list(type, page);
+          for (const row of rows) verify(row, allowed);
+          return rows;
+        },
+        doctype,
+        queryOptions(chunk),
+        completeBudget,
+      );
+      for (const row of rows) {
+        if (seen.has(row.name)) {
+          throw new Error(
+            `Analytics ${doctype} returned a duplicate row across scope chunks.`,
+          );
+        }
+        seen.add(row.name);
+        result.push(row);
+      }
+    }
+    return chunks.length > 1 ? sortScopedRows(result, sortField) : result;
+  }
 
   let result: FrappeDoc[] = [];
   for (const chunk of chunks) {
@@ -135,29 +212,7 @@ async function listScoped(
     if (chunks.length === 1) return rows.slice(0, limit);
 
     // N ứng viên mỗi chunk đủ để tìm top N toàn cục, không nhân cap đầu ra.
-    const candidates = [...result, ...rows].map((row) => {
-      let value: number | string;
-      if (sortField === "modified") {
-        const modified = row.modified;
-        if (
-          typeof modified !== "string" ||
-          !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?$/.test(modified)
-        ) {
-          throw new Error(
-            "Analytics scoped row has no valid modified timestamp for ordered merging.",
-          );
-        }
-        value = modified.includes(".")
-          ? modified.padEnd(26, "0")
-          : `${modified}.000000`;
-      } else value = analyticsNumber(row, sortField);
-      return { row, value };
-    });
-    // Sort ổn định: giá trị bằng nhau giữ thứ tự chunk rồi thứ tự server trong chunk.
-    candidates.sort((a, b) =>
-      a.value < b.value ? 1 : a.value > b.value ? -1 : 0
-    );
-    result = candidates.slice(0, limit).map(({ row }) => row);
+    result = sortScopedRows([...result, ...rows], sortField).slice(0, limit);
   }
   return result;
 }
@@ -219,6 +274,15 @@ export interface AnalyticsContext {
     options: FrappeListOptions,
   ) => Promise<FrappeDoc[]>;
   listBins: (options: FrappeListOptions) => Promise<FrappeDoc[]>;
+  listAllDocuments: (
+    doctype: string,
+    options: CompleteListOptions,
+  ) => Promise<FrappeDoc[]>;
+  listAllItems: (
+    parentType: "Sales Order" | "Sales Invoice",
+    options: CompleteListOptions,
+  ) => Promise<FrappeDoc[]>;
+  listAllBins: (options: CompleteListOptions) => Promise<FrappeDoc[]>;
 }
 
 async function listOwnershipNames(
@@ -283,66 +347,80 @@ export async function resolveAnalyticsContext(
     });
 
   let warehouses: Promise<string[]> | undefined;
+  const budget: AnalyticsReadBudget = { requests: 0, rows: 0 };
+  const listItems = async (
+    parentType: "Sales Order" | "Sales Invoice",
+    options: FrappeListOptions,
+    complete = false,
+  ) => {
+    const parentFilters = (options.filters ?? []).filter((filter) =>
+      filter[0] === "docstatus"
+    );
+    const names = await listOwnershipNames(
+      listDocuments,
+      parentType,
+      parentFilters,
+    );
+    if (names.length === 0) return [];
+    return await listScoped(
+      ctx,
+      `${parentType} Item`,
+      {
+        ...options,
+        fields: [
+          ...new Set([...(options.fields ?? []), "parent", "parenttype"]),
+        ],
+      },
+      "parent",
+      names,
+      (row, allowed) => {
+        if (
+          typeof row.parent !== "string" || !allowed.has(row.parent) ||
+          row.parenttype !== parentType
+        ) {
+          throw new Error(
+            `Analytics ${parentType} Item has unverified company ownership.`,
+          );
+        }
+      },
+      [["parenttype", "=", parentType]],
+      complete ? budget : undefined,
+    );
+  };
+  const listBins = async (options: FrappeListOptions, complete = false) => {
+    warehouses ??= listOwnershipNames(listDocuments, "Warehouse");
+    const names = await warehouses;
+    if (names.length === 0) return [];
+    return await listScoped(
+      ctx,
+      "Bin",
+      {
+        ...options,
+        fields: [...new Set([...(options.fields ?? []), "warehouse"])],
+      },
+      "warehouse",
+      names,
+      (row, allowed) => {
+        if (
+          typeof row.warehouse !== "string" || !allowed.has(row.warehouse)
+        ) {
+          throw new Error("Analytics Bin has unverified company ownership.");
+        }
+      },
+      [],
+      complete ? budget : undefined,
+    );
+  };
   return {
     company,
     currency,
     listDocuments,
-    listItems: async (parentType, options) => {
-      const parentFilters = (options.filters ?? []).filter((filter) =>
-        filter[0] === "docstatus"
-      );
-      const names = await listOwnershipNames(
-        listDocuments,
-        parentType,
-        parentFilters,
-      );
-      if (names.length === 0) return [];
-      return await listScoped(
-        ctx,
-        `${parentType} Item`,
-        {
-          ...options,
-          fields: [
-            ...new Set([...(options.fields ?? []), "parent", "parenttype"]),
-          ],
-        },
-        "parent",
-        names,
-        (row, allowed) => {
-          if (
-            typeof row.parent !== "string" || !allowed.has(row.parent) ||
-            row.parenttype !== parentType
-          ) {
-            throw new Error(
-              `Analytics ${parentType} Item has unverified company ownership.`,
-            );
-          }
-        },
-        [["parenttype", "=", parentType]],
-      );
-    },
-    listBins: async (options) => {
-      warehouses ??= listOwnershipNames(listDocuments, "Warehouse");
-      const names = await warehouses;
-      if (names.length === 0) return [];
-      return await listScoped(
-        ctx,
-        "Bin",
-        {
-          ...options,
-          fields: [...new Set([...(options.fields ?? []), "warehouse"])],
-        },
-        "warehouse",
-        names,
-        (row, allowed) => {
-          if (
-            typeof row.warehouse !== "string" || !allowed.has(row.warehouse)
-          ) {
-            throw new Error("Analytics Bin has unverified company ownership.");
-          }
-        },
-      );
-    },
+    listItems,
+    listBins,
+    listAllDocuments: (doctype, options) =>
+      listCompleteAnalytics(listDocuments, doctype, options, budget),
+    listAllItems: (parentType, options) => listItems(parentType, options, true),
+    listAllBins: (options) => listBins(options, true),
   };
 }
 
