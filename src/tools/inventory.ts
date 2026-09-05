@@ -13,6 +13,83 @@ import { DOCLIST_META, STOCK_META } from "./viewer-meta.ts";
 import { resolveItem } from "../api/resolve.ts";
 
 export const inventoryTools: ErpNextTool[] = [
+  {
+    name: "erpnext_stock_ledger_list",
+    annotations: { readOnlyHint: true },
+    description:
+      "List recent non-cancelled Stock Ledger Entries for one item and warehouse. " +
+      "Item accepts an ID or name; warehouse must be its exact ID. " +
+      "Returns {data: rows}, newest posting date/time/name first, with voucher and quantity fields.",
+    category: "inventory",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["item_code", "warehouse"],
+      properties: {
+        item_code: {
+          type: "string",
+          minLength: 1,
+          pattern: "\\S",
+          description: "Item ID or name",
+        },
+        warehouse: {
+          type: "string",
+          minLength: 1,
+          pattern: "\\S",
+          description: "Exact warehouse ID",
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 20,
+          default: 5,
+          description: "Max results (default 5, maximum 20)",
+        },
+      },
+    },
+    handler: async (input, ctx) => {
+      for (const field of ["item_code", "warehouse"] as const) {
+        if (typeof input[field] !== "string" || !input[field].trim()) {
+          throw new Error(`'${field}' must be a non-empty string`);
+        }
+      }
+      const limit = input.limit === undefined ? 5 : input.limit;
+      if (
+        typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 ||
+        limit > 20
+      ) {
+        throw new Error("'limit' must be an integer between 1 and 20");
+      }
+      const itemCode = await resolveItem(
+        ctx.client,
+        input.item_code as string,
+        { inputPath: "item_code" },
+      );
+      const rows = await ctx.client.list("Stock Ledger Entry", {
+        fields: [
+          "name",
+          "item_code",
+          "warehouse",
+          "posting_date",
+          "posting_time",
+          "voucher_type",
+          "voucher_no",
+          "actual_qty",
+          "qty_after_transaction",
+          "stock_uom",
+        ],
+        filters: [["item_code", "=", itemCode], [
+          "warehouse",
+          "=",
+          input.warehouse as string,
+        ], ["is_cancelled", "=", 0]],
+        order_by: "posting_date desc, posting_time desc, name desc",
+        limit,
+      }, { skipCache: true });
+      return { data: rows };
+    },
+  },
+
   // ── Items ─────────────────────────────────────────────────────────────────
 
   {

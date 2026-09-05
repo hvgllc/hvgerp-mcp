@@ -1,6 +1,7 @@
 import { UI_VIEWERS } from "../viewers.ts";
 import type { DoclistData } from "../doclist-viewer/src/types.ts";
 import type { KanbanBoardData } from "../shared/kanban/types.ts";
+import type { StockMovement } from "../shared/stock-movements.ts";
 
 export { UI_VIEWERS };
 export type Viewer = typeof UI_VIEWERS[number];
@@ -14,9 +15,177 @@ export const SCENARIOS = [
   "malformed-payload",
   "sales-order-date",
   "quotation-date",
+  "stock-movements",
+  "stock-permission",
+  "stock-malformed",
+  "stock-race",
 ] as const;
 export type Scenario = typeof SCENARIOS[number];
 export const GENERATED_AT = "2026-09-05T00:00:00.000Z";
+
+export function stockInventoryFixture() {
+  return {
+    refreshRequest: { toolName: "erpnext_stock_balance", arguments: {} },
+    count: 4,
+    data: [
+      { item_code: "ITEM-A", warehouse: "W1", actual_qty: 18 },
+      { item_code: "ITEM-A", warehouse: "W2", actual_qty: 7 },
+      { item_code: "ITEM-B", warehouse: "W1", actual_qty: 3 },
+      { item_code: "ITEM-B", warehouse: "W2", actual_qty: 0 },
+    ].map((row) => ({
+      ...row,
+      reserved_qty: 0,
+      projected_qty: row.actual_qty,
+      valuation_rate: 10,
+      stock_value: row.actual_qty * 10,
+    })),
+  };
+}
+
+function movementFixture(
+  name: string,
+  item: string,
+  warehouse: string,
+  quantity: number,
+  date: string,
+  time: string,
+  cancelled = 0,
+  balance = quantity,
+): StockMovement & { is_cancelled: number } {
+  return {
+    name,
+    item_code: item,
+    warehouse,
+    posting_date: date,
+    posting_time: time,
+    voucher_type: "Stock Entry",
+    voucher_no: `STE-${name}`,
+    actual_qty: quantity,
+    qty_after_transaction: balance,
+    stock_uom: "Nos",
+    is_cancelled: cancelled,
+  };
+}
+
+const STOCK_LEDGER_ROWS = [
+  movementFixture(
+    "A-W1-001",
+    "ITEM-A",
+    "W1",
+    1,
+    "2026-09-01",
+    "08:00:00.000000",
+  ),
+  movementFixture(
+    "A-W1-005",
+    "ITEM-A",
+    "W1",
+    10,
+    "2026-09-05",
+    "09:00:00.000000",
+    0,
+    20,
+  ),
+  movementFixture(
+    "A-W1-003",
+    "ITEM-A",
+    "W1",
+    3,
+    "2026-09-04",
+    "09:00:00.000000",
+    0,
+    6,
+  ),
+  movementFixture(
+    "A-W1-006",
+    "ITEM-A",
+    "W1",
+    -2,
+    "2026-09-05",
+    "09:00:00.000000",
+    0,
+    18,
+  ),
+  movementFixture(
+    "A-W1-004",
+    "ITEM-A",
+    "W1",
+    4,
+    "2026-09-05",
+    "08:00:00.000000",
+    0,
+    10,
+  ),
+  movementFixture(
+    "A-W1-002",
+    "ITEM-A",
+    "W1",
+    2,
+    "2026-09-03",
+    "09:00:00.000000",
+    0,
+    3,
+  ),
+  movementFixture(
+    "A-W1-CANCELLED",
+    "ITEM-A",
+    "W1",
+    999,
+    "2026-09-05",
+    "23:00:00.000000",
+    1,
+  ),
+  movementFixture(
+    "A-W2-001",
+    "ITEM-A",
+    "W2",
+    7,
+    "2026-09-05",
+    "07:00:00.000000",
+  ),
+  movementFixture(
+    "B-W1-001",
+    "ITEM-B",
+    "W1",
+    3,
+    "2026-09-05",
+    "06:00:00.000000",
+  ),
+  movementFixture(
+    "LOCAL-001",
+    "ITEM-LOCAL",
+    "Local Warehouse",
+    12,
+    "2026-09-05",
+    "05:00:00.000000",
+  ),
+];
+
+export function stockLedgerFixture(
+  itemCode: string,
+  warehouse: string,
+  limit = 5,
+): { data: StockMovement[] } {
+  if (
+    !itemCode.trim() || !warehouse.trim() || !Number.isInteger(limit) ||
+    limit < 1 || limit > 20
+  ) {
+    throw new Error("Invalid local stock ledger query");
+  }
+  const rows = STOCK_LEDGER_ROWS.filter((row) =>
+    row.item_code === itemCode && row.warehouse === warehouse &&
+    row.is_cancelled === 0
+  )
+    .sort((left, right) =>
+      right.posting_date.localeCompare(left.posting_date) ||
+      right.posting_time.localeCompare(left.posting_time) ||
+      right.name.localeCompare(left.name)
+    )
+    .slice(0, limit);
+  return {
+    data: rows.map(({ is_cancelled: _cancelled, ...row }) => ({ ...row })),
+  };
+}
 
 export const TOOL_NAMES: Record<Viewer, string> = {
   "invoice-viewer": "erpnext_sales_invoice_get",
