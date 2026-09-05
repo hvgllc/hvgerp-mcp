@@ -1,6 +1,11 @@
 import type { KanbanBoardData } from "./types.ts";
+import {
+  type DetailSessionToken,
+  sameDetailSession,
+} from "./detail-session.ts";
 
 export interface CardDetailState {
+  session: DetailSessionToken | null;
   selectedCardId: string | null;
   cardDetail: Record<string, unknown> | null;
   detailLoading: boolean;
@@ -18,12 +23,17 @@ export type KanbanViewerAction =
   | { type: "tool-input" }
   | { type: "hydrate-board"; board: KanbanBoardData }
   | { type: "tool-error"; message: string }
-  | { type: "select-card"; cardId: string }
-  | { type: "hydrate-detail"; detail: Record<string, unknown> }
+  | { type: "select-card"; session: DetailSessionToken }
+  | {
+    type: "hydrate-detail";
+    session: DetailSessionToken;
+    detail: Record<string, unknown>;
+  }
   | { type: "close-detail" }
-  | { type: "detail-error"; message: string };
+  | { type: "detail-error"; session: DetailSessionToken; message: string };
 
 const INITIAL_DETAIL: CardDetailState = {
+  session: null,
   selectedCardId: null,
   cardDetail: null,
   detailLoading: false,
@@ -59,13 +69,17 @@ export function kanbanStateReducer(
       return {
         ...state,
         detail: {
-          selectedCardId: action.cardId,
+          session: action.session,
+          selectedCardId: action.session.cardId,
           cardDetail: null,
           detailLoading: true,
           detailError: null,
         },
       };
     case "hydrate-detail":
+      if (!sameDetailSession(state.detail.session, action.session)) {
+        return state;
+      }
       return {
         ...state,
         detail: {
@@ -78,6 +92,9 @@ export function kanbanStateReducer(
     case "close-detail":
       return { ...state, detail: { ...INITIAL_DETAIL } };
     case "detail-error":
+      if (!sameDetailSession(state.detail.session, action.session)) {
+        return state;
+      }
       return {
         ...state,
         detail: {

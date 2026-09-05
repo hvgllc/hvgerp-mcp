@@ -42,6 +42,10 @@ import {
 } from "~/shared/kanban/layout";
 import { extractToolResultText } from "~/shared/refresh";
 import { CardDetailModal } from "./DetailModal";
+import type {
+  DetailSaveResult,
+  DetailSessionToken,
+} from "~/shared/kanban/detail-session";
 
 const app = new App({ name: "Kanban Viewer", version: "1.0.0" });
 const AUTO_REFRESH_INTERVAL_MS = 15_000;
@@ -1033,6 +1037,7 @@ export function KanbanViewer() {
     hydrateDetail,
     closeDetail,
     setDetailError,
+    isDetailSessionCurrent,
   } = useKanbanBoard();
   const [liveMessage, setLiveMessage] = useState("");
   const [activeDropColumn, setActiveDropColumn] = useState<string | null>(null);
@@ -1046,7 +1051,6 @@ export function KanbanViewer() {
   const refreshInFlightRef = useRef(false);
   const refreshAfterMutationRef = useRef(false);
   const lastRefreshStartedAtRef = useRef(0);
-  const detailFetchCardIdRef = useRef<string | null>(null);
 
   function updateBoard(board: KanbanBoardData) {
     boardRef.current = board;
@@ -1411,33 +1415,33 @@ export function KanbanViewer() {
   function handleCardTitleClick(card: KanbanCardData) {
     if (!boardRef.current) return;
     const cardId = card.id;
-    detailFetchCardIdRef.current = cardId;
-    selectCard(cardId);
+    const session = selectCard(boardRef.current.doctype, cardId);
 
     void (async () => {
       try {
         const result = await app.callServerTool({
           name: "erpnext_doc_get",
-          arguments: { doctype: boardRef.current!.doctype, name: cardId },
+          arguments: { doctype: session.doctype, name: cardId },
         }, { timeout: TOOL_CALL_TIMEOUT_MS });
 
-        if (detailFetchCardIdRef.current !== cardId) return;
-
         if (result.isError) {
-          setDetailError(extractToolError(result));
+          setDetailError(session, extractToolError(result));
           return;
         }
 
         const text = extractTextContent(result);
         if (!text) {
-          setDetailError("No detail payload returned");
+          setDetailError(session, "No detail payload returned");
           return;
         }
 
-        hydrateDetail(unwrapDoc(JSON.parse(text) as Record<string, unknown>));
+        hydrateDetail(
+          session,
+          unwrapDoc(JSON.parse(text) as Record<string, unknown>),
+        );
       } catch (error) {
-        if (detailFetchCardIdRef.current !== cardId) return;
         setDetailError(
+          session,
           error instanceof Error ? error.message : "Failed to fetch detail",
         );
       }
@@ -1456,10 +1460,10 @@ export function KanbanViewer() {
   }
 
   async function handleSaveDetail(
-    doctype: string,
-    name: string,
+    session: DetailSessionToken,
     data: Record<string, string>,
-  ) {
+  ): Promise<DetailSaveResult> {
+    const { doctype, cardId: name } = session;
     if (!app.getHostCapabilities()?.serverTools) {
       throw new Error("Host does not support proxied server tool calls");
     }
@@ -1486,21 +1490,34 @@ export function KanbanViewer() {
       throw new Error(extractToolError(result));
     }
 
-    // Re-fetch the detail to get the updated values
-    const refreshResult = await app.callServerTool({
-      name: "erpnext_doc_get",
-      arguments: { doctype, name },
-    }, { timeout: TOOL_CALL_TIMEOUT_MS });
-
-    if (!refreshResult.isError) {
-      const text = extractTextContent(refreshResult);
-      if (text) {
-        hydrateDetail(unwrapDoc(JSON.parse(text) as Record<string, unknown>));
+    let detailRefreshed = false;
+    try {
+      const refreshResult = await app.callServerTool({
+        name: "erpnext_doc_get",
+        arguments: { doctype, name },
+      }, { timeout: TOOL_CALL_TIMEOUT_MS });
+      if (refreshResult.isError) {
+        throw new Error(extractToolError(refreshResult));
       }
+      const text = extractTextContent(refreshResult);
+      if (!text) throw new Error("No detail payload returned");
+      hydrateDetail(
+        session,
+        unwrapDoc(JSON.parse(text) as Record<string, unknown>),
+      );
+      detailRefreshed = true;
+    } catch (error) {
+      // Write đã thành công; lỗi đọc lại không phải lỗi lưu hay yêu cầu rollback.
+      setDetailError(
+        session,
+        error instanceof Error
+          ? error.message
+          : "Failed to refresh saved detail",
+      );
+    } finally {
+      void requestBoardRefresh({ ignoreInterval: true });
     }
-
-    // Refresh the board to reflect changes on cards
-    void requestBoardRefresh({ ignoreInterval: true });
+    return { saved: true, detailRefreshed };
   }
 
   async function handleLoadAssignableUsers(): Promise<
@@ -1528,10 +1545,10 @@ export function KanbanViewer() {
   }
 
   async function handleAssignDetail(
-    doctype: string,
-    name: string,
+    session: DetailSessionToken,
     assignTo: string,
   ) {
+    const { doctype, cardId: name } = session;
     if (!app.getHostCapabilities()?.serverTools) {
       throw new Error("Host does not support proxied server tool calls");
     }
@@ -1561,7 +1578,7 @@ export function KanbanViewer() {
             doc._assign = JSON.stringify(assignment.assignees);
           }
         }
-        hydrateDetail(doc);
+        hydrateDetail(session, doc);
       } catch (error) {
         console.warn(
           "[handleAssignDetail] Could not hydrate the assigned doc:",
@@ -1573,10 +1590,10 @@ export function KanbanViewer() {
   }
 
   async function handleUnassignDetail(
-    doctype: string,
-    name: string,
+    session: DetailSessionToken,
     assignee: string,
   ) {
+    const { doctype, cardId: name } = session;
     if (!app.getHostCapabilities()?.serverTools) {
       throw new Error("Host does not support proxied server tool calls");
     }
@@ -1605,7 +1622,7 @@ export function KanbanViewer() {
               .filter(Boolean),
           );
         }
-        hydrateDetail(doc);
+        hydrateDetail(session, doc);
       } catch (error) {
         console.warn(
           "[handleUnassignDetail] Could not hydrate the doc:",
@@ -1663,11 +1680,13 @@ export function KanbanViewer() {
       />
       {state.detail.selectedCardId && state.board && (
         <CardDetailModal
+          key={JSON.stringify(state.detail.session)}
           detail={state.detail}
           board={state.board}
           onClose={closeDetail}
           onMove={requestMove}
           onSave={handleSaveDetail}
+          isSessionCurrent={isDetailSessionCurrent}
           onAssign={handleAssignDetail}
           onUnassign={handleUnassignDetail}
           onLoadUsers={handleLoadAssignableUsers}
