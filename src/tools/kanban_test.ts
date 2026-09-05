@@ -1,4 +1,5 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
+import { SchemaValidator } from "@casys/mcp-server";
 import type { FrappeClient } from "../api/frappe-client.ts";
 import { kanbanTools } from "./kanban.ts";
 import type { ErpNextToolContext } from "./types.ts";
@@ -28,6 +29,104 @@ function getTool(name: string) {
   if (!tool) throw new Error(`Tool not found: ${name}`);
   return tool;
 }
+
+for (
+  const [doctype, statuses] of Object.entries({
+    Issue: ["Open", "Replied", "On Hold", "Resolved", "Closed"],
+    Opportunity: [
+      "Open",
+      "Replied",
+      "Quotation",
+      "Converted",
+      "Closed",
+      "Lost",
+    ],
+  })
+) {
+  for (const status of statuses) {
+    Deno.test(`kanban boundary accepts ${doctype} ${status} in schema and handler`, async () => {
+      const tool = getTool("erpnext_kanban_get_board");
+      const validator = new SchemaValidator();
+      validator.addSchema(
+        tool.name,
+        tool.inputSchema as Record<string, unknown>,
+      );
+      assert(validator.validate(tool.name, { doctype, status }).valid);
+      const queries: unknown[] = [];
+      await tool.handler(
+        { doctype, status },
+        makeCtx(makeMockClient({
+          list: async (actualDoctype, options) => {
+            queries.push([actualDoctype, options.filters]);
+            return [];
+          },
+        })),
+      );
+      assertEquals(queries, [[doctype, [["status", "=", status]]]]);
+    });
+  }
+  for (
+    const status of [
+      ...(doctype === "Issue"
+        ? ["Quotation", "Converted", "Lost"]
+        : ["On Hold", "Resolved"]),
+      "Unknown",
+      "",
+      null,
+      1,
+      ["Open"],
+    ]
+  ) {
+    Deno.test(`kanban boundary rejects ${doctype} ${JSON.stringify(status)} before client calls`, async () => {
+      const calls: string[] = [];
+      const fail = async () => {
+        calls.push("client");
+        throw new Error("Unexpected client call");
+      };
+      const error = await assertRejects(() =>
+        getTool("erpnext_kanban_get_board").handler(
+          { doctype, status, raised_by: "me", opportunity_owner: "me" },
+          makeCtx(makeMockClient({ list: fail, get: fail, callMethod: fail })),
+        )
+      );
+      assertEquals(calls, []);
+      assert(error instanceof Error);
+      assert(error.message.includes("status"));
+    });
+  }
+}
+
+Deno.test("kanban boundary keeps Task status unsupported without adding a filter", async () => {
+  const tool = getTool("erpnext_kanban_get_board");
+  const queries: unknown[] = [];
+  await tool.handler(
+    { doctype: "Task", status: "Open", project: "PROJECT-1" },
+    makeCtx(makeMockClient({
+      list: async (_doctype, options) => {
+        queries.push(options.filters);
+        return [];
+      },
+    })),
+  );
+  assertEquals(queries, [[["project", "=", "PROJECT-1"]]]);
+  assert(
+    tool.inputSchema.properties?.status?.description?.includes(
+      "not supported for Task",
+    ),
+  );
+});
+
+Deno.test("kanban boundary schema rejects unknown and non-string status", () => {
+  const tool = getTool("erpnext_kanban_get_board");
+  const validator = new SchemaValidator();
+  validator.addSchema(tool.name, tool.inputSchema as Record<string, unknown>);
+  for (const status of ["Unknown", "", null, 1, ["Open"]]) {
+    assertEquals(
+      validator.validate(tool.name, { doctype: "Issue", status }).valid,
+      false,
+    );
+  }
+});
 
 Deno.test("erpnext_kanban_get_board - returns a Task board with metadata and pagination", async () => {
   let capturedLimit = 0;
