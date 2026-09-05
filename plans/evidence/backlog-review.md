@@ -499,3 +499,17 @@ ngoài plans bằng main 341cba4. Không đổi validator, metadata thật hoặ
 history/provenance merge. Root chưa đồng bộ theo chỉ thị chờ review lại; không
 sửa source ứng dụng, push, reply hoặc merge PR. Evidence được commit riêng sau
 test; delta mới vẫn cần fresh review.
+
+## Fresh review sau sửa fixture
+
+Reviewer độc lập APPROVE HEAD `a1b18e18a8fcca85c62067597b9491fa86b2cd92`, test
+source `467c74c4fadb92970ae1290f3552289bc6bd39fa`. Reviewer tự xác minh
+validator 25/25, 84 test đạt không bỏ qua, fmt 53 file, lint 3 file, diff sạch
+và không có delta ngoài plans so với main 341cba4. Fixture không còn phụ thuộc
+TODO thật; không có kế hoạch phụ thuộc 001 nên TODO tổng hợp không tạo lỗi
+prerequisite.
+
+Parent đọc đầy đủ delta test/evidence và tự chạy cùng các gate: đều exit 0. Sáu
+provenance merge và test clean clone vẫn được giữ; không đổi validator
+production hoặc tự bỏ gate. PR25 bắt buộc merge commit để giữ các reviewed
+commit trong lịch sử truy cập được từ clean clone, không squash hoặc rebase.
