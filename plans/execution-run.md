@@ -525,3 +525,57 @@ backlog, GitHub, commit hoặc push.
   validator phải chạy ở worktree tích hợp main mới; không nới kiểm drift để root
   source cũ giả đạt. Backlog branch đã merge main67 sạch tại
   `dd993b765473f0e72ef5056b03fbba8c2be4f35c`, chưa push revision đang sửa.
+
+## Tiến độ 2026-09-05, sau 09:25 UTC
+
+- 017 đã merge PR35 tại `95662c3ee38227d718795995889e28be96041b71`. Parent và
+  reviewer kiểm tích hợp 1255 test đạt, 0 thất bại, 4 bỏ qua; tree GitHub khớp
+  tree đã kiểm thử. CI33955716682 dùng JSR thật và Codex sạch đúng HEAD906eaf20.
+  Root ghi DONE, lưu đủ 38 artifact đúng byte và bằng chứng merge. Tổng 14/25
+  mục DONE, không coi những mục chỉ có local test xanh là hoàn tất.
+- 015 đã push HEAD `65d83be9401d2b92db7ee4a8fb4042c6f50932c9`, CI33957572412 đạt
+  với JSR thật, 1211 test và release preflight. Đang chờ Codex đúng HEAD;
+  approval trên HEAD7f74a48 cũ không được dùng lại. Cần kiểm tích hợp với 017
+  vừa merge, đặc biệt StockViewer và host/fixture Browser.
+- 006 executor hoàn tất source `cf2e43b3459bdd87ff3bce019ad0ac75369166d9`, HEAD
+  evidence `e20bb96ae5ae6351e29b5f8f1243fcb720e65832`: 205 test trọng tâm và
+  1261 test toàn suite đạt. Ma trận ghi đủ 17 tool/các nhánh và giới hạn request
+  thực; đang review độc lập, chưa push hoặc coi DONE.
+- PR25 lượt A có snapshot `b9d6d02a9692c3efff11836b97d8cfbc69da1ec7`, validator
+  25/25, selftest 124 và clean-history 2 ca đạt. Source ứng dụng vẫn bằng
+  main67. Đã sửa ba finding helper và fixture prerequisite phụ thuộc trạng thái
+  cũ; definition binding chưa triển khai. Reviewer riêng đang kiểm định nghĩa
+  của 13 mục DONE tại snapshot này trước khi cấp supplemental approval. Mục 017
+  mới DONE ở root chưa đồng bộ vào snapshot đang review.
+- Quyền sửa/phát hành framework 002 và quyền khóa dependency/npm của 021 vẫn
+  chưa được xác nhận riêng. Không suy rộng quyền tải Node thành các quyền đó.
+
+## Tiến độ 2026-09-05, sau 10:09 UTC
+
+- 006 đã merge PR38 tại `67896f3208caee923659f1900c399d87e99c403c`.
+  CI33958823021 dùng JSR thật, 1314 test đạt và preflight không publish; Codex
+  sạch đúng HEAD `d0b122dbd2273d2ae9e6d480eca96684088acc82`. Parent và reviewer
+  kiểm tích hợp 1314 test. Root ghi DONE, tổng 15/25; không coi budget 100000
+  accepted row là hard cap số row nhận qua mạng khi request đang chạy song song.
+- 015 đã resolve ba hunk host/fixture khi tích hợp 017, được reviewer độc lập
+  duyệt tại `49f45838d189877f768d811280c2c037e9ba44bc`, full 1264 test đạt.
+  Parent chạy Browser R2: 23 PNG, 48 record gồm một diagnostic locator, console
+  0 error/1 warning. Reviewer đọc toàn bộ artifact và APPROVE đúng phạm vi.
+  Kanban chỉ là smoke host, không tính bằng chứng sửa 016.
+- Tích hợp 015 với main sau 006 đạt tại
+  `0fdb66dfde982c5a84a18c911998d455095692fc`: reviewer và parent full 1323 test
+  đạt, 7 HTML/host/fixture giữ nguyên byte so với lượt Browser. Đã push PR37
+  HEAD `cdad59af2f104d0a09c9ee6e7f83e554c66041a6`, chạy Test33959872199 và yêu
+  cầu Codex lại sau hơn 25 phút im lặng; chỉ tính kết quả đúng HEAD này.
+- PR25 snapshot A được reviewer duyệt supplemental definition của 13 mục DONE.
+  Lượt B tại `d37b6d43556c5688b2ce0bd8cebe3220bbc0b63f` thêm binding definition
+  và có 156 test đạt. Reviewer tìm thêm một lỗi fixture positive phụ thuộc 015
+  chưa DONE, có thể đỏ giả khi backlog tiến triển. Executor đang sửa premise
+  trong VM và thêm regression; không nới validator hoặc tạo approval giả. Chưa
+  push helper, chưa đồng bộ DONE006/017 vào snapshot đang review.
+- 013 đối chiếu main67896f3, quote KPI orders chuyển 1109 sang 1104, giữ nguyên
+  contract complete-read/budget của 006. Đã chuyển IN_PROGRESS và giao executor
+  ở worktree riêng. Funnel all-time giữ population cũ không cận ngày, có test
+  riêng; các kỳ hữu hạn phải dùng siteToday và cận Date/Datetime đúng kiểu.
+- Root app vẫn d2c5305; file cá nhân được giữ nguyên. Quyền framework002 và khóa
+  graph/npm021 còn chờ xác nhận, không tự phát hành hoặc nâng dependency.

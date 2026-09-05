@@ -9,7 +9,7 @@
 - Mục audit: 17; loại: `bug`.
 - Ưu tiên: P1; công sức: M; rủi ro sửa: MED.
 - Phụ thuộc: `007`.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
+- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `DONE`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 Invoice và Stock có thể đi vào empty state trước khi trình bày lỗi. Các viewer
@@ -181,11 +181,11 @@ có chủ ý.
 
 ## Tiêu chí hoàn tất
 
-- [ ] Typecheck, test trọng tâm và UI build đạt.
-- [ ] Có bằng chứng 15 ca render trong host, không thay bằng test source regex.
-- [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
+- [x] Typecheck, test trọng tâm và UI build đạt.
+- [x] Có bằng chứng 15 ca render trong host, không thay bằng test source regex.
+- [x] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
-- [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/017.md`, cập
+- [x] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/017.md`, cập
       nhật trạng thái ở `plans/README.md`. Không ghi giá trị bí mật.
 
 ## Điều kiện dừng

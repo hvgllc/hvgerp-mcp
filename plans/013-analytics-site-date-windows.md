@@ -9,7 +9,7 @@
 - Mục audit: 13; loại: `bug`.
 - Ưu tiên: P1; công sức: M; rủi ro sửa: thấp; sửa cận thời gian.
 - Phụ thuộc: `005`, `006`.
-- Mốc soạn: `67a7bc4`, 2026-09-05. Trạng thái thực thi: `TODO`.
+- Mốc soạn: `67896f3`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 KPI orders dựng local Date rồi toISOString khiến UTC+7 báo khoảng tháng 8 là
@@ -19,7 +19,7 @@ từng loại field.
 
 ## Hiện trạng và chứng cứ
 
-`src/tools/analytics.ts:1109`:
+`src/tools/analytics.ts:1104`:
 
 <!-- evidence: src/tools/analytics.ts -->
 
@@ -185,4 +185,11 @@ và nhiều TZ ngăn regression khi deploy từ laptop sang container.
 Date, chỉ đổi vị trí dòng. Outstanding/overdue/aging đã dùng một siteToday cho
 report và bucket trong 005; giữ đường đó, không sửa lại như lỗi còn nguyên. Các
 window orders/revenue/trend/funnel vẫn cần ma trận và cận truy vấn của 013. Chưa
-thực thi: chờ 006 DONE rồi kiểm lại source trước dispatch.
+thực thi tại thời điểm đối chiếu 005.
+
+Đối chiếu sau 006 tại main `67896f3208caee923659f1900c399d87e99c403c`: 005 và
+006 đã DONE. Quote KPI orders giữ nguyên, chuyển tới dòng 1104. Các truy vấn
+tổng hợp nay dùng complete-read và budget chung của 006; giữ nguyên các guard,
+phân trang, company/currency và schema khi bổ sung cận ngày.
+Outstanding/overdue/aging và P&L không bị coi lại là lỗi local Date. Phạm vi và
+tiêu chí hoàn tất không giảm; bắt đầu thực thi 013 sau đối chiếu này.

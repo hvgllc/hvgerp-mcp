@@ -441,9 +441,9 @@
     "evidence": [
       {
         "path": "src/tools/analytics.ts",
-        "line": 1109,
+        "line": 1104,
         "code": "      const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);\n      const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);\n      const lastMonthStartStr = lastMonthStart.toISOString().split(\"T\")[0];\n      const lastMonthEndStr = lastMonthEnd.toISOString().split(\"T\")[0];",
-        "sourceRef": "67a7bc4d777cccced5255b0a43ae648752241f21"
+        "sourceRef": "67896f3208caee923659f1900c399d87e99c403c"
       },
       {
         "path": "src/tools/site-date.ts",
@@ -471,15 +471,15 @@
     "evidence": [
       {
         "path": "src/tools/analytics.ts",
-        "line": 199,
+        "line": 204,
         "code": "      if (!input.include_drafts) {\n        filters.push([\"docstatus\", \"=\", 1]); // Submitted only",
-        "sourceRef": "67a7bc4d777cccced5255b0a43ae648752241f21"
+        "sourceRef": "67896f3208caee923659f1900c399d87e99c403c"
       },
       {
         "path": "src/tools/analytics.ts",
-        "line": 207,
+        "line": 212,
         "code": "          filters: [[\"docstatus\", \"!=\", 2]], // exclude cancelled",
-        "sourceRef": "67a7bc4d777cccced5255b0a43ae648752241f21"
+        "sourceRef": "67896f3208caee923659f1900c399d87e99c403c"
       }
     ]
   },
@@ -671,9 +671,9 @@
       },
       {
         "path": "src/tools/analytics.ts",
-        "line": 329,
+        "line": 331,
         "code": "        months: {\n          type: \"number\",\n          description: \"How many months back to include (default 6)\",\n        },",
-        "sourceRef": "67a7bc4d777cccced5255b0a43ae648752241f21"
+        "sourceRef": "67896f3208caee923659f1900c399d87e99c403c"
       }
     ]
   },

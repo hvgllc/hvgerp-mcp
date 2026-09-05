@@ -9,7 +9,7 @@
 - Mục audit: Hướng phát triển 3; loại: `direction`.
 - Ưu tiên: P3; công sức: M; rủi ro sửa: LOW.
 - Phụ thuộc: `005`, `006`.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `TODO`.
+- Mốc soạn: `67896f3`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
 - Độ tin cậy: cao về vị trí cơ hội trong roadmap; nhu cầu người dùng và khả năng
   ERP cần khảo sát, chưa coi là đã chứng minh.
 
@@ -154,3 +154,13 @@ nếu contact linkage chưa xác minh ghi defer phần đó, không bịa schema
 
 Mỗi section mới cần pagination, permission và currency policy riêng, không mặc
 định đầy đủ.
+
+Đối chiếu sau khi 005/006 DONE tại main
+`67896f3208caee923659f1900c399d87e99c403c`: quote operations dòng 561 giữ
+nguyên. 005/006 chỉ cung cấp contract tiền tệ và complete-read trong analytics,
+không tự làm các list orders/invoices/payments thành truy vấn đầy đủ. Các
+dedicated list hiện chưa có company/offset; Sales Invoice list chưa trả
+currency. Contact list chỉ có company_name/status, chưa chứng minh liên kết
+Customer. Thiết kế phải ghi các khoảng trống này và giới hạn composition, không
+coi chúng là API sẵn có hoặc tự thêm API trong đợt khảo sát. Bắt đầu thực thi
+tài liệu, giữ đủ rubric và phạm vi thiết kế đã duyệt.

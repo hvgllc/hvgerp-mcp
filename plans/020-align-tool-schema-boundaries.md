@@ -9,7 +9,7 @@
 - Mục audit: 20; loại: `bug`.
 - Ưu tiên: P2; công sức: M; rủi ro sửa: MED.
 - Phụ thuộc: `014`.
-- Mốc soạn: `67a7bc4`, 2026-09-05. Trạng thái thực thi: `TODO`.
+- Mốc soạn: `67896f3`, 2026-09-05. Trạng thái thực thi: `TODO`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 Schema Kanban chỉ khai báo trạng thái Opportunity dù Issue adapter nhận trạng
@@ -31,7 +31,7 @@ tạo mảng. Hai biên này cần được kiểm cả ở schema lẫn handler
         },
 ```
 
-`src/tools/analytics.ts:329`:
+`src/tools/analytics.ts:331`:
 
 <!-- evidence: src/tools/analytics.ts -->
 
@@ -179,3 +179,6 @@ thay đổi.
 maximum; handler còn lấy input.months trực tiếp. Chỉ vị trí đoạn source đổi.
 Kanban schema chưa đổi. Chờ chuỗi 006/013/014 hoàn tất trước khi thực thi và đối
 chiếu lại các đoạn này, không nhận cập nhật kế hoạch là đã sửa schema.
+
+Đối chiếu sau 006 tại main67896f3: quote months vẫn nguyên byte, chuyển tới
+dòng 331. Chưa đổi schema hoặc triển khai 020; chờ 013/014 theo phụ thuộc.

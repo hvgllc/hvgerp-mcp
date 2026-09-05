@@ -9,7 +9,7 @@
 - Mục audit: 6; loại: `bug`.
 - Ưu tiên: P1; công sức: L; rủi ro sửa: vừa; lượng truy vấn và ngữ nghĩa tổng.
 - Phụ thuộc: `005`.
-- Mốc soạn: `67a7bc4`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
+- Mốc soạn: `67a7bc4`, 2026-09-05. Trạng thái thực thi: `DONE`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 Analytics có giới hạn 500/1000/5000 trên dữ liệu đầu vào nhưng lấy length/reduce
@@ -175,13 +175,13 @@ hoặc list-result pagination.
 
 ## Tiêu chí hoàn tất
 
-- [ ] Ma trận toàn analytics không còn phép tổng âm thầm dùng một trang.
-- [ ] Mọi đường đầy đủ hoặc lỗi rõ khi giới hạn an toàn; không xuất partial
+- [x] Ma trận toàn analytics không còn phép tổng âm thầm dùng một trang.
+- [x] Mọi đường đầy đủ hoặc lỗi rõ khi giới hạn an toàn; không xuất partial
       total như complete.
-- [ ] Toàn bộ gate server và tests vượt cap đạt, request budget có bằng chứng.
-- [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
+- [x] Toàn bộ gate server và tests vượt cap đạt, request budget có bằng chứng.
+- [x] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
-- [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/006.md`, cập
+- [x] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/006.md`, cập
       nhật trạng thái ở `plans/README.md`. Không ghi giá trị bí mật.
 
 ## Điều kiện dừng
