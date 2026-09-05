@@ -5,9 +5,11 @@ import {
 import {
   boardFixture,
   createDetailFixtureStore,
+  malformedViewerFixture,
   SCENARIOS,
   TOOL_NAMES,
   toolArguments,
+  transactionDateFixture,
   UI_VIEWERS,
   viewerFixture,
 } from "./fixtures.ts";
@@ -26,6 +28,10 @@ const scenario = SCENARIOS.find((name) => name === query.get("scenario")) ??
 const chartTypes = ["bar", "horizontal-bar", "pie", "donut"] as const;
 const chartType = chartTypes.find((name) => name === query.get("chart")) ??
   "bar";
+const dateFixture = viewer === "invoice-viewer" &&
+    (scenario === "sales-order-date" || scenario === "quotation-date")
+  ? transactionDateFixture(scenario)
+  : null;
 for (
   const [id, values, selected] of [
     ["viewer", UI_VIEWERS, viewer],
@@ -121,6 +127,11 @@ function responseFor(
   name: string,
   args: Record<string, unknown>,
 ): FixtureResult {
+  if (dateFixture && name === dateFixture.refreshRequest.toolName) {
+    return args.name === dateFixture.data.name
+      ? result(dateFixture)
+      : failure("Unknown local date document");
+  }
   if (name === TOOL_NAMES[viewer]) {
     if (scenario === "refresh-error") return failure("Local refresh error");
     if (viewer === "kanban-viewer") {
@@ -220,9 +231,11 @@ bridge.oncalltool = async (params, extra) => {
   const id = nextId++;
   const args = params.arguments ?? {};
   record({ id, tool: params.name, args, outcome: "received" });
-  const held = (scenario === "detail-race" &&
-    (params.name === "erpnext_doc_get" ||
-      detailMutations.has(params.name))) ||
+  const held = (dateFixture !== null &&
+    params.name === dateFixture.refreshRequest.toolName) ||
+    (scenario === "detail-race" &&
+      (params.name === "erpnext_doc_get" ||
+        detailMutations.has(params.name))) ||
     (scenario === "board-race" &&
       (params.name === "erpnext_kanban_get_board" ||
         params.name === "erpnext_kanban_move_card"));
@@ -301,7 +314,9 @@ bridge.onerror = (error) => {
 async function sendSuccess() {
   await bridge.sendToolResult(
     result(
-      viewer === "kanban-viewer" ? board : viewerFixture(viewer, chartType),
+      viewer === "kanban-viewer"
+        ? board
+        : dateFixture ?? viewerFixture(viewer, chartType),
     ),
   );
   record({
@@ -316,11 +331,16 @@ async function sendSuccess() {
 bridge.oninitialized = () => {
   void (async () => {
     record({ outcome: "initialized", viewer, scenario });
-    await bridge.sendToolInput({ arguments: toolArguments(viewer) });
+    await bridge.sendToolInput({
+      arguments: dateFixture?.refreshRequest.arguments ?? toolArguments(viewer),
+    });
     record({ outcome: "tool-input" });
     if (scenario === "initial-error") {
       await bridge.sendToolResult(failure("Local initial error"));
       record({ outcome: "initial-error" });
+    } else if (scenario === "malformed-payload") {
+      await bridge.sendToolResult(result(malformedViewerFixture(viewer)));
+      record({ outcome: "malformed-payload", viewer });
     } else {
       await sendSuccess();
     }
@@ -343,6 +363,23 @@ successButton.onclick = () => {
     record({ outcome: "send-error", message: String(error) })
   );
 };
+if (dateFixture) {
+  const malformedButton = document.createElement("button");
+  malformedButton.textContent = "Gửi ngày sai kiểu";
+  malformedButton.onclick = () => {
+    void bridge.sendToolResult(
+      result({
+        ...dateFixture,
+        data: { ...dateFixture.data, transaction_date: {} },
+      }),
+    ).then(() => {
+      record({ outcome: "malformed-date", viewer, scenario });
+    }).catch((error: unknown) =>
+      record({ outcome: "send-error", message: String(error) })
+    );
+  };
+  successButton.after(malformedButton);
+}
 if (!frame.contentWindow) throw new Error("Missing viewer window");
 await bridge.connect(
   new PostMessageTransport(frame.contentWindow, frame.contentWindow),
