@@ -43,6 +43,18 @@ function evidenceSource(sourcePath, sourceRef) {
 }
 const metadataSection = (body) =>
   body.split("\n## Trạng thái và mục tiêu\n")[1]?.split("\n## ")[0] ?? "";
+function auditOf(body) {
+  const fields = body.split("\n").filter((line) =>
+    /^\s*-\s*Mục audit\b/.test(line)
+  );
+  if (
+    fields.length !== 1 ||
+    !metadataSection(body).split("\n").includes(fields[0])
+  ) return undefined;
+  return fields[0].match(
+    /^- Mục audit: ([1-9]|1\d|2[0-2]|Hướng phát triển [1-3]); loại: `[^`]+`\.$/,
+  )?.[1];
+}
 function statusOf(body) {
   if (body.split("Trạng thái thực thi:").length !== 2) return undefined;
   return metadataSection(body).match(
@@ -279,11 +291,22 @@ for (const entry of manifest) {
     "plans/README.md",
     "plans/evidence/" + String(entry.id).padStart(3, "0") + ".md",
   ];
-  const planScope = [...scopeSection.matchAll(/^- `([^`]+)`/gm)]
-    .map((match) => match[1])
-    .filter((file) => !administrativeFiles.includes(file));
+  const scopeItems = [
+    ...scopeSection.matchAll(/^- `([^`]+)`([^\n]*(?:\n[ \t]+[^\n]*)*)/gm),
+  ]
+    .filter((match) => !administrativeFiles.includes(match[1]));
+  const planScope = scopeItems.map((match) => match[1]);
+  const planNewFiles = scopeItems.filter((match) =>
+    /^\s*\(tạo\s+mới(?:\)|;)/.test(match[2])
+  ).map((match) => match[1]);
   if (!sameSet(planScope, entry.scope)) {
     fail(entry.file + ": plan and manifest scope differ");
+  }
+  if (entry.newFiles.some((file) => !entry.scope.includes(file))) {
+    fail(entry.file + ": newFiles contains paths outside scope");
+  }
+  if (!sameSet(planNewFiles, entry.newFiles)) {
+    fail(entry.file + ": plan and manifest new-file classifications differ");
   }
   for (const heading of headings) {
     if (!body.includes(`## ${heading}\n`)) {
@@ -343,6 +366,9 @@ for (const entry of manifest) {
   }
   if (entry.id > 22 && entry.audit !== `Hướng phát triển ${entry.id - 22}`) {
     fail(`${entry.file}: sai hướng phát triển`);
+  }
+  if (auditOf(body) !== entry.audit) {
+    fail(entry.file + ": plan and manifest audit mappings differ");
   }
   for (const scoped of entry.scope) {
     const dependencyCreates = (id, seen = new Set()) => {

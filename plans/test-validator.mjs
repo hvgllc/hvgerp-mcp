@@ -676,7 +676,10 @@ function scopePath(path, fresh = false) {
   const first = manifest.find((entry) => entry.id === 15).scope[0];
   return {
     [fileFor(15)]: (text) =>
-      text.replace("- " + tick + first + tick, "- " + tick + path + tick),
+      text.replace(
+        "- " + tick + first + tick,
+        "- " + tick + path + tick + (fresh ? " (tạo mới)" : ""),
+      ),
     "plans/manifest.json": editManifest((entries) => {
       const entry = entries.find((entry) => entry.id === 15);
       entry.scope[0] = path;
@@ -684,6 +687,146 @@ function scopePath(path, fresh = false) {
     }),
   };
 }
+
+test("newFiles cannot exempt an existing scope path without the plan marker", () => {
+  const entry = manifest.find((item) =>
+    item.scope.includes("docs/concepts.md")
+  );
+  assert(entry);
+  const result = invalid(
+    {
+      "plans/manifest.json": editManifest((entries) =>
+        entries.find((item) => item.id === entry.id).newFiles.push(
+          "docs/concepts.md",
+        )
+      ),
+    },
+    /plan and manifest new-file classifications differ/,
+    ["docs/concepts.md"],
+  );
+  assert.deepEqual(result.messages, [
+    entry.file + ": plan and manifest new-file classifications differ",
+  ]);
+});
+test("newFiles must be a subset of scope", () => {
+  invalid({
+    "plans/manifest.json": editManifest((entries) =>
+      entries[4].newFiles.push("src/outside-scope.ts")
+    ),
+  }, /newFiles contains paths outside scope/);
+});
+test("a plan new-file marker requires the manifest exemption", () => {
+  const entry = manifest.find((item) => item.id === 7);
+  const result = invalid({
+    "plans/manifest.json": editManifest((entries) => {
+      const changed = entries.find((item) => item.id === 7);
+      changed.newFiles = changed.newFiles.filter((path) =>
+        path !== "src/ui/testing/host.ts"
+      );
+    }),
+  }, /007.*plan and manifest new-file classifications differ/);
+  assert.deepEqual(result.messages, [
+    entry.file + ": plan and manifest new-file classifications differ",
+  ]);
+});
+test("dependency-created scope still requires consistent new-file classification", () => {
+  invalid({
+    "plans/manifest.json": editManifest((entries) =>
+      entries.find((item) => item.id === 17).newFiles.push(
+        "src/ui/testing/host.ts",
+      )
+    ),
+  }, /017.*plan and manifest new-file classifications differ/);
+});
+test("a dependency-created plan marker cannot bypass classification in the other direction", () => {
+  invalid({
+    [fileFor(17)]: (text) =>
+      text.replace(
+        "- " + tick + "src/ui/testing/host.ts" + tick,
+        "- " + tick + "src/ui/testing/host.ts" + tick + " (tạo mới)",
+      ),
+  }, /017.*plan and manifest new-file classifications differ/);
+});
+test("historical new-file markers remain valid after their files are tracked", () => {
+  assert(
+    manifest.find((entry) => entry.id === 7).newFiles.includes(
+      "src/ui/testing/host.ts",
+    ),
+  );
+  execFileSync(
+    "git",
+    ["ls-files", "--error-unmatch", "src/ui/testing/host.ts"],
+    { cwd: repoRoot },
+  );
+  const result = run();
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+test("new-file marker accepts wrapped explanations but ignores unrelated prose", () => {
+  const result = run({
+    [fileFor(5)]: (text) =>
+      text.replace("(tạo mới)", "(tạo\n  mới; thêm test tương ứng)") +
+      "\nGhi chú: (tạo mới) chỉ phân loại trong scope.\n",
+  });
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+function auditLabel(text, value) {
+  return text.replace(/(^- Mục audit: )[^;]+/m, "$1" + value);
+}
+test("audit metadata must match the manifest for all numeric and direction plans", () => {
+  for (
+    const entry of [
+      manifest.find((item) => item.id === 5),
+      ...manifest.filter((item) => item.id !== 5),
+    ]
+  ) {
+    const changed = entry.id <= 22
+      ? String(entry.id === 22 ? 1 : entry.id + 1)
+      : `Hướng phát triển ${entry.id === 25 ? 1 : entry.id - 21}`;
+    const result = invalid({
+      [fileFor(entry.id)]: (text) => auditLabel(text, changed),
+    }, /plan and manifest audit mappings differ/);
+    assert.deepEqual(result.messages, [
+      entry.file + ": plan and manifest audit mappings differ",
+    ]);
+  }
+});
+for (
+  const [name, change] of [
+    ["missing", (text) => text.replace(/^- Mục audit:.*\n/m, "")],
+    ["duplicate", (text) => text + "\n- Mục audit: 5; loại: `bug`.\n"],
+    ["malformed duplicate", (text) => text + "\n- Mục audit = 5\n"],
+    [
+      "missing delimiter",
+      (text) => text.replace("Mục audit: 5;", "Mục audit: 5"),
+    ],
+    [
+      "wrong field punctuation",
+      (text) => text.replace("Mục audit:", "Mục audit ="),
+    ],
+    ["outside metadata", (text) =>
+      text.replace(/^- Mục audit:.*\n/m, "") +
+      "\n- Mục audit: 5; loại: `bug`.\n"],
+    ["out-of-range numeric", (text) => auditLabel(text, "23")],
+    [
+      "out-of-range direction",
+      (text) => auditLabel(text, "Hướng phát triển 4"),
+    ],
+  ]
+) {
+  test("audit metadata rejects " + name, () => {
+    invalid(
+      { [fileFor(5)]: change },
+      /005.*plan and manifest audit mappings differ/,
+    );
+  });
+}
+test("audit prose outside declarations does not change metadata", () => {
+  const result = run({
+    [fileFor(5)]: (text) =>
+      text + "\nGhi chú: Mục audit: 6 không phải metadata.\n",
+  });
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
 for (
   const [path, kind] of [["src/untracked-plan-fixture.ts", "file"], [
     "src/untracked-plan-fixture/",
