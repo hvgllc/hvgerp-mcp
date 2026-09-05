@@ -134,6 +134,194 @@ function invalid(replacements, pattern, hidden, filesystem, gitOutput) {
   return result;
 }
 
+for (const marker of [tick.repeat(3), "~~~", "   " + tick.repeat(4)]) {
+  for (
+    const example of [
+      "[Example](missing-code-example.md)",
+      "[example]: /etc/passwd",
+      "[example]: <unfinished",
+    ]
+  ) {
+    test(`Markdown code fence ignores example ${JSON.stringify(marker)} ${example}`, () => {
+      const result = run({
+        "plans/evidence/backlog-review.md": (text) =>
+          text +
+          `\n${marker}markdown\n${example}\n${marker.trim()}\n`,
+      });
+      assert.equal(result.thrown, undefined);
+      assert.equal(result.exitCode, 0, result.messages.join("\n"));
+    });
+  }
+}
+for (const delimiter of [tick, tick.repeat(2), tick.repeat(3)]) {
+  test(`Markdown inline code ignores link and definition examples ${delimiter.length}`, () => {
+    const result = run({
+      "plans/evidence/backlog-review.md": (text) =>
+        text +
+        `\nExample ${delimiter}[Example](missing-code-example.md)${delimiter}.\n` +
+        `${delimiter}\n[example]: /etc/passwd\n${delimiter}\n`,
+    });
+    assert.equal(result.thrown, undefined);
+    assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  });
+}
+for (const marker of [tick.repeat(3), "~~~"]) {
+  test(`Markdown required heading cannot come from fenced example ${marker}`, () => {
+    const setup = stale(21, "Heading fixture explicitly uses non-DONE state");
+    invalid(
+      compose(setup, {
+        [fileFor(21)]: (text) =>
+          text.replace("## Bảo trì\n", "## Notes\n") +
+          `\n${marker}markdown\n## Bảo trì\n${marker}\n`,
+      }),
+      /021.*thiếu Bảo trì/,
+    );
+  });
+}
+for (
+  const line of [
+    "### Bảo trì",
+    "Example ## Bảo trì",
+    tick + "## Bảo trì" + tick,
+  ]
+) {
+  test(`Markdown required heading must be structural ${line}`, () => {
+    invalid(
+      compose(stale(21), {
+        [fileFor(21)]: (text) => text.replace("## Bảo trì\n", line + "\n"),
+      }),
+      /021.*thiếu Bảo trì/,
+    );
+  });
+}
+
+for (const marker of [tick.repeat(3), "~~~"]) {
+  for (const target of ["missing-after-code.md", "/etc/passwd"]) {
+    test(`Markdown live target after closed fence remains checked ${marker} ${target}`, () => {
+      invalid(
+        {
+          "plans/evidence/backlog-review.md": (text) =>
+            text +
+            `\n${marker}md\n[example]: missing-inside.md\n${marker}\n[Live](${target})\n`,
+        },
+        new RegExp(
+          target === "/etc/passwd"
+            ? "unsafe Markdown link"
+            : "link hỏng missing-after-code",
+        ),
+      );
+    });
+  }
+  test(`Markdown fenced reference definition remains inert with live usage ${marker}`, () => {
+    const result = run({
+      "plans/evidence/backlog-review.md": (text) =>
+        text +
+        `\n[Example][sample]\n${marker}\n[sample]: /etc/passwd\n${marker}\n`,
+    });
+    assert.equal(result.thrown, undefined);
+    assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  });
+  test(`Markdown unclosed fence masks examples through EOF ${marker}`, () => {
+    const result = run({
+      "plans/evidence/backlog-review.md": (text) =>
+        text +
+        `\n${marker}md\n[Example](missing-example.md)\n[sample]: /etc/passwd\n`,
+    });
+    assert.equal(result.thrown, undefined);
+    assert.equal(result.exitCode, 0, result.messages.join("\n"));
+    invalid(
+      compose(stale(21), {
+        [fileFor(21)]: (text) =>
+          text.replace("## Bảo trì\n", `${marker}\n## Bảo trì\n`),
+      }),
+      /021.*thiếu Bảo trì/,
+    );
+  });
+}
+for (
+  const [open, falseClose, close] of [
+    [tick.repeat(4), tick.repeat(3), tick.repeat(5)],
+    ["~~~~", "~~~", "~~~~~"],
+    [tick.repeat(3), "~~~", tick.repeat(3)],
+    ["~~~", tick.repeat(3), "~~~"],
+    [tick.repeat(3), tick.repeat(3) + " text", tick.repeat(3)],
+  ]
+) {
+  test(`Markdown fence requires matching marker and length ${open} ${falseClose}`, () => {
+    const result = run({
+      "plans/evidence/backlog-review.md": (text) =>
+        text +
+        `\n${open}\n${falseClose}\n[Example](missing-example.md)\n${close}\n`,
+    });
+    assert.equal(result.thrown, undefined);
+    assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  });
+}
+test("Markdown invalid backtick info is not a fence opener", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      "\n" + tick.repeat(3) + " info" + tick +
+      "invalid\n\n[Live](missing-live.md)\n",
+  }, /link hỏng missing-live.md/);
+});
+for (const prefix of ["Example " + tick, "Example \\" + tick]) {
+  test(`Markdown unmatched or escaped inline tick cannot mask live link ${prefix}`, () => {
+    invalid({
+      "plans/evidence/backlog-review.md": (text) =>
+        text +
+        `\n${prefix}[Live](missing-live.md)\n`,
+    }, /link hỏng missing-live.md/);
+  });
+}
+test("Markdown inline code keeps live links and definitions outside spans", () => {
+  const result = invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      "\n" + tick + "[Example](missing-example.md)" + tick +
+      " [Live](missing-live.md)\n[live]: missing-definition.md\n",
+  }, /link hỏng missing-live.md/);
+  assert.deepEqual(result.messages, [
+    "evidence/backlog-review.md: link hỏng missing-live.md",
+    "evidence/backlog-review.md: link hỏng missing-definition.md",
+  ]);
+});
+test("Markdown heading outside a closed example satisfies the requirement", () => {
+  const setup = stale(21);
+  const before = run(setup);
+  const after = run(compose(setup, {
+    [fileFor(21)]: (text) =>
+      text.replace(
+        "## Bảo trì\n",
+        tick.repeat(4) + "md\n## Example\n" + tick.repeat(4) +
+          "\n   ## Bảo trì ###\n",
+      ),
+  }));
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(after.messages, before.messages);
+});
+
+test("Markdown inline code pairs exact backtick runs and keeps internal unmatched ticks", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      "\nExample " + tick.repeat(2) + "inside " + tick +
+      " [Example](missing-example.md) " + tick.repeat(2) + " end.\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+for (const newline of ["\n", "\r\n"]) {
+  test(`Markdown inline code cannot span blank paragraphs ${JSON.stringify(newline)}`, () => {
+    invalid({
+      "plans/evidence/backlog-review.md": (text) =>
+        text +
+        newline + "Example " + tick + newline.repeat(2) +
+        "[Live](missing-live.md)" + newline + tick + newline,
+    }, /link hỏng missing-live.md/);
+  });
+}
+
 function editManifest(edit) {
   return (text) => {
     const entries = JSON.parse(text);

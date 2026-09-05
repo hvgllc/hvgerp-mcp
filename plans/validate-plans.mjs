@@ -41,6 +41,48 @@ function evidenceSource(sourcePath, sourceRef) {
   }
   return sourceCache.get(key);
 }
+function outsideFencedCode(body) {
+  let fence;
+  return body.split("\n").map((line) => {
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (fence) {
+      if (
+        marker && marker[1][0] === fence[0] &&
+        marker[1].length >= fence.length && /^[ \t\r]*$/.test(marker[2])
+      ) fence = undefined;
+      return "";
+    }
+    if (marker && (marker[1][0] === "~" || !marker[2].includes("`"))) {
+      fence = marker[1];
+      return "";
+    }
+    return line;
+  }).join("\n");
+}
+function outsideInlineCode(body) {
+  // Cặp backtick phải cùng độ dài; không ghép qua ranh giới đoạn trống.
+  return body.split(/(\r?\n[ \t]*\r?\n)/).map((paragraph) => {
+    const runs = [...paragraph.matchAll(/`+/g)];
+    let output = "", start = 0;
+    for (let index = 0; index < runs.length; index++) {
+      const open = runs[index];
+      const escapes =
+        paragraph.slice(0, open.index).match(/\\+$/)?.[0].length ?? 0;
+      if (escapes % 2) continue;
+      const closeIndex = runs.findIndex((candidate, next) =>
+        next > index && candidate[0].length === open[0].length
+      );
+      if (closeIndex < 0) continue;
+      const close = runs[closeIndex];
+      const end = close.index + close[0].length;
+      output += paragraph.slice(start, open.index) +
+        paragraph.slice(open.index, end).replace(/[^\n]/g, " ");
+      start = end;
+      index = closeIndex;
+    }
+    return output + paragraph.slice(start);
+  }).join("");
+}
 const metadataSection = (body) =>
   body.split("\n## Trạng thái và mục tiêu\n")[1]?.split("\n## ")[0] ?? "";
 function auditOf(body) {
@@ -471,8 +513,12 @@ for (const entry of manifest) {
   if (!sameSet(planNewFiles, entry.newFiles)) {
     fail(entry.file + ": plan and manifest new-file classifications differ");
   }
+  const structuralHeadings = new Set(
+    [...outsideFencedCode(body).matchAll(/^ {0,3}##[ \t]+([^\r\n]+)\r?$/gm)]
+      .map((match) => match[1].replace(/[ \t]+#+[ \t]*$/, "").trim()),
+  );
   for (const heading of headings) {
-    if (!body.includes(`## ${heading}\n`)) {
+    if (!structuralHeadings.has(heading)) {
       fail(`${entry.file}: thiếu ${heading}`);
     }
   }
@@ -624,12 +670,13 @@ for (const filePath of planFiles(planRoot)) {
     fail(file + ": contains U+2014");
   }
   if (file.endsWith(".md")) {
-    const targets = [...body.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)]
+    const markdown = outsideInlineCode(outsideFencedCode(body));
+    const targets = [...markdown.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)]
       .map((match) => match[1]);
     // Kiểm mọi definition, kể cả chưa dùng; không phụ thuộc kiểu full/collapsed/shortcut.
     // Label dừng ở ] không escape, không được ăn sang chuỗi ]: trong title.
     for (
-      const definition of body.matchAll(
+      const definition of markdown.matchAll(
         /^[ \t]*\[(?:\\[^\r\n]|[^\[\]\\\r\n])+\]:([^\r\n]*)$/gm,
       )
     ) {
