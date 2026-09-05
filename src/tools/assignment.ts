@@ -249,6 +249,8 @@ export async function applyAssignment(
     throw new Error(`${failureContext}: ${reason}`, { cause: error });
   }
 
+  invalidateAssignment(doctype, name, nativeResult, ctx);
+
   const todos = Array.isArray(nativeResult)
     ? nativeResult.map((todo) => {
       const record = todo as Record<string, unknown>;
@@ -282,6 +284,8 @@ export async function removeAssignment(
     throw new Error(`${failureContext}: ${reason}`, { cause: error });
   }
 
+  invalidateAssignment(doctype, name, nativeResult, ctx);
+
   const todos = Array.isArray(nativeResult)
     ? nativeResult.map((todo) => {
       const record = todo as Record<string, unknown>;
@@ -289,6 +293,27 @@ export async function removeAssignment(
     })
     : [];
   return { removed: assignee, remaining: todos };
+}
+
+function invalidateAssignment(
+  doctype: string,
+  name: string,
+  nativeResult: unknown,
+  ctx: ErpNextToolContext,
+): void {
+  ctx.client.invalidate(doctype, name);
+  ctx.client.invalidate("ToDo");
+  // Native remove may return only remaining assignments, not the closed ToDo's ID.
+  // Invalidate known IDs without guessing or dropping unrelated cached documents.
+  if (!Array.isArray(nativeResult)) return;
+  for (const todo of nativeResult) {
+    if (
+      typeof todo === "object" && todo !== null &&
+      typeof todo.name === "string" && todo.name.trim()
+    ) {
+      ctx.client.invalidate("ToDo", todo.name);
+    }
+  }
 }
 
 /**
@@ -303,7 +328,7 @@ export async function fetchDocAfterAssignment(
   action = "assignment",
 ): Promise<Record<string, unknown>> {
   try {
-    return await ctx.client.get(doctype, name);
+    return await ctx.client.get(doctype, name, { skipCache: true });
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(

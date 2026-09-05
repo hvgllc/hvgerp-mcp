@@ -13,6 +13,7 @@ import { getFrappeClient, setFrappeClient } from "./frappe-client.ts";
 import { runWithCaller } from "./caller-context.ts";
 import { resolveLink } from "./resolve.ts";
 import { createCache, getCache, setCache } from "../cache/cache.ts";
+import { applyAssignment, removeAssignment } from "../tools/assignment.ts";
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
@@ -85,6 +86,92 @@ const STATIC_ENV = {
 };
 
 const listBody = () => ({ data: [{ name: "TASK-001", subject: "First" }] });
+
+for (const action of ["assign", "unassign"] as const) {
+  Deno.test(`caller clients - native ${action} clears the peer's target and ToDo caches`, async () => {
+    await withEnv({ ...STATIC_ENV, MCP_CACHE_ENABLED: undefined }, async () => {
+      const writer = {
+        accessToken: "token-writer",
+        principal: "writer@example.com",
+      };
+      const reader = {
+        accessToken: "token-reader",
+        principal: "reader@example.com",
+      };
+      let mutations = 0;
+      const { calls, restore } = recordFetchRouted((url, method) => {
+        if (method === "POST") {
+          mutations++;
+          return {
+            status: 200,
+            body: {
+              message: [{ name: "TODO-001", owner: "user@example.com" }],
+            },
+          };
+        }
+        const row = { name: "TEST-001", revision: mutations };
+        return {
+          status: 200,
+          body: {
+            data: /\/api\/resource\/(Task|ToDo)$/.test(new URL(url).pathname)
+              ? [row]
+              : row,
+          },
+        };
+      });
+      const read = () =>
+        runWithCaller(reader, async () => {
+          const client = getFrappeClient();
+          return [
+            (await client.get("Task", "TASK-001")).revision,
+            (await client.list("Task"))[0].revision,
+            (await client.list("ToDo"))[0].revision,
+            (await client.get("ToDo", "TODO-001")).revision,
+          ];
+        });
+      try {
+        assertEquals(await read(), [0, 0, 0, 0]);
+        assertEquals(await read(), [0, 0, 0, 0]);
+        assertEquals(
+          calls.length,
+          4,
+          "the peer cache must be demonstrably warm",
+        );
+        await runWithCaller(writer, () => {
+          const ctx = { client: getFrappeClient() };
+          return action === "assign"
+            ? applyAssignment(
+              "Task",
+              "TASK-001",
+              { assignees: ["user@example.com"], args: {} },
+              ctx,
+              "assignment failed",
+            )
+            : removeAssignment(
+              "Task",
+              "TASK-001",
+              "user@example.com",
+              ctx,
+              "unassignment failed",
+            );
+        });
+        assertEquals(mutations, 1);
+        assertEquals(
+          await read(),
+          [1, 1, 1, 1],
+          "the peer must not retain pre-mutation values",
+        );
+        assertEquals(calls.length, 9);
+        assertEquals(
+          calls.slice(5).map((call) => call.authorization),
+          Array(4).fill("HVGKeycloak token-reader"),
+        );
+      } finally {
+        restore();
+      }
+    });
+  });
+}
 
 // ── Client selection ──────────────────────────────────────────────────────────
 
