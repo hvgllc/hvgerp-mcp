@@ -588,3 +588,15 @@ hiện gap, không phải lý do miễn review. Không thêm rule trùng, không
 AGENTS, dependency, source ứng dụng, workspace root hoặc source 017. Chỉ hai
 helper và evidence này thay đổi. Chưa push/reply; delta cần fresh review của
 parent và vòng Codex/CI tiếp theo, không dùng APPROVE trước đó cho commit mới.
+
+### Fresh review và kiểm chứng parent trên bản sửa metadata
+
+Reviewer độc lập APPROVE HEAD399f0a65c6489608f020b5d2a2a21bb1f59ae067,
+source886e68a09eaa15712f2b1d0070e07ba98a7dc127, không có finding. Reviewer đọc
+nguyên văn comment Codex và toàn delta, tự chạy validator25/25, 101 helper/
+history test, format53 file, lint3 script và diff check: đều đạt.
+
+Parent tự đọc toàn diff và evidence, chạy lại các gate tương tự: validator
+25/25, 101 test đạt không bỏ qua, format53/lint3/diff đều exit0. Giữ nguyên sáu
+provenance merges và regression không còn TODO; source ngoài plans không đổi.
+PR25 vẫn cần Codex sạch cùng CI trên HEAD mới và bắt buộc merge commit.
