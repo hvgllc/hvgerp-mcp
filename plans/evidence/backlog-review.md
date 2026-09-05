@@ -771,3 +771,33 @@ evidence chỉ thêm bốn field definition, tất cả byte còn lại giữ ng
 ngoài plans vẫn bằng main 67a7bc4, không chạy lại app build trong lượt B và
 không suy từ helper gate ra CI JSR thật. Không sửa workspace root, AGENTS,
 dependency, version, publish hoặc GitHub; parent tiếp tục fresh review và CI.
+
+## Sửa P2 độc lập: tiền đề non-DONE của positive fixture
+
+Reviewer trên `d37b6d43556c5688b2ce0bd8cebe3220bbc0b63f` phát hiện ba positive
+fixture prose/marker/audit vẫn dùng trực tiếp trạng thái hiện tại của 015. Khi
+015 DONE, definition binding đúng sẽ từ chối chỉnh kế hoạch và làm test báo đỏ
+giả. Rà thêm các ca manifest record 021, dependency 013/021, new artifact
+directory, file mới chưa tracked và thư mục tracked: cùng lỗi tiền đề.
+
+Đã gom tám loại edit hiện có vào fixture dùng chung. Regression mới đặt cả 25 kế
+hoạch DONE trong VM, xác nhận từng trạng thái được đổi và yêu cầu helper tự
+thiết lập non-DONE trước khi edit. Trước sửa setup, chạy
+`node --test --test-name-pattern='positive semantic fixture survives' plans/test-validator.mjs`
+cho **0 passed, 8 failed**, đều đúng assertion thiếu tiền đề non-DONE ở 015, 013
+hoặc 021. Đây là red của test harness, không gọi validator đang từ chối đúng là
+bug, không dùng lỗi Git/approval chưa có làm red của source ứng dụng.
+
+Helper mới đặt riêng các target thành STALE có lý do rõ trong bộ nhớ, đồng bộ
+README và loại stale_reason cũ trước khi thêm một lý do duy nhất. Không sửa
+metadata trên đĩa. Nó kiểm trạng thái được dựng, target không có diagnostic từ
+baseline và edit thật sự thay đổi nội dung. Sau edit, toàn bộ diagnostic và exit
+code phải bằng baseline; mọi historical sourceRef của target vẫn được đọc. Các
+lỗi hợp lệ của DONE giả lập khác được giữ nguyên trong phép so, không chế
+approval để ép toàn bộ nền giả lập xanh. Tám test positive cũ dùng chính helper
+này, nên control không kiểm một đường code tách rời.
+
+Sau sửa, **161 validator tests passed, 0 failed, 0 skipped**: giữ 153 test và
+thêm tám control mọi kế hoạch DONE. Validator production, history helper,
+manifest, 25 plan và 13 approval không đổi. Full helper/history và clean clone
+được chạy trên commit local tiếp theo; không push hoặc sửa ứng dụng.

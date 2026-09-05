@@ -218,6 +218,9 @@ prerequisite khai báo tạo mới mới được miễn điều kiện existing
 phụ thuộc, baseline đã refresh, literal/token, drift và link lồng nhau, cùng
 contract kiểm tra của 007/011/021. Fixture chỉ thay nội dung đọc trong bộ nhớ và
 dùng Git source thật; không ghi source hoặc giả làm reviewer đã duyệt kế hoạch.
+Các fixture chỉnh prose, marker, scope hoặc record không liên quan tự dựng
+non-DONE trong bộ nhớ. Control đặt toàn bộ 25 mục DONE rồi so diagnostic trước
+và sau delta, không tạo approval giả cho các mục chưa được duyệt.
 
 ## Trạng thái sau này
 

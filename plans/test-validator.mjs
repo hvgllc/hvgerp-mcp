@@ -267,13 +267,7 @@ test("DONE definition rejects real commit without plan snapshot", () => {
   invalid(definitionField("definition_commit", ref), /001.*definition/);
 });
 test("DONE definition compares only the matching manifest record", () => {
-  const result = run({
-    "plans/manifest.json": editManifest((entries) => {
-      entries.find((entry) => entry.id === 21).maintenanceNote =
-        "Unrelated plan progress";
-    }),
-  });
-  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  assertNonDoneSemantic("unrelated manifest record");
 });
 test("DONE definition canonicalizes object keys but preserves array contents", () => {
   const result = run({
@@ -390,6 +384,125 @@ function compose(...fixtures) {
     }
   }
   return result;
+}
+function semanticFixtureCases() {
+  return [
+    ["unrelated manifest record", [21], {
+      "plans/manifest.json": editManifest((entries) => {
+        entries.find((entry) => entry.id === 21).maintenanceNote =
+          "Unrelated plan progress";
+      }),
+    }],
+    ["dependency presentation", [13, 21], {
+      [fileFor(13)]: (text) =>
+        planDependencies(text, "  " + tick + "006" + tick + " , 005  "),
+      "plans/README.md": (text) =>
+        indexDependencies(text, 13, " 006 , " + tick + "005" + tick + " "),
+      [fileFor(21)]: (text) =>
+        planDependencies(text, "  " + tick + "không" + tick + "  "),
+    }],
+    ["unrelated prose", [15], {
+      [fileFor(15)]: (text) => text + "\nGhi chú trình bày bổ sung.\n",
+    }],
+    ["wrapped new-file marker", [15], {
+      [fileFor(15)]: (text) =>
+        text.replace("(tạo mới)", "(tạo\n  mới; thêm test tương ứng)") +
+        "\nGhi chú: (tạo mới) chỉ phân loại trong scope.\n",
+    }],
+    ["audit prose", [15], {
+      [fileFor(15)]: (text) =>
+        text + "\nGhi chú: Mục audit: 6 không phải metadata.\n",
+    }],
+    [
+      "new artifact directory",
+      [15],
+      scopePath("plans/evidence/new-artifact-fixture/", true),
+    ],
+    ["new absent file", [15], scopePath("src/untracked-plan-fixture.ts", true)],
+    ["tracked directory", [15], scopePath("src/tools/")],
+  ];
+}
+function assertNonDoneSemantic(name, base = {}) {
+  const [, ids, changes] = semanticFixtureCases().find(([candidate]) =>
+    candidate === name
+  );
+  // Trạng thái chỉ là fixture trong bộ nhớ; không tạo approval cho DONE giả lập.
+  const setup = compose(
+    base,
+    ...ids.map((id) =>
+      compose({
+        [fileFor(id)]: (text) => text.replace(/^- stale_reason:.*\n/gm, ""),
+      }, stale(id, "Semantic fixture explicitly uses non-DONE state"))
+    ),
+  );
+  for (const id of ids) {
+    const path = fileFor(id);
+    const original = readFileSync(resolve(repoRoot, path), "utf8");
+    const prepared = setup[path] ? setup[path](original) : original;
+    assert(
+      prepared.includes("Trạng thái thực thi: `STALE`"),
+      "Positive fixture must explicitly establish non-DONE: " + id,
+    );
+  }
+  const before = run(setup);
+  const edited = compose(setup, changes);
+  assert(
+    Object.keys(changes).some((path) => {
+      const original = readFileSync(resolve(repoRoot, path), "utf8");
+      return edited[path](original) !==
+        (setup[path] ? setup[path](original) : original);
+    }),
+    "Semantic fixture must perform a real edit",
+  );
+  const after = run(edited);
+  assert.equal(before.thrown, undefined);
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    before.messages.filter((message) =>
+      ids.some((id) =>
+        message.startsWith(fileFor(id).slice("plans/".length) + ":")
+      )
+    ),
+    [],
+    "Non-DONE targets must have a valid fixture baseline",
+  );
+  assert.deepEqual(after.messages, before.messages);
+  assert.equal(after.exitCode, before.exitCode);
+  for (const id of ids) {
+    for (const evidence of manifest.find((entry) => entry.id === id).evidence) {
+      assert(
+        after.historicalReads.includes(
+          evidence.sourceRef + ":" + evidence.path,
+        ),
+      );
+    }
+  }
+}
+for (
+  const name of [
+    "unrelated manifest record",
+    "dependency presentation",
+    "unrelated prose",
+    "wrapped new-file marker",
+    "audit prose",
+    "new artifact directory",
+    "new absent file",
+    "tracked directory",
+  ]
+) {
+  test("positive semantic fixture survives all plans DONE: " + name, () => {
+    const allDone = compose(
+      ...manifest.map((entry) => status(entry.id, "DONE")),
+    );
+    for (const entry of manifest) {
+      assert(
+        allDone[fileFor(entry.id)](
+          readFileSync(resolve(planRoot, entry.file), "utf8"),
+        ).includes("Trạng thái thực thi: `DONE`"),
+      );
+    }
+    assertNonDoneSemantic(name, allDone);
+  });
 }
 function assertUnfinishedPrerequisite(next, base = {}) {
   // STALE giữ chứng cứ Git thật, không cần dựng approval giả hoặc đổi source hiện tại.
@@ -726,15 +839,7 @@ test("adding manifest prerequisite requires matching docs", () => {
   }, /plan and manifest dependencies differ/);
 });
 test("dependency sets allow whitespace backticks and different order outside approved DONE definitions", () => {
-  const result = run({
-    [fileFor(13)]: (text) =>
-      planDependencies(text, "  " + tick + "006" + tick + " , 005  "),
-    "plans/README.md": (text) =>
-      indexDependencies(text, 13, " 006 , " + tick + "005" + tick + " "),
-    [fileFor(21)]: (text) =>
-      planDependencies(text, "  " + tick + "không" + tick + "  "),
-  });
-  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  assertNonDoneSemantic("dependency presentation");
 });
 for (const direction of ["remove", "add"]) {
   test("scope must match plan file list: " + direction, () => {
@@ -788,10 +893,7 @@ test("STALE rejects unreadable historical Git source", () => {
   }, /Cannot read historical source deadbee[0-9a-f]{33}:/);
 });
 test("unrelated prose does not affect source dependency or scope invariants", () => {
-  const result = run({
-    [fileFor(15)]: (text) => text + "\nGhi chú trình bày bổ sung.\n",
-  });
-  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  assertNonDoneSemantic("unrelated prose");
 });
 function assertInventoryPlan(text, entry) {
   for (
@@ -965,8 +1067,7 @@ test("newFiles validates invalid paths even outside scope", () => {
   }, /015.*invalid repo-relative newFiles path/);
 });
 test("new artifact directory retains a canonical trailing slash", () => {
-  const result = run(scopePath("plans/evidence/new-artifact-fixture/", true));
-  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  assertNonDoneSemantic("new artifact directory");
 });
 for (const size of [7, 39, 41]) {
   test("sourceRef rejects non-full commit ID length " + size, () => {
@@ -1207,12 +1308,7 @@ test("historical new-file markers remain valid after their files are tracked", (
   assert.equal(result.exitCode, 0, result.messages.join("\n"));
 });
 test("new-file marker accepts wrapped explanations but ignores unrelated prose", () => {
-  const result = run({
-    [fileFor(15)]: (text) =>
-      text.replace("(tạo mới)", "(tạo\n  mới; thêm test tương ứng)") +
-      "\nGhi chú: (tạo mới) chỉ phân loại trong scope.\n",
-  });
-  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  assertNonDoneSemantic("wrapped new-file marker");
 });
 function auditLabel(text, value) {
   return text.replace(/(^- Mục audit: )[^;]+/m, "$1" + value);
@@ -1271,11 +1367,7 @@ for (
   });
 }
 test("audit prose outside declarations does not change non-DONE metadata", () => {
-  const result = run({
-    [fileFor(15)]: (text) =>
-      text + "\nGhi chú: Mục audit: 6 không phải metadata.\n",
-  });
-  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  assertNonDoneSemantic("audit prose");
 });
 for (
   const [path, kind] of [["src/untracked-plan-fixture.ts", "file"], [
@@ -1300,16 +1392,14 @@ test("existing directory scope requires a path boundary", () => {
   });
 });
 test("explicit new file may be absent from tracked tree", () => {
-  const result = run(scopePath("src/untracked-plan-fixture.ts", true));
-  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  assertNonDoneSemantic("new absent file");
 });
 test("prerequisite-created scope can be absent in current source", () => {
   const result = run({}, ["src/ui/testing/host.ts"]);
   assert.equal(result.exitCode, 0, result.messages.join("\n"));
 });
 test("tracked directory scope is accepted", () => {
-  const result = run(scopePath("src/tools/"));
-  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  assertNonDoneSemantic("tracked directory");
 });
 test("DONE rejects bare approval metadata", () => {
   invalid({
