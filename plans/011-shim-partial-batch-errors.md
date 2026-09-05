@@ -9,7 +9,7 @@
 - Mục audit: 11; loại: `bug`.
 - Ưu tiên: P1; công sức: M; rủi ro sửa: vừa; semantics JSON-RPC batch.
 - Phụ thuộc: không.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
+- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `DONE`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 forwardOne throw trong entry thứ hai làm mất replies của entry đầu; shim.ts trả
@@ -206,14 +206,14 @@ soạn hoặc cập nhật kế hoạch.
 
 ## Tiêu chí hoàn tất
 
-- [ ] Client thấy toàn bộ kết quả đã biết và phân biệt unknown với not executed.
-- [ ] Mọi regression batch và gate shim/runtime boundary đạt.
-- [ ] Không làm giảm xác thực hoặc lộ chi tiết nội bộ.
-- [ ] Image Dockerfile.shim thật build và container smoke đạt; revision label
+- [x] Client thấy toàn bộ kết quả đã biết và phân biệt unknown với not executed.
+- [x] Mọi regression batch và gate shim/runtime boundary đạt.
+- [x] Không làm giảm xác thực hoặc lộ chi tiết nội bộ.
+- [x] Image Dockerfile.shim thật build và container smoke đạt; revision label
       khớp source commit, có image ID/log/assertion và cleanup rõ ràng.
-- [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
+- [x] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
-- [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/011.md`, cập
+- [x] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/011.md`, cập
       nhật trạng thái ở `plans/README.md`. Không ghi giá trị bí mật.
 
 ## Điều kiện dừng

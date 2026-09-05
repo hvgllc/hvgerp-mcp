@@ -10,7 +10,7 @@
 - Ưu tiên: P1; công sức: L; rủi ro sửa: vừa; thay ý nghĩa số tiền đang hiển thị
   sai.
 - Phụ thuộc: không.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
+- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `DONE`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 Các chart/KPI cộng grand_total, amount, outstanding_amount mà không mang đơn vị
@@ -181,14 +181,14 @@ input hợp lệ cũ trên site một company.
 
 ## Tiêu chí hoàn tất
 
-- [ ] Tất cả tool trong ma trận có chính sách đơn vị đã xác minh và test riêng.
-- [ ] Không cộng mixed currency; không hiện EUR nếu nguồn là VND; company
+- [x] Tất cả tool trong ma trận có chính sách đơn vị đã xác minh và test riêng.
+- [x] Không cộng mixed currency; không hiện EUR nếu nguồn là VND; company
       ambiguity trả lỗi rõ.
-- [ ] Gate server, build Node đạt; docs có migration behavior, không bump
+- [x] Gate server, build Node đạt; docs có migration behavior, không bump
       version.
-- [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
+- [x] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
-- [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/005.md`, cập
+- [x] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/005.md`, cập
       nhật trạng thái ở `plans/README.md`. Không ghi giá trị bí mật.
 
 ## Điều kiện dừng

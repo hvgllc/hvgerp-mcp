@@ -52,6 +52,15 @@ pushd "$DIST_DIR" >/dev/null
 npm install --no-fund --no-audit
 ```
 
+`.github/workflows/publish.yml:74`:
+
+<!-- evidence: .github/workflows/publish.yml -->
+
+<!-- deno-fmt-ignore -->
+```text
+        run: npm install -g npm@latest
+```
+
 ## Quy ước cần giữ
 
 Server dùng TypeScript Deno ESM, import tương đối có `.ts`, `import type` cho
@@ -135,6 +144,12 @@ Không dùng latest để khởi tạo lock. Nếu chưa có graph đủ chứng
 thuận các phiên bản chính xác cần khóa. Ghi nhận graph JSR và npm có thể khác
 cách đóng gói, không mặc định byte bằng nhau.
 
+Chốt cả phiên bản npm CLI chính xác từ nguồn có chứng cứ và được người dùng chấp
+thuận, không chỉ dependency của project. npm đi kèm Node 20/22 đã tải không mặc
+nhiên là phiên bản dùng để trusted publishing. Nếu chưa được duyệt phiên bản npm
+đáp ứng môi trường Publish, dừng ở preflight, không tự cài latest hoặc coi việc
+pin graph là quyền nâng package manager.
+
 **Kiểm tra:**
 `git ls-files deno.lock src/ui/package-lock.json && git check-ignore deno.lock`
 → baseline: UI lock được theo dõi, deno.lock đang bị ignore; bảng phiên bản có
@@ -150,6 +165,12 @@ deno.json như hiện tại; không vô tình xuất package build nội bộ.
 MCP_SERVER_OVERRIDE vẫn là nhánh thử nghiệm được ghi rõ không tái lập, không
 được dùng trong Publish chuẩn. CI kiểm lock frozen đúng CLI Deno đang hỗ trợ,
 không đoán flag.
+
+Thay npm@latest trong Publish bằng npm CLI đã chốt. Build mặc định, verifier,
+release preflight và Publish phải dùng cùng phiên bản chính xác; kiểm phiên bản
+trước khi cài/build và lỗi rõ nếu khác. Ghi version trong evidence của hai build
+sạch, không chỉ so hai build dùng chung ambient npm. Không chạy Publish để xác
+minh thay đổi này.
 
 **Kiểm tra:**
 `bash -n scripts/build-node.sh && bash -n scripts/release-check.sh` → exit 0;
@@ -207,6 +228,8 @@ hai binary; release:check chạy riêng cũng phải đạt.
 ## Tiêu chí hoàn tất
 
 - [ ] Deno và Node build đều dùng lock được theo dõi.
+- [ ] npm CLI có phiên bản chính xác đã được duyệt, dùng nhất quán ở build,
+      verifier, release preflight và Publish; sai phiên bản bị chặn trước build.
 - [ ] Hai build sạch và smoke runtime20/22 có chứng cứ; release:check đạt.
 - [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.

@@ -9,7 +9,7 @@
 - Mục audit: 19; loại: `bug`.
 - Ưu tiên: P2; công sức: S; rủi ro sửa: LOW.
 - Phụ thuộc: `018`.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `TODO`.
+- Mốc soạn: `a63503e`, 2026-09-05. Trạng thái thực thi: `DONE`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 Clone khi đọc không bảo vệ cache nếu bên gọi sửa chính đối tượng đã đưa vào set.
@@ -17,6 +17,9 @@ FrappeClient trả đối tượng từ fetch sau khi lưu nên lần đọc đ�
 các lần đọc sau.
 
 ## Hiện trạng và chứng cứ
+
+Trích đoạn audit d2c5305 được giữ cùng sourceRef lịch sử; đối chiếu main mới ở
+phần Bảo trì bên dưới.
 
 `src/cache/memory.ts:33`:
 
@@ -134,11 +137,11 @@ khai.
 
 ## Tiêu chí hoàn tất
 
-- [ ] Hai lớp regression cache và FrappeClient đạt.
-- [ ] Không xóa clone-on-read hoặc thay bằng shallow clone.
-- [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
+- [x] Hai lớp regression cache và FrappeClient đạt.
+- [x] Không xóa clone-on-read hoặc thay bằng shallow clone.
+- [x] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
-- [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/019.md`, cập
+- [x] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/019.md`, cập
       nhật trạng thái ở `plans/README.md`. Không ghi giá trị bí mật.
 
 ## Điều kiện dừng
@@ -151,5 +154,14 @@ khai.
   dấu DONE bằng dữ liệu giả thay cho môi trường bắt buộc.
 
 ## Bảo trì
+
+Parent đối chiếu main a63503e trước dispatch: 018 đã thêm cap, sweep expired,
+FIFO và TTL không dương; 012 đã thêm generation bảo vệ get/list và caller peers.
+Cả hai đã merge, combined tree vượt 1002 test cùng UI/Node build. Các test
+client mới từ 003/004/010/012 đã được đọc và review trong các PR tương ứng; giữ
+nguyên chúng. Lỗi alias vẫn còn tại dòng 55. Với TTL dương, clone phải thành
+công trước khi xóa entry sống cũ hoặc evict entry sống khác; TTL không dương giữ
+semantics xóa key và không cần clone. Không đổi generation hoặc client source.
+Giữ nguyên mọi control cap/invalidation của 018/012.
 
 Cache backend mới phải giữ cách ly cả đầu ghi và đầu đọc.

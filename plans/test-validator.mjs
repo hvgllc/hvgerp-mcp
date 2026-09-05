@@ -18,9 +18,43 @@ const manifest = JSON.parse(
 );
 const fileFor = (id) =>
   "plans/" + manifest.find((entry) => entry.id === id).file;
+const gitFixtureCache = new Map();
+function readGitFixture(
+  command,
+  args,
+  options,
+  execute,
+  cache = gitFixtureCache,
+) {
+  // Chỉ object ID đầy đủ là bất biến; HEAD, refs và filesystem luôn được đọc lại.
+  const immutable = command === "git" && (
+    (args.length === 2 && args[0] === "show" &&
+      /^[0-9a-f]{40}:.+$/.test(args[1])) ||
+    (args.length === 3 && args[0] === "cat-file" && args[1] === "-t" &&
+      /^[0-9a-f]{40}$/.test(args[2])) ||
+    (args.length === 6 &&
+      args.slice(0, 5).join(" ") === "ls-tree -r -t -z --full-tree" &&
+      /^[0-9a-f]{40}$/.test(args[5]))
+  );
+  const key = JSON.stringify([
+    command,
+    args,
+    options.cwd,
+    options.encoding ?? null,
+  ]);
+  const copy = (output) =>
+    Buffer.isBuffer(output) ? Buffer.from(output) : output;
+  if (immutable && cache.has(key)) return copy(cache.get(key));
+  const output = execute(command, args, options);
+  if (immutable && (typeof output === "string" || Buffer.isBuffer(output))) {
+    cache.set(key, copy(output));
+  }
+  return output;
+}
 
 function run(replacements = {}, hidden = [], filesystem = {}, gitOutput) {
   const messages = [], historicalReads = [];
+  let gitSubprocesses = 0;
   const state = { exitCode: 0 };
   let thrown;
   try {
@@ -46,11 +80,18 @@ function run(replacements = {}, hidden = [], filesystem = {}, gitOutput) {
       },
       execFileSync(command, args, options) {
         historicalReads.push(args[1]);
-        const output = execFileSync(command, args, {
+        const settings = {
           ...options,
           stdio: ["ignore", "pipe", "pipe"],
-        });
-        return gitOutput ? gitOutput(args, output) : output;
+        };
+        const execute = (...params) => {
+          gitSubprocesses++;
+          return execFileSync(...params);
+        };
+        // Callback lỗi/biến đổi output phải thấy Git thật, không đọc hoặc ghi cache.
+        return gitOutput
+          ? gitOutput(args, execute(command, args, settings))
+          : readGitFixture(command, args, settings, execute);
       },
       dirname,
       createHash,
@@ -67,7 +108,13 @@ function run(replacements = {}, hidden = [], filesystem = {}, gitOutput) {
     thrown = error;
     state.exitCode = 1;
   }
-  return { exitCode: state.exitCode, messages, historicalReads, thrown };
+  return {
+    exitCode: state.exitCode,
+    messages,
+    historicalReads,
+    thrown,
+    gitSubprocesses,
+  };
 }
 
 function invalid(replacements, pattern, hidden, filesystem, gitOutput) {
@@ -188,8 +235,52 @@ test("DONE rejects duplicate verdict fields", () => {
 });
 for (const next of ["IN_PROGRESS", "DONE"]) {
   test(next + " requires completed prerequisites", () => {
-    invalid(status(6, next), /006.*prerequisite 005.*DONE/);
+    assertUnfinishedPrerequisite(next);
   });
+}
+function compose(...fixtures) {
+  const result = {};
+  for (const fixture of fixtures) {
+    for (const [path, change] of Object.entries(fixture)) {
+      const previous = result[path];
+      result[path] = (text) => change(previous ? previous(text) : text);
+    }
+  }
+  return result;
+}
+function assertUnfinishedPrerequisite(next, base = {}) {
+  // STALE giữ chứng cứ Git thật, không cần dựng approval giả hoặc đổi source hiện tại.
+  const fixture = compose(
+    base,
+    stale(5, "Prerequisite fixture is not complete"),
+    status(6, next),
+  );
+  const result = invalid(fixture, /006.*prerequisite 005.*DONE/);
+  const prerequisite = (messages) =>
+    messages.filter((message) => /006.*prerequisite 005.*DONE/.test(message));
+  assert.deepEqual(prerequisite(result.messages), [
+    fileFor(6).slice("plans/".length) + ": prerequisite 005 must be DONE",
+  ]);
+  assert(result.historicalReads.includes(
+    manifest.find((entry) => entry.id === 5).evidence[0].sourceRef + ":" +
+      manifest.find((entry) => entry.id === 5).evidence[0].path,
+  ));
+  const restored = run(compose(base, status(5, "DONE"), status(6, next)));
+  assert.equal(restored.thrown, undefined);
+  assert.deepEqual(prerequisite(restored.messages), []);
+}
+for (const next of ["IN_PROGRESS", "DONE"]) {
+  test(
+    next +
+      " prerequisite fixture survives all future plans marked DONE and unrelated status changes",
+    () => {
+      const futureDone = compose(
+        ...manifest.map((entry) => status(entry.id, "DONE")),
+      );
+      assertUnfinishedPrerequisite(next, futureDone);
+      assertUnfinishedPrerequisite(next, compose(futureDone, stale(21)));
+    },
+  );
 }
 test("historical baseline requires sourceRef on every record", () => {
   invalid({
@@ -199,13 +290,14 @@ test("historical baseline requires sourceRef on every record", () => {
   }, /001.*sourceRef/);
 });
 test("historical evidence fails when Git object is missing", () => {
+  const missing = "deadbee".padEnd(40, "0");
   const result = run({
     "plans/manifest.json": editManifest((entries) => {
-      entries[0].evidence[0].sourceRef = "deadbee";
+      entries[0].evidence[0].sourceRef = missing;
     }),
   });
   assert.equal(result.exitCode, 1);
-  assert(result.historicalReads.includes("deadbee:src/auth/config.ts"));
+  assert(result.historicalReads.includes(missing + ":src/auth/config.ts"));
   assert.match(result.messages.join("\n") + String(result.thrown), /deadbee/);
 });
 // Tự dựng TODO từ Git HEAD, không lấy trạng thái backlog thật làm tiền đề.
@@ -540,9 +632,10 @@ test("STALE rejects unreadable historical Git source", () => {
   invalid({
     ...stale(2),
     "plans/manifest.json": editManifest((entries) => {
-      entries.find((entry) => entry.id === 2).evidence[0].sourceRef = "deadbee";
+      entries.find((entry) => entry.id === 2).evidence[0].sourceRef = "deadbee"
+        .padEnd(40, "0");
     }),
-  }, /Cannot read historical source deadbee:/);
+  }, /Cannot read historical source deadbee[0-9a-f]{33}:/);
 });
 test("unrelated prose does not affect source dependency or scope invariants", () => {
   const result = run({
@@ -687,6 +780,206 @@ function scopePath(path, fresh = false) {
     }),
   };
 }
+
+for (
+  const path of [
+    "../outside-plan.ts",
+    "/outside-plan.ts",
+    "C:/outside-plan.ts",
+    "C:\\outside-plan.ts",
+    "src\\outside.ts",
+    "./outside.ts",
+    "src/../outside.ts",
+    "src/./outside.ts",
+    "src//outside.ts",
+    "src///",
+    "",
+    null,
+  ]
+) {
+  test(
+    "scope paths reject noncanonical new-file exemption: " +
+      JSON.stringify(path),
+    () => {
+      invalid(scopePath(path, true), /015.*invalid repo-relative scope path/);
+    },
+  );
+}
+test("newFiles validates invalid paths even outside scope", () => {
+  invalid({
+    "plans/manifest.json": editManifest((entries) => {
+      entries.find((entry) => entry.id === 15).newFiles.push(
+        "../outside-plan.ts",
+      );
+    }),
+  }, /015.*invalid repo-relative newFiles path/);
+});
+test("new artifact directory retains a canonical trailing slash", () => {
+  const result = run(scopePath("plans/evidence/new-artifact-fixture/", true));
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+for (const size of [7, 39, 41]) {
+  test("sourceRef rejects non-full commit ID length " + size, () => {
+    const original = manifest[0].evidence[0].sourceRef;
+    const ref = size < 40 ? original.slice(0, size) : original + "0";
+    if (size < 40) {
+      assert.equal(
+        execFileSync("git", ["rev-parse", ref], {
+          cwd: repoRoot,
+          encoding: "utf8",
+        }).trim(),
+        original,
+      );
+    }
+    invalid({
+      "plans/manifest.json": editManifest((entries) => {
+        entries[0].evidence[0].sourceRef = ref;
+      }),
+    }, /001.*valid sourceRef/);
+  });
+}
+test("sourceRef rejects nonhex while retaining real full commit IDs", () => {
+  invalid({
+    "plans/manifest.json": editManifest((entries) => {
+      entries[0].evidence[0].sourceRef = "g".repeat(40);
+    }),
+  }, /001.*valid sourceRef/);
+  const valid = run();
+  assert.equal(valid.exitCode, 0, valid.messages.join("\n"));
+});
+test("immutable Git fixtures reuse subprocess output across validator runs", (t) => {
+  gitFixtureCache.clear();
+  const first = run(), second = run();
+  assert.equal(first.exitCode, 0);
+  assert.equal(second.exitCode, 0);
+  assert.deepEqual(second.messages, first.messages);
+  assert.deepEqual(second.historicalReads, first.historicalReads);
+  assert(
+    second.gitSubprocesses < first.gitSubprocesses,
+    "Immutable Git reads must not spawn again",
+  );
+  t.diagnostic(
+    JSON.stringify({
+      coldGitSubprocesses: first.gitSubprocesses,
+      warmGitSubprocesses: second.gitSubprocesses,
+      historicalReads: second.historicalReads.length,
+    }),
+  );
+});
+test("Git fixture cache isolates buffers and keys by command arguments cwd and encoding", () => {
+  const cache = new Map();
+  const ref = manifest[0].evidence[0].sourceRef;
+  const args = ["show", ref + ":src/auth/config.ts"];
+  const settings = { cwd: repoRoot };
+  let calls = 0;
+  const execute = () => {
+    calls++;
+    return Buffer.from("original");
+  };
+  const read = (command = "git", commandArgs = args, options = settings) =>
+    readGitFixture(command, commandArgs, options, execute, cache);
+  const first = read();
+  first.fill(0);
+  const second = read();
+  assert.equal(second.toString(), "original");
+  second.fill(1);
+  assert.equal(read().toString(), "original");
+  assert.equal(calls, 1);
+  read("git", ["show", ref + ":src/runtime.ts"]);
+  read("git", ["show", "0".repeat(40) + ":src/auth/config.ts"]);
+  read("git", args, { cwd: planRoot });
+  read("git", args, { ...settings, encoding: "utf8" });
+  read("other", args);
+  read("other", args);
+  assert.equal(calls, 7);
+});
+test("Git fixture cache never retains failures unknown reads or mutable refs", () => {
+  const cache = new Map();
+  const ref = manifest[0].evidence[0].sourceRef;
+  let calls = 0;
+  const failure = new Error("Git fixture read failure");
+  const fail = () => {
+    calls++;
+    throw failure;
+  };
+  for (let i = 0; i < 2; i++) {
+    assert.throws(() =>
+      readGitFixture(
+        "git",
+        ["show", ref + ":missing.ts"],
+        { cwd: repoRoot },
+        fail,
+        cache,
+      ), (error) => error === failure);
+  }
+  assert.equal(calls, 2);
+  assert.equal(cache.size, 0);
+  const execute = () => {
+    calls++;
+    return "current";
+  };
+  for (
+    const args of [["status", "--short"], ["show", "HEAD:src/runtime.ts"], [
+      "cat-file",
+      "-t",
+      "HEAD",
+    ], ["ls-tree", "-r", "-t", "-z", "--full-tree", "HEAD"]]
+  ) {
+    readGitFixture("git", args, { cwd: repoRoot }, execute, cache);
+    readGitFixture("git", args, { cwd: repoRoot }, execute, cache);
+  }
+  assert.equal(calls, 10);
+  assert.equal(cache.size, 0);
+});
+test("Git output callbacks bypass warm fixtures and cannot poison later runs", () => {
+  const baseline = run();
+  let callbacks = 0;
+  const result = invalid(
+    {},
+    /Cannot read historical source/,
+    [],
+    {},
+    (args, output) => {
+      callbacks++;
+      if (args[0] === "show") {
+        throw new Error(
+          "Injected historical read failure",
+        );
+      }
+      return output;
+    },
+  );
+  assert(callbacks > 0);
+  assert.equal(result.gitSubprocesses, callbacks);
+  let malformed = false;
+  invalid({}, /historical source mismatch/, [], {}, (args, output) => {
+    if (args[0] !== "show") return output;
+    malformed = true;
+    return "Malformed historical fixture";
+  });
+  assert(malformed);
+  const restored = run();
+  assert.equal(restored.exitCode, 0, restored.messages.join("\n"));
+  assert.deepEqual(restored.historicalReads, baseline.historicalReads);
+});
+test("canonical scope validation precedes dependency-created exemptions", () => {
+  const host = "src/ui/testing/host.ts", traversal = "../outside-plan.ts";
+  invalid({
+    [fileFor(7)]: (text) => text.replaceAll(host, traversal),
+    [fileFor(17)]: (text) => text.replaceAll(host, traversal),
+    "plans/manifest.json": editManifest((entries) => {
+      for (const id of [7, 17]) {
+        const entry = entries.find((item) => item.id === id);
+        entry.scope = entry.scope.map((path) =>
+          path === host ? traversal : path
+        );
+        entry.newFiles = entry.newFiles.map((path) =>
+          path === host ? traversal : path
+        );
+      }
+    }),
+  }, /017.*invalid repo-relative scope path/);
+});
 
 test("newFiles cannot exempt an existing scope path without the plan marker", () => {
   const entry = manifest.find((item) =>

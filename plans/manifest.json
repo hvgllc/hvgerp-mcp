@@ -172,6 +172,8 @@
     "scope": [
       "src/tools/analytics.ts",
       "src/tools/analytics_test.ts",
+      "src/tools/analytics-context.ts",
+      "src/tools/analytics-context_test.ts",
       "src/tools/analytics-pagination.ts",
       "src/tools/analytics-pagination_test.ts",
       "src/tools/query-report.ts",
@@ -185,15 +187,15 @@
     "evidence": [
       {
         "path": "src/tools/analytics.ts",
-        "line": 1060,
-        "code": "        limit: 1000,\n      });\n\n      const total = invoices.reduce(",
-        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
+        "line": 1120,
+        "code": "        limit: 1000,\n      });\n      const currentCount = currentOrders.length;",
+        "sourceRef": "67a7bc4d777cccced5255b0a43ae648752241f21"
       },
       {
         "path": "src/tools/analytics.ts",
-        "line": 1067,
-        "code": "      const count = invoices.length;",
-        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
+        "line": 1133,
+        "code": "      const prevCount = prevOrders.length;",
+        "sourceRef": "67a7bc4d777cccced5255b0a43ae648752241f21"
       }
     ]
   },
@@ -439,9 +441,9 @@
     "evidence": [
       {
         "path": "src/tools/analytics.ts",
-        "line": 1100,
+        "line": 1109,
         "code": "      const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);\n      const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);\n      const lastMonthStartStr = lastMonthStart.toISOString().split(\"T\")[0];\n      const lastMonthEndStr = lastMonthEnd.toISOString().split(\"T\")[0];",
-        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
+        "sourceRef": "67a7bc4d777cccced5255b0a43ae648752241f21"
       },
       {
         "path": "src/tools/site-date.ts",
@@ -469,15 +471,15 @@
     "evidence": [
       {
         "path": "src/tools/analytics.ts",
-        "line": 231,
+        "line": 199,
         "code": "      if (!input.include_drafts) {\n        filters.push([\"docstatus\", \"=\", 1]); // Submitted only",
-        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
+        "sourceRef": "67a7bc4d777cccced5255b0a43ae648752241f21"
       },
       {
         "path": "src/tools/analytics.ts",
-        "line": 239,
+        "line": 207,
         "code": "          filters: [[\"docstatus\", \"!=\", 2]], // exclude cancelled",
-        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
+        "sourceRef": "67a7bc4d777cccced5255b0a43ae648752241f21"
       }
     ]
   },
@@ -669,9 +671,9 @@
       },
       {
         "path": "src/tools/analytics.ts",
-        "line": 360,
+        "line": 329,
         "code": "        months: {\n          type: \"number\",\n          description: \"How many months back to include (default 6)\",\n        },",
-        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
+        "sourceRef": "67a7bc4d777cccced5255b0a43ae648752241f21"
       }
     ]
   },
@@ -719,6 +721,12 @@
         "line": 80,
         "lang": "bash",
         "code": "pushd \"$DIST_DIR\" >/dev/null\nnpm install --no-fund --no-audit",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
+      },
+      {
+        "path": ".github/workflows/publish.yml",
+        "line": 74,
+        "code": "        run: npm install -g npm@latest",
         "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]

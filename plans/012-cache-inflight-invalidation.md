@@ -9,7 +9,7 @@
 - Mục audit: 12; loại: `bug`.
 - Ưu tiên: P1; công sức: M; rủi ro sửa: vừa; phối hợp cache nhiều caller.
 - Phụ thuộc: không.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
+- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `DONE`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 list/get ghi cache vô điều kiện sau await. Một GET bắt đầu trước PUT có thể hoàn
@@ -164,12 +164,12 @@ invalidation không hồi quy.
 
 ## Tiêu chí hoàn tất
 
-- [ ] Sau write hoàn tất, late old response không trở thành cache hit mới.
-- [ ] Có tests cả list/get và peer cache, không chỉ single-client.
-- [ ] Gate server và runtime boundary đạt; Cache interface công khai không đổi.
-- [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
+- [x] Sau write hoàn tất, late old response không trở thành cache hit mới.
+- [x] Có tests cả list/get và peer cache, không chỉ single-client.
+- [x] Gate server và runtime boundary đạt; Cache interface công khai không đổi.
+- [x] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
-- [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/012.md`, cập
+- [x] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/012.md`, cập
       nhật trạng thái ở `plans/README.md`. Không ghi giá trị bí mật.
 
 ## Điều kiện dừng

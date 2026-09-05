@@ -9,7 +9,7 @@
 - Mục audit: 18; loại: `perf`.
 - Ưu tiên: P2; công sức: M; rủi ro sửa: MED.
 - Phụ thuộc: không.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
+- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `DONE`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 MemoryCache chỉ xóa entry hết hạn khi đúng key được đọc lại. Luồng truy vấn dùng
@@ -138,12 +138,12 @@ exit 0, không timer hoặc tài nguyên bị rò.
 
 ## Tiêu chí hoàn tất
 
-- [ ] 10.000 lần ghi không làm Map vượt cap100 trong test.
-- [ ] Test cache và client đạt; số entry baseline/sau sửa cùng fixture được ghi
+- [x] 10.000 lần ghi không làm Map vượt cap100 trong test.
+- [x] Test cache và client đạt; số entry baseline/sau sửa cùng fixture được ghi
       rõ.
-- [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
+- [x] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
-- [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/018.md`, cập
+- [x] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/018.md`, cập
       nhật trạng thái ở `plans/README.md`. Không ghi giá trị bí mật.
 
 ## Điều kiện dừng

@@ -600,3 +600,100 @@ Parent tự đọc toàn diff và evidence, chạy lại các gate tương tự:
 25/25, 101 test đạt không bỏ qua, format53/lint3/diff đều exit0. Giữ nguyên sáu
 provenance merges và regression không còn TODO; source ngoài plans không đổi.
 PR25 vẫn cần Codex sạch cùng CI trên HEAD mới và bắt buộc merge commit.
+
+## Lượt A: đường dẫn, full sourceRef và Git fixture cache
+
+Phạm vi được parent giao trên base `dd993b765473f0e72ef5056b03fbba8c2be4f35c`,
+source ứng dụng bằng main `67a7bc4d777cccced5255b0a43ae648752241f21`. Chỉ chỉnh
+hai helper và báo cáo này. Bảo toàn 19 file metadata parent đã sửa và file mới
+`002-contract-extension.md`; snapshot sẽ commit chung theo quyền rõ ràng của
+parent. Không nhận main mới trong lúc metadata đang freeze, không sửa trạng thái
+thật 005/006, AGENTS, root hoặc GitHub.
+
+### Baseline và prerequisite fixture
+
+`node plans/validate-plans.mjs` đạt 25 kế hoạch. Selftest gốc có **97 passed, 2
+failed** trong 99 test, thời gian quan sát 42,945 giây. Cả hai ca tại fixture
+prerequisite giả định 005 chưa DONE: IN_PROGRESS 006 thực tế hợp lệ và trả 0;
+DONE 006 chỉ còn lỗi checklist/approval, không có diagnostic prerequisite. Đây
+là lỗi tiền đề test, không phải lý do nới validator.
+
+Fixture mới tự đặt 005 STALE với lý do tường minh trong bộ nhớ, giữ sourceRef và
+historical source thật, đồng bộ hàng README rồi đặt 006 IN_PROGRESS/DONE. Mỗi ca
+bắt riêng đúng diagnostic `006 prerequisite 005 must be DONE`, xác nhận
+historical read vẫn diễn ra; control khôi phục 005 DONE phải bỏ diagnostic đó.
+Hai ca bổ sung chạy cùng phép kiểm khi toàn bộ trạng thái được đặt DONE trong bộ
+nhớ, rồi đổi riêng trạng thái 021. Fixture không tạo approval cho các mục tương
+lai: các diagnostic checklist/approval hợp lệ khác vẫn được giữ, không dùng
+chúng thay cho assertion prerequisite. Không có metadata giả ghi xuống đĩa hoặc
+Git.
+
+### Các finding helper đã xử lý
+
+Lượt này xử lý ba finding helper `3940080329`, `3940080332`, `3940080342` theo
+ba nhóm dưới đây.
+
+- Đường dẫn: kiểm repo-relative canonical cho từng scope và newFiles trước mọi
+  exemption tạo mới hoặc prerequisite-created. Từ chối absolute POSIX, Windows
+  drive, backslash, thành phần `.`/`..`, slash lặp và giá trị rỗng/sai kiểu;
+  không normalize traversal rồi chấp nhận. `scopedObject` dùng cùng guard. File
+  mới hợp lệ, thư mục artifact có một trailing slash và exemption lịch sử tiếp
+  tục đạt. Giá trị lỗi trả diagnostic, không gây exception không liên quan.
+- SourceRef: evidence sourceRef cần đúng 40 ký tự hex. Hai prefix 7 và 39 ký tự
+  được Git resolve về đúng commit thật vẫn bị từ chối. Giữ các ca 41 ký tự,
+  nonhex, full SHA không tồn tại và full SHA hợp lệ. Hai fixture Git thiếu trước
+  đây dùng `deadbee` chuyển thành full SHA không tồn tại để tiếp tục kiểm lỗi
+  đọc Git thực, không chết sớm chỉ vì regex. Mốc soạn short label không đổi.
+- Git fixture cache: test harness chia sẻ cache output Git bất biến giữa các
+  run, khóa theo command, args, cwd và encoding. Chỉ cache show/cat-file/ls-tree
+  dùng full object ID; HEAD/ref động, command ngoài allowlist và filesystem hiện
+  tại luôn đọc lại. Chỉ lưu output đọc thành công; Buffer được copy cả khi lưu
+  và khi trả. Run có gitOutput bỏ qua cache hoàn toàn, callback vẫn đọc Git thật
+  và có thể ném lỗi/đổi output để bắt regression. Không sửa validator production
+  để bỏ historicalReads hoặc thay Git bằng kết quả giả.
+
+### Red/green và phép đo
+
+Sau thêm regression nhưng trước sửa validator/cache, chạy nhóm trọng tâm:
+
+```sh
+node --test --test-name-pattern='completed prerequisites|prerequisite fixture|noncanonical|newFiles validates|sourceRef rejects|immutable Git fixtures' plans/test-validator.mjs
+```
+
+Kết quả **6 passed, 16 failed**. Mười đường dẫn không chuẩn đồng bộ ở plan và
+manifest được validator cũ nhận sai, gồm `../outside-plan.ts`; prefix 7/39 ký tự
+cũng sai pass, cache không giảm subprocess. Ba ca rỗng/null/newFiles ngoài scope
+vốn đã bị guard khác từ chối, chỉ thiếu diagnostic canonical mới, không tính là
+ba hành vi sai pass. Các fixture prerequisite đã sửa đạt ngay với validator cũ,
+xác nhận không cần nới gate.
+
+Green cuối: **124 passed, 0 failed, 0 skipped**. Bao gồm Buffer alias, khác
+path/ref/cwd/encoding/command, đọc Git lỗi không được cache, mutable HEAD không
+cache, callback ném lỗi và trả malformed output không làm nhiễm run sau, cùng
+dependency-created traversal. Một cặp run validator thật đo được **81 Git
+subprocess khi cold, 2 khi warm**, nhưng vẫn ghi đủ **81 historicalReads** ở cả
+hai run. Không có threshold thời gian trong assertion. Lượt green quan sát 6,163
+giây với 124 test, không coi đây là benchmark tương đương bộ 99 test cũ hoặc lời
+hứa latency trên máy khác.
+
+### Gate local trước snapshot
+
+- Validator: 25 kế hoạch đạt; `node --test plans/test-validator.mjs`: 124 đạt.
+- `deno fmt --check plans/`: 60 file đạt; lint ba helper bằng `--no-config` đạt;
+  `git diff --check` đạt.
+- Server check, UI typecheck, lint toàn repo 206 file và format 282 file đạt.
+- UI cài đúng lock offline và build đủ 7 viewer; Node build offline và syntax
+  check đạt. Pack dry-run từ `dist-node/bin` có đúng 10 file, gồm 7 HTML.
+- Full Deno trên source main 67a7bc4: **1202 passed, 0 failed, 4 ignored**; chạy
+  sau UI/Node build, không gọi ERPNext thật.
+- Deno dùng `--config deno.nojsr.json --sloppy-imports --frozen`; đã so mọi
+  trường ngoài imports với deno.json, vendor với npm 0.25.0 pristine và lock
+  SHA-256 `f32268af50c10ba06223c9a0b7f2d7092555ffa90172cd573ecf8d3feb2d882a`:
+  khớp. Không nâng dependency/runtime hoặc pin npm trong lượt này.
+
+Chưa triển khai finding definition binding `3940080334`. Snapshot metadata cần
+review độc lập trước lượt B; không dùng test helper xanh làm approval cho
+definition. Yêu cầu pin npm của `3940080337` do parent ghi trong kế hoạch 021,
+chưa phải implementation hoặc quyền cài package manager. Clean-history gate phải
+chạy sau commit snapshot; kết quả được bàn giao riêng, không suy ra từ validator
+chạy trong worktree có metadata chưa commit.

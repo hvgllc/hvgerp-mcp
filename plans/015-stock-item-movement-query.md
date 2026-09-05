@@ -9,7 +9,7 @@
 - Mục audit: 15; loại: `bug`.
 - Ưu tiên: P1; công sức: M; rủi ro sửa: vừa; đổi nguồn đọc lịch sử.
 - Phụ thuộc: `007`.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `TODO`.
+- Mốc soạn: `341cba4`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 StockDetailPanel gửi item_code cho stock_entry_list nhưng tool không hỗ trợ nên
@@ -259,6 +259,22 @@ production. Fixture không thay bằng chứng schema hoặc quyền site.
   dấu DONE bằng dữ liệu giả thay cho môi trường bắt buộc.
 
 ## Bảo trì
+
+Parent đã kiểm drift tới main 341cba4 trước dispatch: 007 chỉ bổ sung guard
+string ở ba trường Item của panel; host/fixtures được 007 tạo và 009 mở rộng
+detail race. Inventory, client test và catalog không có delta từ mốc audit. Giữ
+các guard và toàn bộ scenario cũ; không ghi vào worktree 017 hoặc đổi host
+Browser đang chạy của parent. Mục 017 đang review PR riêng, không có executor
+ghi UI đồng thời. Nếu 017 cần sửa host khi 015 đang làm, parent sẽ điều phối nối
+tiếp và review tích hợp trước merge.
+
+Đối chiếu catalog khi thêm ledger phát hiện hai bảng tools/coverage cùng thiếu
+năm tool đã có trong registry: gl_entry_list, financial_report,
+employee_checkin_list, attendance_day_get và attendance_day_fix (đều có prefix
+erpnext_). Parent đã đọc declaration và bảng, cho phép bổ sung đúng năm dòng tài
+liệu trong hai file scope sẵn có, giữ heading Accounting 8 và HR 15 nhất quán.
+Không sửa source Accounting/HR; day_fix phải được mô tả là mutation có thể
+hủy/rebuild Attendance, không phải read-only.
 
 Nếu sau này timeline 023 được chọn triển khai, tái dùng request contract/rows đã
 xác minh. Item và warehouse là identity của panel, không chỉ item.

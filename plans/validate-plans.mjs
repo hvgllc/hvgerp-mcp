@@ -130,13 +130,16 @@ function gitTree(ref) {
   }
   return treeCache.get(ref);
 }
-function scopedObject(tree, path) {
-  if (
-    !path || path.startsWith("/") || path.includes("\\") ||
-    path.split("/").some((part, index, parts) =>
+function canonicalScopePath(path) {
+  return typeof path === "string" && path.length > 0 &&
+    !path.startsWith("/") && !/^[A-Za-z]:/.test(path) &&
+    !path.includes("\\") && !path.includes("\0") &&
+    !path.split("/").some((part, index, parts) =>
       part === "." || part === ".." || (!part && index !== parts.length - 1)
-    )
-  ) return undefined;
+    );
+}
+function scopedObject(tree, path) {
+  if (!canonicalScopePath(path)) return undefined;
   const object = tree?.get(path.replace(/\/$/, ""));
   const directory = path.endsWith("/");
   return object?.type === (directory ? "tree" : "blob") &&
@@ -299,6 +302,21 @@ for (const entry of manifest) {
   const planNewFiles = scopeItems.filter((match) =>
     /^\s*\(tạo\s+mới(?:\)|;)/.test(match[2])
   ).map((match) => match[1]);
+  for (
+    const [label, paths] of [["scope", entry.scope], [
+      "newFiles",
+      entry.newFiles,
+    ]]
+  ) {
+    for (const scoped of paths) {
+      if (!canonicalScopePath(scoped)) {
+        fail(
+          entry.file + ": invalid repo-relative " + label + " path: " +
+            JSON.stringify(scoped),
+        );
+      }
+    }
+  }
   if (!sameSet(planScope, entry.scope)) {
     fail(entry.file + ": plan and manifest scope differ");
   }
@@ -371,6 +389,7 @@ for (const entry of manifest) {
     fail(entry.file + ": plan and manifest audit mappings differ");
   }
   for (const scoped of entry.scope) {
+    if (!canonicalScopePath(scoped)) continue;
     const dependencyCreates = (id, seen = new Set()) => {
       if (seen.has(id)) return false;
       seen.add(id);
@@ -406,7 +425,7 @@ for (const entry of manifest) {
     fail(entry.file + ": evidence excerpt count mismatch");
   }
   for (const [index, evidence] of entry.evidence.entries()) {
-    if (!/^[0-9a-f]{7,40}$/.test(evidence.sourceRef ?? "")) {
+    if (!/^[0-9a-f]{40}$/.test(evidence.sourceRef ?? "")) {
       fail(entry.file + ": evidence requires a valid sourceRef");
       continue;
     }

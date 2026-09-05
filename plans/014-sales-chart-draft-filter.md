@@ -9,7 +9,7 @@
 - Mục audit: 14; loại: `bug`.
 - Ưu tiên: P1; công sức: S; rủi ro sửa: thấp; lọc cùng business population.
 - Phụ thuộc: `005`, `006`, `013`.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `TODO`.
+- Mốc soạn: `67a7bc4`, 2026-09-05. Trạng thái thực thi: `TODO`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 Sales chart có ba nhánh customer/item/status dùng ba quy tắc docstatus khác
@@ -18,7 +18,7 @@ cancelled luôn bị loại; dimension chỉ đổi nhóm tổng hợp, không �
 
 ## Hiện trạng và chứng cứ
 
-`src/tools/analytics.ts:231`:
+`src/tools/analytics.ts:199`:
 
 <!-- evidence: src/tools/analytics.ts -->
 
@@ -28,7 +28,7 @@ cancelled luôn bị loại; dimension chỉ đổi nhóm tổng hợp, không �
         filters.push(["docstatus", "=", 1]); // Submitted only
 ```
 
-`src/tools/analytics.ts:239`:
+`src/tools/analytics.ts:207`:
 
 <!-- evidence: src/tools/analytics.ts -->
 
@@ -169,3 +169,9 @@ behavior, không đổi public shape.
 
 Mọi dimension mới phải tái dùng policy population chung và có ca cancelled. Đừng
 sao chép filter riêng vào từng nhánh.
+
+Đối chiếu sau 005 tại main67a7bc4: ba nhánh vẫn khác population như finding,
+nhưng dùng context.listDocuments/listItems và base_grand_total/base_amount. Giữ
+ownership/company/currency và chunk budget đã duyệt. Đoạn item hiện lọc
+docstatus 1 ở child và discovery parent, nên include_drafts phải được truyền
+đúng qua cả hai tầng sau khi 006/013 hoàn tất. Chưa thực thi mục 014.

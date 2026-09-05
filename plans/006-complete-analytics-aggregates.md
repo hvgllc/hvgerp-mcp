@@ -9,7 +9,7 @@
 - Mục audit: 6; loại: `bug`.
 - Ưu tiên: P1; công sức: L; rủi ro sửa: vừa; lượng truy vấn và ngữ nghĩa tổng.
 - Phụ thuộc: `005`.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `TODO`.
+- Mốc soạn: `67a7bc4`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 Analytics có giới hạn 500/1000/5000 trên dữ liệu đầu vào nhưng lấy length/reduce
@@ -19,7 +19,7 @@ chứng minh đầy đủ; tăng cap đơn thuần không hoàn tất.
 
 ## Hiện trạng và chứng cứ
 
-`src/tools/analytics.ts:1060`:
+`src/tools/analytics.ts:1120`:
 
 <!-- evidence: src/tools/analytics.ts -->
 
@@ -27,17 +27,16 @@ chứng minh đầy đủ; tăng cap đơn thuần không hoàn tất.
 ```text
         limit: 1000,
       });
-
-      const total = invoices.reduce(
+      const currentCount = currentOrders.length;
 ```
 
-`src/tools/analytics.ts:1067`:
+`src/tools/analytics.ts:1133`:
 
 <!-- evidence: src/tools/analytics.ts -->
 
 <!-- deno-fmt-ignore -->
 ```text
-      const count = invoices.length;
+      const prevCount = prevOrders.length;
 ```
 
 ## Quy ước cần giữ
@@ -64,6 +63,8 @@ Các file được sửa khi thực thi:
 
 - `src/tools/analytics.ts`
 - `src/tools/analytics_test.ts`
+- `src/tools/analytics-context.ts`
+- `src/tools/analytics-context_test.ts`
 - `src/tools/analytics-pagination.ts` (tạo mới)
 - `src/tools/analytics-pagination_test.ts` (tạo mới)
 - `src/tools/query-report.ts`
@@ -79,9 +80,9 @@ version hay tự nâng dependency. Định danh, chuỗi lỗi và commit bằng
 phần giải thích tiếng Việt có dấu, không dùng ký tự U+2014.
 
 Trước khi sửa, chạy `git status --short`,
-`git diff --stat d2c5305..HEAD -- src/tools/analytics.ts src/tools/analytics_test.ts src/tools/analytics-pagination.ts src/tools/analytics-pagination_test.ts src/tools/query-report.ts src/tools/query-report_test.ts docs/tools.md`
+`git diff --stat d2c5305..HEAD -- src/tools/analytics.ts src/tools/analytics_test.ts src/tools/analytics-context.ts src/tools/analytics-context_test.ts src/tools/analytics-pagination.ts src/tools/analytics-pagination_test.ts src/tools/query-report.ts src/tools/query-report_test.ts docs/tools.md`
 và
-`git diff -- src/tools/analytics.ts src/tools/analytics_test.ts src/tools/analytics-pagination.ts src/tools/analytics-pagination_test.ts src/tools/query-report.ts src/tools/query-report_test.ts docs/tools.md`.
+`git diff -- src/tools/analytics.ts src/tools/analytics_test.ts src/tools/analytics-context.ts src/tools/analytics-context_test.ts src/tools/analytics-pagination.ts src/tools/analytics-pagination_test.ts src/tools/query-report.ts src/tools/query-report_test.ts docs/tools.md`.
 Bảo toàn thay đổi có sẵn. Nếu phụ thuộc đã thực thi, đối chiếu diff và làm mới
 kế hoạch này theo code mới trước khi sửa; sai khác chưa giải thích được là điều
 kiện dừng.
@@ -92,14 +93,14 @@ mở PR hoặc merge nếu chưa có chỉ thị thực thi tương ứng; commi
 
 ## Lệnh xác minh
 
-| Mục đích          | Lệnh                                                                                                                      | Kết quả mong đợi                                   |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| Test trọng tâm    | `deno test --allow-all src/tools/analytics_test.ts src/tools/analytics-pagination_test.ts src/tools/query-report_test.ts` | exit 0; mọi ca trong mục Kiểm thử đạt              |
-| Kiểu server       | `deno check mod.ts server.ts`                                                                                             | exit 0                                             |
-| Test hồi quy      | `deno test --allow-all src/`                                                                                              | exit 0                                             |
-| Lint              | `deno lint`                                                                                                               | exit 0                                             |
-| Format            | `deno fmt --check`                                                                                                        | exit 0                                             |
-| UI và Node bundle | `deno task ui:install && deno task ui:build && bash scripts/build-node.sh`                                                | exit 0; đủ 7 viewer; kiểm tra bundle như bước cuối |
+| Mục đích          | Lệnh                                                                                                                                                          | Kết quả mong đợi                                   |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| Test trọng tâm    | `deno test --allow-all src/tools/analytics_test.ts src/tools/analytics-context_test.ts src/tools/analytics-pagination_test.ts src/tools/query-report_test.ts` | exit 0; mọi ca trong mục Kiểm thử đạt              |
+| Kiểu server       | `deno check mod.ts server.ts`                                                                                                                                 | exit 0                                             |
+| Test hồi quy      | `deno test --allow-all src/`                                                                                                                                  | exit 0                                             |
+| Lint              | `deno lint`                                                                                                                                                   | exit 0                                             |
+| Format            | `deno fmt --check`                                                                                                                                            | exit 0                                             |
+| UI và Node bundle | `deno task ui:install && deno task ui:build && bash scripts/build-node.sh`                                                                                    | exit 0; đủ 7 viewer; kiểm tra bundle như bước cuối |
 
 Baseline lúc tư vấn: lint qua; format toàn repo chỉ vướng file cá nhân chưa theo
 dõi ở gốc; UI typecheck có lỗi; Deno test/check thiếu JSR cache. Các lệnh trên
@@ -116,10 +117,11 @@ toàn repo là bị chặn.
 
 Liệt kê toàn bộ ctx.client.list trong analytics.ts và phân biệt presentation
 limit với fetch limit, kể cả Item Price, item_group, Bin, sales/purchase child
-rows và funnel. Mỗi phép count/sum/top N phải có test fixture vượt cap: 1001 hóa
-đơn, 501 mỗi funnel stage, 5001 đơn sáu tháng; Stock có item ở hai kho làm đổi
-thứ hạng. Mock phải thực thi limit/limit_start thật, không trả tất cả bất kể
-args.
+rows và funnel, cùng các đường listItems/listBins trong analytics-context.ts.
+Mỗi phép count/sum/top N phải có test fixture vượt cap: 1001 đơn cho KPI count,
+1001 dòng Accounts Receivable để giữ đường report của 005, 501 mỗi funnel stage,
+5001 đơn sáu tháng; Stock có item ở hai kho làm đổi thứ hạng. Mock phải thực thi
+limit/limit_start thật, không trả tất cả bất kể args.
 
 **Kiểm tra:**
 `rg -n 'ctx.client.list|limit:|reduce\(|\.length' src/tools/analytics.ts` → mọi
@@ -151,7 +153,7 @@ count phải đầy đủ từng tập, vẫn giữ ngữ nghĩa ratio giữa t�
 thất bại.
 
 **Kiểm tra:**
-`deno test --allow-all src/tools/analytics_test.ts src/tools/analytics-pagination_test.ts`
+`deno test --allow-all src/tools/analytics_test.ts src/tools/analytics-context_test.ts src/tools/analytics-pagination_test.ts`
 → exit 0; expected totals khớp toàn dataset, thứ hạng stock đúng khi thêm kho.
 
 ### Bước 4: Kiểm chi phí và hợp đồng
@@ -197,3 +199,37 @@ hoặc list-result pagination.
 
 Mọi cap mới phải phân loại retrieval/presentation. Giữ datasets vượt cap trong
 regression, không tối ưu test bằng mock trả vượt limit.
+
+Parent đã đối chiếu source main `67a7bc4d777cccced5255b0a43ae648752241f21` sau
+khi 005 DONE qua PR29. Outstanding/overdue/aging nay đọc Accounts Receivable qua
+receivableInvoiceRows, dùng siteToday và company currency: không quay lại Sales
+Invoice outstanding_amount hoặc lặp sửa cap đã biến mất ở đường đó. Evidence
+hiện trạng chuyển sang KPI orders còn cap 1000 thật. Cache 012/018/019 và shim
+011 đã merge, không thuộc phạm vi sửa của 006.
+
+005 thêm analytics-context.ts: listOwnershipNames đã phân trang tên parent và
+Warehouse tới hết, có guard 100000, kiểm tiến triển và memo Warehouse. Tuy nhiên
+listScoped vẫn lấy N mỗi chunk rồi cắt N toàn cục, từ chối offset khác 0. Vì vậy
+không bọc listItems/listBins hiện tại bằng vòng offset rồi coi là pagination.
+Phạm vi bổ sung đúng analytics-context.ts và test để cung cấp đường đọc đầy đủ
+cho aggregate; giữ company/parenttype/warehouse ownership, budget toàn encoded
+request target 6000, kiểm Item UOM đủ/duy nhất và fail-closed. Không được bỏ
+chứng cứ URL thật, Unicode, chunk cuối hoặc các control quyền của 005 để làm
+test qua. Nếu thay đổi contract helper nội bộ từ top N sang full dataset, cập
+nhật test đúng ý nghĩa mới và giữ control cho lọc company/ownership/URL.
+
+Đọc kỹ public tool schema trước khi phân loại scope: stock_chart và kpi_orders
+không nhận company trong 005, nên giữ phạm vi các dữ liệu caller được phép đọc;
+không tự thêm company filter hoặc đổi API vì câu chữ tổng quát ở bước 3. Với
+tool có AnalyticsContext, bắt buộc giữ company đã chốt. P&L/report allowlist và
+ngày/draft window đã định nghĩa giữ nguyên; các sửa ngày/draft thuộc 013/014.
+Cap ambiguity Company 21 và radar lựa chọn mặc định 4 item là giới hạn chọn phạm
+vi/hiển thị, không mặc nhiên biến chúng thành phép tổng toàn site.
+
+Baseline tích hợp trước dispatch: full suite 1202 passed, 0 failed, 4 ignored;
+server/UI typecheck, lint, format, UI/Node build đều đạt trong worktree riêng.
+Local dùng workaround frozen đã cho phép trong docs/jsr-403-workaround.md; CI
+Test bắt buộc JSR thật trước merge. Cài UI đúng lock bằng npm ci offline, không
+thay dependency. Parent giữ root ở d2c5305 để bảo toàn file người dùng: excerpt
+mới trong plan này phải đối chiếu ở worktree main67a7bc4, không coi source cũ
+tại root là hiện trạng triển khai hoặc nới validator để che drift.
