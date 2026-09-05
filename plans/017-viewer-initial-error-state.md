@@ -91,8 +91,9 @@ Các file được sửa khi thực thi:
 - `src/ui/shared/presentation_test.ts`
 - `src/ui/viewer_error_state_test.ts`
 - `src/ui/testing/fixtures.ts`
-- `src/ui/testing/host.ts` (chỉ dispatch scenario malformed-payload đúng
-  contract)
+- `src/ui/testing/host.ts` (dispatch malformed-payload và fixture ngày Sales
+  Order/Quotation của R2; giữ refresh để điều khiển thứ tự, kiểm document ID,
+  gửi ngày sai kiểu và recovery đúng contract)
 - `plans/evidence/017/` (tạo mới)
 - `plans/README.md`
 - `plans/evidence/017.md`
@@ -199,3 +200,14 @@ có chủ ý.
 ## Bảo trì
 
 Viewer mới phải có ca lỗi ban đầu và refresh lỗi trong cùng bộ fixtures.
+
+Đối chiếu bổ sung sau merge PR35 tại `95662c3ee38227d718795995889e28be96041b71`:
+revision R2 `d93185944ef524c69779fc4db93d0b5e0a5a97f8` đã kiểm payload ngày của
+Sales Order/Quotation, thêm fixture ngày và điều khiển held
+refresh/malformed/recovery trong host. Mô tả scope phía trên được cập nhật để
+phản ánh đúng phần đã review và ghi trong evidence, thay qualifier cũ chỉ nhắc
+malformed-payload. Không mở quyền gọi production, sửa mutation hoặc dùng host để
+lọc response thay viewer. Acceptance 15 ca của năm viewer giữ nguyên; R2 bổ sung
+kiểm ngày và service row để bảo toàn payload thực. Giới hạn title/party/mutation
+của SO/QTN và recovery bằng host gửi lại payload vẫn được ghi rõ trong evidence,
+không coi đã sửa.
