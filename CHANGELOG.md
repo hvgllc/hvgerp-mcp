@@ -10,8 +10,17 @@ requests and tags actually live.
 
 ## [Unreleased]
 
+### Added
+
+- `erpnext_stock_ledger_list`: read recent non-cancelled Stock Ledger Entries
+  for one required item and warehouse, with a bounded limit of 1 to 20 rows.
+
 ### Fixed
 
+- The stock viewer's Recent Movements now uses the selected item and warehouse
+  instead of unfiltered site-wide Stock Entries. It shows voucher, posting
+  date/time and quantity change, reports permission errors, and discards late
+  results when the selected item or warehouse changes.
 - Monetary analytics now resolve one company and use its currency instead of
   adding document currencies together and labeling the result EUR. Sites with
   multiple visible companies must pass `company`. Recorded base amounts supply
