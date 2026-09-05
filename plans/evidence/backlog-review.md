@@ -89,6 +89,12 @@ với config local và diff check đều exit 0. SHA lock vẫn nguyên sau các
 
 ## Workaround local của nhánh backlog
 
+Parent đã chạy lại trên source tích hợp c1e7485: server check, lint 193 file,
+format 249 file, UI build đủ 7 viewer, Node build với framework 0.25.0, node
+--check và full suite 847 passed, 0 failed, 4 ignored đều exit 0. Source không
+đổi bởi bản sửa provenance 3099afd. Reviewer độc lập APPROVE 3099afd sau khi tự
+chạy validator 25/25 và regression 30/30. CI/Codex của HEAD mới vẫn chờ.
+
 Parent chạy Deno gate nhưng thiếu `deno.nojsr.json`, nên lần đó dừng trước khi
 kiểm source. Đã đọc lại hướng dẫn workaround được duyệt và tạo artifact ignored
 trong đúng worktree backlog, không tải hoặc nâng dependency:
