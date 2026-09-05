@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -18,14 +19,25 @@ const manifest = JSON.parse(
 const fileFor = (id) =>
   "plans/" + manifest.find((entry) => entry.id === id).file;
 
-function run(replacements = {}, hidden = []) {
+function run(replacements = {}, hidden = [], filesystem = {}, gitOutput) {
   const messages = [], historicalReads = [];
   const state = { exitCode: 0 };
   let thrown;
   try {
     runInNewContext(source, {
       existsSync: (path) =>
-        !hidden.includes(relative(repoRoot, path)) && existsSync(path),
+        !hidden.includes(relative(repoRoot, path)) &&
+        (Object.hasOwn(filesystem, relative(repoRoot, path)) ||
+          existsSync(path)),
+      lstatSync: (path) => {
+        const kind = filesystem[relative(repoRoot, path)];
+        return kind
+          ? {
+            isFile: () => kind === "file",
+            isDirectory: () => kind === "directory",
+          }
+          : lstatSync(path);
+      },
       readdirSync,
       readFileSync(path, encoding) {
         const text = readFileSync(path, encoding);
@@ -34,12 +46,14 @@ function run(replacements = {}, hidden = []) {
       },
       execFileSync(command, args, options) {
         historicalReads.push(args[1]);
-        return execFileSync(command, args, {
+        const output = execFileSync(command, args, {
           ...options,
           stdio: ["ignore", "pipe", "pipe"],
         });
+        return gitOutput ? gitOutput(args, output) : output;
       },
       dirname,
+      createHash,
       relative,
       resolve,
       injectedPlanRoot: planRoot,
@@ -56,8 +70,8 @@ function run(replacements = {}, hidden = []) {
   return { exitCode: state.exitCode, messages, historicalReads, thrown };
 }
 
-function invalid(replacements, pattern, hidden) {
-  const result = run(replacements, hidden);
+function invalid(replacements, pattern, hidden, filesystem, gitOutput) {
+  const result = run(replacements, hidden, filesystem, gitOutput);
   assert.equal(result.exitCode, 1, "Validator accepted invalid evidence");
   assert.equal(
     result.thrown,
@@ -93,6 +107,20 @@ function status(id, next) {
           : line
       ).join("\n"),
   };
+}
+function stale(
+  id,
+  reason = "Source changed; refresh evidence before execution",
+) {
+  const replacements = status(id, "STALE");
+  const change = replacements[fileFor(id)];
+  replacements[fileFor(id)] = (text) =>
+    change(text).replace(
+      "## Trạng thái và mục tiêu\n",
+      "## Trạng thái và mục tiêu\n\n- stale_reason: " + JSON.stringify(reason) +
+        "\n",
+    );
+  return replacements;
 }
 
 test("baseline preserves historical auth evidence", () => {
@@ -404,7 +432,7 @@ test("BLOCKED detects current source drift", () => {
   );
 });
 test("explicit STALE accepts current drift but still reads historical source", () => {
-  const result = run({ ...status(2, "STALE"), ...blockedDrift });
+  const result = run({ ...stale(2), ...blockedDrift });
   assert.equal(result.exitCode, 0, result.messages.join("\n"));
   assert(
     result.historicalReads.some((path) =>
@@ -414,7 +442,7 @@ test("explicit STALE accepts current drift but still reads historical source", (
 });
 test("STALE rejects invalid historical evidence", () => {
   invalid({
-    ...status(2, "STALE"),
+    ...stale(2),
     ...blockedDrift,
     "plans/manifest.json": editManifest((entries) => {
       entries.find((entry) => entry.id === 2).evidence[0].code += "INVALID";
@@ -423,7 +451,7 @@ test("STALE rejects invalid historical evidence", () => {
 });
 test("STALE rejects unreadable historical Git source", () => {
   invalid({
-    ...status(2, "STALE"),
+    ...stale(2),
     "plans/manifest.json": editManifest((entries) => {
       entries.find((entry) => entry.id === 2).evidence[0].sourceRef = "deadbee";
     }),
@@ -476,6 +504,262 @@ test("015 contract rejects operations tool as its requested ledger tool", () => 
     () => assertInventoryPlan(text, manifest.find((entry) => entry.id === 15)),
     /Missing inventory-only contract: erpnext_stock_ledger_list/,
   );
+});
+test("015 includes public tool catalog updates", () => {
+  const entry = manifest.find((entry) => entry.id === 15);
+  const text = readFileSync(resolve(repoRoot, fileFor(15)), "utf8");
+  for (
+    const path of ["README.md", "docs/coverage.md", "docs/architecture.md"]
+  ) {
+    assert(entry.scope.includes(path), "Missing catalog scope: " + path);
+    assert(
+      text.includes(tick + path + tick),
+      "Missing catalog requirement: " + path,
+    );
+  }
+});
+for (
+  const suffix of [
+    "- Trạng thái thực thi: `DONE`.\n",
+    "- Trạng thái thực thi: `BROKEN`.\n",
+  ]
+) {
+  test(
+    "execution status rejects duplicate declaration: " + suffix.trim(),
+    () => {
+      invalid(
+        { [fileFor(15)]: (text) => text + "\n" + suffix },
+        /015.*missing valid execution status/,
+      );
+    },
+  );
+}
+test("execution status cannot be supplied by prose outside metadata", () => {
+  invalid({
+    [fileFor(15)]: (text) =>
+      text.replace("Trạng thái thực thi:", "Trạng thái cũ:") +
+      "\nTrạng thái thực thi: `TODO`.\n",
+  }, /015.*missing valid execution status/);
+});
+test("execution status rejects malformed first declaration followed by valid metadata", () => {
+  invalid({
+    [fileFor(15)]: (text) => "Trạng thái thực thi: `BROKEN`.\n" + text,
+  }, /015.*missing valid execution status/);
+});
+test("STALE requires a dedicated reason before bypassing current drift", () => {
+  invalid(
+    { ...status(2, "STALE"), ...blockedDrift },
+    /002.*STALE requires one nonempty stale_reason/,
+  );
+});
+for (const reason of ["", "  "]) {
+  test(
+    "STALE rejects empty or whitespace reason: " + JSON.stringify(reason),
+    () => {
+      invalid(
+        { ...stale(2, reason), ...blockedDrift },
+        /002.*STALE requires one nonempty stale_reason/,
+      );
+    },
+  );
+}
+test("STALE rejects duplicate reason", () => {
+  const replacements = stale(2);
+  const change = replacements[fileFor(2)];
+  replacements[fileFor(2)] = (text) =>
+    change(text) + '\n- stale_reason: "Another reason"\n';
+  invalid(replacements, /002.*STALE requires one nonempty stale_reason/);
+});
+test("README links are bound to their row IDs", () => {
+  invalid({
+    "plans/README.md": (text) =>
+      text.replaceAll(manifest[4].file, "SWAP_FILE").replaceAll(
+        manifest[5].file,
+        manifest[4].file,
+      ).replaceAll("SWAP_FILE", manifest[5].file),
+  }, /README row file does not match ID/);
+});
+test("README rejects duplicate row IDs", () => {
+  invalid({
+    "plans/README.md": (text) =>
+      text + "\n" + text.split("\n").find((line) => line.startsWith("| 005 ")),
+  }, /README requires exactly one row for ID 005/);
+});
+function scopePath(path, fresh = false) {
+  const first = manifest.find((entry) => entry.id === 15).scope[0];
+  return {
+    [fileFor(15)]: (text) =>
+      text.replace("- " + tick + first + tick, "- " + tick + path + tick),
+    "plans/manifest.json": editManifest((entries) => {
+      const entry = entries.find((entry) => entry.id === 15);
+      entry.scope[0] = path;
+      if (fresh) entry.newFiles.push(path);
+    }),
+  };
+}
+for (
+  const [path, kind] of [["src/untracked-plan-fixture.ts", "file"], [
+    "src/untracked-plan-fixture/",
+    "directory",
+  ]]
+) {
+  test("existing scope rejects untracked placeholder: " + kind, () => {
+    invalid(scopePath(path), /existing scope is not tracked/, [], {
+      [path.replace(/\/$/, "")]: kind,
+    });
+  });
+}
+test("existing scope rejects tracked filename replaced by directory", () => {
+  invalid(scopePath("src/runtime.ts"), /existing scope type mismatch/, [], {
+    "src/runtime.ts": "directory",
+  });
+});
+test("existing directory scope requires a path boundary", () => {
+  invalid(scopePath("src/tool/"), /existing scope is not tracked/, [], {
+    "src/tool": "directory",
+  });
+});
+test("explicit new file may be absent from tracked tree", () => {
+  const result = run(scopePath("src/untracked-plan-fixture.ts", true));
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+test("prerequisite-created scope can be absent in current source", () => {
+  const result = run({}, ["src/ui/testing/host.ts"]);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+test("tracked directory scope is accepted", () => {
+  const result = run(scopePath("src/tools/"));
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+test("DONE rejects bare approval metadata", () => {
+  invalid({
+    "plans/evidence/001.md": () => "---\nreview_verdict: APPROVE\n---\n",
+  }, /001.*reviewer approval evidence/);
+});
+test("DONE rejects copied approval evidence from another plan", () => {
+  invalid({
+    "plans/evidence/001.md": () =>
+      readFileSync(resolve(planRoot, "evidence/004.md"), "utf8"),
+  }, /001.*reviewer approval evidence/);
+});
+for (const revision of ["not-a-ref", "deadbee".padEnd(40, "0")]) {
+  test("DONE rejects invalid reviewed revision: " + revision, () => {
+    invalid({
+      "plans/evidence/001.md": (text) =>
+        text.replace(/^reviewed_commit:.*$/m, "reviewed_commit: " + revision),
+    }, /001.*reviewer approval evidence/);
+  });
+}
+test("DONE rejects duplicate reviewed revision", () => {
+  invalid({
+    "plans/evidence/001.md": (text) =>
+      text.replace(
+        "reviewed_commit:",
+        "reviewed_commit: 495cd989\nreviewed_commit:",
+      ),
+  }, /001.*reviewer approval evidence/);
+});
+test("DONE rejects a Git blob used as reviewed commit", () => {
+  const report = readFileSync(resolve(planRoot, "evidence/001.md"), "utf8");
+  const blob = report.match(/^reviewed_evidence_blob: (.+)$/m)[1];
+  invalid({
+    "plans/evidence/001.md": (text) =>
+      text.replace(/^reviewed_commit:.*$/m, "reviewed_commit: " + blob),
+  }, /Cannot read Git commit tree/);
+});
+test("DONE rejects incorrect plan ID and historical evidence blob", () => {
+  for (
+    const [key, value] of [["plan_id", "004"], [
+      "reviewed_evidence_blob",
+      "0".repeat(40),
+    ], ["completed_evidence_blob", "0".repeat(40)]]
+  ) {
+    invalid({
+      "plans/evidence/001.md": (text) =>
+        text.replace(new RegExp("^" + key + ":.*$", "m"), key + ": " + value),
+    }, /001.*reviewer approval evidence/);
+  }
+});
+test("DONE rejects unreadable completed commit", () => {
+  invalid({
+    "plans/evidence/001.md": (text) =>
+      text.replace(
+        /^completed_commit:.*$/m,
+        "completed_commit: " + "deadbee".padEnd(40, "0"),
+      ),
+  }, /Cannot read Git commit tree/);
+});
+test("DONE rejects source object drift between review and completion", () => {
+  let changed = false;
+  const ref = readFileSync(resolve(planRoot, "evidence/001.md"), "utf8").match(
+    /^completed_commit: (.+)$/m,
+  )[1];
+  invalid({}, /001.*reviewer approval evidence/, [], {}, (args, output) => {
+    if (args[0] !== "ls-tree" || args.at(-1) !== ref) return output;
+    return output.split("\0").map((line) => {
+      if (!line.endsWith("\tsrc/auth/config.ts")) return line;
+      changed = true;
+      return line.replace(/[0-9a-f]{40}\t/, "0".repeat(40) + "\t");
+    }).join("\0");
+  });
+  assert(changed, "Expected the scoped source object fixture to change");
+});
+for (
+  const [id, path] of [[8, "plans/evidence/008.csv"], [
+    7,
+    "plans/evidence/007/browser/01-invoice.png",
+  ]]
+) {
+  test("DONE artifact bytes remain bound to completion: " + id, () => {
+    const artifact = id === 7
+      ? "plans/evidence/007/browser/" +
+        readdirSync(resolve(planRoot, "evidence/007/browser")).find((file) =>
+          file.endsWith(".png")
+        )
+      : path;
+    invalid(
+      { [artifact]: (bytes) => Buffer.concat([bytes, Buffer.from("CHANGED")]) },
+      new RegExp(String(id).padStart(3, "0") + ".*reviewer approval evidence"),
+    );
+  });
+}
+test("existing scope rejects Git tree read failure", () => {
+  invalid({}, /Cannot read Git commit tree: HEAD/, [], {}, (args, output) => {
+    if (args[0] === "ls-tree" && args.at(-1) === "HEAD") {
+      throw new Error("Git tree unavailable");
+    }
+    return output;
+  });
+});
+test("prerequisite-created source may be absent from Git HEAD and filesystem", () => {
+  const result = run(
+    {},
+    ["src/ui/testing/host.ts"],
+    {},
+    (args, output) =>
+      args[0] === "ls-tree" && args.at(-1) === "HEAD"
+        ? output.split("\0").filter((line) =>
+          !line.endsWith("\tsrc/ui/testing/host.ts")
+        ).join("\0")
+        : output,
+  );
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+test("STALE rejects non-string reason and reason outside metadata", () => {
+  for (
+    const replacement of ["- stale_reason: 42", '- stale_reason: "Valid prose"']
+  ) {
+    const changes = status(2, "STALE");
+    const change = changes[fileFor(2)];
+    changes[fileFor(2)] = (text) =>
+      replacement.endsWith("42")
+        ? change(text).replace(
+          "## Trạng thái và mục tiêu\n",
+          "## Trạng thái và mục tiêu\n\n" + replacement + "\n",
+        )
+        : change(text) + "\n" + replacement + "\n";
+    invalid(changes, /002.*STALE requires one nonempty stale_reason/);
+  }
 });
 test("021 requires both explicit Node runtime paths", () => {
   const text = readFileSync(resolve(repoRoot, fileFor(21)), "utf8");

@@ -94,6 +94,9 @@ Các file được sửa khi thực thi:
 - `src/tools/inventory_test.ts`
 - `src/client_test.ts`
 - `docs/tools.md`
+- `README.md`
+- `docs/coverage.md`
+- `docs/architecture.md`
 - `CHANGELOG.md`
 - `plans/evidence/015/` (tạo mới)
 - `plans/README.md`
@@ -108,9 +111,9 @@ dependency. Định danh, chuỗi lỗi và commit bằng tiếng Anh; phần gi
 Việt có dấu, không dùng ký tự U+2014.
 
 Trước khi sửa, chạy `git status --short`,
-`git diff --stat d2c5305..HEAD -- src/ui/stock-viewer/src/components/StockDetailPanel.tsx src/ui/shared/stock-movements.ts src/ui/shared/stock-movements_test.ts src/ui/testing/fixtures.ts src/ui/testing/host.ts src/tools/inventory.ts src/tools/inventory_test.ts src/client_test.ts docs/tools.md CHANGELOG.md`
+`git diff --stat d2c5305..HEAD -- src/ui/stock-viewer/src/components/StockDetailPanel.tsx src/ui/shared/stock-movements.ts src/ui/shared/stock-movements_test.ts src/ui/testing/fixtures.ts src/ui/testing/host.ts src/tools/inventory.ts src/tools/inventory_test.ts src/client_test.ts docs/tools.md README.md docs/coverage.md docs/architecture.md CHANGELOG.md`
 và
-`git diff -- src/ui/stock-viewer/src/components/StockDetailPanel.tsx src/ui/shared/stock-movements.ts src/ui/shared/stock-movements_test.ts src/ui/testing/fixtures.ts src/ui/testing/host.ts src/tools/inventory.ts src/tools/inventory_test.ts src/client_test.ts docs/tools.md CHANGELOG.md`.
+`git diff -- src/ui/stock-viewer/src/components/StockDetailPanel.tsx src/ui/shared/stock-movements.ts src/ui/shared/stock-movements_test.ts src/ui/testing/fixtures.ts src/ui/testing/host.ts src/tools/inventory.ts src/tools/inventory_test.ts src/client_test.ts docs/tools.md README.md docs/coverage.md docs/architecture.md CHANGELOG.md`.
 Bảo toàn thay đổi có sẵn. Nếu phụ thuộc đã thực thi, đối chiếu diff và làm mới
 kế hoạch này theo code mới trước khi sửa; sai khác chưa giải thích được là điều
 kiện dừng.
@@ -184,8 +187,12 @@ itemCode hoặc warehouse đổi; dependencies useEffect phải có cả hai. N�
 permission denied, hiện lỗi có lý do và không fallback về chứng từ toàn site.
 Inventory-only phải hoạt động, không coi operations bị tắt là lỗi bình thường
 của Recent Movements. Giữ cancellation guard để response item cũ không đi vào
-item mới. Cập nhật docs/tools.md và CHANGELOG chỉ về hành vi người dùng/tool đọc
-mới, không bump version.
+item mới. Cập nhật `docs/tools.md`, `README.md`, `docs/coverage.md`,
+`docs/architecture.md` và CHANGELOG về tool đọc mới. Đếm registry thực lúc
+execute: tổng tool và inventory tăng một so với baseline của lượt sửa; cập nhật
+cả heading, số tổng/category, bảng catalog và liệt kê inventory, không chỉ thêm
+tên trong docs/tools.md. Không hardcode số 134/9 nếu các kế hoạch trước đã thêm
+tool; không bump version.
 
 **Kiểm tra:**
 `npm --prefix src/ui run typecheck && deno test --allow-all src/ui/shared/stock-movements_test.ts src/tools/inventory_test.ts src/client_test.ts`
@@ -231,6 +238,10 @@ production. Fixture không thay bằng chứng schema hoặc quyền site.
       doc_list trong client đó, không thay schema/nghĩa tool cũ.
 - [ ] Typecheck UI/server và suite đạt; docs mô tả tool/giới hạn mới đúng, không
       nâng version.
+- [ ] Catalog `README.md`, `docs/coverage.md`, `docs/architecture.md` và
+      `docs/tools.md` liệt kê tool ledger; số tổng/category khớp registry thực
+      được lưu bằng chứng, không còn danh mục inventory tuyên bố đầy đủ nhưng
+      thiếu tool.
 - [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
 - [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/015.md`, cập

@@ -1,5 +1,6 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -40,10 +41,30 @@ function evidenceSource(sourcePath, sourceRef) {
   }
   return sourceCache.get(key);
 }
-const statusOf = (body) =>
-  body.match(
-    /Trạng thái thực thi:\s*`(TODO|IN_PROGRESS|BLOCKED|DONE|STALE)`/,
+const metadataSection = (body) =>
+  body.split("\n## Trạng thái và mục tiêu\n")[1]?.split("\n## ")[0] ?? "";
+function statusOf(body) {
+  if (body.split("Trạng thái thực thi:").length !== 2) return undefined;
+  return metadataSection(body).match(
+    /^- Mốc soạn: `[0-9a-f]{7,40}`, \d{4}-\d{2}-\d{2}\. Trạng thái thực thi: `(TODO|IN_PROGRESS|BLOCKED|DONE|STALE)`\.$/m,
   )?.[1];
+}
+function staleReason(body) {
+  const fields = body.split("\n").filter((line) =>
+    /^\s*-\s*stale_reason\s*:/.test(line)
+  );
+  if (
+    fields.length !== 1 ||
+    !metadataSection(body).split("\n").includes(fields[0])
+  ) return false;
+  const value = fields[0].match(/^- stale_reason: (.+)$/)?.[1];
+  try {
+    const reason = JSON.parse(value ?? "null");
+    return typeof reason === "string" && reason.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
 const statusById = new Map(manifest.map((entry) => {
   const path = resolve(planRoot, entry.file);
   return [
@@ -57,12 +78,115 @@ function exactLines(source, evidence) {
     evidence.line - 1 + evidence.code.split("\n").length,
   ).join("\n") === evidence.code;
 }
-function approved(body) {
+const treeCache = new Map();
+function gitTree(ref) {
+  if (!treeCache.has(ref)) {
+    try {
+      const options = {
+        cwd: repoRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      };
+      if (
+        execFileSync("git", ["cat-file", "-t", ref], options).trim() !==
+          "commit"
+      ) {
+        throw new Error("Expected a Git commit");
+      }
+      const output = execFileSync("git", [
+        "ls-tree",
+        "-r",
+        "-t",
+        "-z",
+        "--full-tree",
+        ref,
+      ], options);
+      treeCache.set(
+        ref,
+        new Map(
+          output.split("\0").filter(Boolean).map((line) => {
+            const [header, path] = line.split("\t");
+            const [mode, type, oid] = header.split(" ");
+            return [path, { mode, type, oid }];
+          }),
+        ),
+      );
+    } catch {
+      fail("Cannot read Git commit tree: " + ref);
+      treeCache.set(ref, undefined);
+    }
+  }
+  return treeCache.get(ref);
+}
+function scopedObject(tree, path) {
+  if (
+    !path || path.startsWith("/") || path.includes("\\") ||
+    path.split("/").some((part, index, parts) =>
+      part === "." || part === ".." || (!part && index !== parts.length - 1)
+    )
+  ) return undefined;
+  const object = tree?.get(path.replace(/\/$/, ""));
+  const directory = path.endsWith("/");
+  return object?.type === (directory ? "tree" : "blob") &&
+      (directory || object.mode === "100644" || object.mode === "100755")
+    ? object
+    : undefined;
+}
+function approved(body, entry) {
   const metadata = body.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1];
-  const verdicts = metadata?.split(/\r?\n/).filter((line) =>
-    line.startsWith("review_verdict:")
-  );
-  return verdicts?.length === 1 && verdicts[0] === "review_verdict: APPROVE";
+  const field = (key) => {
+    const lines = metadata?.split(/\r?\n/).filter((line) =>
+      new RegExp("^\\s*" + key + "\\s*:").test(line)
+    );
+    return lines?.length === 1
+      ? lines[0].match(new RegExp("^" + key + ": (.+)$"))?.[1]
+      : undefined;
+  };
+  const id = String(entry.id).padStart(3, "0");
+  if (field("review_verdict") !== "APPROVE" || field("plan_id") !== id) {
+    return false;
+  }
+  const reviewed = field("reviewed_commit"),
+    completed = field("completed_commit");
+  if (![reviewed, completed].every((ref) => /^[0-9a-f]{40}$/.test(ref ?? ""))) {
+    return false;
+  }
+  const reviewTree = gitTree(reviewed), completionTree = gitTree(completed);
+  if (!reviewTree || !completionTree) return false;
+  const reportPath = "plans/evidence/" + id + ".md";
+  for (
+    const [tree, key] of [[reviewTree, "reviewed_evidence_blob"], [
+      completionTree,
+      "completed_evidence_blob",
+    ]]
+  ) {
+    const report = scopedObject(tree, reportPath);
+    if (!report || report.oid !== field(key)) return false;
+  }
+  for (const path of entry.scope) {
+    const before = scopedObject(reviewTree, path),
+      after = scopedObject(completionTree, path);
+    if (
+      !before || !after || before.oid !== after.oid ||
+      before.mode !== after.mode
+    ) return false;
+    if (path.startsWith("plans/")) {
+      const artifacts = path.endsWith("/")
+        ? [...completionTree].filter(([name, object]) =>
+          name.startsWith(path) && object.type === "blob"
+        )
+        : [[path, after]];
+      for (const [name, object] of artifacts) {
+        const current = resolve(repoRoot, name);
+        if (!existsSync(current) || !lstatSync(current).isFile()) return false;
+        const data = readFileSync(current);
+        const oid = createHash("sha1").update("blob " + data.length + "\0")
+          .update(data).digest("hex");
+        if (oid !== object.oid) return false;
+      }
+    }
+  }
+  return true;
 }
 function planFiles(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -171,6 +295,10 @@ for (const entry of manifest) {
   }
   const executionStatus = statusOf(body);
   if (!executionStatus) fail(entry.file + ": missing valid execution status");
+  const validStale = executionStatus === "STALE" && staleReason(body);
+  if (executionStatus === "STALE" && !validStale) {
+    fail(entry.file + ": STALE requires one nonempty stale_reason in metadata");
+  }
   if (executionStatus === "IN_PROGRESS" || executionStatus === "DONE") {
     for (const dependency of entry.depends) {
       if (statusById.get(dependency) !== "DONE") {
@@ -199,7 +327,8 @@ for (const entry of manifest) {
       String(entry.id).padStart(3, "0") + ".md",
     );
     if (
-      !existsSync(evidencePath) || !approved(readFileSync(evidencePath, "utf8"))
+      !existsSync(evidencePath) ||
+      !approved(readFileSync(evidencePath, "utf8"), entry)
     ) {
       fail(entry.file + ": DONE requires reviewer approval evidence");
     }
@@ -225,14 +354,21 @@ for (const entry of manifest) {
           dependency.depends.some((next) => dependencyCreates(next, seen)));
     };
     if (
-      !existsSync(resolve(repoRoot, scoped)) &&
-      !entry.newFiles.includes(scoped) && !entry.depends.some((id) =>
-        dependencyCreates(id)
-      )
+      !entry.newFiles.includes(scoped) &&
+      !entry.depends.some((id) => dependencyCreates(id))
     ) {
-      fail(
-        `${entry.file}: scope chưa tồn tại và chưa đánh dấu tạo mới: ${scoped}`,
-      );
+      if (!scopedObject(gitTree("HEAD"), scoped)) {
+        fail(entry.file + ": existing scope is not tracked: " + scoped);
+      }
+      const current = resolve(repoRoot, scoped);
+      if (!existsSync(current)) {
+        fail(entry.file + ": existing scope is missing: " + scoped);
+      } else {
+        const stat = lstatSync(current);
+        if (!(scoped.endsWith("/") ? stat.isDirectory() : stat.isFile())) {
+          fail(entry.file + ": existing scope type mismatch: " + scoped);
+        }
+      }
     }
   }
   const blocks = [
@@ -263,7 +399,7 @@ for (const entry of manifest) {
           ":" + evidence.path + ":" + evidence.line,
       );
     }
-    if (["TODO", "IN_PROGRESS", "BLOCKED"].includes(executionStatus)) {
+    if (executionStatus !== "DONE" && !validStale) {
       const currentPath = resolve(repoRoot, evidence.path);
       if (
         !existsSync(currentPath) ||
@@ -309,9 +445,15 @@ else {
     if (!index.includes(`](${entry.file})`)) {
       fail(`README thiếu ${entry.file}`);
     }
-    const row = index.split("\n").find((line) =>
-      line.startsWith(`| ${String(entry.id).padStart(3, "0")} `)
+    const id = String(entry.id).padStart(3, "0");
+    const rows = index.split("\n").filter((line) =>
+      line.split("|")[1]?.trim() === id
     );
+    if (rows.length !== 1) fail("README requires exactly one row for ID " + id);
+    const row = rows[0];
+    const target = row?.split("|")[2]?.trim().match(/^\[[^\]]+\]\(([^)]+)\)$/)
+      ?.[1];
+    if (target !== entry.file) fail("README row file does not match ID " + id);
     const rowStatus = row?.match(
       /\|\s*(TODO|IN_PROGRESS|BLOCKED|DONE|STALE)\s*\|$/,
     )?.[1];
@@ -319,9 +461,7 @@ else {
     if (!indexDependencies || !sameSet(indexDependencies, entry.depends)) {
       fail(entry.file + ": index and manifest dependencies differ");
     }
-    const planStatus = readFileSync(resolve(planRoot, entry.file), "utf8")
-      .match(/Trạng thái thực thi:\s*`(TODO|IN_PROGRESS|BLOCKED|DONE|STALE)`/)
-      ?.[1];
+    const planStatus = statusById.get(entry.id);
     if (!rowStatus || rowStatus !== planStatus) {
       fail(`${entry.file}: index and plan status differ`);
     }

@@ -244,3 +244,45 @@ tự scope và ghi chú không liên quan được chấp nhận. Reviewer chạ
 Parent cũng đọc toàn delta và tự chạy các gate tài liệu đạt. Hiệu quả kiểm local
 của rule được xác nhận, chưa suy ra Codex vòng tới sẽ áp dụng đúng; cần CI và
 review mới trên HEAD được push.
+
+## Review 5120105157: sáu khoảng trống còn lại
+
+Đọc nguyên văn sáu finding trên HEAD `1535fe8`. Codex viện dẫn đúng hai rule
+trong plans/AGENTS.md cho năm finding validator; đây là bằng chứng rule đã giúp
+chỉ ra gap còn sót, không phải lý do miễn finding. Giữ nguyên rule hẹp, không
+thêm rule rộng hoặc tuyên bố mọi khoảng trống đã hết trước review tiếp.
+
+- `3939716577`: bổ sung README.md, docs/coverage.md, docs/architecture.md vào
+  scope/manifest/diff commands/checklist 015. Catalog phải đếm registry thực lúc
+  execute và tăng đúng một tool inventory, không chép số cũ 134/9.
+- `3939716583`: bare/copied APPROVE, reviewed_commit sai/trùng/không đọc được bị
+  từ chối. Parent duyệt binding plan_id + reviewed_commit + completed_commit
+  thật; report blobs lấy đúng path NNN ở Git lịch sử. Sáu cặp final HEAD/merge
+  đã đo trước code: toàn scope 001/003/004/007/008/024 lần lượt 3/5/2/20/6/1
+  object khớp, kể cả CSV/PNG/trace. Không miễn plans. Mốc review độc lập gốc vẫn
+  giữ trong narrative; metadata reviewed_commit chỉ HEAD cuối đã được Codex xác
+  nhận sạch và CI thật được báo cáo. Không tạo revision hoặc verdict mới.
+  Source/doc/artifact cùng object giữa reviewed/completed; artifact hiện tại
+  trong scope plans còn so Git blob byte thật. Gate không xác thực danh tính
+  reviewer hoặc CI offline.
+- `3939716588`: chỉ đọc status từ dòng metadata Mốc soạn trong mục quy định;
+  toàn plan có đúng một khai báo. Duplicate hợp lệ/malformed hoặc prose ngoài
+  metadata không thể thay status điều khiển gate.
+- `3939716594`: scope existing phải có Git tree membership trong HEAD, đúng
+  blob/tree, mode và path boundary; kiểm loại file/dir trong working tree.
+  Placeholder untracked hay thư mục mang tên file bị chặn. newFiles hoặc
+  prerequisite-created vẫn được miễn đúng khai báo, kể cả root chưa nhận source
+  của dependency. Lỗi đọc Git là failure, không fallback existsSync.
+- `3939716598`: mỗi row ID README có đúng một link đúng manifest file, không chỉ
+  tìm link toàn trang; hoán đổi 005/006 hoặc duplicate row bị chặn.
+- `3939716604`: STALE chỉ miễn current drift khi có đúng một stale_reason là
+  JSON string không rỗng trong metadata. Thiếu/rỗng/trùng/sai kiểu/sai vị trí bị
+  chặn; historical source vẫn kiểm kể cả khi lý do hợp lệ.
+
+Red đầu: 72 test, 52 pass, 20 fail đúng assertion của sáu lớp. Sau sửa 72/72
+xanh. Bổ sung chín regression về object type, provenance report, source object
+khác giữa revision, byte CSV/PNG, lỗi Git tree, prerequisite thiếu ở Git HEAD và
+reason sai kiểu/vị trí: tổng 81/81 xanh. Fixture chỉ đổi dữ liệu đọc trong bộ
+nhớ, không sửa artifact, source hoặc Git history. Các ca chủ ý hợp lệ gồm STALE
+có lý do, docs-only/squash với blob khớp, newFiles/dependency-created; ghi chú
+unrelated vẫn qua. Các mốc này chưa thay review fresh của delta mới.

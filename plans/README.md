@@ -146,6 +146,33 @@ không phải verdict dương. Links Markdown được kiểm cả dưới evide
 tương đối với thư mục chứa file. Các kiểm tra này không thay review
 implementation, CI hoặc bằng chứng môi trường bắt buộc.
 
+Status được đọc từ đúng dòng metadata Mốc soạn trong mục Trạng thái và mục tiêu;
+toàn kế hoạch chỉ có một khai báo trạng thái. STALE còn yêu cầu đúng một dòng
+`- stale_reason: "Lý do cụ thể"` tại cùng mục: giá trị là JSON string không rỗng
+sau trim, không dùng prose ngoài metadata hoặc dòng trùng để miễn current drift.
+TODO/IN_PROGRESS/BLOCKED và STALE thiếu lý do vẫn không được bỏ kiểm source hiện
+tại; DONE tiếp tục kiểm lịch sử theo binding bên dưới.
+
+Approval DONE ràng buộc bằng sáu field duy nhất trong YAML frontmatter:
+`review_verdict: APPROVE`, `plan_id: NNN`, `reviewed_commit`,
+`completed_commit`, `reviewed_evidence_blob`, `completed_evidence_blob`. Hai
+commit dùng full SHA, phải là Git commit đọc được. reviewed_commit là revision
+đã được review sạch, completed_commit là final/merge thật được ghi trong
+evidence; không phải HEAD đang chạy validator. Hai blob ID phải trỏ đúng report
+`plans/evidence/NNN.md` tại hai commit đó. Toàn scope, kể cả thư mục artifact
+trong plans, phải có cùng Git object/type/mode ở hai revision, chấp nhận squash
+hoặc docs-only final mà không ép hai commit bằng nhau. Artifact trong scope dưới
+plans còn phải khớp byte hiện tại với completed revision; report NNN chính có
+thể append lịch sử sau đó, giữ blob snapshot gốc.
+
+Đây là kiểm tính nhất quán của metadata và Git, không xác thực danh tính người
+review hoặc CI bằng offline. Các mốc review độc lập cũ được giữ trong narrative
+khi reviewed_commit chuyển sang HEAD cuối đã được Codex xác nhận. Không tạo Git
+object giả, không tự hash báo cáo mới để chứng minh approval của chính nó. Scope
+existing phải là file/tree tracked trong Git HEAD với đúng loại và ranh giới
+đường dẫn, đồng thời tồn tại trong working tree. Chỉ newFiles hoặc path được
+prerequisite khai báo tạo mới mới được miễn điều kiện existing này.
+
 `node --test plans/test-validator.mjs` chạy regression về checklist, verdict,
 phụ thuộc, baseline đã refresh, literal/token, drift và link lồng nhau, cùng
 contract kiểm tra của 007/011/021. Fixture chỉ thay nội dung đọc trong bộ nhớ và

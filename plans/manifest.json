@@ -495,6 +495,9 @@
       "src/tools/inventory_test.ts",
       "src/client_test.ts",
       "docs/tools.md",
+      "README.md",
+      "docs/coverage.md",
+      "docs/architecture.md",
       "CHANGELOG.md",
       "plans/evidence/015/"
     ],
