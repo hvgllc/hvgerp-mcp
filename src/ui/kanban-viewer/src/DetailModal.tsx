@@ -4,6 +4,12 @@ import type { KanbanBoardData, KanbanCardData } from "~/shared/kanban/types";
 import type { CardDetailState } from "~/shared/kanban/state";
 import { badgeToneColors, getAvailableTargets } from "./KanbanViewer";
 import { ActionButton } from "~/shared/ActionButton";
+import {
+  type DetailSaveResult,
+  type DetailSessionToken,
+  settleDetailOperation,
+  updateDetailDraft,
+} from "~/shared/kanban/detail-session";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -745,11 +751,13 @@ function AssigneesSection({
   onAssign,
   onUnassign,
   onLoadUsers,
+  isCurrent,
 }: {
   assignees: string[];
   onAssign: (assignTo: string) => Promise<void>;
   onUnassign?: (assignee: string) => Promise<void>;
   onLoadUsers: () => Promise<AssignableUser[]>;
+  isCurrent: () => boolean;
 }) {
   const [users, setUsers] = useState<AssignableUser[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -787,31 +795,32 @@ function AssigneesSection({
     if (!selected || assigning) return;
     setAssigning(true);
     setAssignError(null);
-    try {
-      await onAssign(selected);
-      setSelected("");
-    } catch (error) {
-      setAssignError(
-        error instanceof Error ? error.message : "Assignment failed",
-      );
-    } finally {
-      setAssigning(false);
-    }
+    await settleDetailOperation({
+      request: () => onAssign(selected),
+      isCurrent,
+      onSuccess: () => setSelected(""),
+      onError: (error) =>
+        setAssignError(
+          error instanceof Error ? error.message : "Assignment failed",
+        ),
+      onSettled: () => setAssigning(false),
+    });
   }
 
   async function handleUnassign(assignee: string) {
     if (!onUnassign || removing) return;
     setRemoving(assignee);
     setAssignError(null);
-    try {
-      await onUnassign(assignee);
-    } catch (error) {
-      setAssignError(
-        error instanceof Error ? error.message : "Unassignment failed",
-      );
-    } finally {
-      setRemoving(null);
-    }
+    await settleDetailOperation({
+      request: () => onUnassign(assignee),
+      isCurrent,
+      onSuccess: () => {},
+      onError: (error) =>
+        setAssignError(
+          error instanceof Error ? error.message : "Unassignment failed",
+        ),
+      onSettled: () => setRemoving(null),
+    });
   }
 
   return (
@@ -952,28 +961,27 @@ export function CardDetailModal({
   onUnassign,
   onLoadUsers,
   onNavigate,
+  isSessionCurrent,
 }: {
   detail: CardDetailState;
   board: KanbanBoardData;
   onClose: () => void;
   onMove: (card: KanbanCardData, toColumn: string, label: string) => void;
   onSave?: (
-    doctype: string,
-    name: string,
+    session: DetailSessionToken,
     data: Record<string, string>,
-  ) => void;
+  ) => Promise<DetailSaveResult>;
   onAssign?: (
-    doctype: string,
-    name: string,
+    session: DetailSessionToken,
     assignTo: string,
   ) => Promise<void>;
   onUnassign?: (
-    doctype: string,
-    name: string,
+    session: DetailSessionToken,
     assignee: string,
   ) => Promise<void>;
   onLoadUsers?: () => Promise<AssignableUser[]>;
   onNavigate?: (message: string) => void;
+  isSessionCurrent: (session: DetailSessionToken) => boolean;
 }) {
   const [editedFields, setEditedFields] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -981,6 +989,14 @@ export function CardDetailModal({
     { text: string; isError: boolean } | null
   >(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const draftRevision = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!detail.selectedCardId) return;
@@ -997,9 +1013,10 @@ export function CardDetailModal({
     setSaveMessage(null);
   }, [detail.selectedCardId]);
 
-  if (!detail.selectedCardId) return null;
+  if (!detail.selectedCardId || !detail.session) return null;
 
-  const selectedCardId = detail.selectedCardId;
+  const session = detail.session;
+  const isCurrent = () => mounted.current && isSessionCurrent(session);
   const card = board.cards.find((c) => c.id === detail.selectedCardId);
   const cardTitle = card?.title ?? detail.selectedCardId;
   const availableTargets = card
@@ -1008,36 +1025,41 @@ export function CardDetailModal({
   const hasEdits = Object.keys(editedFields).length > 0;
 
   function handleFieldChange(key: string, value: string) {
+    ++draftRevision.current;
     setEditedFields((prev) => {
       const original = detail.cardDetail
         ? String(detail.cardDetail[key] ?? "")
         : "";
-      if (value === original) {
-        const next = { ...prev };
-        delete next[key];
-        return next;
-      }
-      return { ...prev, [key]: value };
+      return updateDetailDraft(prev, key, value, original, saving);
     });
     setSaveMessage(null);
   }
 
   async function handleSave() {
-    if (!hasEdits || !onSave || !detail.selectedCardId) return;
+    if (!hasEdits || !onSave || saving) return;
+    const revision = draftRevision.current;
     setSaving(true);
     setSaveMessage(null);
-    try {
-      await onSave(board.doctype, detail.selectedCardId, editedFields);
-      setSaveMessage({ text: "Saved", isError: false });
-      setEditedFields({});
-    } catch (error) {
-      setSaveMessage({
-        text: error instanceof Error ? error.message : "Save failed",
-        isError: true,
-      });
-    } finally {
-      setSaving(false);
-    }
+    await settleDetailOperation({
+      request: () => onSave(session, editedFields),
+      isCurrent,
+      canApplyResult: () => draftRevision.current === revision,
+      onSuccess: (result) => {
+        setSaveMessage({
+          text: result.detailRefreshed
+            ? "Saved"
+            : "Saved; detail refresh failed",
+          isError: false,
+        });
+        setEditedFields({});
+      },
+      onError: (error) =>
+        setSaveMessage({
+          text: error instanceof Error ? error.message : "Save failed",
+          isError: true,
+        }),
+      onSettled: () => setSaving(false),
+    });
   }
 
   const columnColor = card
@@ -1306,13 +1328,12 @@ export function CardDetailModal({
                 // fall back to the board card's assignee (list data has it).
                 return card?.assignee ? [card.assignee] : [];
               })()}
-              onAssign={(assignTo) =>
-                onAssign(board.doctype, selectedCardId, assignTo)}
+              onAssign={(assignTo) => onAssign(session, assignTo)}
               onUnassign={onUnassign
-                ? (assignee) =>
-                  onUnassign(board.doctype, selectedCardId, assignee)
+                ? (assignee) => onUnassign(session, assignee)
                 : undefined}
               onLoadUsers={onLoadUsers}
+              isCurrent={isCurrent}
             />
           )}
 

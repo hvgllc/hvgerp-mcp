@@ -1,8 +1,13 @@
-import { useReducer } from "react";
+import { useReducer, useRef } from "react";
+import {
+  createDetailSessionTracker,
+  type DetailSessionToken,
+} from "./detail-session";
 import { createKanbanInitialState, kanbanStateReducer } from "./state";
 import type { KanbanBoardData } from "./types";
 
 export function useKanbanBoard() {
+  const sessions = useRef(createDetailSessionTracker()).current;
   const [state, dispatch] = useReducer(
     kanbanStateReducer,
     undefined,
@@ -20,17 +25,24 @@ export function useKanbanBoard() {
     setError(message: string) {
       dispatch({ type: "tool-error", message });
     },
-    selectCard(cardId: string) {
-      dispatch({ type: "select-card", cardId });
+    selectCard(doctype: string, cardId: string) {
+      const session = sessions.open(doctype, cardId);
+      dispatch({ type: "select-card", session });
+      return session;
     },
-    hydrateDetail(detail: Record<string, unknown>) {
-      dispatch({ type: "hydrate-detail", detail });
+    isDetailSessionCurrent: sessions.isCurrent,
+    hydrateDetail(
+      session: DetailSessionToken,
+      detail: Record<string, unknown>,
+    ) {
+      dispatch({ type: "hydrate-detail", session, detail });
     },
     closeDetail() {
+      sessions.close();
       dispatch({ type: "close-detail" });
     },
-    setDetailError(message: string) {
-      dispatch({ type: "detail-error", message });
+    setDetailError(session: DetailSessionToken, message: string) {
+      dispatch({ type: "detail-error", session, message });
     },
   };
 }
