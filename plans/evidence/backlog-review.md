@@ -55,7 +55,22 @@ chứng implementation hoặc môi trường thật đã đạt.
 
 ## Gate cuối
 
-Chạy lại validator, node test, format toàn plans, lint hai script và diff check
-sau sửa. Kết quả cuối và commit được bổ sung sau khi chốt snapshot, trước khi
-parent push hoặc trả lời review. PR vẫn cần Codex review sạch trên HEAD mới và
-CI đúng HEAD, không lấy gate tài liệu local thay CI ứng dụng.
+Toàn bộ chín finding trong bảng được sửa tại commit
+`3fdf65abad747ae0facdccb41b1e5118ba76e640`. Sau đó tích hợp main
+`c1e74851077a1aff262c13116ce1d8f448302234` qua merge
+`f2459126fc5a4b1ebead23a8eee0cd64154114f5`, không sửa source ngoài merge.
+
+Đã chạy lại trên nền mới sau khi cập nhật 003 DONE từ review/CI/merge thật:
+
+- `node plans/validate-plans.mjs`: exit 0, đủ 25 kế hoạch.
+- `node --test plans/test-validator.mjs`: exit 0, 29 passed, 0 failed; gồm 27 ca
+  của vòng đỏ cùng hai control giữ lại từ validator trước.
+- `deno fmt --check plans/`: exit 0, 40 file.
+- `deno lint plans/validate-plans.mjs plans/test-validator.mjs`: exit 0, 2
+  script.
+- `git diff --check`: exit 0.
+- Diff source nhánh backlog so với main c1e7485 rỗng. Test ứng dụng trên nền
+  tích hợp cuối sẽ do parent chạy lại, không suy ra từ 29 test validator.
+
+PR vẫn cần Codex review sạch trên HEAD mới và CI đúng HEAD, không lấy gate tài
+liệu local thay CI ứng dụng. Chưa push hoặc trả lời review trong lượt executor.

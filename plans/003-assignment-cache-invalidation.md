@@ -9,7 +9,7 @@
 - Mục audit: 3; loại: `bug`.
 - Ưu tiên: P1; công sức: S; rủi ro sửa: thấp; ảnh hưởng cache hit.
 - Phụ thuộc: không.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `TODO`.
+- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `DONE`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 doc_assign GET trước khi ghi, applyAssignment/removeAssignment gọi method native
@@ -153,12 +153,12 @@ một lượt.
 
 ## Tiêu chí hoàn tất
 
-- [ ] Phản hồi sau assignment dùng fresh GET, cache liên quan bị invalidate đúng
+- [x] Phản hồi sau assignment dùng fresh GET, cache liên quan bị invalidate đúng
       thời điểm.
-- [ ] Các regression cache thật và gate server đều đạt.
-- [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
+- [x] Các regression cache thật và gate server đều đạt.
+- [x] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
-- [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/003.md`, cập
+- [x] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/003.md`, cập
       nhật trạng thái ở `plans/README.md`. Không ghi giá trị bí mật.
 
 ## Điều kiện dừng

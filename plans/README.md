@@ -34,7 +34,7 @@ là ước lượng công sức/rủi ro sửa, không phải cam kết thời h
 | --- | --------------------------------------------------------------------------------------------------- | ------- | --------------------------------------------------------- | ------------- | -------- |
 | 001 | [Từ chối cấu hình OAuth chưa đầy đủ](001-reject-partial-oauth.md)                                   | P1      | S / thấp; giữ chế độ không auth chủ động                  | không         | DONE     |
 | 002 | [Kiểm câu trả lời MRTR trước mọi thao tác ghi](002-mrtr-preflight-before-write.md)                  | P1      | L / vừa; thay ranh giới phân giải và thực thi             | không         | BLOCKED  |
-| 003 | [Trả dữ liệu mới sau giao và bỏ giao việc](003-assignment-cache-invalidation.md)                    | P1      | S / thấp; ảnh hưởng cache hit                             | không         | TODO     |
+| 003 | [Trả dữ liệu mới sau giao và bỏ giao việc](003-assignment-cache-invalidation.md)                    | P1      | S / thấp; ảnh hưởng cache hit                             | không         | DONE     |
 | 004 | [Áp timeout cho toàn bộ phản hồi ERPNext](004-response-body-timeout.md)                             | P1      | S / thấp; giữ chính sách không retry write                | không         | DONE     |
 | 005 | [Tính analytics trong company và đồng tiền xác định](005-analytics-currency-context.md)             | P1      | L / vừa; thay ý nghĩa số tiền đang hiển thị sai           | không         | TODO     |
 | 006 | [Tổng hợp đủ dữ liệu trước khi tạo KPI và top N](006-complete-analytics-aggregates.md)              | P1      | L / vừa; lượng truy vấn và ngữ nghĩa tổng                 | 005           | TODO     |

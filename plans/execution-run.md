@@ -27,12 +27,28 @@ release/publish, không tự nâng dependency hoặc đổi production.
   review độc lập APPROVE; xem evidence/004.md. Worktree của executor
   goal_execute_004 tại /private/tmp/hvgerp-goal.BTKxiY/004, branch
   advisor/004-response-body-timeout.
+- 003 DONE: PR #26 merge c1e7485, CI Test 33945379032 đạt 847/0/4 bằng JSR thật,
+  Codex sạch và reviewer độc lập APPROVE; xem evidence/003.md.
+- Người dùng đã cho mở rộng hợp đồng 002; đang làm rõ thiết kế trước khi sửa
+  implementation. Ghi chú thiếu quyền trước đó là lịch sử, không tự đánh DONE.
+- 007 đang được executor khác kiểm; snapshot kế hoạch ở nhánh backlog còn TODO
+  vì source 007 chưa được tích hợp và không suy ra đã đạt từ tiến độ bên ngoài.
 - Hai worktree từ main 013a1cf; source thuộc scope chưa drift so với d2c5305.
 - Worktree lưu backlog: /private/tmp/hvgerp-goal.BTKxiY/backlog, branch
   advisor/goal-backlog; chỉ lưu plans, không copy file cá nhân ở gốc.
-- Tổng hiện tại: 3 DONE, 1 BLOCKED, 21 TODO. Phần bên dưới lưu lịch sử.
+- Tổng snapshot hiện tại: 4 DONE, 1 BLOCKED, 20 TODO. Phần bên dưới lưu lịch sử.
 
 ## Tiến độ lưu backlog
+
+- PR #25 review 5119802375 có chín finding ở HEAD 5302914. Bản sửa local
+  `3fdf65a` thêm gate checklist/verdict/dependency/sourceRef/exact text/nested
+  links và chỉnh kế hoạch 007/011/021. Regression 29/29 đạt; xem
+  [evidence/backlog-review.md](evidence/backlog-review.md).
+- Đã merge main c1e7485 vào nhánh backlog qua f245912, chỉ nhận source đã merge,
+  không tự sửa source. Parent tiếp tục review, CI và phản hồi Codex trên HEAD
+  backlog mới; chưa coi PR #25 sạch từ gate local.
+
+### Lịch sử trước vòng Codex mới
 
 - Commit lưu backlog 26a89f6 và sửa review 0a44372, chỉ có plans.
 - Review độc lập APPROVE sau khi bỏ lời dẫn khỏi bản lưu executor 001 để toàn
