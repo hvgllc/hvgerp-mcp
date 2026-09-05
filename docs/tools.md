@@ -440,8 +440,33 @@ present, is output-generation time, not proof that all pages share a database
 snapshot. Concurrent inserts, deletes or updates can move rows between pages;
 duplicate detection catches some changes but cannot detect every omission. Use
 authoritative ERPNext reports for reconciliation and rerun charts when
-underlying data is changing. Existing date windows and draft filters are
-unchanged.
+underlying data is changing. Draft filters are unchanged.
+
+### Analytics date windows
+
+Finite windows capture `siteToday` once per tool call, before reading their
+pages. Calendar arithmetic and `YYYY-MM` buckets do not depend on the MCP host's
+timezone. Date bounds include both endpoints; Lead `creation` is a Datetime and
+uses an exclusive midnight upper bound so the whole final day is included,
+including fractional seconds.
+
+| Tool                                     | Field                                                                                   | Bounds                                                                                                               |
+| ---------------------------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `erpnext_kpi_revenue`                    | Sales Order `transaction_date` (Date)                                                   | First day five months before the current site month through today; current MTD compared with the full previous month |
+| `erpnext_revenue_trend`                  | Sales Order `transaction_date` (Date)                                                   | First day of the requested N-month window through today, for total and customer series                               |
+| `erpnext_kpi_orders`                     | Sales Order `transaction_date` (Date), not `creation`                                   | Current month start through today; comparison uses previous month start through its final day                        |
+| `erpnext_sales_funnel`, finite periods   | Lead `creation` (Datetime); Opportunity/Quotation/Sales Order `transaction_date` (Date) | Month/quarter/year start through today; Lead uses `[start 00:00:00, tomorrow 00:00:00)`                              |
+| `erpnext_sales_funnel`, `all` or omitted | No date filter                                                                          | Existing all-time population, including future-dated records; no unnecessary timezone lookup                         |
+| `erpnext_kpi_outstanding`                | Accounts Receivable `report_date`                                                       | Existing report as of site today, unchanged                                                                          |
+| `erpnext_kpi_overdue`                    | Report `report_date` and `due_date` (Date)                                              | Existing report as of site today, then strict `due_date < today`, unchanged                                          |
+| `erpnext_ar_aging`                       | Report `report_date` and `due_date` (Date)                                              | Existing report and aging buckets use the same site-day snapshot, unchanged                                          |
+| `erpnext_profit_loss`                    | ERPNext report date range                                                               | Existing separate full-month report contract, unchanged                                                              |
+
+MTD, trend and finite funnel periods exclude future-dated documents. `all` is
+not an as-of-today window. The existing site-timezone fallback remains in place:
+System Settings when readable, then the defaults-based timezone method, then
+UTC. The fallback is not an authoritative site-timezone guarantee. These bounds
+do not turn successive reads into an atomic database snapshot.
 
 Ownership IDs are split by encoded request-target length (6,000 bytes for the
 API path and query, leaving headroom for a proxy prefix). A single ID plus the
