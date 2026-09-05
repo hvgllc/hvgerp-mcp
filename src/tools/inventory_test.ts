@@ -11,6 +11,7 @@
 
 import { assertEquals, assertRejects } from "@std/assert";
 import { inventoryTools } from "./inventory.ts";
+import { FrappeAPIError } from "../api/frappe-client.ts";
 import type { FrappeClient } from "../api/frappe-client.ts";
 import type { ErpNextToolContext } from "./types.ts";
 
@@ -38,6 +39,163 @@ function getTool(name: string) {
   if (!tool) throw new Error(`Tool not found: ${name}`);
   return tool;
 }
+
+Deno.test("stock ledger list is a bounded read-only inventory tool", async () => {
+  const tool = getTool("erpnext_stock_ledger_list");
+  assertEquals(tool.category, "inventory");
+  assertEquals(tool.annotations?.readOnlyHint, true);
+  assertEquals(tool.inputSchema.required, ["item_code", "warehouse"]);
+  let captured: unknown;
+  const rows = [{ name: "SLE-A" }];
+  const result = await tool.handler(
+    { item_code: "Widget", warehouse: "W1" },
+    makeCtx(makeMockClient({
+      get: async () => {
+        throw new FrappeAPIError("Item ID not found", 404, {});
+      },
+      list: async (doctype, options) => {
+        if (doctype === "Item") {
+          assertEquals(options.filters, [["item_name", "=", "Widget"]]);
+          return [{ name: "ITEM-A", item_name: "Widget" }];
+        }
+        captured = { doctype, options };
+        return rows;
+      },
+    })),
+  );
+  assertEquals(result, { data: rows });
+  assertEquals(captured, {
+    doctype: "Stock Ledger Entry",
+    options: {
+      fields: [
+        "name",
+        "item_code",
+        "warehouse",
+        "posting_date",
+        "posting_time",
+        "voucher_type",
+        "voucher_no",
+        "actual_qty",
+        "qty_after_transaction",
+        "stock_uom",
+      ],
+      filters: [["item_code", "=", "ITEM-A"], ["warehouse", "=", "W1"], [
+        "is_cancelled",
+        "=",
+        0,
+      ]],
+      limit: 5,
+      order_by: "posting_date desc, posting_time desc, name desc",
+    },
+  });
+});
+
+Deno.test("stock ledger validates every input before resolving or querying", async () => {
+  const tool = getTool("erpnext_stock_ledger_list");
+  let calls = 0;
+  const ctx = makeCtx(makeMockClient({
+    get: async () => {
+      calls++;
+      return {};
+    },
+    list: async () => {
+      calls++;
+      return [];
+    },
+  }));
+  for (
+    const input of [
+      {},
+      { item_code: "ITEM-A" },
+      { warehouse: "W1" },
+      ...["", "  ", null, 4, [], {}].flatMap((value) => [
+        { item_code: value, warehouse: "W1" },
+        { item_code: "ITEM-A", warehouse: value },
+      ]),
+      ...[null, 0, -1, 21, 1.5, "5", NaN, Infinity].map((limit) => ({
+        item_code: "ITEM-A",
+        warehouse: "W1",
+        limit,
+      })),
+    ]
+  ) await assertRejects(() => tool.handler(input, ctx), Error);
+  assertEquals(calls, 0);
+});
+
+Deno.test("stock ledger propagates resolution and permission errors without fallback", async () => {
+  const tool = getTool("erpnext_stock_ledger_list");
+  for (const phase of ["get", "list"]) {
+    let ledgerCalls = 0;
+    const error = new FrappeAPIError("Ledger permission denied", 403, {});
+    const ctx = makeCtx(makeMockClient({
+      get: async () => {
+        if (phase === "get") throw error;
+        return { name: "ITEM-A" };
+      },
+      list: async (doctype) => {
+        assertEquals(doctype, "Stock Ledger Entry");
+        ledgerCalls++;
+        throw error;
+      },
+    }));
+    assertEquals(
+      await assertRejects(() =>
+        tool.handler({ item_code: "ITEM-A", warehouse: "W1" }, ctx)
+      ),
+      error,
+    );
+    assertEquals(ledgerCalls, phase === "get" ? 0 : 1);
+  }
+});
+
+Deno.test("stock ledger keeps each item and warehouse pair and ignores query overrides", async () => {
+  const tool = getTool("erpnext_stock_ledger_list");
+  for (
+    const [item, warehouse] of [["ITEM-A", "W1"], ["ITEM-A", "W2"], [
+      "ITEM-B",
+      "W1",
+    ]]
+  ) {
+    for (const limit of [1, 5, 20]) {
+      let calls = 0;
+      const ctx = makeCtx(makeMockClient({
+        get: async (doctype, name) => {
+          assertEquals(doctype, "Item");
+          assertEquals(name, item);
+          return { name };
+        },
+        list: async (doctype, options) => {
+          calls++;
+          assertEquals(doctype, "Stock Ledger Entry");
+          assertEquals(options.filters, [["item_code", "=", item], [
+            "warehouse",
+            "=",
+            warehouse,
+          ], ["is_cancelled", "=", 0]]);
+          assertEquals(options.limit, limit);
+          assertEquals(
+            options.order_by,
+            "posting_date desc, posting_time desc, name desc",
+          );
+          return [];
+        },
+      }));
+      assertEquals(
+        await tool.handler({
+          item_code: item,
+          warehouse,
+          limit,
+          doctype: "Stock Entry",
+          filters: [],
+          fields: ["*"],
+          order_by: "modified asc",
+        }, ctx),
+        { data: [] },
+      );
+      assertEquals(calls, 1);
+    }
+  }
+});
 
 // ── erpnext_item_create ──────────────────────────────────────────────────────
 
