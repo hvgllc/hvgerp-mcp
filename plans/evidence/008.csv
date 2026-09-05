@@ -1,0 +1,5 @@
+name,customer_name,amount,notes
+CUSTOMER-001,"Alpha, Incorporated",42,"A ""quoted"" value"
+CUSTOMER-002,'=1+1,0,"First line
+Second line"
+CUSTOMER-003,Công ty Việt,-1,"'+SUM(1,2)"
