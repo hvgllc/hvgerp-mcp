@@ -376,6 +376,12 @@ Deno.test("erpnext_kanban_move_card - executes an allowed Task move", async () =
   let updatedData: Record<string, unknown> | undefined;
 
   const mockClient = makeMockClient({
+    get: async (doctype: string, name: string, options: unknown) => {
+      assertEquals(doctype, "Task");
+      assertEquals(name, "TASK-0001");
+      assertEquals(options, { skipCache: true });
+      return { name, status: "Open", modified: "2026-09-05 10:00:00.000001" };
+    },
     update: async (
       doctype: string,
       name: string,
@@ -408,7 +414,10 @@ Deno.test("erpnext_kanban_move_card - executes an allowed Task move", async () =
 
   assertEquals(updatedDoctype, "Task");
   assertEquals(updatedName, "TASK-0001");
-  assertEquals(updatedData, { status: "Working" });
+  assertEquals(updatedData, {
+    status: "Working",
+    modified: "2026-09-05 10:00:00.000001",
+  });
   assertEquals(result.ok, true);
   assertEquals((result.serverCard as { columnId: string }).columnId, "working");
 });
@@ -474,12 +483,18 @@ Deno.test("erpnext_kanban_move_card - executes an allowed Opportunity move", asy
   let updatedData: Record<string, unknown> | undefined;
 
   const mockClient = makeMockClient({
-    get: async () => ({
-      name: "CRM-OPP-2026-00001",
-      title: "ACME renewal",
-      status: "Open",
-      party_name: "Acme Corp",
-    }),
+    get: async (doctype: string, name: string, options: unknown) => {
+      assertEquals(doctype, "Opportunity");
+      assertEquals(name, "CRM-OPP-2026-00001");
+      assertEquals(options, { skipCache: true });
+      return {
+        name,
+        title: "ACME renewal",
+        status: "Open",
+        modified: "2026-09-05 10:00:00.000001",
+        party_name: "Acme Corp",
+      };
+    },
     update: async (
       doctype: string,
       name: string,
@@ -515,7 +530,10 @@ Deno.test("erpnext_kanban_move_card - executes an allowed Opportunity move", asy
 
   assertEquals(updatedDoctype, "Opportunity");
   assertEquals(updatedName, "CRM-OPP-2026-00001");
-  assertEquals(updatedData, { status: "Quotation" });
+  assertEquals(updatedData, {
+    status: "Quotation",
+    modified: "2026-09-05 10:00:00.000001",
+  });
   assertEquals(result.ok, true);
   assertEquals(
     (result.serverCard as { columnId: string }).columnId,
@@ -529,13 +547,19 @@ Deno.test("erpnext_kanban_move_card - executes an allowed Issue move", async () 
   let updatedData: Record<string, unknown> | undefined;
 
   const mockClient = makeMockClient({
-    get: async () => ({
-      name: "ISS-2026-00001",
-      subject: "Shipment damaged in transit",
-      status: "Open",
-      customer: "Acme Corp",
-      raised_by: "alice@example.com",
-    }),
+    get: async (doctype: string, name: string, options: unknown) => {
+      assertEquals(doctype, "Issue");
+      assertEquals(name, "ISS-2026-00001");
+      assertEquals(options, { skipCache: true });
+      return {
+        name,
+        subject: "Shipment damaged in transit",
+        status: "Open",
+        modified: "2026-09-05 10:00:00.000001",
+        customer: "Acme Corp",
+        raised_by: "alice@example.com",
+      };
+    },
     update: async (
       doctype: string,
       name: string,
@@ -568,7 +592,10 @@ Deno.test("erpnext_kanban_move_card - executes an allowed Issue move", async () 
 
   assertEquals(updatedDoctype, "Issue");
   assertEquals(updatedName, "ISS-2026-00001");
-  assertEquals(updatedData, { status: "Resolved" });
+  assertEquals(updatedData, {
+    status: "Resolved",
+    modified: "2026-09-05 10:00:00.000001",
+  });
   assertEquals(result.ok, true);
   assertEquals(
     (result.serverCard as { columnId: string }).columnId,
