@@ -460,3 +460,42 @@ hash 002/quyền, 005/011/017, 016/022 và ba file người dùng không đổi.
 root giữ nguyên prefix nội dung, chỉ append tiến độ/gate. Không có app build,
 dependency install, push/reply hoặc merge PR. Delta mới vẫn cần fresh review và
 CI do parent quản lý; không dùng APPROVE cũ của 0af23a9 thay thế.
+
+## Sửa REVISE độc lập: fixture drift không phụ thuộc TODO còn lại
+
+Reviewer độc lập phát hiện P2 trong plans/test-validator.mjs trên HEAD
+`a5fe5d24f98b173ac3a7064aabeab596a1f65588`: test chọn một TODO từ backlog thật,
+nên khi mọi TODO chuyển BLOCKED hợp lệ thì test tự thất bại. Đây là lỗi tiền đề
+fixture, không phải lỗi validator hoặc lý do bỏ current-source gate.
+
+Thêm regression trước sửa: trong bộ nhớ, đổi toàn bộ metadata TODO thành BLOCKED
+cùng hàng README; assert không còn plan TODO và validator vẫn 25/25. Sau đó gọi
+đúng regression current-source cũ. Lệnh
+`node --test --test-name-pattern='TODO detects|without TODO' plans/test-validator.mjs`
+đỏ đúng nguyên nhân: 1 passed, 1 failed tại assertion
+`The fixture requires a TODO plan with current evidence`. Không dùng lỗi Git,
+scope hoặc checklist để làm ca đỏ.
+
+Sửa fixture tự đặt kế hoạch 001 thành TODO trong bộ nhớ, đồng bộ index,
+checklist và mọi record evidence/fenced excerpt/citation bằng exact text từ Git
+HEAD thật. Không đổi trạng thái hoặc report approval thực trên đĩa. Ghép fixture
+lên backlog nền sau khi đã đổi hết TODO thành BLOCKED, không tìm TODO sẵn có.
+Fixture hợp lệ phải qua validator trước; sau đó chỉ thay một dòng current
+source, yêu cầu đúng một diagnostic current source drift của 001. Historical
+source vẫn được đọc từ cùng ref Git thật; không skip hoặc giảm assertion.
+
+Lần soạn fixture đầu chỉ thay một record trong khi 001 có hai fenced excerpt,
+nên baseline bị từ chối vì count mismatch. Đã sửa đồng bộ toàn bộ
+record/excerpt, không coi lỗi soạn này là bằng chứng đỏ của finding. Hai ca
+trọng tâm sau sửa đều xanh. Ca nền không TODO, ca TODO tự dựng hợp lệ và ca
+current-source sai được kiểm riêng; regression unrelated prose và provenance cũ
+vẫn giữ nguyên.
+
+Commit test riêng: `467c74c4fadb92970ae1290f3552289bc6bd39fa`. Sau commit, chạy
+`node --test plans/test-validator.mjs plans/test-history.mjs`: 84 passed, 0
+failed, 0 skipped, gồm 82 validator regression và hai phép kiểm Git clone thật.
+Validator 25/25, format 53 file, lint ba script, diff check đều đạt; source
+ngoài plans bằng main 341cba4. Không đổi validator, metadata thật hoặc
+history/provenance merge. Root chưa đồng bộ theo chỉ thị chờ review lại; không
+sửa source ứng dụng, push, reply hoặc merge PR. Evidence được commit riêng sau
+test; delta mới vẫn cần fresh review.
