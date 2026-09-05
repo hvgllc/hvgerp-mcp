@@ -9,7 +9,7 @@
 - Mục audit: 14; loại: `bug`.
 - Ưu tiên: P1; công sức: S; rủi ro sửa: thấp; lọc cùng business population.
 - Phụ thuộc: `005`, `006`, `013`.
-- Mốc soạn: `bce7d25`, 2026-09-05. Trạng thái thực thi: `TODO`.
+- Mốc soạn: `bce7d25`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 Sales chart có ba nhánh customer/item/status dùng ba quy tắc docstatus khác

@@ -9,7 +9,7 @@
 - Mục audit: 15; loại: `bug`.
 - Ưu tiên: P1; công sức: M; rủi ro sửa: vừa; đổi nguồn đọc lịch sử.
 - Phụ thuộc: `007`.
-- Mốc soạn: `341cba4`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
+- Mốc soạn: `341cba4`, 2026-09-05. Trạng thái thực thi: `DONE`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 StockDetailPanel gửi item_code cho stock_entry_list nhưng tool không hỗ trợ nên
@@ -231,20 +231,20 @@ production. Fixture không thay bằng chứng schema hoặc quyền site.
 
 ## Tiêu chí hoàn tất
 
-- [ ] Recent Movements được xác minh chỉ chứa đúng item/kho và dữ liệu posted
+- [x] Recent Movements được xác minh chỉ chứa đúng item/kho và dữ liệu posted
       ledger phù hợp.
-- [ ] Nguồn/field upstream có bằng chứng; tests và browser flow thật qua.
-- [ ] Tool ledger read-only tồn tại và gọi được ở inventory-only; không có
+- [x] Nguồn/field upstream có bằng chứng; tests và browser flow thật qua.
+- [x] Tool ledger read-only tồn tại và gọi được ở inventory-only; không có
       doc_list trong client đó, không thay schema/nghĩa tool cũ.
-- [ ] Typecheck UI/server và suite đạt; docs mô tả tool/giới hạn mới đúng, không
+- [x] Typecheck UI/server và suite đạt; docs mô tả tool/giới hạn mới đúng, không
       nâng version.
-- [ ] Catalog `README.md`, `docs/coverage.md`, `docs/architecture.md` và
+- [x] Catalog `README.md`, `docs/coverage.md`, `docs/architecture.md` và
       `docs/tools.md` liệt kê tool ledger; số tổng/category khớp registry thực
       được lưu bằng chứng, không còn danh mục inventory tuyên bố đầy đủ nhưng
       thiếu tool.
-- [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
+- [x] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
-- [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/015.md`, cập
+- [x] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/015.md`, cập
       nhật trạng thái ở `plans/README.md`. Không ghi giá trị bí mật.
 
 ## Điều kiện dừng

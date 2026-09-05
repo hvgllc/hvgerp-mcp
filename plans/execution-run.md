@@ -609,3 +609,32 @@ backlog, GitHub, commit hoặc push.
 - Quyền framework002 và khóa graph/npm021 chưa được trả lời. Đã hỏi riêng
   npm11.19.0 đang cài với graph hiện tại và native JSR lock; không suy quyền tải
   Node20/22 thành quyền nâng dependency, release hoặc Publish.
+
+## Tiến độ 2026-09-05, sau 11:12 UTC
+
+- 015 merge PR37 tại `174cd29bd5bd7ced3cb231b56e786e4f982e422c`, root ghi DONE,
+  tổng 18/25. CI33962369958 dùng JSR thật, 1363 test đạt ở hai lượt và release
+  preflight. Codex clean5551370812 đúng HEADbd53d03; ba finding đã sửa và trả
+  lời. Parent kiểm tích hợp full1363, UI7/Node và tree sau merge khớp.
+- Browser R3 của 015 dùng Stock HTML mới, tám PNG và 14 snapshot, console 0
+  error/1 warning AppBridge initialize lần hai đã ghi rõ. Reviewer đọc/xem đủ
+  artifact và APPROVE, source nguyên byte. Trace riêng a-w2 cập nhật chậm hơn
+  iframe, snapshot b-w1 tiếp theo chứa request A/W2; không coi snapshot là
+  atomic. Root sao đủ 43 artifact của mọi vòng và so byte toàn thư mục đạt.
+- Helper PR25 tại `f4618e5cb7d87407b5e38cd472d1029c3de75e57` được reviewer độc
+  lập APPROVE. Parent và reviewer tự chạy 187/187 helper/history tests,
+  validator 25/25; giữ 17 definition approval cũ. Đang đồng bộ DONE015 và tiến
+  độ014/023 vào snapshot mới trước vòng CI/Codex tiếp.
+- 014 đã triển khai và review độc lập tại
+  `4e3bcbe5870e5fdfc51b1b6504532d5c583a7fd7`: red6/control5, focused243,
+  full1360 và gate build đạt. Parent đang kiểm tích hợp main sau015, chưa push
+  hoặc DONE. Filter9tổ hợp và metric/topN giữ riêng đúng hợp đồng.
+- 016 source và tích hợp được reviewer APPROVE tại
+  `f79bc1344c62c1a5dddd5b7dc86b8523f3a67ea4`, full1389 đạt. Merge một hunk held
+  của host bằng union, giữ source/artifact015 nguyên byte. Còn Browser thật và
+  CI/Codex, không coi14NodeVMcontract là bằng chứng tab/drag thật.
+- 023 bắt đầu thiết kế sau015DONE, chỉ hai tài liệu trong worktree riêng. Đã làm
+  mới kế hoạch theo tool ledger limit20 và các thiếu hụt company/date/
+  offset/viewer binding; không tự xây feature hoặc mở rộng sang replenishment.
+- Quyền riêng framework002 và khóa graph/npm021 vẫn chờ trả lời. Root app và ba
+  file cá nhân giữ SHA-256 cũ, không release/publish hoặc tác động production.

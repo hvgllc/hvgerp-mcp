@@ -9,7 +9,7 @@
 - Mục audit: Hướng phát triển 1; loại: `direction`.
 - Ưu tiên: P3; công sức: M; rủi ro sửa: LOW.
 - Phụ thuộc: `015`.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `TODO`.
+- Mốc soạn: `174cd29`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
 - Độ tin cậy: cao về vị trí cơ hội trong roadmap; nhu cầu người dùng và khả năng
   ERP cần khảo sát, chưa coi là đã chứng minh.
 
@@ -151,3 +151,13 @@ biện, chốt hoặc ghi câu hỏi chặn, không mở rộng sang replenishme
 
 Chỉ cập nhật roadmap thành shipped sau một yêu cầu triển khai riêng với test
 thực tế.
+
+Đối chiếu sau 015 DONE tại main `174cd29bd5bd7ced3cb231b56e786e4f982e422c`:
+quote roadmap dòng 38 giữ nguyên. Tool `erpnext_stock_ledger_list` hiện đọc mới
+tối đa 20 row cho đúng một item và warehouse, không nhận company/date/offset và
+không có viewer binding. Generic doc_list có fields/filters/order_by/limit nhưng
+không có offset; không được mô tả các khoảng trống này thành API đã có. Stock
+chart hiện là tồn kho tại thời điểm đọc, không phải lịch sử biến động. Thiết kế
+phải phân biệt lượng chuyển động, số dư sau giao dịch và opening balance với mức
+đầy đủ thật, không suy lịch sử đầy đủ từ năm row gần nhất hoặc tự triển khai API
+trong đợt này.
