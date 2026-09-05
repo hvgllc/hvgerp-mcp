@@ -924,6 +924,7 @@ async function forwardOne(
   clientVersion: string,
   rememberedCapabilities?: Record<string, unknown>,
   allowEventStream = true,
+  observeResponse?: (response: Response) => void,
 ): Promise<ForwardOutcome> {
   const { message: outbound, headers: mcpHeaders } = rewriteOutbound(
     message,
@@ -957,6 +958,7 @@ async function forwardOne(
     body: JSON.stringify(outbound),
     signal: req.signal,
   });
+  observeResponse?.(res);
 
   // Media type không phân biệt hoa thường (RFC 9110), nên `Application/JSON`
   // của một upstream hay một tầng trung gian vẫn là JSON. So chuỗi thô ở đây
@@ -1026,6 +1028,15 @@ function markNotExecuted(
       `Not executed: an earlier entry in this batch was answered with ` +
         `HTTP ${status}`,
     ));
+  }
+}
+
+async function discardBatchResponse(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Lỗi cleanup không được thay thế lỗi đã biết hoặc làm mất completed replies.
+    console.warn("[shim] failed to cancel discarded batch response body");
   }
 }
 
@@ -1719,157 +1730,209 @@ export async function handleShimRequest(
   let upstreamHeaders: Headers | undefined;
   // Phiên chỉ được trao đi khi đã có gì đó để nó trỏ tới.
   let issuedSession: string | undefined;
+  // Notification có thể đã ghi dữ liệu dù không đóng góp reply nào.
+  let forwardedEntries = 0;
 
   for (let index = 0; index < messages.length; index += 1) {
     const entry = messages[index];
-    if (!isRecord(entry) || typeof entry["method"] !== "string") {
-      // Câu trả lời này cũng do shim tự viết, nên nó cũng đi vòng qua cổng xác
-      // thực của server nếu không hỏi: một thân `[{}]` không token vẫn nhận
-      // HTTP 200 thay vì 401.
-      const auth = await authorize();
-      if (auth.blocked !== undefined) return auth.blocked;
-      upstreamHeaders ??= auth.upstream;
-      replies.push(jsonRpcError(
-        normalizeId(isRecord(entry) ? entry["id"] : null),
-        -32600,
-        "Invalid Request: missing 'method' field",
-      ));
-      continue;
-    }
+    let forwarding = false;
+    let receivedResponse: Response | undefined;
+    try {
+      const missingMethod = !isRecord(entry) ||
+        typeof entry["method"] !== "string";
+      const message = entry as JsonRpcMessage;
+      const id = isRecord(entry) ? entry["id"] : undefined;
+      const locallyAnswered = !missingMethod && id !== undefined &&
+        LOCALLY_ANSWERED.has(message.method as string);
+      const invalidField = missingMethod || locallyAnswered
+        ? undefined
+        : describeInvalidFields(message);
 
-    const message = entry as JsonRpcMessage;
-    const id = message.id;
-
-    if (id !== undefined && LOCALLY_ANSWERED.has(message.method as string)) {
-      // Trả lời tại chỗ nghĩa là không có lượt nào chạm cổng xác thực của
-      // server, nên phải tự hỏi. Không hỏi thì một caller không token vẫn nhận
-      // 200 cho keepalive và báo "phiên còn sống", trong khi mọi lời gọi thật
-      // của nó đều bị từ chối.
-      const auth = await authorize();
-      if (auth.blocked !== undefined) return auth.blocked;
-      upstreamHeaders ??= auth.upstream;
-      // Hai method này không bao giờ tới bộ kiểm của server, nên shim phải tự
-      // kiểm. Không kiểm thì một phong bì sai - thiếu `jsonrpc`, `id` là object,
-      // `level` không hợp lệ - vẫn nhận `result` rỗng như một lời gọi đúng.
-      const invalid = validateLocalRequest(message);
-      replies.push(
-        invalid ?? { jsonrpc: "2.0", id, result: {} },
-      );
-      continue;
-    }
-
-    // `rewriteOutbound` thay trường sai kiểu bằng `{}` để có chỗ đặt `_meta`,
-    // nên `{"method":"tools/list","params":[]}` tới server dưới hình dạng một
-    // request hợp lệ và nhận về danh sách tool thay vì `-32602`. Bộ kiểm của
-    // server không bao giờ nhìn thấy giá trị thật, nên shim phải tự từ chối.
-    const invalidField = describeInvalidFields(message);
-    if (invalidField !== undefined) {
-      const auth = await authorize();
-      if (auth.blocked !== undefined) return auth.blocked;
-      upstreamHeaders ??= auth.upstream;
-      // Notification sai định dạng không có câu trả lời nào theo JSON-RPC,
-      // nhưng vẫn phải đi qua cổng quyền: bỏ qua nó mà không hỏi là để một
-      // caller không token nhận 202 thay vì 401.
-      if (id !== undefined) {
-        replies.push(jsonRpcError(
-          normalizeId(id),
-          -32602,
-          `Invalid params: ${invalidField}`,
-        ));
+      // Cả ba nhánh tự trả lời phải hỏi cùng một cổng quyền trước khi tạo reply.
+      if (missingMethod || locallyAnswered || invalidField !== undefined) {
+        const auth = await authorize();
+        if (auth.blocked !== undefined) {
+          if (forwardedEntries === 0) return auth.blocked;
+          upstreamHeaders = auth.upstream;
+          status = auth.blocked.status;
+          if (id !== undefined) {
+            replies.push(
+              jsonRpcError(
+                normalizeId(id),
+                -32000,
+                `Not executed: authorization denied with HTTP ${status}`,
+              ),
+            );
+          }
+          markNotExecuted(replies, messages, index, status);
+          // Không để lỗi hủy thân che mất các kết quả đã gom.
+          await discardBatchResponse(auth.blocked);
+          break;
+        }
+        upstreamHeaders ??= auth.upstream;
       }
-      continue;
-    }
 
-    const outcome = await forwardOne(
-      message,
-      req,
-      target,
-      identity,
-      clientVersion,
-      recall(CAPABILITY_CACHE, sessionKey, fallbackKey),
-      // `initialize` phải về dạng JSON. Upstream được quyền trả stream SSE cho
-      // một POST đã dịch, mà stream thì shim chuyển tiếp nguyên trạng: nó
-      // không biết cuộc thoả thuận có thành hay không, nên không nhớ
-      // capabilities, không nhớ revision và không cấp phiên. Client 2025-03-26
-      // sau đó rơi về LEGACY_FALLBACK_VERSION dù vừa `initialize` thành công.
-      // Đây là lời gọi duy nhất mà kết quả phải quan sát được, và nó cũng
-      // không cần chở gì theo dòng thời gian.
-      !Array.isArray(parsed) && message.method !== "initialize",
-    );
-    upstreamHeaders = outcome.response.headers;
-
-    // Không có JSON để dịch thì không có gì để shim làm: trả nguyên response
-    // của upstream, thân còn nguyên chưa đọc. Đây là đường của 401 kèm
-    // `WWW-Authenticate` (thứ khởi động lại luồng OAuth), của 5xx, và của mọi
-    // thân không phải JSON.
-    // Response không có JSON để đọc - stream SSE, thân lạ, 5xx - thì shim không
-    // biết cuộc thoả thuận có thành hay không, nên không cấp phiên ở đây: quên
-    // vẫn đúng hơn nhớ một trạng thái chưa chắc có thật.
-    if (outcome.payload === undefined && outcome.status !== 202) {
-      // Chưa gom được câu trả lời nào thì trả nguyên response của upstream là
-      // đúng nhất: thân chưa bị đọc, `WWW-Authenticate` còn nguyên, stream SSE
-      // đi thẳng tới client.
-      if (replies.length === 0) return outcome.response;
-      // Nhưng giữa một batch đã chạy dở thì nó xoá sạch dấu vết của những
-      // entry đã thực thi: client chỉ thấy một lỗi chung, thử lại cả batch, và
-      // lặp lại đúng những thay đổi vừa xảy ra. Ghi một kết quả cho entry này
-      // rồi đánh dấu phần còn lại là chưa chạy.
-      await outcome.response.body?.cancel();
-      if (id !== undefined) {
+      if (missingMethod) {
         replies.push(jsonRpcError(
-          normalizeId(id),
-          -32603,
-          `Internal error: upstream answered HTTP ${outcome.status} with a ` +
-            `body this shim cannot translate`,
+          normalizeId(isRecord(entry) ? entry["id"] : null),
+          -32600,
+          "Invalid Request: missing 'method' field",
         ));
+        continue;
+      }
+
+      if (locallyAnswered) {
+        // Hai method này không bao giờ tới bộ kiểm của server, nên shim phải tự
+        // kiểm. Không kiểm thì một phong bì sai - thiếu `jsonrpc`, `id` là object,
+        // `level` không hợp lệ - vẫn nhận `result` rỗng như một lời gọi đúng.
+        const invalid = validateLocalRequest(message);
+        replies.push(
+          invalid ?? { jsonrpc: "2.0", id, result: {} },
+        );
+        continue;
+      }
+
+      // `rewriteOutbound` thay trường sai kiểu bằng `{}` để có chỗ đặt `_meta`,
+      // nên `{"method":"tools/list","params":[]}` tới server dưới hình dạng một
+      // request hợp lệ và nhận về danh sách tool thay vì `-32602`. Bộ kiểm của
+      // server không bao giờ nhìn thấy giá trị thật, nên shim phải tự từ chối.
+      if (invalidField !== undefined) {
+        // Notification sai định dạng không có câu trả lời nào theo JSON-RPC,
+        // nhưng vẫn phải đi qua cổng quyền: bỏ qua nó mà không hỏi là để một
+        // caller không token nhận 202 thay vì 401.
+        if (id !== undefined) {
+          replies.push(jsonRpcError(
+            normalizeId(id),
+            -32602,
+            `Invalid params: ${invalidField}`,
+          ));
+        }
+        continue;
+      }
+
+      forwarding = true;
+      forwardedEntries += 1;
+      const outcome = await forwardOne(
+        message,
+        req,
+        target,
+        identity,
+        clientVersion,
+        recall(CAPABILITY_CACHE, sessionKey, fallbackKey),
+        // `initialize` phải về dạng JSON. Upstream được quyền trả stream SSE cho
+        // một POST đã dịch, mà stream thì shim chuyển tiếp nguyên trạng: nó
+        // không biết cuộc thoả thuận có thành hay không, nên không nhớ
+        // capabilities, không nhớ revision và không cấp phiên. Client 2025-03-26
+        // sau đó rơi về LEGACY_FALLBACK_VERSION dù vừa `initialize` thành công.
+        // Đây là lời gọi duy nhất mà kết quả phải quan sát được, và nó cũng
+        // không cần chở gì theo dòng thời gian.
+        !Array.isArray(parsed) && message.method !== "initialize",
+        (response) => {
+          receivedResponse = response;
+          upstreamHeaders = response.headers;
+        },
+      );
+      upstreamHeaders = outcome.response.headers;
+
+      // Không có JSON để dịch thì không có gì để shim làm: trả nguyên response
+      // của upstream, thân còn nguyên chưa đọc. Đây là đường của 401 kèm
+      // `WWW-Authenticate` (thứ khởi động lại luồng OAuth), của 5xx, và của mọi
+      // thân không phải JSON.
+      // Response không có JSON để đọc - stream SSE, thân lạ, 5xx - thì shim không
+      // biết cuộc thoả thuận có thành hay không, nên không cấp phiên ở đây: quên
+      // vẫn đúng hơn nhớ một trạng thái chưa chắc có thật.
+      if (outcome.payload === undefined && outcome.status !== 202) {
+        // Chưa gom được câu trả lời nào thì trả nguyên response của upstream là
+        // đúng nhất: thân chưa bị đọc, `WWW-Authenticate` còn nguyên, stream SSE
+        // đi thẳng tới client.
+        if (replies.length === 0 && forwardedEntries === 1) {
+          return outcome.response;
+        }
+        // Nhưng giữa một batch đã chạy dở thì nó xoá sạch dấu vết của những
+        // entry đã thực thi: client chỉ thấy một lỗi chung, thử lại cả batch, và
+        // lặp lại đúng những thay đổi vừa xảy ra. Ghi một kết quả cho entry này
+        // rồi đánh dấu phần còn lại là chưa chạy.
+        await discardBatchResponse(outcome.response);
+        if (id !== undefined) {
+          replies.push(jsonRpcError(
+            normalizeId(id),
+            -32603,
+            `Outcome unknown: upstream answered HTTP ${outcome.status} with a ` +
+              `body this shim cannot translate`,
+          ));
+        }
+        status = outcome.status >= 400 ? outcome.status : 502;
+        markNotExecuted(replies, messages, index, outcome.status);
+        break;
       }
       if (outcome.status >= 400) status = outcome.status;
-      markNotExecuted(replies, messages, index, outcome.status);
-      break;
-    }
-    if (outcome.status >= 400) status = outcome.status;
-    if (outcome.payload !== undefined) replies.push(outcome.payload);
-
-    // Chỉ nhớ sau khi thoả thuận THÀNH CÔNG. Ghi trước lúc gọi nghĩa là một
-    // `initialize` bị upstream từ chối vẫn để lại capabilities, revision và
-    // một phiên gắn trên chính response lỗi: client mang phiên đó quay lại và
-    // được dịch bằng một trạng thái chưa bao giờ được thoả thuận.
-    if (
-      message.method === "initialize" && sessionKey !== undefined &&
-      isRecord(message.params) && outcome.status < 400 &&
-      outcome.payload !== undefined && !hasJsonRpcError(outcome.payload)
-    ) {
-      rememberCapabilities(sessionKey, message.params["capabilities"]);
-      if (fallbackKey !== undefined) {
-        rememberCapabilities(fallbackKey, message.params["capabilities"]);
-      }
-      // Thoả thuận revision xảy ra đúng một lần, ở đây. Chỉ nhớ bản đời cũ đã
-      // biết: một lời khai `2026-07-28` được phát lại cho lượt sau là dựng
-      // ngược chính thứ shim sinh ra để dịch.
       if (
-        declaredVersion !== undefined &&
-        KNOWN_LEGACY_VERSIONS.has(declaredVersion)
-      ) {
-        rememberRevision(sessionKey, declaredVersion);
-        if (fallbackKey !== undefined) {
-          rememberRevision(fallbackKey, declaredVersion);
-        }
-      }
-      issuedSession = mintedSession;
-    }
+        outcome.payload !== undefined &&
+        (!Array.isArray(parsed) || id !== undefined)
+      ) replies.push(outcome.payload);
 
-    // Cả batch dùng chung một bộ chứng danh, nên khi một message đã nhận câu
-    // trả lời về quyền hoặc về nhịp thì mọi message còn lại chắc chắn nhận
-    // đúng câu đó. Đi tiếp không đổi được kết quả mà biến một request bên
-    // ngoài thành N lượt gọi lên tầng xác thực: một thân vừa đủ dưới trần
-    // kích thước cũng chứa được hàng nghìn message nhỏ.
-    if (AUTH_STATUSES.has(outcome.status)) {
-      markNotExecuted(replies, messages, index, outcome.status);
+      // Chỉ nhớ sau khi thoả thuận THÀNH CÔNG. Ghi trước lúc gọi nghĩa là một
+      // `initialize` bị upstream từ chối vẫn để lại capabilities, revision và
+      // một phiên gắn trên chính response lỗi: client mang phiên đó quay lại và
+      // được dịch bằng một trạng thái chưa bao giờ được thoả thuận.
+      if (
+        message.method === "initialize" && sessionKey !== undefined &&
+        isRecord(message.params) && outcome.status < 400 &&
+        outcome.payload !== undefined && !hasJsonRpcError(outcome.payload)
+      ) {
+        rememberCapabilities(sessionKey, message.params["capabilities"]);
+        if (fallbackKey !== undefined) {
+          rememberCapabilities(fallbackKey, message.params["capabilities"]);
+        }
+        // Thoả thuận revision xảy ra đúng một lần, ở đây. Chỉ nhớ bản đời cũ đã
+        // biết: một lời khai `2026-07-28` được phát lại cho lượt sau là dựng
+        // ngược chính thứ shim sinh ra để dịch.
+        if (
+          declaredVersion !== undefined &&
+          KNOWN_LEGACY_VERSIONS.has(declaredVersion)
+        ) {
+          rememberRevision(sessionKey, declaredVersion);
+          if (fallbackKey !== undefined) {
+            rememberRevision(fallbackKey, declaredVersion);
+          }
+        }
+        issuedSession = mintedSession;
+      }
+
+      // Cả batch dùng chung một bộ chứng danh, nên khi một message đã nhận câu
+      // trả lời về quyền hoặc về nhịp thì mọi message còn lại chắc chắn nhận
+      // đúng câu đó. Đi tiếp không đổi được kết quả mà biến một request bên
+      // ngoài thành N lượt gọi lên tầng xác thực: một thân vừa đủ dưới trần
+      // kích thước cũng chứa được hàng nghìn message nhỏ.
+      if (AUTH_STATUSES.has(outcome.status)) {
+        markNotExecuted(replies, messages, index, outcome.status);
+        break;
+      }
+    } catch (error) {
+      // Single request vẫn dùng hợp đồng lỗi ở entrypoint. Batch cần giữ từng
+      // kết quả đã biết; không thử lại để đoán một write đã commit hay chưa.
+      if (!Array.isArray(parsed)) throw error;
+      status = receivedResponse !== undefined && receivedResponse.status >= 400
+        ? receivedResponse.status
+        : 502;
+      const id = isRecord(entry) ? entry["id"] : undefined;
+      if (id !== undefined) {
+        replies.push(
+          jsonRpcError(
+            normalizeId(id),
+            -32603,
+            forwarding
+              ? "Outcome unknown: upstream failure; do not replay this batch"
+              : "Not executed: authorization unavailable",
+          ),
+        );
+      }
+      markNotExecuted(replies, messages, index, status);
       break;
     }
   }
 
-  if (replies.length === 0) {
+  if (replies.length === 0 && status === 200) {
     const accepted = new Headers();
     // 202 vẫn là một câu trả lời, nên nó cũng phải mang revision như đường
     // JSON bên dưới: client chặt chẽ đọc thiếu header này thì bỏ luôn một
@@ -1896,5 +1959,8 @@ export async function handleShimRequest(
   if (issuedSession !== undefined) attachSession(headers, issuedSession);
 
   const body = Array.isArray(parsed) ? replies : replies[0];
-  return new Response(JSON.stringify(body), { status, headers });
+  return new Response(replies.length === 0 ? null : JSON.stringify(body), {
+    status,
+    headers,
+  });
 }

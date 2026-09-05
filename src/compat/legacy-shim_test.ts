@@ -4,7 +4,7 @@
  * `Mcp-Name` phải soi gương trường định danh), nên một bài test đạt nghĩa là
  * request đó cũng đi lọt server thật, chứ không chỉ lọt một bản giả dễ tính.
  */
-import { assert, assertEquals, assertExists } from "@std/assert";
+import { assert, assertEquals, assertExists, assertRejects } from "@std/assert";
 import {
   acceptsEventStream,
   clearCapabilityCache,
@@ -20,6 +20,396 @@ import {
 
 const META_PROTOCOL = "io.modelcontextprotocol/protocolVersion";
 const META_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities";
+
+const partialHeaders = {
+  "Access-Control-Allow-Origin": "https://client.example",
+  "Access-Control-Expose-Headers": "WWW-Authenticate, MCP-Protocol-Version",
+  "WWW-Authenticate": 'Bearer realm="test"',
+};
+
+const batchWrite = (id?: number) => ({
+  jsonrpc: "2.0",
+  ...(id === undefined ? {} : { id }),
+  method: "tools/call",
+  params: { name: "test_write" },
+});
+
+function partialPost(messages: unknown[]): Request {
+  const request = legacyPost(messages);
+  request.headers.set("MCP-Protocol-Version", "2025-06-18");
+  return request;
+}
+
+type PartialFailure = "network" | "json" | "body" | "html" | "401" | "403";
+
+function partialFailure(kind: PartialFailure): Response {
+  if (kind === "network") {
+    throw new Error("http://private-upstream:7654/secret");
+  }
+  if (kind === "body") {
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.error(new Error("private body failure"));
+        },
+      }),
+      { headers: { ...partialHeaders, "Content-Type": "application/json" } },
+    );
+  }
+  if (kind === "json") {
+    return new Response("{private malformed JSON", {
+      headers: { ...partialHeaders, "Content-Type": "application/json" },
+    });
+  }
+  return new Response("private upstream response", {
+    status: kind === "html" ? 502 : Number(kind),
+    headers: { ...partialHeaders, "Content-Type": "text/html" },
+  });
+}
+
+for (const kind of ["network", "json", "body", "html", "401", "403"] as const) {
+  for (const notificationFirst of [false, true]) {
+    Deno.test(`partial batch preserves ${notificationFirst ? "notification" : "write"} before ${kind}`, async () => {
+      const originalFetch = globalThis.fetch;
+      const calls: unknown[] = [];
+      globalThis.fetch = async (_input, init) => {
+        const message = JSON.parse(String(init?.body));
+        calls.push(message);
+        if (calls.length === 2) return partialFailure(kind);
+        return message.id === undefined
+          ? new Response(null, { status: 202, headers: partialHeaders })
+          : Response.json({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: { saved: true },
+          }, {
+            headers: partialHeaders,
+          });
+      };
+      try {
+        const response = await handleShimRequest(
+          partialPost([
+            batchWrite(notificationFirst ? undefined : 1),
+            batchWrite(2),
+            batchWrite(),
+            batchWrite(3),
+          ]),
+          { upstream: "http://private-upstream:7654" },
+        );
+        assertEquals(
+          response.status,
+          kind === "401" || kind === "403" ? Number(kind) : 502,
+        );
+        assertEquals(
+          response.headers.get("MCP-Protocol-Version"),
+          "2025-06-18",
+        );
+        assertEquals(
+          response.headers.get("Access-Control-Allow-Origin"),
+          partialHeaders["Access-Control-Allow-Origin"],
+        );
+        const text = await response.text();
+        assert(!text.includes("private"));
+        const replies = JSON.parse(text);
+        assertEquals(
+          replies.map((reply: { id: number }) => reply.id),
+          notificationFirst ? [2, 3] : [1, 2, 3],
+        );
+        if (!notificationFirst) {
+          assertEquals(replies.shift().result, { saved: true });
+        }
+        assert(String(replies[0].error.message).includes("Outcome unknown"));
+        assert(String(replies[1].error.message).includes("Not executed"));
+        assertEquals(calls.length, 2);
+        if (kind === "401" || kind === "403") {
+          assertEquals(
+            response.headers.get("WWW-Authenticate"),
+            partialHeaders["WWW-Authenticate"],
+          );
+        }
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  }
+}
+
+for (
+  const localEntry of [
+    { jsonrpc: "2.0", id: 2 },
+    { jsonrpc: "2.0", id: 2, method: "ping" },
+    { jsonrpc: "2.0", id: 2, method: "tools/call", params: [] },
+  ]
+) {
+  for (const failure of ["network", "401", "403"] as const) {
+    for (const notificationFirst of [false, true]) {
+      Deno.test(`partial batch retains prior write on local ${localEntry.method ?? "missing method"} ${failure} notification=${notificationFirst}`, async () => {
+        const originalFetch = globalThis.fetch;
+        const calls: { id?: number | string }[] = [];
+        globalThis.fetch = async (_input, init) => {
+          const message = JSON.parse(String(init?.body));
+          calls.push(message);
+          if (message.id === "shim-authorization-probe") {
+            return partialFailure(failure);
+          }
+          return message.id === undefined
+            ? new Response(null, { status: 202, headers: partialHeaders })
+            : Response.json({
+              jsonrpc: "2.0",
+              id: message.id,
+              result: { saved: true },
+            }, { headers: partialHeaders });
+        };
+        try {
+          const response = await handleShimRequest(
+            partialPost([
+              batchWrite(notificationFirst ? undefined : 1),
+              localEntry,
+              batchWrite(3),
+              batchWrite(),
+            ]),
+            { upstream: "http://private-upstream:7654" },
+          );
+          assertEquals(
+            response.status,
+            failure === "network" ? 502 : Number(failure),
+          );
+          assertEquals(
+            response.headers.get("MCP-Protocol-Version"),
+            "2025-06-18",
+          );
+          assertEquals(
+            response.headers.get("Access-Control-Allow-Origin"),
+            partialHeaders["Access-Control-Allow-Origin"],
+          );
+          if (failure !== "network") {
+            assertEquals(
+              response.headers.get("WWW-Authenticate"),
+              partialHeaders["WWW-Authenticate"],
+            );
+          }
+          const text = await response.text();
+          assert(!text.includes("private"));
+          const replies = JSON.parse(text);
+          assertEquals(
+            replies.map((reply: { id: number }) => reply.id),
+            notificationFirst ? [2, 3] : [1, 2, 3],
+          );
+          if (!notificationFirst) {
+            assertEquals(replies.shift().result, { saved: true });
+          }
+          assert(String(replies[0].error.message).includes("Not executed"));
+          assert(String(replies[1].error.message).includes("Not executed"));
+          if (failure === "network") {
+            assert(
+              String(replies[0].error.message).includes(
+                "authorization unavailable",
+              ),
+            );
+          }
+          assertEquals(calls.map((call) => call.id), [
+            notificationFirst ? undefined : 1,
+            "shim-authorization-probe",
+          ]);
+        } finally {
+          globalThis.fetch = originalFetch;
+        }
+      });
+    }
+  }
+}
+
+for (const mode of ["forward", "authorize"] as const) {
+  Deno.test(`first batch ${mode} exception reports execution state and stops`, async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      return partialFailure("network");
+    };
+    try {
+      const response = await handleShimRequest(
+        partialPost([
+          mode === "forward"
+            ? batchWrite(1)
+            : { jsonrpc: "2.0", id: 1, method: "ping" },
+          batchWrite(2),
+        ]),
+        { upstream: "http://private-upstream:7654" },
+      );
+      assertEquals(response.status, 502);
+      const replies = await response.json();
+      assertEquals(replies.map((reply: { id: number }) => reply.id), [1, 2]);
+      assert(
+        replies[0].error.message.includes(
+          mode === "forward"
+            ? "Outcome unknown"
+            : "Not executed: authorization unavailable",
+        ),
+      );
+      assert(replies[1].error.message.includes("Not executed"));
+      assertEquals(calls, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+}
+
+for (const mode of ["network", "json-auth", "local-auth"] as const) {
+  Deno.test(`notification-only partial batch ${mode} keeps failure without RPC replies`, async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response(null, { status: 202, headers: partialHeaders });
+      }
+      if (mode === "network") return partialFailure("network");
+      return Response.json({
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32000, message: "Unauthorized" },
+      }, { status: 401, headers: partialHeaders });
+    };
+    try {
+      const response = await handleShimRequest(
+        partialPost([
+          batchWrite(),
+          mode === "local-auth"
+            ? { ...batchWrite(), params: [] }
+            : batchWrite(),
+          batchWrite(),
+        ]),
+        { upstream: "http://private-upstream:7654" },
+      );
+      assertEquals(response.status, mode === "network" ? 502 : 401);
+      assertEquals(await response.text(), "");
+      assertEquals(response.headers.get("MCP-Protocol-Version"), "2025-06-18");
+      assertEquals(
+        response.headers.get("Access-Control-Allow-Origin"),
+        partialHeaders["Access-Control-Allow-Origin"],
+      );
+      if (mode !== "network") {
+        assertEquals(
+          response.headers.get("WWW-Authenticate"),
+          partialHeaders["WWW-Authenticate"],
+        );
+      }
+      assertEquals(calls, 2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+}
+
+for (
+  const localEntry of [
+    { jsonrpc: "2.0", id: 1 },
+    { jsonrpc: "2.0", id: 1, method: "ping" },
+    { jsonrpc: "2.0", id: 1, method: "tools/call", params: [] },
+  ]
+) {
+  Deno.test(`local ${localEntry.method ?? "missing method"} auth denial before writes is untouched`, async () => {
+    const originalFetch = globalThis.fetch;
+    const denied = partialFailure("401");
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      return denied;
+    };
+    try {
+      const response = await handleShimRequest(
+        partialPost([localEntry, batchWrite(2)]),
+        { upstream: "http://private-upstream:7654" },
+      );
+      assertEquals(response, denied);
+      assertEquals(response.status, 401);
+      assertEquals(await response.text(), "private upstream response");
+      assertEquals(calls, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+}
+
+for (
+  const mode of [
+    "unreadable-auth",
+    "cancel-rejected",
+    "local-cancel-rejected",
+  ] as const
+) {
+  Deno.test(`partial batch ${mode} keeps completed reply and challenge`, async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async (_input, init) => {
+      calls += 1;
+      const message = JSON.parse(String(init?.body));
+      if (calls === 1) {
+        return Response.json({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: { saved: true },
+        });
+      }
+      if (mode === "unreadable-auth") {
+        return new Response("{", {
+          status: 401,
+          headers: { ...partialHeaders, "Content-Type": "application/json" },
+        });
+      }
+      return new Response(
+        new ReadableStream({
+          cancel() {
+            throw new Error("private cancel failed");
+          },
+        }),
+        { status: 401, headers: partialHeaders },
+      );
+    };
+    try {
+      const response = await handleShimRequest(
+        partialPost([
+          batchWrite(1),
+          mode === "local-cancel-rejected"
+            ? { jsonrpc: "2.0", id: 2, method: "ping" }
+            : batchWrite(2),
+          batchWrite(3),
+        ]),
+        { upstream: "http://private-upstream:7654" },
+      );
+      assertEquals(response.status, 401);
+      assertEquals(
+        response.headers.get("WWW-Authenticate"),
+        partialHeaders["WWW-Authenticate"],
+      );
+      const replies = await response.json();
+      assertEquals(replies.map((reply: { id: number }) => reply.id), [1, 2, 3]);
+      assertEquals(replies[0].result, { saved: true });
+      assert(!JSON.stringify(replies).includes("private"));
+      assertEquals(calls, 2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+}
+
+Deno.test("single forwarding exception retains existing rejection contract", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => partialFailure("network");
+  try {
+    await assertRejects(
+      () =>
+        handleShimRequest(legacyPost(batchWrite(1)), {
+          upstream: "http://private-upstream:7654",
+        }),
+      Error,
+      "private-upstream",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 interface CapturedRequest {
   method: string;
