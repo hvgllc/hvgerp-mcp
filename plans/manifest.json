@@ -1,0 +1,762 @@
+[
+  {
+    "id": 1,
+    "file": "001-reject-partial-oauth.md",
+    "audit": "1",
+    "depends": [],
+    "scope": [
+      "src/auth/config.ts",
+      "src/auth/config_test.ts",
+      "docs/environment-variables.md"
+    ],
+    "newFiles": [],
+    "evidence": [
+      {
+        "path": "src/auth/config.ts",
+        "line": 81,
+        "code": "  if (tokens.size === 0 && !jwksUrl) return null;"
+      },
+      {
+        "path": "server.ts",
+        "line": 101,
+        "code": "  const authConfig = httpFlag ? loadAuthConfig() : null;\n  const authProvider = authConfig ? buildAuthProvider(authConfig) : undefined;"
+      }
+    ]
+  },
+  {
+    "id": 2,
+    "file": "002-mrtr-preflight-before-write.md",
+    "audit": "2",
+    "depends": [],
+    "scope": [
+      "src/mrtr/link-disambiguation.ts",
+      "src/mrtr/link-disambiguation_test.ts",
+      "src/api/resolve.ts",
+      "src/api/resolve_test.ts",
+      "src/tools/types.ts",
+      "src/client.ts",
+      "src/client_test.ts",
+      "src/tools/assignment.ts",
+      "src/tools/sales.ts",
+      "src/tools/purchasing.ts",
+      "src/tools/hr.ts",
+      "src/tools/project.ts",
+      "src/tools/operations.ts",
+      "src/tools/accounting.ts",
+      "src/tools/inventory.ts",
+      "src/tools/crm.ts",
+      "src/tools/sales_test.ts",
+      "src/tools/purchasing_test.ts",
+      "src/tools/hr_test.ts",
+      "src/tools/project_test.ts",
+      "src/tools/operations_test.ts",
+      "src/tools/assignment_test.ts",
+      "src/transport_wire_test.ts",
+      "src/tools/assets.ts",
+      "src/tools/assets_test.ts"
+    ],
+    "newFiles": [],
+    "evidence": [
+      {
+        "path": "src/mrtr/link-disambiguation.ts",
+        "line": 177,
+        "code": "  try {\n    return { result: await options.execute(options.args), args: options.args };"
+      },
+      {
+        "path": "src/client.ts",
+        "line": 221,
+        "code": "            execute: (callArgs) => tool.handler(callArgs, toolContext),"
+      }
+    ]
+  },
+  {
+    "id": 3,
+    "file": "003-assignment-cache-invalidation.md",
+    "audit": "3",
+    "depends": [],
+    "scope": [
+      "src/tools/assignment.ts",
+      "src/tools/assignment_test.ts",
+      "src/tools/operations_test.ts",
+      "src/tools/project_test.ts",
+      "src/api/caller-client_test.ts"
+    ],
+    "newFiles": [],
+    "evidence": [
+      {
+        "path": "src/tools/assignment.ts",
+        "line": 242,
+        "code": "    nativeResult = await ctx.client.callMethod(ASSIGNMENT_METHOD, {\n      doctype,\n      name,\n      ...assignment.args,\n    });"
+      },
+      {
+        "path": "src/tools/assignment.ts",
+        "line": 305,
+        "code": "  try {\n    return await ctx.client.get(doctype, name);"
+      }
+    ]
+  },
+  {
+    "id": 4,
+    "file": "004-response-body-timeout.md",
+    "audit": "4",
+    "depends": [],
+    "scope": [
+      "src/api/frappe-client.ts",
+      "src/api/frappe-client_test.ts"
+    ],
+    "newFiles": [],
+    "evidence": [
+      {
+        "path": "src/api/frappe-client.ts",
+        "line": 455,
+        "code": "    clearTimeout(timer);"
+      },
+      {
+        "path": "src/api/frappe-client.ts",
+        "line": 460,
+        "code": "    const rawText = await response.text();"
+      }
+    ]
+  },
+  {
+    "id": 5,
+    "file": "005-analytics-currency-context.md",
+    "audit": "5",
+    "depends": [],
+    "scope": [
+      "src/tools/analytics.ts",
+      "src/tools/analytics_test.ts",
+      "src/tools/analytics-context.ts",
+      "src/tools/analytics-context_test.ts",
+      "src/tools/query-report.ts",
+      "src/tools/query-report_test.ts",
+      "docs/tools.md",
+      "docs/concepts.md",
+      "CHANGELOG.md"
+    ],
+    "newFiles": [
+      "src/tools/analytics-context.ts",
+      "src/tools/analytics-context_test.ts"
+    ],
+    "evidence": [
+      {
+        "path": "src/tools/analytics.ts",
+        "line": 1054,
+        "code": "      const invoices = await ctx.client.list(\"Sales Invoice\", {\n        fields: [\"outstanding_amount\"],"
+      },
+      {
+        "path": "src/tools/analytics.ts",
+        "line": 1075,
+        "code": "        currency: \"EUR\","
+      }
+    ]
+  },
+  {
+    "id": 6,
+    "file": "006-complete-analytics-aggregates.md",
+    "audit": "6",
+    "depends": [
+      5
+    ],
+    "scope": [
+      "src/tools/analytics.ts",
+      "src/tools/analytics_test.ts",
+      "src/tools/analytics-pagination.ts",
+      "src/tools/analytics-pagination_test.ts",
+      "src/tools/query-report.ts",
+      "src/tools/query-report_test.ts",
+      "docs/tools.md"
+    ],
+    "newFiles": [
+      "src/tools/analytics-pagination.ts",
+      "src/tools/analytics-pagination_test.ts"
+    ],
+    "evidence": [
+      {
+        "path": "src/tools/analytics.ts",
+        "line": 1060,
+        "code": "        limit: 1000,\n      });\n\n      const total = invoices.reduce("
+      },
+      {
+        "path": "src/tools/analytics.ts",
+        "line": 1067,
+        "code": "      const count = invoices.length;"
+      }
+    ]
+  },
+  {
+    "id": 7,
+    "file": "007-browser-typecheck-gate.md",
+    "audit": "7",
+    "depends": [],
+    "scope": [
+      "src/ui/tsconfig.json",
+      "src/ui/package.json",
+      "src/ui/chart-viewer/src/ChartViewer.tsx",
+      "src/ui/invoice-viewer/src/components/ItemDetailPanel.tsx",
+      "src/ui/stock-viewer/src/components/StockDetailPanel.tsx",
+      "src/ui/shared/kanban/interactions.ts",
+      "src/ui/shared/kanban/layout.ts",
+      "src/ui/shared/kanban/presentation.ts",
+      "src/ui/shared/kanban/refresh.ts",
+      "src/ui/shared/kanban/state.ts",
+      ".github/workflows/test.yml",
+      "scripts/release-check.sh",
+      "CONTRIBUTING.md",
+      "src/ui/testing/host.html",
+      "src/ui/testing/host.ts",
+      "src/ui/testing/fixtures.ts",
+      "src/ui/testing/README.md",
+      "src/ui/vite.test-host.config.mjs",
+      "deno.json",
+      "plans/evidence/007/"
+    ],
+    "newFiles": [
+      "src/ui/testing/host.html",
+      "src/ui/testing/host.ts",
+      "src/ui/testing/fixtures.ts",
+      "src/ui/testing/README.md",
+      "src/ui/vite.test-host.config.mjs",
+      "plans/evidence/007/"
+    ],
+    "evidence": [
+      {
+        "path": "src/ui/tsconfig.json",
+        "line": 19,
+        "lang": "json",
+        "code": "  \"include\": [\"**/*.ts\", \"**/*.tsx\"],\n  \"exclude\": [\"node_modules\", \"dist\"]"
+      },
+      {
+        "path": "deno.json",
+        "line": 16,
+        "lang": "json",
+        "code": "    \"check\": \"deno check mod.ts server.ts\","
+      }
+    ]
+  },
+  {
+    "id": 8,
+    "file": "008-safe-csv-export.md",
+    "audit": "8",
+    "depends": [
+      7
+    ],
+    "scope": [
+      "src/ui/doclist-viewer/src/helpers.ts",
+      "src/ui/shared/csv.ts",
+      "src/ui/shared/csv_test.ts",
+      "src/ui/testing/fixtures.ts",
+      "plans/evidence/008.csv",
+      "plans/evidence/008/"
+    ],
+    "newFiles": [
+      "src/ui/shared/csv.ts",
+      "src/ui/shared/csv_test.ts",
+      "plans/evidence/008.csv",
+      "plans/evidence/008/"
+    ],
+    "evidence": [
+      {
+        "path": "src/ui/doclist-viewer/src/helpers.ts",
+        "line": 92,
+        "code": "  const header = columns.join(\",\");"
+      },
+      {
+        "path": "src/ui/doclist-viewer/src/helpers.ts",
+        "line": 95,
+        "code": "      const v = formatCell(row[col]);\n      return v.includes(\",\") || v.includes('\"')\n        ? `\"${v.replace(/\"/g, '\"\"')}\"`\n        : v;"
+      }
+    ]
+  },
+  {
+    "id": 9,
+    "file": "009-kanban-detail-request-identity.md",
+    "audit": "9",
+    "depends": [
+      7
+    ],
+    "scope": [
+      "src/ui/kanban-viewer/src/KanbanViewer.tsx",
+      "src/ui/kanban-viewer/src/DetailModal.tsx",
+      "src/ui/shared/kanban/state.ts",
+      "src/ui/shared/kanban/state_test.ts",
+      "src/ui/shared/kanban/useKanbanBoard.ts",
+      "src/ui/shared/kanban/detail-session.ts",
+      "src/ui/shared/kanban/detail-session_test.ts",
+      "src/ui/testing/fixtures.ts",
+      "plans/evidence/009/"
+    ],
+    "newFiles": [
+      "src/ui/shared/kanban/detail-session.ts",
+      "src/ui/shared/kanban/detail-session_test.ts",
+      "plans/evidence/009/"
+    ],
+    "evidence": [
+      {
+        "path": "src/ui/shared/kanban/state.ts",
+        "line": 68,
+        "code": "    case \"hydrate-detail\":\n      return {\n        ...state,\n        detail: {\n          ...state.detail,\n          cardDetail: action.detail,"
+      },
+      {
+        "path": "src/ui/kanban-viewer/src/DetailModal.tsx",
+        "line": 1030,
+        "code": "      await onSave(board.doctype, detail.selectedCardId, editedFields);\n      setSaveMessage({ text: \"Saved\", isError: false });\n      setEditedFields({});"
+      }
+    ]
+  },
+  {
+    "id": 10,
+    "file": "010-kanban-conflict-protection.md",
+    "audit": "10",
+    "depends": [],
+    "scope": [
+      "src/kanban/adapters/task.ts",
+      "src/kanban/adapters/opportunity.ts",
+      "src/kanban/adapters/issue.ts",
+      "src/kanban/adapters/task-adapter_test.ts",
+      "src/kanban/adapters/opportunity-adapter_test.ts",
+      "src/kanban/adapters/issue-adapter_test.ts",
+      "src/api/frappe-client_test.ts",
+      "docs/erpnext-quirks.md"
+    ],
+    "newFiles": [],
+    "evidence": [
+      {
+        "path": "src/kanban/adapters/task.ts",
+        "line": 218,
+        "code": "    const currentTask = await ctx.client.get(\"Task\", move.cardId) as Record<"
+      },
+      {
+        "path": "src/kanban/adapters/task.ts",
+        "line": 258,
+        "code": "    const serverTask = await ctx.client.update(\"Task\", move.cardId, {\n      status,\n    }) as Record<"
+      }
+    ]
+  },
+  {
+    "id": 11,
+    "file": "011-shim-partial-batch-errors.md",
+    "audit": "11",
+    "depends": [],
+    "scope": [
+      "src/compat/legacy-shim.ts",
+      "src/compat/legacy-shim_test.ts",
+      "shim.ts",
+      "docs/migration-mcp-spec-2026-07-28.md"
+    ],
+    "newFiles": [],
+    "evidence": [
+      {
+        "path": "src/compat/legacy-shim.ts",
+        "line": 1783,
+        "code": "    const outcome = await forwardOne("
+      },
+      {
+        "path": "shim.ts",
+        "line": 92,
+        "code": "    return Response.json({\n      jsonrpc: \"2.0\",\n      id: null,\n      error: { code: -32603, message: \"Shim upstream failure\" },\n    }, { status: 502 });"
+      }
+    ]
+  },
+  {
+    "id": 12,
+    "file": "012-cache-inflight-invalidation.md",
+    "audit": "12",
+    "depends": [],
+    "scope": [
+      "src/api/frappe-client.ts",
+      "src/api/frappe-client_test.ts",
+      "src/api/caller-client_test.ts",
+      "src/cache/invalidation-generation.ts",
+      "src/cache/invalidation-generation_test.ts"
+    ],
+    "newFiles": [
+      "src/cache/invalidation-generation.ts",
+      "src/cache/invalidation-generation_test.ts"
+    ],
+    "evidence": [
+      {
+        "path": "src/api/frappe-client.ts",
+        "line": 589,
+        "code": "    this.cache.set(cacheKey, res.data, getCacheTtlMs());\n    return res.data;"
+      },
+      {
+        "path": "src/api/frappe-client.ts",
+        "line": 610,
+        "code": "      cache.deleteByPrefix(`list:${doctype}:`);\n      cache.deleteByPrefix(`resolve:miss:${doctype}:`);\n      if (name) cache.delete(`get:${doctype}:${name}`);"
+      }
+    ]
+  },
+  {
+    "id": 13,
+    "file": "013-analytics-site-date-windows.md",
+    "audit": "13",
+    "depends": [
+      5,
+      6
+    ],
+    "scope": [
+      "src/tools/analytics.ts",
+      "src/tools/analytics_test.ts",
+      "src/tools/analytics-dates.ts",
+      "src/tools/analytics-dates_test.ts",
+      "docs/tools.md"
+    ],
+    "newFiles": [
+      "src/tools/analytics-dates.ts",
+      "src/tools/analytics-dates_test.ts"
+    ],
+    "evidence": [
+      {
+        "path": "src/tools/analytics.ts",
+        "line": 1100,
+        "code": "      const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);\n      const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);\n      const lastMonthStartStr = lastMonthStart.toISOString().split(\"T\")[0];\n      const lastMonthEndStr = lastMonthEnd.toISOString().split(\"T\")[0];"
+      },
+      {
+        "path": "src/tools/site-date.ts",
+        "line": 122,
+        "code": "export async function siteToday(ctx: ErpNextToolContext): Promise<string> {\n  return (await siteNow(ctx)).now.slice(0, 10);\n}"
+      }
+    ]
+  },
+  {
+    "id": 14,
+    "file": "014-sales-chart-draft-filter.md",
+    "audit": "14",
+    "depends": [
+      5,
+      6,
+      13
+    ],
+    "scope": [
+      "src/tools/analytics.ts",
+      "src/tools/analytics_test.ts",
+      "docs/tools.md"
+    ],
+    "newFiles": [],
+    "evidence": [
+      {
+        "path": "src/tools/analytics.ts",
+        "line": 231,
+        "code": "      if (!input.include_drafts) {\n        filters.push([\"docstatus\", \"=\", 1]);"
+      },
+      {
+        "path": "src/tools/analytics.ts",
+        "line": 239,
+        "code": "          filters: [[\"docstatus\", \"!=\", 2]], // exclude cancelled"
+      }
+    ]
+  },
+  {
+    "id": 15,
+    "file": "015-stock-item-movement-query.md",
+    "audit": "15",
+    "depends": [
+      7
+    ],
+    "scope": [
+      "src/ui/stock-viewer/src/components/StockDetailPanel.tsx",
+      "src/ui/shared/stock-movements.ts",
+      "src/ui/shared/stock-movements_test.ts",
+      "src/ui/testing/fixtures.ts",
+      "src/tools/operations_test.ts",
+      "docs/tools.md",
+      "plans/evidence/015/"
+    ],
+    "newFiles": [
+      "src/ui/shared/stock-movements.ts",
+      "src/ui/shared/stock-movements_test.ts",
+      "plans/evidence/015/"
+    ],
+    "evidence": [
+      {
+        "path": "src/ui/stock-viewer/src/components/StockDetailPanel.tsx",
+        "line": 35,
+        "code": "          app.callServerTool({\n            name: \"erpnext_stock_entry_list\",\n            arguments: { limit: 5, item_code: itemCode },"
+      },
+      {
+        "path": "src/tools/operations.ts",
+        "line": 582,
+        "code": "        filters: {\n          type: \"array\","
+      }
+    ]
+  },
+  {
+    "id": 16,
+    "file": "016-kanban-refresh-generation.md",
+    "audit": "16",
+    "depends": [
+      7,
+      9
+    ],
+    "scope": [
+      "src/ui/kanban-viewer/src/KanbanViewer.tsx",
+      "src/ui/shared/kanban/refresh.ts",
+      "src/ui/shared/kanban/refresh_test.ts",
+      "src/ui/shared/kanban/refresh-controller.ts",
+      "src/ui/shared/kanban/refresh-controller_test.ts",
+      "src/ui/testing/fixtures.ts",
+      "plans/evidence/016/"
+    ],
+    "newFiles": [
+      "src/ui/shared/kanban/refresh-controller.ts",
+      "src/ui/shared/kanban/refresh-controller_test.ts",
+      "plans/evidence/016/"
+    ],
+    "evidence": [
+      {
+        "path": "src/ui/kanban-viewer/src/KanbanViewer.tsx",
+        "line": 1127,
+        "code": "      updateBoard(parseBoard(text));"
+      },
+      {
+        "path": "src/ui/kanban-viewer/src/KanbanViewer.tsx",
+        "line": 1224,
+        "code": "      } else if (refreshAfterMutationRef.current) {\n        refreshAfterMutationRef.current = false;\n        void requestBoardRefresh({ ignoreInterval: true });"
+      }
+    ]
+  },
+  {
+    "id": 17,
+    "file": "017-viewer-initial-error-state.md",
+    "audit": "17",
+    "depends": [
+      7
+    ],
+    "scope": [
+      "src/ui/invoice-viewer/src/InvoiceViewer.tsx",
+      "src/ui/stock-viewer/src/StockViewer.tsx",
+      "src/ui/chart-viewer/src/ChartViewer.tsx",
+      "src/ui/kpi-viewer/src/KpiViewer.tsx",
+      "src/ui/funnel-viewer/src/FunnelViewer.tsx",
+      "src/ui/shared/presentation.ts",
+      "src/ui/shared/presentation_test.ts",
+      "src/ui/viewer_error_state_test.ts",
+      "src/ui/testing/fixtures.ts",
+      "plans/evidence/017/"
+    ],
+    "newFiles": [
+      "plans/evidence/017/"
+    ],
+    "evidence": [
+      {
+        "path": "src/ui/invoice-viewer/src/InvoiceViewer.tsx",
+        "line": 237,
+        "code": "    if (result.isError) {\n      const text = extractToolResultText(result);\n      setError(text ?? \"Tool returned an error\");\n      setLoading(false);\n      return false;\n    }"
+      },
+      {
+        "path": "src/ui/invoice-viewer/src/InvoiceViewer.tsx",
+        "line": 378,
+        "code": "  if (!data) {\n    return (\n      <div\n        style={{ display: \"flex\", flexDirection: \"column\", minHeight: \"100vh\" }}\n      >\n        <ErpNextBrandHeader />\n        <InvoiceEmptyState />"
+      }
+    ]
+  },
+  {
+    "id": 18,
+    "file": "018-bound-memory-cache.md",
+    "audit": "18",
+    "depends": [],
+    "scope": [
+      "src/cache/memory.ts",
+      "src/cache/memory_test.ts"
+    ],
+    "newFiles": [],
+    "evidence": [
+      {
+        "path": "src/cache/memory.ts",
+        "line": 33,
+        "code": "  set<T>(key: string, value: T, ttlMs: number): void {\n    this.store.set(key, { value, expiresAt: Date.now() + ttlMs });\n  }"
+      }
+    ]
+  },
+  {
+    "id": 19,
+    "file": "019-cache-write-value-isolation.md",
+    "audit": "19",
+    "depends": [
+      18
+    ],
+    "scope": [
+      "src/cache/memory.ts",
+      "src/cache/memory_test.ts",
+      "src/api/frappe-client_test.ts"
+    ],
+    "newFiles": [],
+    "evidence": [
+      {
+        "path": "src/cache/memory.ts",
+        "line": 33,
+        "code": "  set<T>(key: string, value: T, ttlMs: number): void {\n    this.store.set(key, { value, expiresAt: Date.now() + ttlMs });\n  }"
+      }
+    ]
+  },
+  {
+    "id": 20,
+    "file": "020-align-tool-schema-boundaries.md",
+    "audit": "20",
+    "depends": [
+      14
+    ],
+    "scope": [
+      "src/tools/kanban.ts",
+      "src/tools/kanban_test.ts",
+      "src/tools/analytics.ts",
+      "src/tools/analytics_test.ts"
+    ],
+    "newFiles": [],
+    "evidence": [
+      {
+        "path": "src/tools/kanban.ts",
+        "line": 111,
+        "code": "        status: {\n          type: \"string\",\n          description: \"Optional Opportunity status filter\",\n          enum: [\"Open\", \"Replied\", \"Quotation\", \"Converted\", \"Closed\", \"Lost\"],\n        },"
+      },
+      {
+        "path": "src/tools/analytics.ts",
+        "line": 360,
+        "code": "        months: {\n          type: \"number\",\n          description: \"How many months back to include (default 6)\",\n        },"
+      }
+    ]
+  },
+  {
+    "id": 21,
+    "file": "021-reproducible-build-inputs.md",
+    "audit": "21",
+    "depends": [],
+    "scope": [
+      ".gitignore",
+      "deno.lock",
+      "scripts/build-node.sh",
+      "scripts/node-build/package.json",
+      "scripts/node-build/package-lock.json",
+      "scripts/release-check.sh",
+      ".github/workflows/publish.yml",
+      "CONTRIBUTING.md",
+      "scripts/verify-reproducible-build.mjs",
+      "plans/evidence/021/"
+    ],
+    "newFiles": [
+      "deno.lock",
+      "scripts/node-build/package.json",
+      "scripts/node-build/package-lock.json",
+      "scripts/verify-reproducible-build.mjs",
+      "plans/evidence/021/"
+    ],
+    "evidence": [
+      {
+        "path": ".gitignore",
+        "line": 1,
+        "lang": "text",
+        "code": "node_modules/\ndeno.lock\ndist-node/"
+      },
+      {
+        "path": "scripts/build-node.sh",
+        "line": 65,
+        "lang": "json",
+        "code": "  \"devDependencies\": {\n    \"esbuild\": \"^0.25.12\",\n    \"tsx\": \"^4.20.6\",\n    \"typescript\": \"^5.9.2\"\n  },"
+      },
+      {
+        "path": "scripts/build-node.sh",
+        "line": 80,
+        "lang": "bash",
+        "code": "pushd \"$DIST_DIR\" >/dev/null\nnpm install --no-fund --no-audit"
+      }
+    ]
+  },
+  {
+    "id": 22,
+    "file": "022-release-security-documentation.md",
+    "audit": "22",
+    "depends": [
+      21
+    ],
+    "scope": [
+      "CONTRIBUTING.md",
+      "SECURITY.md",
+      "docs/migration-mcp-spec-2026-07-28.md"
+    ],
+    "newFiles": [],
+    "evidence": [
+      {
+        "path": "CONTRIBUTING.md",
+        "line": 78,
+        "lang": "text",
+        "code": "1. Update the version in `deno.json` **and** `server.ts` (it lives in both),\n   plus `CHANGELOG.md`."
+      },
+      {
+        "path": "src/version.ts",
+        "line": 15,
+        "code": "export const SERVER_VERSION = \"3.4.0\";"
+      },
+      {
+        "path": ".github/workflows/publish.yml",
+        "line": 15,
+        "lang": "yaml",
+        "code": "  release:\n    types: [published]"
+      }
+    ]
+  },
+  {
+    "id": 23,
+    "file": "023-stock-ledger-timeline-design.md",
+    "audit": "Hướng phát triển 1",
+    "depends": [
+      15
+    ],
+    "scope": [
+      "docs/design/stock-ledger-timeline.md"
+    ],
+    "newFiles": [
+      "docs/design/stock-ledger-timeline.md"
+    ],
+    "evidence": [
+      {
+        "path": "docs/ROADMAP.md",
+        "line": 38,
+        "lang": "text",
+        "code": "| Stock Ledger Timeline      | chart-viewer (line) + doclist-viewer | Stock movements over time with drill-down.                                                                                                                                                                                                        |"
+      }
+    ]
+  },
+  {
+    "id": 24,
+    "file": "024-setup-readiness-design.md",
+    "audit": "Hướng phát triển 2",
+    "depends": [],
+    "scope": [
+      "docs/design/setup-readiness.md"
+    ],
+    "newFiles": [
+      "docs/design/setup-readiness.md"
+    ],
+    "evidence": [
+      {
+        "path": "docs/ROADMAP.md",
+        "line": 70,
+        "lang": "text",
+        "code": "1. Create Company\n2. Create Price Lists (Standard Selling, Standard Buying)\n3. Create Warehouses (or use the ones auto-created by Company)\n4. Create Item Groups if needed\n5. Create UOMs if non-standard (Nos, Kg, etc. exist by default)"
+      }
+    ]
+  },
+  {
+    "id": 25,
+    "file": "025-customer-360-design.md",
+    "audit": "Hướng phát triển 3",
+    "depends": [
+      5,
+      6
+    ],
+    "scope": [
+      "docs/design/customer-360.md"
+    ],
+    "newFiles": [
+      "docs/design/customer-360.md"
+    ],
+    "evidence": [
+      {
+        "path": "src/tools/operations.ts",
+        "line": 561,
+        "code": "    name: \"erpnext_doc_list\",\n    annotations: { readOnlyHint: true },"
+      }
+    ]
+  }
+]
