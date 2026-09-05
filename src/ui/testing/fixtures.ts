@@ -86,6 +86,38 @@ export function toolArguments(viewer: Viewer): Record<string, unknown> {
   return {};
 }
 
+export function pagedBoardFixture(offset: 0 | 50): KanbanBoardData {
+  const board = boardFixture();
+  const cards = Array.from({ length: 52 }, (_, index) => ({
+    id: `TASK-PAGED-${index + 1}`,
+    title: `Paged task ${index + 1}`,
+    columnId: "Open",
+    accent: "#2563eb",
+  })).slice(offset, offset + 50);
+  return {
+    ...board,
+    title: `Local paged board offset ${offset}`,
+    refreshArguments: {
+      doctype: "Task",
+      project: "PROJECT-PAGED",
+      offset,
+      limit: 50,
+    },
+    cards,
+    columns: board.columns.map((column) => ({
+      ...column,
+      count: column.id === "Open" ? cards.length : 0,
+    })),
+    pagination: {
+      offset,
+      limit: 50,
+      loadedCount: cards.length,
+      hasMore: offset === 0,
+      total: 52,
+    },
+  };
+}
+
 export function transactionDateFixture(
   kind: "sales-order-date" | "quotation-date",
 ) {

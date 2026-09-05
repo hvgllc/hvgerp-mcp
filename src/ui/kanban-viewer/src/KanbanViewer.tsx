@@ -25,17 +25,14 @@ import type {
 import {
   applyOptimisticMove,
   canDropCardInColumn,
-  enqueueMove,
   type QueuedKanbanMove,
   reconcileMoveSuccess,
   rollbackMoveFailure,
-  takeNextQueuedMove,
 } from "~/shared/kanban/interactions";
 import {
-  canRequestBoardRefresh,
-  type KanbanRefreshRequestData,
-  resolveKanbanRefreshRequest,
-} from "~/shared/kanban/refresh";
+  type BoardMutationToken,
+  createBoardRefreshController,
+} from "~/shared/kanban/refresh-controller";
 import {
   clampKanbanFocusIndex,
   shouldUseKanbanColumnFocus,
@@ -1027,6 +1024,8 @@ type ToolResultPayload = {
   isError?: boolean;
 };
 
+type SessionQueuedMove = QueuedKanbanMove & { mutation: BoardMutationToken };
+
 export function KanbanViewer() {
   const {
     state,
@@ -1041,20 +1040,48 @@ export function KanbanViewer() {
   } = useKanbanBoard();
   const [liveMessage, setLiveMessage] = useState("");
   const [activeDropColumn, setActiveDropColumn] = useState<string | null>(null);
-  const queueRef = useRef<QueuedKanbanMove[]>([]);
+  const queueRef = useRef<SessionQueuedMove[]>([]);
   const snapshotsRef = useRef<Record<string, KanbanBoardData>>({});
   const processingRef = useRef(false);
   const boardRef = useRef<KanbanBoardData | null>(null);
   const draggedCardIdRef = useRef<string | null>(null);
   const draggingRef = useRef(false);
-  const refreshRequestRef = useRef<KanbanRefreshRequestData | null>(null);
-  const refreshInFlightRef = useRef(false);
-  const refreshAfterMutationRef = useRef(false);
-  const lastRefreshStartedAtRef = useRef(0);
+  const controllerRef = useRef<
+    ReturnType<typeof createBoardRefreshController> | null
+  >(null);
+  if (!controllerRef.current) {
+    controllerRef.current = createBoardRefreshController({
+      async read(request) {
+        const result = await app.callServerTool({
+          name: request.toolName,
+          arguments: request.arguments,
+        }, { timeout: TOOL_CALL_TIMEOUT_MS });
+        if (result.isError) throw new Error(extractToolError(result));
+        const text = extractTextContent(result);
+        if (!text) throw new Error("No board payload returned");
+        return parseBoard(text);
+      },
+      apply(board) {
+        boardRef.current = board;
+        hydrateBoard(board);
+      },
+      gate: () => ({
+        visibilityState: typeof document === "undefined"
+          ? "visible"
+          : document.visibilityState,
+        dragging: draggingRef.current,
+        processingMove: processingRef.current,
+        queuedMoves: queueRef.current.length,
+        available: Boolean(app.getHostCapabilities()?.serverTools),
+      }),
+      now: () => Date.now(),
+      minIntervalMs: AUTO_REFRESH_INTERVAL_MS,
+    });
+  }
+  const refreshController = controllerRef.current;
 
   function updateBoard(board: KanbanBoardData) {
-    boardRef.current = board;
-    hydrateBoard(board);
+    refreshController.update(board);
   }
 
   function parseToolCallResult(
@@ -1078,72 +1105,20 @@ export function KanbanViewer() {
     }
   }
 
-  async function requestBoardRefresh(
+  function requestBoardRefresh(
     options: { ignoreInterval?: boolean } = {},
   ) {
-    const board = boardRef.current;
-    const request = resolveKanbanRefreshRequest(
-      board,
-      refreshRequestRef.current,
-    );
-
-    if (
-      !canRequestBoardRefresh({
-        board,
-        request,
-        visibilityState: typeof document === "undefined"
-          ? "visible"
-          : document.visibilityState,
-        dragging: draggingRef.current,
-        processingMove: processingRef.current,
-        queuedMoves: queueRef.current.length,
-        refreshInFlight: refreshInFlightRef.current,
-        now: Date.now(),
-        lastRefreshStartedAt: lastRefreshStartedAtRef.current,
-        minIntervalMs: AUTO_REFRESH_INTERVAL_MS,
-      }, options)
-    ) {
-      return false;
-    }
-
-    if (!request || !app.getHostCapabilities()?.serverTools) {
-      return false;
-    }
-
-    refreshInFlightRef.current = true;
-    lastRefreshStartedAtRef.current = Date.now();
-
-    try {
-      const result = await app.callServerTool({
-        name: request.toolName,
-        arguments: request.arguments,
-      }, { timeout: TOOL_CALL_TIMEOUT_MS });
-
-      if (result.isError) {
-        return false;
-      }
-
-      const text = extractTextContent(result);
-      if (!text) {
-        return false;
-      }
-
-      updateBoard(parseBoard(text));
-      return true;
-    } catch {
-      return false;
-    } finally {
-      refreshInFlightRef.current = false;
-    }
+    return refreshController.request(options);
   }
 
   async function processQueue() {
     if (processingRef.current) return;
-    const { nextMove, restQueue } = takeNextQueuedMove(queueRef.current);
+    const [nextMove, ...restQueue] = queueRef.current;
     if (!nextMove) return;
 
     if (!boardRef.current) {
       queueRef.current = restQueue;
+      refreshController.endMutation(nextMove.mutation);
       return;
     }
 
@@ -1151,7 +1126,7 @@ export function KanbanViewer() {
     processingRef.current = true;
 
     const queueId = nextMove.queueId ?? nextMove.cardId;
-    if (!snapshotsRef.current[queueId]) {
+    if (refreshController.isCurrent(nextMove.mutation)) {
       const optimistic = applyOptimisticMove(boardRef.current, nextMove);
       snapshotsRef.current[queueId] = optimistic.snapshot;
       updateBoard(optimistic.board);
@@ -1172,6 +1147,7 @@ export function KanbanViewer() {
         },
       }, { timeout: TOOL_CALL_TIMEOUT_MS });
 
+      if (!refreshController.isCurrent(nextMove.mutation)) return;
       if (result.isError) {
         const snapshot = snapshotsRef.current[queueId];
         const message = normalizeMoveFailureMessage(extractToolError(result));
@@ -1202,7 +1178,6 @@ export function KanbanViewer() {
             serverCard: parsed.serverCard as KanbanCardData | undefined,
           });
           updateBoard(reconciled);
-          refreshAfterMutationRef.current = true;
           const destinationLabel = reconciled.columns.find((column) =>
             column.id === nextMove.toColumn
           )?.label ??
@@ -1211,6 +1186,7 @@ export function KanbanViewer() {
         }
       }
     } catch (error) {
+      if (!refreshController.isCurrent(nextMove.mutation)) return;
       const snapshot = snapshotsRef.current[queueId];
       const message = normalizeMoveFailureMessage(error);
       if (snapshot) {
@@ -1223,18 +1199,21 @@ export function KanbanViewer() {
     } finally {
       delete snapshotsRef.current[queueId];
       processingRef.current = false;
+      refreshController.endMutation(nextMove.mutation);
       if (queueRef.current.length > 0) {
         void processQueue();
-      } else if (refreshAfterMutationRef.current) {
-        refreshAfterMutationRef.current = false;
-        void requestBoardRefresh({ ignoreInterval: true });
+      } else {
+        void refreshController.drain();
       }
     }
   }
 
   function requestMove(card: KanbanCardData, toColumn: string, label: string) {
     const board = boardRef.current;
-    if (!board || card.pending || card.columnId === toColumn) return;
+    if (
+      !board || !refreshController.ready || card.pending ||
+      card.columnId === toColumn
+    ) return;
 
     const transition = board.allowedTransitions.find((candidate) =>
       candidate.allowed &&
@@ -1249,40 +1228,40 @@ export function KanbanViewer() {
       return;
     }
 
-    const queuedMove: QueuedKanbanMove = {
+    const queuedMove: SessionQueuedMove = {
       queueId: crypto.randomUUID(),
       doctype: board.doctype,
       moveToolName: board.moveToolName,
       cardId: card.id,
       fromColumn: card.columnId,
       toColumn,
+      mutation: refreshController.beginMutation(),
     };
 
     const shouldStartImmediately = !processingRef.current &&
       queueRef.current.length === 0;
     if (shouldStartImmediately) {
-      const optimistic = applyOptimisticMove(board, queuedMove);
-      snapshotsRef.current[queuedMove.queueId ?? queuedMove.cardId] =
-        optimistic.snapshot;
-      updateBoard(optimistic.board);
       setLiveMessage(`Moving ${card.title} to ${label}`);
     } else {
       setLiveMessage(`${card.title} queued for ${label}`);
     }
 
-    queueRef.current = enqueueMove(queueRef.current, queuedMove);
+    queueRef.current = [...queueRef.current, queuedMove];
     void processQueue();
   }
 
   useEffect(() => {
     app.ontoolinput = (params: { arguments?: Record<string, unknown> }) => {
       const toolName = app.getHostContext()?.toolInfo?.tool.name;
-      if (toolName && params.arguments) {
-        refreshRequestRef.current = {
-          toolName,
-          arguments: params.arguments,
-        };
-      }
+      refreshController.receiveInput(
+        toolName && params.arguments
+          ? {
+            toolName,
+            arguments: params.arguments,
+          }
+          : null,
+      );
+      closeDetail();
 
       if (!boardRef.current) {
         startLoading();
@@ -1297,7 +1276,8 @@ export function KanbanViewer() {
       }
 
       try {
-        updateBoard(parseBoard(text));
+        refreshController.receiveBoard(parseBoard(text));
+        closeDetail();
       } catch (error) {
         setError(
           error instanceof Error
@@ -1345,10 +1325,6 @@ export function KanbanViewer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    boardRef.current = state.board;
-  }, [state.board]);
-
   function handleDragStart(
     card: KanbanCardData,
     event: DragEvent<HTMLElement>,
@@ -1370,6 +1346,7 @@ export function KanbanViewer() {
     draggedCardIdRef.current = null;
     draggingRef.current = false;
     setActiveDropColumn(null);
+    void refreshController.drain();
   }
 
   function handleDragOverColumn(
@@ -1481,43 +1458,50 @@ export function KanbanViewer() {
       }
     }
 
-    const result = await app.callServerTool({
-      name: "erpnext_doc_update",
-      arguments: { doctype, name, data: coerced },
-    }, { timeout: TOOL_CALL_TIMEOUT_MS });
-
-    if (result.isError) {
-      throw new Error(extractToolError(result));
-    }
-
-    let detailRefreshed = false;
+    const mutation = refreshController.beginMutation();
     try {
-      const refreshResult = await app.callServerTool({
-        name: "erpnext_doc_get",
-        arguments: { doctype, name },
+      const result = await app.callServerTool({
+        name: "erpnext_doc_update",
+        arguments: { doctype, name, data: coerced },
       }, { timeout: TOOL_CALL_TIMEOUT_MS });
-      if (refreshResult.isError) {
-        throw new Error(extractToolError(refreshResult));
+
+      if (result.isError) {
+        throw new Error(extractToolError(result));
       }
-      const text = extractTextContent(refreshResult);
-      if (!text) throw new Error("No detail payload returned");
-      hydrateDetail(
-        session,
-        unwrapDoc(JSON.parse(text) as Record<string, unknown>),
-      );
-      detailRefreshed = true;
-    } catch (error) {
-      // Write đã thành công; lỗi đọc lại không phải lỗi lưu hay yêu cầu rollback.
-      setDetailError(
-        session,
-        error instanceof Error
-          ? error.message
-          : "Failed to refresh saved detail",
-      );
+
+      let detailRefreshed = false;
+      try {
+        const refreshResult = await app.callServerTool({
+          name: "erpnext_doc_get",
+          arguments: { doctype, name },
+        }, { timeout: TOOL_CALL_TIMEOUT_MS });
+        if (refreshResult.isError) {
+          throw new Error(extractToolError(refreshResult));
+        }
+        const text = extractTextContent(refreshResult);
+        if (!text) throw new Error("No detail payload returned");
+        if (refreshController.isCurrent(mutation)) {
+          hydrateDetail(
+            session,
+            unwrapDoc(JSON.parse(text) as Record<string, unknown>),
+          );
+        }
+        detailRefreshed = true;
+      } catch (error) {
+        // Write đã thành công; lỗi đọc lại không phải lỗi lưu hay yêu cầu rollback.
+        if (refreshController.isCurrent(mutation)) {
+          setDetailError(
+            session,
+            error instanceof Error
+              ? error.message
+              : "Failed to refresh saved detail",
+          );
+        }
+      }
+      return { saved: true, detailRefreshed };
     } finally {
-      void requestBoardRefresh({ ignoreInterval: true });
+      refreshController.endMutation(mutation);
     }
-    return { saved: true, detailRefreshed };
   }
 
   async function handleLoadAssignableUsers(): Promise<
@@ -1552,41 +1536,46 @@ export function KanbanViewer() {
     if (!app.getHostCapabilities()?.serverTools) {
       throw new Error("Host does not support proxied server tool calls");
     }
-    const result = await app.callServerTool({
-      name: "erpnext_doc_assign",
-      arguments: { doctype, name, assign_to: assignTo },
-    }, { timeout: TOOL_CALL_TIMEOUT_MS });
-    if (result.isError) {
-      throw new Error(extractToolError(result));
-    }
-
-    // erpnext_doc_assign returns the fresh doc — no extra fetch needed.
-    // The assignment is committed at this point: a hydration hiccup must not
-    // block the board refresh or read as an assignment failure.
-    const text = extractTextContent(result);
-    if (text) {
-      try {
-        const payload = JSON.parse(text) as Record<string, unknown>;
-        const doc = unwrapDoc(payload);
-        // Frappe v16 omits _assign from single-doc GET responses; the
-        // assignment result is authoritative, so synthesize it.
-        if (!doc._assign) {
-          const assignment = payload.assignment as
-            | { assignees?: string[] }
-            | undefined;
-          if (assignment?.assignees?.length) {
-            doc._assign = JSON.stringify(assignment.assignees);
-          }
-        }
-        hydrateDetail(session, doc);
-      } catch (error) {
-        console.warn(
-          "[handleAssignDetail] Could not hydrate the assigned doc:",
-          error,
-        );
+    const mutation = refreshController.beginMutation();
+    try {
+      const result = await app.callServerTool({
+        name: "erpnext_doc_assign",
+        arguments: { doctype, name, assign_to: assignTo },
+      }, { timeout: TOOL_CALL_TIMEOUT_MS });
+      if (result.isError) {
+        throw new Error(extractToolError(result));
       }
+
+      // Kết quả assign đã chứa document mới, không cần đọc thêm.
+      // Lỗi hydrate không được ngăn refresh board hoặc báo write đã thành công là lỗi.
+      const text = extractTextContent(result);
+      if (text) {
+        try {
+          const payload = JSON.parse(text) as Record<string, unknown>;
+          const doc = unwrapDoc(payload);
+          // Frappe v16 omits _assign from single-doc GET responses; the
+          // assignment result is authoritative, so synthesize it.
+          if (!doc._assign) {
+            const assignment = payload.assignment as
+              | { assignees?: string[] }
+              | undefined;
+            if (assignment?.assignees?.length) {
+              doc._assign = JSON.stringify(assignment.assignees);
+            }
+          }
+          if (refreshController.isCurrent(mutation)) {
+            hydrateDetail(session, doc);
+          }
+        } catch (error) {
+          console.warn(
+            "[handleAssignDetail] Could not hydrate the assigned doc:",
+            error,
+          );
+        }
+      }
+    } finally {
+      refreshController.endMutation(mutation);
     }
-    void requestBoardRefresh({ ignoreInterval: true });
   }
 
   async function handleUnassignDetail(
@@ -1597,40 +1586,46 @@ export function KanbanViewer() {
     if (!app.getHostCapabilities()?.serverTools) {
       throw new Error("Host does not support proxied server tool calls");
     }
-    const result = await app.callServerTool({
-      name: "erpnext_doc_unassign",
-      arguments: { doctype, name, assign_to: assignee },
-    }, { timeout: TOOL_CALL_TIMEOUT_MS });
-    if (result.isError) {
-      throw new Error(extractToolError(result));
-    }
+    const mutation = refreshController.beginMutation();
+    try {
+      const result = await app.callServerTool({
+        name: "erpnext_doc_unassign",
+        arguments: { doctype, name, assign_to: assignee },
+      }, { timeout: TOOL_CALL_TIMEOUT_MS });
+      if (result.isError) {
+        throw new Error(extractToolError(result));
+      }
 
-    const text = extractTextContent(result);
-    if (text) {
-      try {
-        const payload = JSON.parse(text) as Record<string, unknown>;
-        const doc = unwrapDoc(payload);
-        // Frappe v16 omits _assign from single-doc GET responses; rebuild it
-        // from the authoritative remaining-assignment list (may be empty).
-        if (!doc._assign) {
-          const assignment = payload.assignment as
-            | { remaining?: Array<{ owner?: string }> }
-            | undefined;
-          doc._assign = JSON.stringify(
-            (assignment?.remaining ?? [])
-              .map((todo) => todo.owner)
-              .filter(Boolean),
+      const text = extractTextContent(result);
+      if (text) {
+        try {
+          const payload = JSON.parse(text) as Record<string, unknown>;
+          const doc = unwrapDoc(payload);
+          // Frappe v16 omits _assign from single-doc GET responses; rebuild it
+          // from the authoritative remaining-assignment list (may be empty).
+          if (!doc._assign) {
+            const assignment = payload.assignment as
+              | { remaining?: Array<{ owner?: string }> }
+              | undefined;
+            doc._assign = JSON.stringify(
+              (assignment?.remaining ?? [])
+                .map((todo) => todo.owner)
+                .filter(Boolean),
+            );
+          }
+          if (refreshController.isCurrent(mutation)) {
+            hydrateDetail(session, doc);
+          }
+        } catch (error) {
+          console.warn(
+            "[handleUnassignDetail] Could not hydrate the doc:",
+            error,
           );
         }
-        hydrateDetail(session, doc);
-      } catch (error) {
-        console.warn(
-          "[handleUnassignDetail] Could not hydrate the doc:",
-          error,
-        );
       }
+    } finally {
+      refreshController.endMutation(mutation);
     }
-    void requestBoardRefresh({ ignoreInterval: true });
   }
 
   if (state.loading) {

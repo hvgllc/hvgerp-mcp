@@ -5,6 +5,29 @@ export interface KanbanRefreshRequestData {
   arguments: Record<string, unknown>;
 }
 
+function canonicalArguments(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalArguments);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, canonicalArguments(item)]),
+    );
+  }
+  return value;
+}
+
+export function kanbanRequestIdentity(
+  board: KanbanBoardData,
+  request: KanbanRefreshRequestData,
+): string {
+  return JSON.stringify([
+    board.boardId,
+    board.doctype,
+    request.toolName,
+    canonicalArguments(request.arguments),
+  ]);
+}
+
 export interface KanbanRefreshGate {
   board: KanbanBoardData | null;
   request: KanbanRefreshRequestData | null;
