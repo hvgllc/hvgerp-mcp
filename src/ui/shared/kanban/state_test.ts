@@ -54,7 +54,7 @@ Deno.test("kanban state - marks loading when tool input starts", () => {
 Deno.test("kanban state - select-card sets loading detail state", () => {
   const state = kanbanStateReducer(createKanbanInitialState(), {
     type: "select-card",
-    cardId: "TASK-0001",
+    session: { doctype: "Task", cardId: "TASK-0001", generation: 1 },
   });
 
   assertEquals(state.detail.selectedCardId, "TASK-0001");
@@ -66,7 +66,7 @@ Deno.test("kanban state - select-card sets loading detail state", () => {
 Deno.test("kanban state - hydrate-detail populates card detail", () => {
   const selected = kanbanStateReducer(createKanbanInitialState(), {
     type: "select-card",
-    cardId: "TASK-0001",
+    session: { doctype: "Task", cardId: "TASK-0001", generation: 1 },
   });
 
   const detail = {
@@ -76,6 +76,7 @@ Deno.test("kanban state - hydrate-detail populates card detail", () => {
   };
   const state = kanbanStateReducer(selected, {
     type: "hydrate-detail",
+    session: selected.detail.session!,
     detail,
   });
 
@@ -87,7 +88,7 @@ Deno.test("kanban state - hydrate-detail populates card detail", () => {
 Deno.test("kanban state - close-detail resets detail state", () => {
   const selected = kanbanStateReducer(createKanbanInitialState(), {
     type: "select-card",
-    cardId: "TASK-0001",
+    session: { doctype: "Task", cardId: "TASK-0001", generation: 1 },
   });
 
   const state = kanbanStateReducer(selected, { type: "close-detail" });
@@ -100,11 +101,12 @@ Deno.test("kanban state - close-detail resets detail state", () => {
 Deno.test("kanban state - detail-error sets error on detail", () => {
   const selected = kanbanStateReducer(createKanbanInitialState(), {
     type: "select-card",
-    cardId: "TASK-0001",
+    session: { doctype: "Task", cardId: "TASK-0001", generation: 1 },
   });
 
   const state = kanbanStateReducer(selected, {
     type: "detail-error",
+    session: selected.detail.session!,
     message: "Network error",
   });
 
@@ -112,3 +114,29 @@ Deno.test("kanban state - detail-error sets error on detail", () => {
   assertEquals(state.detail.detailError, "Network error");
   assertEquals(state.detail.selectedCardId, "TASK-0001");
 });
+
+for (const completion of ["success", "error"] as const) {
+  Deno.test(`kanban state - ignores stale ${completion} after changing cards`, () => {
+    const first = kanbanStateReducer(createKanbanInitialState(), {
+      type: "select-card",
+      session: { doctype: "Task", cardId: "TASK-A", generation: 1 },
+    });
+    const closed = kanbanStateReducer(first, { type: "close-detail" });
+    const second = kanbanStateReducer(closed, {
+      type: "select-card",
+      session: { doctype: "Task", cardId: "TASK-B", generation: 3 },
+    });
+    const action = completion === "success"
+      ? {
+        type: "hydrate-detail" as const,
+        detail: { name: "TASK-A" },
+        session: { doctype: "Task", cardId: "TASK-A", generation: 1 },
+      }
+      : {
+        type: "detail-error" as const,
+        message: "Old failure",
+        session: { doctype: "Task", cardId: "TASK-A", generation: 1 },
+      };
+    assertEquals(kanbanStateReducer(second, action), second);
+  });
+}
