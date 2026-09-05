@@ -513,3 +513,78 @@ Parent đọc đầy đủ delta test/evidence và tự chạy cùng các gate: 
 provenance merge và test clean clone vẫn được giữ; không đổi validator
 production hoặc tự bỏ gate. PR25 bắt buộc merge commit để giữ các reviewed
 commit trong lịch sử truy cập được từ clean clone, không squash hoặc rebase.
+
+## Review 5120400034: đối chiếu audit và phân loại file mới
+
+Đã đọc nguyên văn hai comment GitHub trên đúng HEAD
+`51f8476fabf6139645aad94c161d30175fcbbad0` và truy luồng validator. Cả hai là
+FIX. Baseline thực trước sửa: validator 25/25 và 84 test helper/history đạt.
+
+### Finding 3939947561: newFiles phải khớp khai báo trong kế hoạch
+
+Ca đỏ tái hiện đúng ví dụ: chỉ thêm docs/concepts.md của 005 vào newFiles trong
+manifest fixture và ẩn file khỏi existsSync. Validator cũ trả exit 0, làm
+assertion yêu cầu từ chối thất bại. Không xóa file thật trên đĩa. Bổ sung ca
+newFiles ngoài scope, hai chiều phân loại và dependency-created không được vượt
+qua phân loại. Kiểm chiều ngược cuối dùng host.ts của 007 đã tracked: bỏ khỏi
+newFiles trong manifest nhưng giữ marker trong plan, validator cũ vẫn trả exit
+0; validator mới chỉ báo đúng một lỗi classification.
+
+Validator mới yêu cầu newFiles là tập con của scope và bằng tập đường dẫn được
+đánh dấu tạo mới trong danh sách Phạm vi và Git. Đọc cả continuation line của
+list item; chấp nhận `(tạo mới)` hoặc `(tạo mới; giải thích)`, kể cả line wrap.
+Marker trong prose ngoài scope không được coi là khai báo. Kiểm classification
+chạy trước các ngoại lệ kiểm file. Không đổi nguyên tắc historical newFiles:
+file tạo bởi kế hoạch đã DONE có thể hiện diện trong Git hiện tại; không buộc
+file đó phải vắng mặt và không nới provenance của DONE.
+
+Positive controls giữ file mới chưa tồn tại, host.ts lịch sử đã tracked,
+prerequisite-created vắng trong Git/current source, marker có giải thích và
+prose không liên quan. Helper scopePath trong test cập nhật marker khi tự tạo
+fixture newFiles hợp lệ, không sửa metadata thật để làm xanh.
+
+### Finding 3939947563: audit phải khớp giữa plan và manifest
+
+Ca đỏ cuối dùng plan 005 đổi Mục audit từ 5 thành 6, giữ mọi phần khác:
+validator cũ vẫn exit 0. Ma trận xanh sau sửa thay lần lượt nhãn của cả 25 plan,
+gồm numeric audit 1-22 và Hướng phát triển 1-3 ở ID 023-025, yêu cầu mỗi ca chỉ
+có đúng một diagnostic audit mismatch. Thiếu khai báo, khai báo trùng hợp lệ
+hoặc malformed, sai dấu phân cách, nằm ngoài metadata, numeric/direction ngoài
+miền đều phải bị từ chối. Prose nhắc audit khác không phải declaration vẫn qua.
+
+auditOf chỉ nhận duy nhất dòng Mục audit trong Trạng thái và mục tiêu, theo
+format metadata hiện có, rồi so với entry.audit. Giữ kiểm entry.id/audit cũ để
+không cho sửa đồng thời hai nhãn thành ánh xạ sai. Không sửa các file plan,
+manifest hoặc trạng thái thực thi trên đĩa.
+
+### Red/green và gate
+
+- Trước sửa:
+  `node --test --test-name-pattern='newFiles cannot|audit metadata must match' plans/test-validator.mjs`
+  có 0 passed, 2 failed vì validator sai pass. Nhóm mở rộng có 12 failed; một
+  fixture chiều ngược ban đầu còn bị lỗi existing-file nên chưa cô lập đủ. Đã
+  đổi sang host.ts lịch sử của 007 như trên, không coi lỗi existence đó là red
+  riêng của classification.
+- Sau chốt fixture, nạp validator nguyên bản từ
+  `git show 51f8476:plans/validate-plans.mjs` vào test module trong bộ nhớ, chạy
+  riêng chiều ngược và audit 005: 0 passed, 2 failed, đều do validator trả 0
+  thay vì 1. Không rollback file làm việc, thay Git object hoặc tạo review
+  artifact giả.
+- Sau sửa, 17 regression mới đạt. Source helper commit:
+  `886e68a09eaa15712f2b1d0070e07ba98a7dc127`.
+- Trên commit sạch, `node plans/validate-plans.mjs` đạt 25/25;
+  `node --test plans/test-validator.mjs plans/test-history.mjs` đạt **101
+  passed, 0 failed, 0 skipped**, gồm 99 validator test và hai ca Git clone thật.
+  Clean single-branch clone giữ đầy đủ ancestry và validator xanh; historical
+  clone trước provenance fix vẫn đỏ đúng sáu object thiếu/bảy DONE.
+- `deno fmt --check plans/` đạt 53 file;
+  `deno lint --no-config plans/validate-plans.mjs plans/test-validator.mjs plans/test-history.mjs`
+  đạt ba script; `git diff --check` đạt. Source ngoài plans vẫn bằng main
+  `341cba437dba69348b6e11e2c6f599480d5fc212`.
+
+Giữ sáu provenance merges và regression mọi TODO chuyển BLOCKED. Codex đã viện
+dẫn rule scope hiện có đúng vào finding newFiles; đây là bằng chứng rule phát
+hiện gap, không phải lý do miễn review. Không thêm rule trùng, không thay
+AGENTS, dependency, source ứng dụng, workspace root hoặc source 017. Chỉ hai
+helper và evidence này thay đổi. Chưa push/reply; delta cần fresh review của
+parent và vòng Codex/CI tiếp theo, không dùng APPROVE trước đó cho commit mới.
