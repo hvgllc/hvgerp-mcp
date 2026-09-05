@@ -2283,6 +2283,90 @@ Deno.test("erpnext_sales_chart - customer grouping returns horizontal-bar", asyn
 
 // ── erpnext_revenue_trend ───────────────────────────────────────────────────
 
+Deno.test("revenue months boundary schema accepts default and integer limits only", () => {
+  const tool = getTool("erpnext_revenue_trend");
+  const validator = new SchemaValidator();
+  validator.addSchema(tool.name, tool.inputSchema as Record<string, unknown>);
+  for (const input of [{}, { months: 1 }, { months: 6 }, { months: 60 }]) {
+    assert(validator.validate(tool.name, input).valid);
+  }
+  for (const months of [0, -1, 1.5, 61, "6", null, true, []]) {
+    assertEquals(
+      validator.validate(tool.name, { months }).valid,
+      false,
+      String(months),
+    );
+  }
+});
+
+for (const months of [0, -1, 1.5, 61, NaN, Infinity, "6", null, true, []]) {
+  for (const company of [undefined, "Fixture Company"]) {
+    Deno.test(`revenue months boundary rejects ${String(months)} company=${String(company)} before all client calls`, async () => {
+      const calls: string[] = [];
+      const fail = async () => {
+        calls.push("client");
+        throw new Error("Unexpected client call");
+      };
+      const error = await assertRejects(() =>
+        getTool("erpnext_revenue_trend").handler(
+          { months, ...(company ? { company } : {}) },
+          makeCtx(makeMockClient({ list: fail, get: fail, callMethod: fail })),
+        )
+      );
+      assertEquals(calls, []);
+      assert(error instanceof Error);
+      assert(error.message.includes("months"));
+      assert(!(error instanceof RangeError));
+    });
+  }
+}
+
+for (const months of [undefined, 1, 60]) {
+  for (const group_by of ["total", "customer"]) {
+    Deno.test(`revenue months boundary preserves ${String(months)} months ${group_by}`, async () => {
+      const calls: unknown[] = [];
+      const result = await getTool("erpnext_revenue_trend").handler(
+        { ...(months === undefined ? {} : { months }), group_by },
+        makeCtx(makeCompanyMockClient({
+          list: async (doctype, options) => {
+            calls.push([doctype, options.filters]);
+            return [{
+              customer_name: "Customer 1",
+              base_grand_total: 12,
+              transaction_date: relativeMonth(0, 1),
+            }];
+          },
+        })),
+      ) as any;
+      assertEquals(result.labels.length, months ?? 6);
+      assertEquals(result.datasets[0].values.length, months ?? 6);
+      assertEquals(
+        result.datasets[0].values.reduce(
+          (sum: number, value: number) => sum + value,
+          0,
+        ),
+        12,
+      );
+      assertEquals(result.currency, "EUR");
+      assertEquals(result.refreshRequest.arguments.company, "Fixture Company");
+      assertEquals(calls.length, 1);
+      const [doctype, filters] = calls[0] as [string, unknown[]];
+      assertEquals(doctype, "Sales Order");
+      assert(
+        filters.some((filter) =>
+          JSON.stringify(filter) ===
+            JSON.stringify(["company", "=", "Fixture Company"])
+        ),
+      );
+      assert(
+        filters.some((filter) =>
+          JSON.stringify(filter) === JSON.stringify(["docstatus", "!=", 2])
+        ),
+      );
+    });
+  }
+}
+
 Deno.test("erpnext_revenue_trend - returns line chart with monthly data", async () => {
   const mockClient = makeCompanyMockClient({
     list: async () => [

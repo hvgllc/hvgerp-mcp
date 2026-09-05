@@ -53,6 +53,30 @@ const MAX_RADAR_ITEMS = 8;
  */
 const MAX_PL_MONTHS = 60;
 
+const MAX_REVENUE_MONTHS = 60;
+
+function revenueTrendTool(
+  tool: Parameters<typeof companyAnalyticsTool>[0],
+): ErpNextTool {
+  const wrapped = companyAnalyticsTool(tool);
+  return {
+    ...wrapped,
+    handler: async (input, ctx) => {
+      const months = input.months === undefined ? 6 : input.months;
+      // Kiểm trước wrapper company để đầu vào sai không gây bất kỳ lượt đọc ERP nào.
+      if (
+        typeof months !== "number" || !Number.isInteger(months) ||
+        months < 1 || months > MAX_REVENUE_MONTHS
+      ) {
+        throw new Error(
+          `[erpnext_revenue_trend] 'months' must be a whole number between 1 and ${MAX_REVENUE_MONTHS}`,
+        );
+      }
+      return await wrapped.handler(input, ctx);
+    },
+  };
+}
+
 /** Ngày dạng YYYY-MM-DD của một mốc dựng bằng `Date.UTC`. */
 function utcDateString(instant: Date): string {
   return instant.toISOString().slice(0, 10);
@@ -322,7 +346,7 @@ export const analyticsTools: ErpNextTool[] = [
 
   // ── Revenue Trend (line / area) ─────────────────────────────────────────
 
-  companyAnalyticsTool({
+  revenueTrendTool({
     name: "erpnext_revenue_trend",
     annotations: { readOnlyHint: true },
     _meta: CHART_META,
@@ -336,8 +360,12 @@ export const analyticsTools: ErpNextTool[] = [
       type: "object",
       properties: {
         months: {
-          type: "number",
-          description: "How many months back to include (default 6)",
+          type: "integer",
+          minimum: 1,
+          maximum: MAX_REVENUE_MONTHS,
+          default: 6,
+          description:
+            `How many months back to include (default 6, max ${MAX_REVENUE_MONTHS})`,
         },
         type: {
           type: "string",
