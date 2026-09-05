@@ -129,6 +129,8 @@ export function viewerFixture(
         }],
       };
     case "doclist-viewer":
+      // Ba dòng cố định dùng cho kiểm tra download CSV: biểu thức chỉ tính số,
+      // không có URL, macro hay dữ liệu ERPNext thật.
       return {
         refreshRequest,
         count: 3,
