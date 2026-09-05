@@ -41,15 +41,15 @@ là ước lượng công sức/rủi ro sửa, không phải cam kết thời h
 | 007 | [Thiết lập typecheck thực cho mã browser](007-browser-typecheck-gate.md)                            | P1      | M / thấp; không nới strict                                | không         | DONE        |
 | 008 | [Xuất CSV đúng cấu trúc và giữ văn bản là văn bản](008-safe-csv-export.md)                          | P1      | S / thấp; cần giữ kiểu số                                 | 007           | DONE        |
 | 009 | [Chỉ áp kết quả bất đồng bộ vào đúng phiên mở thẻ](009-kanban-detail-request-identity.md)           | P1      | M / vừa; không hủy mutation đã gửi                        | 007           | DONE        |
-| 010 | [Kiểm trạng thái Kanban bằng dữ liệu mới và bảo vệ ghi](010-kanban-conflict-protection.md)          | P1      | M / vừa; phụ thuộc hợp đồng optimistic locking của Frappe | không         | IN_PROGRESS |
+| 010 | [Kiểm trạng thái Kanban bằng dữ liệu mới và bảo vệ ghi](010-kanban-conflict-protection.md)          | P1      | M / vừa; phụ thuộc hợp đồng optimistic locking của Frappe | không         | DONE        |
 | 011 | [Giữ kết quả batch đã thực thi khi upstream ném lỗi](011-shim-partial-batch-errors.md)              | P1      | M / vừa; semantics JSON-RPC batch                         | không         | IN_PROGRESS |
-| 012 | [Không tái nạp snapshot cũ sau cache invalidation](012-cache-inflight-invalidation.md)              | P1      | M / vừa; phối hợp cache nhiều caller                      | không         | TODO        |
+| 012 | [Không tái nạp snapshot cũ sau cache invalidation](012-cache-inflight-invalidation.md)              | P1      | M / vừa; phối hợp cache nhiều caller                      | không         | IN_PROGRESS |
 | 013 | [Dùng ngày site cho cửa sổ analytics](013-analytics-site-date-windows.md)                           | P1      | M / thấp; sửa cận thời gian                               | 005, 006      | TODO        |
 | 014 | [Áp include_drafts nhất quán cho sales chart](014-sales-chart-draft-filter.md)                      | P1      | S / thấp; lọc cùng business population                    | 005, 006, 013 | TODO        |
 | 015 | [Hiện đúng chuyển động theo mặt hàng và kho](015-stock-item-movement-query.md)                      | P1      | M / vừa; đổi nguồn đọc lịch sử                            | 007           | TODO        |
 | 016 | [Bỏ snapshot board cũ và giữ refresh sau mutation](016-kanban-refresh-generation.md)                | P1      | M / vừa; phối hợp queue và optimistic updates             | 007, 009      | TODO        |
 | 017 | [Hiển thị lỗi tải đầu và giữ dữ liệu khi refresh lỗi](017-viewer-initial-error-state.md)            | P1      | M / MED                                                   | 007           | IN_PROGRESS |
-| 018 | [Giới hạn số entry và thu hồi cache hết hạn](018-bound-memory-cache.md)                             | P2      | M / MED                                                   | không         | TODO        |
+| 018 | [Giới hạn số entry và thu hồi cache hết hạn](018-bound-memory-cache.md)                             | P2      | M / MED                                                   | không         | IN_PROGRESS |
 | 019 | [Tách giá trị cache khỏi đối tượng bên ghi](019-cache-write-value-isolation.md)                     | P2      | S / LOW                                                   | 018           | TODO        |
 | 020 | [Đồng bộ schema trạng thái Kanban và giới hạn tháng doanh thu](020-align-tool-schema-boundaries.md) | P2      | M / MED                                                   | 014           | TODO        |
 | 021 | [Khóa đầu vào dependency của bản build](021-reproducible-build-inputs.md)                           | P2      | L / HIGH                                                  | không         | TODO        |
@@ -129,6 +129,25 @@ TODO/IN_PROGRESS/BLOCKED còn phải khớp đúng các dòng source hiện tạ
 drift trước thực thi. Khi refresh, cập nhật đồng bộ code, line, sourceRef và
 fenced excerpt; đổi trạng thái không tự đổi baseline. Mốc soạn chỉ là metadata.
 Cần giữ Git history của các ref này, không fallback khi đọc Git thất bại.
+
+Giữ revision trong lịch sử reachable, không dựa vào object cache hoặc nhánh
+executor còn tồn tại trên máy. Các reviewed HEAD của 001/003/004/007/008/009/024
+đã được giữ bằng provenance-only merge sau khi so toàn tree với completed
+revision. Không thay reviewed_commit bằng completed_commit chỉ để gate xanh.
+PR25 phải dùng merge commit, không squash/rebase; các lần đưa bằng chứng mới vào
+main phải giữ reviewed revision reachable tương tự. Checkout shallow cần fetch
+đầy đủ history trước khi kiểm, ví dụ `git fetch --unshallow origin`; CI checkout
+dùng `fetch-depth: 0`, không coi depth 1 là đầy đủ lịch sử.
+
+Sau commit local và trước push/merge, chạy `node --test plans/test-history.mjs`.
+Gate kiểm HEAD đã commit trong clone một nhánh `--no-local --no-tags`, không đọc
+nhờ objects của worktree gốc; yêu cầu plans tracked và sạch, không tải
+dependency hoặc gọi network ngoài Git transport local. Gate còn chạy revision
+lỗi thật 2442505 trong repository biệt lập và kiểm đúng sáu reviewed HEAD bị
+thiếu, tránh ca âm thất bại vì lý do khác. Các repository tạm được dọn sau test.
+Workspace root cố ý giữ source d2c5305 và plans untracked chỉ chạy
+validator/format; gate history phải chạy ở worktree thực thi đã commit, không
+dùng checkout root cũ thay cho HEAD PR.
 
 Phụ thuộc được đối chiếu theo tập ID giữa manifest, metadata kế hoạch và cột
 README; whitespace/backtick và thứ tự trình bày không đổi ý nghĩa. Scope trong

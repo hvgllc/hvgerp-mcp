@@ -384,3 +384,60 @@ check đạt. Parent đọc toàn delta và tự chạy lại validator 25/25, r
 81/81, format 51 file, lint hai script, diff check và so source ngoài plans với
 main 99b1fa3: đều exit 0. Root validator cũng đạt, source vẫn d2c5305. Phần thêm
 này chỉ lưu review/gate; CI và Codex review tiếp theo phải kiểm HEAD được push.
+
+## Review 5120263910: giữ provenance trong clone sạch
+
+Finding
+[3939821509](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3939821509)
+trên HEAD `24425057594124b5b8485c900e555c66834c342a` hợp lệ. Agent và parent độc
+lập tái hiện bằng clone local một nhánh `--no-local --no-tags`: validator exit
+1, thiếu sáu reviewed HEAD và từ chối đủ bảy DONE 001/003/004/007/008/009/024.
+SourceRef và completed_commit đều reachable; lỗi không nằm ở snippet hoặc
+verdict. Không sửa validator để bỏ lỗi Git.
+
+Trước sửa, tự so từng scope cùng report snapshot: không mismatch ở bảy kế hoạch.
+Toàn tree reviewed/completed cũng khớp ở cả sáu cặp revision khác nhau. Không
+tạo object giả, đổi metadata approval hoặc tự gắn review cho merge chưa được
+review. Các SHA thật được giữ bằng sáu merge `-s ours`, mỗi lần assert tree
+không đổi và `git merge-base --is-ancestor reviewed HEAD` exit 0:
+
+| Reviewed HEAD                            | Provenance merge                         |
+| ---------------------------------------- | ---------------------------------------- |
+| bb78ace761b7ae9b26900c8c80faad699a9adfa6 | 11c4e5555e4483948821640de9c4d2f017beafca |
+| ecc1b69d7d0f3c7a3310a5696097e2497b482a29 | 72a3a9a2d05a66ecaa9f2e8e4e27df952126c3cf |
+| 0c0d93c380220e36da53fafdc55841b568a277ef | 99ceadf2894b022b3b4bc2ebbda8401e95ec8df4 |
+| 1aae3db9532ab6af2d332849e20c374d75984c6b | bb1d3cb9a6d1fbc5ef0cb721d10b49273508e288 |
+| 9fb89c707dc7b2478cfa98e40ba6fbd678907b4a | 82d3bb32c15701c398991200e20bdf7b6d175c0e |
+| 306a8aea336dad45697d9c670b784ed201468687 | 3d5b4997a3c46e8590c8df350eb66406395ac487 |
+
+Main `341cba437dba69348b6e11e2c6f599480d5fc212` được nhận trước đó bằng merge
+`728dc8dd614a0ad6b730ae4f640acd821bc3ac09`. Cả sáu provenance merge giữ tree
+`3690708817a2fe1d0558b28d73de8e93c9a4c3ca` của lượt tích hợp này. Source ngoài
+plans bằng main 341cba4; không nhận source các nhánh chưa merge.
+
+010 DONE theo [PR32](https://github.com/hvgllc/hvgerp-mcp/pull/32). Reviewed
+HEAD fa8df34046878143c2ea71d0c52392adb8885879 đã là parent của merge 341cba4,
+nên reachable sẵn, không cần provenance merge bổ sung. Scope chín path cùng
+report blob ca93ebc228f4358849ecadc10a71526d70be5efc khớp ở HEAD/merge; tree
+cùng 38de6eaf493bfa52311927eb79f64f5301b5c532. CI
+[33951342340](https://github.com/hvgllc/hvgerp-mcp/actions/runs/33951342340) 947
+passed, 0 failed, 4 ignored; release-check gốc OK, JSR 0.25.0. Clean comment
+5550181076 lúc 07:08:24Z đúng HEAD, findings_error false, findings rỗng,
+threads 0. Merge lúc 07:13:47Z. Giữ mốc independent APPROVE source c261592 trong
+[010.md](010.md), bổ sung binding từ evidence thật.
+
+Validator ngay sau nhận source main đỏ đúng hai snippet 010 còn IN_PROGRESS;
+chuyển DONE theo chứng cứ thật, giữ baseline lịch sử, không bỏ drift. Regression
+current-source cũ gắn 010 cần đổi tiền đề: chọn kế hoạch TODO thật rồi chỉ sửa
+đúng dòng current source trong bộ nhớ, không dùng DONE để kỳ vọng drift.
+
+Thêm plans/test-history.mjs kiểm Git thực, không chỉ VM fixture: clean clone của
+HEAD đã commit phải qua validator và mọi ref cần thiết phải là ancestor. Ca âm
+fetch riêng revision 2442505 thật vào repository tạm, rồi clone một nhánh: đúng
+sáu object thiếu, 13 diagnostic gồm sáu lỗi Git và bảy lỗi approval. Chạy riêng
+ca âm đã đạt đúng nguyên nhân. Gate dọn repository tạm, không sửa source
+worktree. Gate xanh của HEAD mới cần chạy sau commit local.
+
+Cập nhật rule provenance hiện có trong plans/AGENTS.md, không thêm rule trùng
+hoặc nới validator. README nêu PR25 phải merge commit, checkout shallow cần đầy
+đủ history. GitHub API read-only xác nhận allow_merge_commit true.

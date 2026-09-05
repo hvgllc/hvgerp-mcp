@@ -9,7 +9,7 @@
 - Mục audit: 18; loại: `perf`.
 - Ưu tiên: P2; công sức: M; rủi ro sửa: MED.
 - Phụ thuộc: không.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `TODO`.
+- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 MemoryCache chỉ xóa entry hết hạn khi đúng key được đọc lại. Luồng truy vấn dùng
@@ -17,6 +17,11 @@ nhiều key khác nhau có thể giữ entry vô hạn theo thời gian. Giới 
 bảo vệ tiến trình mà không thêm Redis hoặc timer nền.
 
 ## Hiện trạng và chứng cứ
+
+Parent đã đọc toàn kế hoạch và đối chiếu `d2c5305..341cba4`: source
+`src/cache/memory.ts` và `src/cache/memory_test.ts` không có drift. Executor bắt
+đầu trong worktree riêng từ main 341cba4; không sửa source root hoặc đổi
+baseline bằng chứng bên dưới.
 
 `src/cache/memory.ts:33`:
 

@@ -209,10 +209,19 @@ test("historical evidence fails when Git object is missing", () => {
   assert.match(result.messages.join("\n") + String(result.thrown), /deadbee/);
 });
 test("TODO detects current source drift independently of historical source", () => {
+  const entry = manifest.find((item) =>
+    readFileSync(resolve(planRoot, item.file), "utf8")
+      .includes("Trạng thái thực thi: " + tick + "TODO" + tick)
+  );
+  assert(entry, "The fixture requires a TODO plan with current evidence");
+  const evidence = entry.evidence[0];
   invalid({
-    "src/kanban/adapters/task.ts": (text) =>
-      text.replace("const currentTask = await", "const changedTask = await"),
-  }, /010.*current source drift/);
+    [evidence.path]: (text) => {
+      const lines = text.split("\n");
+      lines[evidence.line - 1] += " INVALID_CURRENT_SOURCE";
+      return lines.join("\n");
+    },
+  }, new RegExp(String(entry.id).padStart(3, "0") + ".*current source drift"));
 });
 test("DONE still verifies exact historical source", () => {
   invalid({

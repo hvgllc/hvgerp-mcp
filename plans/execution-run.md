@@ -197,3 +197,51 @@ trước lượt này. So sâu manifest root chỉ đổi record 010/011/015/017
 baseline 016/022 giữ nguyên. Mười artifact 009, kể cả bảy PNG, khớp byte giữa
 backlog và root. Delta quản trị này chỉ ở plans, commit local do agent quản trị
 tạo; push/review tiếp do parent quyết định.
+
+## Tích hợp 010 và sửa provenance PR25
+
+Backlog nhận main `341cba437dba69348b6e11e2c6f599480d5fc212` bằng merge 728dc8d,
+rồi giữ sáu reviewed HEAD thật bằng provenance-only merge. Mỗi merge giữ nguyên
+tree và xác nhận ancestry; không sửa source ứng dụng. Finding
+[3939821509](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3939821509)
+trong review 5120263910 trên HEAD 2442505 đã được agent và parent tái hiện:
+clone một nhánh thiếu objects, dù máy phát triển chạy validator xanh. PR25 cần
+merge commit, không squash/rebase, và gate dùng đầy đủ history. Chi tiết SHA,
+phản chứng và phạm vi tại
+[evidence/backlog-review.md](evidence/backlog-review.md).
+
+010 DONE theo PR32, reviewed HEAD fa8df34046878143c2ea71d0c52392adb8885879 và
+merge 341cba437dba69348b6e11e2c6f599480d5fc212 lúc 07:13:47Z. CI 33951342340 đạt
+947 passed, 0 failed, 4 ignored, release-check gốc OK, JSR 0.25.0; Codex clean
+comment 5550181076 đúng HEAD, findings_error false, findings rỗng, threads 0.
+Reviewed HEAD là parent của merge thật, không cần provenance merge riêng
+cho 010. Scope/report và full tree khớp, binding tại
+[evidence/010.md](evidence/010.md). Không dùng fixture thay chứng cứ upstream.
+
+012 và 018 IN_PROGRESS trong worktree riêng từ main 341cba4. Parent đã đọc delta
+003/004/010 trước giao 012: chỉ timeout và regression trước đó thay đổi, các chỗ
+fill cache/peers không drift. Với 018, memory.ts/memory_test.ts không drift từ
+d2c5305. Giữ baseline sourceRef và tiêu chí gốc, không nhập source executor chưa
+merge.
+
+Parent đã kiểm logs CI
+[33951383281](https://github.com/hvgllc/hvgerp-mcp/actions/runs/33951383281) của
+PR25 trên HEAD 2442505: 899 passed, 0 failed, 4 ignored, release preflight OK và
+JSR 0.25.0. CI này không thay gate clone sạch hoặc review delta mới.
+
+PR29 có mention 5550195890 lúc 07:11:20Z sau hơn 25 phút chưa có phản hồi mới.
+PR31 HEAD `305d6f02da4eed548bc39e9385aa0e99236049ed`, source bf58b05 đã review
+độc lập APPROVE, full suite 969 passed, 0 failed, 4 ignored; Docker 51 ca/673
+assertion. Parent xác nhận
+[CI 33951972388](https://github.com/hvgllc/hvgerp-mcp/actions/runs/33951972388)
+SUCCESS đúng HEAD: 969/0/4, release-check gốc OK, JSR 0.25.0. Hai finding đã
+reply tại 3939829446/3939829617; watch baseline 07:13:50Z với trigger
+5550065503. Chưa đánh 011 DONE hoặc merge PR31 trong lượt này. 017 từng REVISE
+tại 3a8fa2c, đã sửa cb1ceac, full suite 930/0/4; đang review, Browser còn chờ
+kết nối, không coi full suite thay Browser QA.
+
+Tổng trạng thái: 8 DONE, 1 BLOCKED (002), 5 IN_PROGRESS (005, 011, 012, 017,
+018), 11 TODO. Root giữ source d2c5305, baseline 016/022, quyền/thiết kế 002,
+ghi chú các kế hoạch đang chạy và mọi nội dung journal cũ. Không reset/pull
+root, sửa file người dùng, nâng dependency, push, reply hoặc merge PR trong lượt
+quản trị này.

@@ -9,7 +9,7 @@
 - Mục audit: 12; loại: `bug`.
 - Ưu tiên: P1; công sức: M; rủi ro sửa: vừa; phối hợp cache nhiều caller.
 - Phụ thuộc: không.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `TODO`.
+- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 list/get ghi cache vô điều kiện sau await. Một GET bắt đầu trước PUT có thể hoàn
@@ -18,6 +18,13 @@ thể trả cho request đã bắt đầu trước đó nhưng không được d
 request mới sau mutation.
 
 ## Hiện trạng và chứng cứ
+
+Đối chiếu trước execute ngày 2026-09-05 với main `341cba4`: 004 chỉ đổi vòng đời
+timeout trong request và thêm tests; 003 thêm tests invalidation assignment ở
+caller-client; 010 thêm tests cache/optimistic locking trong frappe-client.
+Parent đã đọc các delta này. Hai chỗ fill cache và cơ chế cachePeers bên dưới
+chưa đổi, lỗi vẫn còn. Executor phải giữ toàn bộ regression đã merge và không
+sửa timeout, assignment hoặc adapter Kanban.
 
 `src/api/frappe-client.ts:589`:
 

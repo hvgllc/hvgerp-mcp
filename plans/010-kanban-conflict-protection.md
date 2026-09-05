@@ -10,7 +10,7 @@
 - Ưu tiên: P1; công sức: M; rủi ro sửa: vừa; phụ thuộc hợp đồng optimistic
   locking của Frappe.
 - Phụ thuộc: không.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
+- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `DONE`.
 - Độ tin cậy: cao về GET cache; cơ chế compare-and-write cần xác minh.
 
 Ba adapter GET bình thường rồi so fromColumn, sau đó update chỉ status. Cache có
@@ -173,15 +173,15 @@ fresh-read guard và compare-and-write.
 
 ## Tiêu chí hoàn tất
 
-- [ ] Cả ba adapter dùng fresh GET và có regression cache thật.
-- [ ] Có bằng chứng upstream cho cơ chế khóa; test request/response tương ứng
+- [x] Cả ba adapter dùng fresh GET và có regression cache thật.
+- [x] Có bằng chứng upstream cho cơ chế khóa; test request/response tương ứng
       đạt.
-- [ ] Nếu chưa chứng minh compare-and-write thì trạng thái vẫn BLOCKED, dù fresh
+- [x] Nếu chưa chứng minh compare-and-write thì trạng thái vẫn BLOCKED, dù fresh
       GET đã sửa.
-- [ ] Các gate server đạt.
-- [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
+- [x] Các gate server đạt.
+- [x] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
-- [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/010.md`, cập
+- [x] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/010.md`, cập
       nhật trạng thái ở `plans/README.md`. Không ghi giá trị bí mật.
 
 ## Điều kiện dừng
