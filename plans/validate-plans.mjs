@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const planRoot = dirname(fileURLToPath(import.meta.url));
@@ -10,14 +10,56 @@ const manifest = JSON.parse(
 );
 const failures = [];
 const fail = (message) => failures.push(message);
-const normalized = (value) => value.replace(/\s+/g, "");
-function evidenceSource(sourcePath, historicalRef) {
-  return historicalRef
-    ? execFileSync("git", ["show", `${historicalRef}:${sourcePath}`], {
-      cwd: repoRoot,
-      encoding: "utf8",
-    })
-    : readFileSync(resolve(repoRoot, sourcePath), "utf8");
+const sourceCache = new Map();
+function evidenceSource(sourcePath, sourceRef) {
+  const key = sourceRef + ":" + sourcePath;
+  if (!sourceCache.has(key)) {
+    try {
+      sourceCache.set(
+        key,
+        execFileSync("git", ["show", key], {
+          cwd: repoRoot,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        }),
+      );
+    } catch {
+      fail("Cannot read historical source " + key);
+      sourceCache.set(key, undefined);
+    }
+  }
+  return sourceCache.get(key);
+}
+const statusOf = (body) =>
+  body.match(
+    /Trạng thái thực thi:\s*`(TODO|IN_PROGRESS|BLOCKED|DONE|STALE)`/,
+  )?.[1];
+const statusById = new Map(manifest.map((entry) => {
+  const path = resolve(planRoot, entry.file);
+  return [
+    entry.id,
+    existsSync(path) ? statusOf(readFileSync(path, "utf8")) : undefined,
+  ];
+}));
+function exactLines(source, evidence) {
+  return source.split("\n").slice(
+    evidence.line - 1,
+    evidence.line - 1 + evidence.code.split("\n").length,
+  ).join("\n") === evidence.code;
+}
+function approved(body) {
+  const metadata = body.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1];
+  const verdicts = metadata?.split(/\r?\n/).filter((line) =>
+    line.startsWith("review_verdict:")
+  );
+  return verdicts?.length === 1 && verdicts[0] === "review_verdict: APPROVE";
+}
+function planFiles(directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = resolve(directory, entry.name);
+    if (entry.isDirectory()) return planFiles(path);
+    return entry.isFile() && /\.(md|json|mjs)$/.test(entry.name) ? [path] : [];
+  });
 }
 const headings = [
   "Trạng thái và mục tiêu",
@@ -73,29 +115,42 @@ for (const entry of manifest) {
       fail(`${entry.file}: thiếu ${heading}`);
     }
   }
-  if (!body.includes("`d2c5305`")) fail(`${entry.file}: thiếu SHA`);
-  const executionStatus = body.match(
-    /Trạng thái thực thi:\s*`(TODO|IN_PROGRESS|BLOCKED|DONE|STALE)`/,
-  )?.[1];
-  if (!executionStatus) fail(`${entry.file}: missing valid execution status`);
-  const historicalRef = executionStatus === "DONE"
-    ? body.match(/Mốc soạn:\s*`([0-9a-f]{7,40})`/)?.[1]
-    : undefined;
-  if (executionStatus === "DONE" && !historicalRef) {
-    fail(`${entry.file}: DONE requires a valid historical source reference`);
-    continue;
+  if (!body.match(/Mốc soạn:\s*`([0-9a-f]{7,40})`/)) {
+    fail(entry.file + ": missing valid drafting reference");
+  }
+  const executionStatus = statusOf(body);
+  if (!executionStatus) fail(entry.file + ": missing valid execution status");
+  if (executionStatus === "IN_PROGRESS" || executionStatus === "DONE") {
+    for (const dependency of entry.depends) {
+      if (statusById.get(dependency) !== "DONE") {
+        fail(
+          entry.file + ": prerequisite " + String(dependency).padStart(3, "0") +
+            " must be DONE",
+        );
+      }
+    }
   }
   if (executionStatus === "DONE") {
+    const completion =
+      body.split("\n## Tiêu chí hoàn tất\n")[1]?.split(/\n## /)[0] ?? "";
+    const items = [
+      ...completion.matchAll(/^[ \t]*[-*+][ \t]+\[([ xX])\][ \t]+\S/gm),
+    ];
+    if (!items.length) {
+      fail(entry.file + ": DONE requires a completion checklist");
+    }
+    if (items.some((item) => item[1] === " ")) {
+      fail(entry.file + ": DONE has unchecked completion criteria");
+    }
     const evidencePath = resolve(
       planRoot,
       "evidence",
-      `${String(entry.id).padStart(3, "0")}.md`,
+      String(entry.id).padStart(3, "0") + ".md",
     );
     if (
-      !existsSync(evidencePath) ||
-      !readFileSync(evidencePath, "utf8").includes("APPROVE")
+      !existsSync(evidencePath) || !approved(readFileSync(evidencePath, "utf8"))
     ) {
-      fail(`${entry.file}: DONE requires reviewer approval evidence`);
+      fail(entry.file + ": DONE requires reviewer approval evidence");
     }
   }
   const steps = [...body.matchAll(/^### Bước \d+:/gm)].length;
@@ -131,50 +186,70 @@ for (const entry of manifest) {
   }
   const blocks = [
     ...body.matchAll(
-      /<!-- evidence: ([^\n]+) -->\s*```[^\n]*\n([\s\S]*?)\n```/g,
+      /<!-- evidence: ([^\n]+) -->\s*(?:<!-- deno-fmt-ignore -->\s*)?```[^\n]*\n([\s\S]*?)\n```/g,
     ),
   ];
-  for (const evidence of entry.evidence) {
-    const source = evidenceSource(evidence.path, historicalRef);
-    const suffix = source.split("\n").slice(evidence.line - 1).join("\n");
-    if (!normalized(suffix).startsWith(normalized(evidence.code))) {
-      fail(`${entry.file}: sai dòng ${evidence.path}:${evidence.line}`);
-    }
-    if (!body.includes(`\`${evidence.path}:${evidence.line}\``)) {
-      fail(`${entry.file}: thiếu tham chiếu dòng chứng cứ`);
-    }
-  }
   if (blocks.length !== entry.evidence.length) {
-    fail(`${entry.file}: số trích đoạn không khớp`);
+    fail(entry.file + ": evidence excerpt count mismatch");
   }
-  for (const [, sourcePath, code] of blocks) {
-    if (!existsSync(resolve(repoRoot, sourcePath))) {
-      fail(`Thiếu nguồn ${sourcePath}`);
+  for (const [index, evidence] of entry.evidence.entries()) {
+    if (!/^[0-9a-f]{7,40}$/.test(evidence.sourceRef ?? "")) {
+      fail(entry.file + ": evidence requires a valid sourceRef");
       continue;
     }
-    const source = evidenceSource(sourcePath, historicalRef);
-    if (!normalized(source).includes(normalized(code))) {
-      fail(`${entry.file}: trích đoạn không khớp ${sourcePath}`);
+    if (
+      !Number.isInteger(evidence.line) || evidence.line < 1 ||
+      typeof evidence.code !== "string" || !evidence.code.length
+    ) {
+      fail(entry.file + ": invalid evidence line or code");
+      continue;
+    }
+    const source = evidenceSource(evidence.path, evidence.sourceRef);
+    if (source === undefined) continue;
+    if (!exactLines(source, evidence)) {
+      fail(
+        entry.file + ": historical source mismatch " + evidence.sourceRef +
+          ":" + evidence.path + ":" + evidence.line,
+      );
+    }
+    if (executionStatus === "TODO" || executionStatus === "IN_PROGRESS") {
+      const currentPath = resolve(repoRoot, evidence.path);
+      if (
+        !existsSync(currentPath) ||
+        !exactLines(readFileSync(currentPath, "utf8"), evidence)
+      ) {
+        fail(
+          entry.file + ": current source drift " + evidence.path + ":" +
+            evidence.line,
+        );
+      }
+    }
+    if (!body.includes(`\`${evidence.path}:${evidence.line}\``)) {
+      fail(entry.file + ": missing evidence line citation");
+    }
+    const block = blocks[index];
+    if (!block || block[1] !== evidence.path || block[2] !== evidence.code) {
+      fail(entry.file + ": excerpt mismatch " + evidence.path);
     }
   }
 }
-for (
-  const file of readdirSync(planRoot).filter((name) =>
-    /\.(md|json|mjs)$/.test(name)
-  )
-) {
-  const body = readFileSync(resolve(planRoot, file), "utf8");
-  if (body.includes(String.fromCharCode(0x2014))) fail(`${file}: chứa U+2014`);
+for (const filePath of planFiles(planRoot)) {
+  const file = relative(planRoot, filePath);
+  const body = readFileSync(filePath, "utf8");
+  if (body.includes(String.fromCharCode(0x2014))) {
+    fail(file + ": contains U+2014");
+  }
   if (file.endsWith(".md")) {
     for (const [, target] of body.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)) {
       if (/^(https?:|#)/.test(target)) continue;
       const clean = target.split("#")[0];
-      if (clean && !existsSync(resolve(planRoot, clean))) {
-        fail(`${file}: link hỏng ${target}`);
+      if (clean && !existsSync(resolve(dirname(filePath), clean))) {
+        fail(file + ": link hỏng " + target);
       }
     }
   }
 }
+
 const indexPath = resolve(planRoot, "README.md");
 if (!existsSync(indexPath)) fail("Thiếu README.md");
 else {

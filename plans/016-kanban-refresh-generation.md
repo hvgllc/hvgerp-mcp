@@ -24,18 +24,20 @@ hết khi đã thực sự xử lý.
 
 <!-- evidence: src/ui/kanban-viewer/src/KanbanViewer.tsx -->
 
-```typescript
-updateBoard(parseBoard(text));
+<!-- deno-fmt-ignore -->
+```text
+      updateBoard(parseBoard(text));
 ```
 
 `src/ui/kanban-viewer/src/KanbanViewer.tsx:1224`:
 
 <!-- evidence: src/ui/kanban-viewer/src/KanbanViewer.tsx -->
 
-```typescript
-} else if (refreshAfterMutationRef.current) {
-  refreshAfterMutationRef.current = false;
-  void requestBoardRefresh({ ignoreInterval: true });
+<!-- deno-fmt-ignore -->
+```text
+      } else if (refreshAfterMutationRef.current) {
+        refreshAfterMutationRef.current = false;
+        void requestBoardRefresh({ ignoreInterval: true });
 ```
 
 ## Quy ước cần giữ

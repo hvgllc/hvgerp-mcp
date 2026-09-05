@@ -23,19 +23,21 @@ Stock Entry cha. Đây là sửa phần lịch sử hiện có, chưa xây timel
 
 <!-- evidence: src/ui/stock-viewer/src/components/StockDetailPanel.tsx -->
 
-```typescript
-app.callServerTool({
-  name: "erpnext_stock_entry_list",
-  arguments: { limit: 5, item_code: itemCode },
+<!-- deno-fmt-ignore -->
+```text
+          app.callServerTool({
+            name: "erpnext_stock_entry_list",
+            arguments: { limit: 5, item_code: itemCode },
 ```
 
 `src/tools/operations.ts:582`:
 
 <!-- evidence: src/tools/operations.ts -->
 
-```typescript
-filters: {
-  type: "array",
+<!-- deno-fmt-ignore -->
+```text
+        filters: {
+          type: "array",
 ```
 
 ## Quy ước cần giữ

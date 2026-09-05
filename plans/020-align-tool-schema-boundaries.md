@@ -22,23 +22,25 @@ tạo mảng. Hai biên này cần được kiểm cả ở schema lẫn handler
 
 <!-- evidence: src/tools/kanban.ts -->
 
-```typescript
-status: {
-  type: "string",
-  description: "Optional Opportunity status filter",
-  enum: ["Open", "Replied", "Quotation", "Converted", "Closed", "Lost"],
-},
+<!-- deno-fmt-ignore -->
+```text
+        status: {
+          type: "string",
+          description: "Optional Opportunity status filter",
+          enum: ["Open", "Replied", "Quotation", "Converted", "Closed", "Lost"],
+        },
 ```
 
 `src/tools/analytics.ts:360`:
 
 <!-- evidence: src/tools/analytics.ts -->
 
-```typescript
-months: {
-  type: "number",
-  description: "How many months back to include (default 6)",
-},
+<!-- deno-fmt-ignore -->
+```text
+        months: {
+          type: "number",
+          description: "How many months back to include (default 6)",
+        },
 ```
 
 ## Quy ước cần giữ

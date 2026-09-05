@@ -24,18 +24,20 @@ GET là khóa nguyên tử.
 
 <!-- evidence: src/kanban/adapters/task.ts -->
 
-```typescript
-const currentTask = await ctx.client.get("Task", move.cardId) as Record<
+<!-- deno-fmt-ignore -->
+```text
+    const currentTask = await ctx.client.get("Task", move.cardId) as Record<
 ```
 
 `src/kanban/adapters/task.ts:258`:
 
 <!-- evidence: src/kanban/adapters/task.ts -->
 
-```typescript
-const serverTask = await ctx.client.update("Task", move.cardId, {
-  status,
-}) as Record<
+<!-- deno-fmt-ignore -->
+```text
+    const serverTask = await ctx.client.update("Task", move.cardId, {
+      status,
+    }) as Record<
 ```
 
 ## Quy ước cần giữ

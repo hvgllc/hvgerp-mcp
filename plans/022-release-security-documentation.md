@@ -23,6 +23,7 @@ tự cam kết hỗ trợ phiên bản mới ngoài chính sách hiện có.
 
 <!-- evidence: CONTRIBUTING.md -->
 
+<!-- deno-fmt-ignore -->
 ```text
 1. Update the version in `deno.json` **and** `server.ts` (it lives in both),
    plus `CHANGELOG.md`.
@@ -32,7 +33,8 @@ tự cam kết hỗ trợ phiên bản mới ngoài chính sách hiện có.
 
 <!-- evidence: src/version.ts -->
 
-```typescript
+<!-- deno-fmt-ignore -->
+```text
 export const SERVER_VERSION = "3.4.0";
 ```
 
@@ -40,9 +42,10 @@ export const SERVER_VERSION = "3.4.0";
 
 <!-- evidence: .github/workflows/publish.yml -->
 
-```yaml
-release:
-  types: [published]
+<!-- deno-fmt-ignore -->
+```text
+  release:
+    types: [published]
 ```
 
 ## Quy ước cần giữ

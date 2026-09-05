@@ -23,23 +23,25 @@ ghi nhận chính xác nhưng tuyệt đối không thay nội dung, error hoặ
 
 <!-- evidence: src/ui/shared/kanban/state.ts -->
 
-```typescript
-case "hydrate-detail":
-  return {
-    ...state,
-    detail: {
-      ...state.detail,
-      cardDetail: action.detail,
+<!-- deno-fmt-ignore -->
+```text
+    case "hydrate-detail":
+      return {
+        ...state,
+        detail: {
+          ...state.detail,
+          cardDetail: action.detail,
 ```
 
 `src/ui/kanban-viewer/src/DetailModal.tsx:1030`:
 
 <!-- evidence: src/ui/kanban-viewer/src/DetailModal.tsx -->
 
-```typescript
-await onSave(board.doctype, detail.selectedCardId, editedFields);
-setSaveMessage({ text: "Saved", isError: false });
-setEditedFields({});
+<!-- deno-fmt-ignore -->
+```text
+      await onSave(board.doctype, detail.selectedCardId, editedFields);
+      setSaveMessage({ text: "Saved", isError: false });
+      setEditedFields({});
 ```
 
 ## Quy ước cần giữ

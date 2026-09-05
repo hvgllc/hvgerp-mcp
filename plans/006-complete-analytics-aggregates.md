@@ -23,7 +23,8 @@ chứng minh đầy đủ; tăng cap đơn thuần không hoàn tất.
 
 <!-- evidence: src/tools/analytics.ts -->
 
-```typescript
+<!-- deno-fmt-ignore -->
+```text
         limit: 1000,
       });
 
@@ -34,8 +35,9 @@ chứng minh đầy đủ; tăng cap đơn thuần không hoàn tất.
 
 <!-- evidence: src/tools/analytics.ts -->
 
-```typescript
-const count = invoices.length;
+<!-- deno-fmt-ignore -->
+```text
+      const count = invoices.length;
 ```
 
 ## Quy ước cần giữ

@@ -23,16 +23,18 @@ nhánh.
 
 <!-- evidence: src/api/frappe-client.ts -->
 
-```typescript
-clearTimeout(timer);
+<!-- deno-fmt-ignore -->
+```text
+    clearTimeout(timer);
 ```
 
 `src/api/frappe-client.ts:460`:
 
 <!-- evidence: src/api/frappe-client.ts -->
 
-```typescript
-const rawText = await response.text();
+<!-- deno-fmt-ignore -->
+```text
+    const rawText = await response.text();
 ```
 
 ## Quy ước cần giữ

@@ -22,10 +22,11 @@ bảo vệ tiến trình mà không thêm Redis hoặc timer nền.
 
 <!-- evidence: src/cache/memory.ts -->
 
-```typescript
-set<T>(key: string, value: T, ttlMs: number): void {
-  this.store.set(key, { value, expiresAt: Date.now() + ttlMs });
-}
+<!-- deno-fmt-ignore -->
+```text
+  set<T>(key: string, value: T, ttlMs: number): void {
+    this.store.set(key, { value, expiresAt: Date.now() + ttlMs });
+  }
 ```
 
 ## Quy ước cần giữ

@@ -22,17 +22,21 @@ có quy tắc kiểu rõ, bọc DOM download giữ nguyên thao tác người d�
 
 <!-- evidence: src/ui/doclist-viewer/src/helpers.ts -->
 
-```typescript
-const header = columns.join(",");
+<!-- deno-fmt-ignore -->
+```text
+  const header = columns.join(",");
 ```
 
 `src/ui/doclist-viewer/src/helpers.ts:95`:
 
 <!-- evidence: src/ui/doclist-viewer/src/helpers.ts -->
 
-```typescript
-const v = formatCell(row[col]);
-return v.includes(",") || v.includes('"') ? `"${v.replace(/"/g, '""')}"` : v;
+<!-- deno-fmt-ignore -->
+```text
+      const v = formatCell(row[col]);
+      return v.includes(",") || v.includes('"')
+        ? `"${v.replace(/"/g, '""')}"`
+        : v;
 ```
 
 ## Quy ước cần giữ

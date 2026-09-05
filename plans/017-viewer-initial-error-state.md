@@ -22,27 +22,29 @@ dùng cần phân biệt không có dữ liệu với không đọc được d�
 
 <!-- evidence: src/ui/invoice-viewer/src/InvoiceViewer.tsx -->
 
-```typescript
-if (result.isError) {
-  const text = extractToolResultText(result);
-  setError(text ?? "Tool returned an error");
-  setLoading(false);
-  return false;
-}
+<!-- deno-fmt-ignore -->
+```text
+    if (result.isError) {
+      const text = extractToolResultText(result);
+      setError(text ?? "Tool returned an error");
+      setLoading(false);
+      return false;
+    }
 ```
 
 `src/ui/invoice-viewer/src/InvoiceViewer.tsx:378`:
 
 <!-- evidence: src/ui/invoice-viewer/src/InvoiceViewer.tsx -->
 
-```typescript
-if (!data) {
-  return (
-    <div
-      style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}
-    >
-      <ErpNextBrandHeader />
-      <InvoiceEmptyState />
+<!-- deno-fmt-ignore -->
+```text
+  if (!data) {
+    return (
+      <div
+        style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}
+      >
+        <ErpNextBrandHeader />
+        <InvoiceEmptyState />
 ```
 
 ## Quy ước cần giữ

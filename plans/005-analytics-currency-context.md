@@ -24,17 +24,19 @@ vi cần bao trùm toàn analytics, không chỉ thay chuỗi EUR.
 
 <!-- evidence: src/tools/analytics.ts -->
 
-```typescript
-const invoices = await ctx.client.list("Sales Invoice", {
-  fields: ["outstanding_amount"],
+<!-- deno-fmt-ignore -->
+```text
+      const invoices = await ctx.client.list("Sales Invoice", {
+        fields: ["outstanding_amount"],
 ```
 
 `src/tools/analytics.ts:1075`:
 
 <!-- evidence: src/tools/analytics.ts -->
 
-```typescript
-currency: "EUR",
+<!-- deno-fmt-ignore -->
+```text
+        currency: "EUR",
 ```
 
 ## Quy ước cần giữ

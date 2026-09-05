@@ -23,18 +23,20 @@ từng loại field.
 
 <!-- evidence: src/tools/analytics.ts -->
 
-```typescript
-const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
-const lastMonthStartStr = lastMonthStart.toISOString().split("T")[0];
-const lastMonthEndStr = lastMonthEnd.toISOString().split("T")[0];
+<!-- deno-fmt-ignore -->
+```text
+      const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+      const lastMonthStartStr = lastMonthStart.toISOString().split("T")[0];
+      const lastMonthEndStr = lastMonthEnd.toISOString().split("T")[0];
 ```
 
 `src/tools/site-date.ts:122`:
 
 <!-- evidence: src/tools/site-date.ts -->
 
-```typescript
+<!-- deno-fmt-ignore -->
+```text
 export async function siteToday(ctx: ErpNextToolContext): Promise<string> {
   return (await siteNow(ctx)).now.slice(0, 10);
 }

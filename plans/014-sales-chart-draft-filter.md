@@ -22,17 +22,19 @@ cancelled luôn bị loại; dimension chỉ đổi nhóm tổng hợp, không �
 
 <!-- evidence: src/tools/analytics.ts -->
 
-```typescript
-if (!input.include_drafts) {
-  filters.push(["docstatus", "=", 1]);
+<!-- deno-fmt-ignore -->
+```text
+      if (!input.include_drafts) {
+        filters.push(["docstatus", "=", 1]); // Submitted only
 ```
 
 `src/tools/analytics.ts:239`:
 
 <!-- evidence: src/tools/analytics.ts -->
 
-```typescript
-filters: [["docstatus", "!=", 2]], // exclude cancelled
+<!-- deno-fmt-ignore -->
+```text
+          filters: [["docstatus", "!=", 2]], // exclude cancelled
 ```
 
 ## Quy ước cần giữ

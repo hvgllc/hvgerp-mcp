@@ -23,21 +23,23 @@ phản hồi và cache sau mutation, không thay workflow giao việc native.
 
 <!-- evidence: src/tools/assignment.ts -->
 
-```typescript
-nativeResult = await ctx.client.callMethod(ASSIGNMENT_METHOD, {
-  doctype,
-  name,
-  ...assignment.args,
-});
+<!-- deno-fmt-ignore -->
+```text
+    nativeResult = await ctx.client.callMethod(ASSIGNMENT_METHOD, {
+      doctype,
+      name,
+      ...assignment.args,
+    });
 ```
 
 `src/tools/assignment.ts:305`:
 
 <!-- evidence: src/tools/assignment.ts -->
 
-```typescript
-try {
-  return await ctx.client.get(doctype, name);
+<!-- deno-fmt-ignore -->
+```text
+  try {
+    return await ctx.client.get(doctype, name);
 ```
 
 ## Quy ước cần giữ

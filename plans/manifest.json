@@ -14,12 +14,14 @@
       {
         "path": "src/auth/config.ts",
         "line": 81,
-        "code": "  if (tokens.size === 0 && !jwksUrl) return null;"
+        "code": "  if (tokens.size === 0 && !jwksUrl) return null;",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       },
       {
         "path": "server.ts",
         "line": 101,
-        "code": "  const authConfig = httpFlag ? loadAuthConfig() : null;\n  const authProvider = authConfig ? buildAuthProvider(authConfig) : undefined;"
+        "code": "  const authConfig = httpFlag ? loadAuthConfig() : null;\n  const authProvider = authConfig ? buildAuthProvider(authConfig) : undefined;",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -60,12 +62,14 @@
       {
         "path": "src/mrtr/link-disambiguation.ts",
         "line": 177,
-        "code": "  try {\n    return { result: await options.execute(options.args), args: options.args };"
+        "code": "  try {\n    return { result: await options.execute(options.args), args: options.args };",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       },
       {
         "path": "src/client.ts",
         "line": 221,
-        "code": "            execute: (callArgs) => tool.handler(callArgs, toolContext),"
+        "code": "            execute: (callArgs) => tool.handler(callArgs, toolContext),",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -86,12 +90,14 @@
       {
         "path": "src/tools/assignment.ts",
         "line": 242,
-        "code": "    nativeResult = await ctx.client.callMethod(ASSIGNMENT_METHOD, {\n      doctype,\n      name,\n      ...assignment.args,\n    });"
+        "code": "    nativeResult = await ctx.client.callMethod(ASSIGNMENT_METHOD, {\n      doctype,\n      name,\n      ...assignment.args,\n    });",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       },
       {
         "path": "src/tools/assignment.ts",
         "line": 305,
-        "code": "  try {\n    return await ctx.client.get(doctype, name);"
+        "code": "  try {\n    return await ctx.client.get(doctype, name);",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -109,12 +115,14 @@
       {
         "path": "src/api/frappe-client.ts",
         "line": 455,
-        "code": "    clearTimeout(timer);"
+        "code": "    clearTimeout(timer);",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       },
       {
         "path": "src/api/frappe-client.ts",
         "line": 460,
-        "code": "    const rawText = await response.text();"
+        "code": "    const rawText = await response.text();",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -142,12 +150,14 @@
       {
         "path": "src/tools/analytics.ts",
         "line": 1054,
-        "code": "      const invoices = await ctx.client.list(\"Sales Invoice\", {\n        fields: [\"outstanding_amount\"],"
+        "code": "      const invoices = await ctx.client.list(\"Sales Invoice\", {\n        fields: [\"outstanding_amount\"],",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       },
       {
         "path": "src/tools/analytics.ts",
         "line": 1075,
-        "code": "        currency: \"EUR\","
+        "code": "        currency: \"EUR\",",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -175,12 +185,14 @@
       {
         "path": "src/tools/analytics.ts",
         "line": 1060,
-        "code": "        limit: 1000,\n      });\n\n      const total = invoices.reduce("
+        "code": "        limit: 1000,\n      });\n\n      const total = invoices.reduce(",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       },
       {
         "path": "src/tools/analytics.ts",
         "line": 1067,
-        "code": "      const count = invoices.length;"
+        "code": "      const count = invoices.length;",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -224,13 +236,15 @@
         "path": "src/ui/tsconfig.json",
         "line": 19,
         "lang": "json",
-        "code": "  \"include\": [\"**/*.ts\", \"**/*.tsx\"],\n  \"exclude\": [\"node_modules\", \"dist\"]"
+        "code": "  \"include\": [\"**/*.ts\", \"**/*.tsx\"],\n  \"exclude\": [\"node_modules\", \"dist\"]",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       },
       {
         "path": "deno.json",
         "line": 16,
         "lang": "json",
-        "code": "    \"check\": \"deno check mod.ts server.ts\","
+        "code": "    \"check\": \"deno check mod.ts server.ts\",",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -259,12 +273,14 @@
       {
         "path": "src/ui/doclist-viewer/src/helpers.ts",
         "line": 92,
-        "code": "  const header = columns.join(\",\");"
+        "code": "  const header = columns.join(\",\");",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       },
       {
         "path": "src/ui/doclist-viewer/src/helpers.ts",
         "line": 95,
-        "code": "      const v = formatCell(row[col]);\n      return v.includes(\",\") || v.includes('\"')\n        ? `\"${v.replace(/\"/g, '\"\"')}\"`\n        : v;"
+        "code": "      const v = formatCell(row[col]);\n      return v.includes(\",\") || v.includes('\"')\n        ? `\"${v.replace(/\"/g, '\"\"')}\"`\n        : v;",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -295,12 +311,14 @@
       {
         "path": "src/ui/shared/kanban/state.ts",
         "line": 68,
-        "code": "    case \"hydrate-detail\":\n      return {\n        ...state,\n        detail: {\n          ...state.detail,\n          cardDetail: action.detail,"
+        "code": "    case \"hydrate-detail\":\n      return {\n        ...state,\n        detail: {\n          ...state.detail,\n          cardDetail: action.detail,",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       },
       {
         "path": "src/ui/kanban-viewer/src/DetailModal.tsx",
         "line": 1030,
-        "code": "      await onSave(board.doctype, detail.selectedCardId, editedFields);\n      setSaveMessage({ text: \"Saved\", isError: false });\n      setEditedFields({});"
+        "code": "      await onSave(board.doctype, detail.selectedCardId, editedFields);\n      setSaveMessage({ text: \"Saved\", isError: false });\n      setEditedFields({});",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -324,12 +342,14 @@
       {
         "path": "src/kanban/adapters/task.ts",
         "line": 218,
-        "code": "    const currentTask = await ctx.client.get(\"Task\", move.cardId) as Record<"
+        "code": "    const currentTask = await ctx.client.get(\"Task\", move.cardId) as Record<",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       },
       {
         "path": "src/kanban/adapters/task.ts",
         "line": 258,
-        "code": "    const serverTask = await ctx.client.update(\"Task\", move.cardId, {\n      status,\n    }) as Record<"
+        "code": "    const serverTask = await ctx.client.update(\"Task\", move.cardId, {\n      status,\n    }) as Record<",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -342,19 +362,24 @@
       "src/compat/legacy-shim.ts",
       "src/compat/legacy-shim_test.ts",
       "shim.ts",
-      "docs/migration-mcp-spec-2026-07-28.md"
+      "docs/migration-mcp-spec-2026-07-28.md",
+      "plans/evidence/011/container-smoke.ts"
     ],
-    "newFiles": [],
+    "newFiles": [
+      "plans/evidence/011/container-smoke.ts"
+    ],
     "evidence": [
       {
         "path": "src/compat/legacy-shim.ts",
         "line": 1783,
-        "code": "    const outcome = await forwardOne("
+        "code": "    const outcome = await forwardOne(",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       },
       {
         "path": "shim.ts",
         "line": 92,
-        "code": "    return Response.json({\n      jsonrpc: \"2.0\",\n      id: null,\n      error: { code: -32603, message: \"Shim upstream failure\" },\n    }, { status: 502 });"
+        "code": "    return Response.json({\n      jsonrpc: \"2.0\",\n      id: null,\n      error: { code: -32603, message: \"Shim upstream failure\" },\n    }, { status: 502 });",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -378,12 +403,14 @@
       {
         "path": "src/api/frappe-client.ts",
         "line": 589,
-        "code": "    this.cache.set(cacheKey, res.data, getCacheTtlMs());\n    return res.data;"
+        "code": "    this.cache.set(cacheKey, res.data, getCacheTtlMs());\n    return res.data;",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       },
       {
         "path": "src/api/frappe-client.ts",
         "line": 610,
-        "code": "      cache.deleteByPrefix(`list:${doctype}:`);\n      cache.deleteByPrefix(`resolve:miss:${doctype}:`);\n      if (name) cache.delete(`get:${doctype}:${name}`);"
+        "code": "      cache.deleteByPrefix(`list:${doctype}:`);\n      cache.deleteByPrefix(`resolve:miss:${doctype}:`);\n      if (name) cache.delete(`get:${doctype}:${name}`);",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -410,12 +437,14 @@
       {
         "path": "src/tools/analytics.ts",
         "line": 1100,
-        "code": "      const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);\n      const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);\n      const lastMonthStartStr = lastMonthStart.toISOString().split(\"T\")[0];\n      const lastMonthEndStr = lastMonthEnd.toISOString().split(\"T\")[0];"
+        "code": "      const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);\n      const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);\n      const lastMonthStartStr = lastMonthStart.toISOString().split(\"T\")[0];\n      const lastMonthEndStr = lastMonthEnd.toISOString().split(\"T\")[0];",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       },
       {
         "path": "src/tools/site-date.ts",
         "line": 122,
-        "code": "export async function siteToday(ctx: ErpNextToolContext): Promise<string> {\n  return (await siteNow(ctx)).now.slice(0, 10);\n}"
+        "code": "export async function siteToday(ctx: ErpNextToolContext): Promise<string> {\n  return (await siteNow(ctx)).now.slice(0, 10);\n}",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -438,12 +467,14 @@
       {
         "path": "src/tools/analytics.ts",
         "line": 231,
-        "code": "      if (!input.include_drafts) {\n        filters.push([\"docstatus\", \"=\", 1]);"
+        "code": "      if (!input.include_drafts) {\n        filters.push([\"docstatus\", \"=\", 1]); // Submitted only",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       },
       {
         "path": "src/tools/analytics.ts",
         "line": 239,
-        "code": "          filters: [[\"docstatus\", \"!=\", 2]], // exclude cancelled"
+        "code": "          filters: [[\"docstatus\", \"!=\", 2]], // exclude cancelled",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -472,12 +503,14 @@
       {
         "path": "src/ui/stock-viewer/src/components/StockDetailPanel.tsx",
         "line": 35,
-        "code": "          app.callServerTool({\n            name: \"erpnext_stock_entry_list\",\n            arguments: { limit: 5, item_code: itemCode },"
+        "code": "          app.callServerTool({\n            name: \"erpnext_stock_entry_list\",\n            arguments: { limit: 5, item_code: itemCode },",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       },
       {
         "path": "src/tools/operations.ts",
         "line": 582,
-        "code": "        filters: {\n          type: \"array\","
+        "code": "        filters: {\n          type: \"array\",",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -507,12 +540,14 @@
       {
         "path": "src/ui/kanban-viewer/src/KanbanViewer.tsx",
         "line": 1127,
-        "code": "      updateBoard(parseBoard(text));"
+        "code": "      updateBoard(parseBoard(text));",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       },
       {
         "path": "src/ui/kanban-viewer/src/KanbanViewer.tsx",
         "line": 1224,
-        "code": "      } else if (refreshAfterMutationRef.current) {\n        refreshAfterMutationRef.current = false;\n        void requestBoardRefresh({ ignoreInterval: true });"
+        "code": "      } else if (refreshAfterMutationRef.current) {\n        refreshAfterMutationRef.current = false;\n        void requestBoardRefresh({ ignoreInterval: true });",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -542,12 +577,14 @@
       {
         "path": "src/ui/invoice-viewer/src/InvoiceViewer.tsx",
         "line": 237,
-        "code": "    if (result.isError) {\n      const text = extractToolResultText(result);\n      setError(text ?? \"Tool returned an error\");\n      setLoading(false);\n      return false;\n    }"
+        "code": "    if (result.isError) {\n      const text = extractToolResultText(result);\n      setError(text ?? \"Tool returned an error\");\n      setLoading(false);\n      return false;\n    }",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       },
       {
         "path": "src/ui/invoice-viewer/src/InvoiceViewer.tsx",
         "line": 378,
-        "code": "  if (!data) {\n    return (\n      <div\n        style={{ display: \"flex\", flexDirection: \"column\", minHeight: \"100vh\" }}\n      >\n        <ErpNextBrandHeader />\n        <InvoiceEmptyState />"
+        "code": "  if (!data) {\n    return (\n      <div\n        style={{ display: \"flex\", flexDirection: \"column\", minHeight: \"100vh\" }}\n      >\n        <ErpNextBrandHeader />\n        <InvoiceEmptyState />",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -565,7 +602,8 @@
       {
         "path": "src/cache/memory.ts",
         "line": 33,
-        "code": "  set<T>(key: string, value: T, ttlMs: number): void {\n    this.store.set(key, { value, expiresAt: Date.now() + ttlMs });\n  }"
+        "code": "  set<T>(key: string, value: T, ttlMs: number): void {\n    this.store.set(key, { value, expiresAt: Date.now() + ttlMs });\n  }",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -586,7 +624,8 @@
       {
         "path": "src/cache/memory.ts",
         "line": 33,
-        "code": "  set<T>(key: string, value: T, ttlMs: number): void {\n    this.store.set(key, { value, expiresAt: Date.now() + ttlMs });\n  }"
+        "code": "  set<T>(key: string, value: T, ttlMs: number): void {\n    this.store.set(key, { value, expiresAt: Date.now() + ttlMs });\n  }",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -608,12 +647,14 @@
       {
         "path": "src/tools/kanban.ts",
         "line": 111,
-        "code": "        status: {\n          type: \"string\",\n          description: \"Optional Opportunity status filter\",\n          enum: [\"Open\", \"Replied\", \"Quotation\", \"Converted\", \"Closed\", \"Lost\"],\n        },"
+        "code": "        status: {\n          type: \"string\",\n          description: \"Optional Opportunity status filter\",\n          enum: [\"Open\", \"Replied\", \"Quotation\", \"Converted\", \"Closed\", \"Lost\"],\n        },",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       },
       {
         "path": "src/tools/analytics.ts",
         "line": 360,
-        "code": "        months: {\n          type: \"number\",\n          description: \"How many months back to include (default 6)\",\n        },"
+        "code": "        months: {\n          type: \"number\",\n          description: \"How many months back to include (default 6)\",\n        },",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -646,19 +687,22 @@
         "path": ".gitignore",
         "line": 1,
         "lang": "text",
-        "code": "node_modules/\ndeno.lock\ndist-node/"
+        "code": "node_modules/\ndeno.lock\ndist-node/",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       },
       {
         "path": "scripts/build-node.sh",
         "line": 65,
         "lang": "json",
-        "code": "  \"devDependencies\": {\n    \"esbuild\": \"^0.25.12\",\n    \"tsx\": \"^4.20.6\",\n    \"typescript\": \"^5.9.2\"\n  },"
+        "code": "  \"devDependencies\": {\n    \"esbuild\": \"^0.25.12\",\n    \"tsx\": \"^4.20.6\",\n    \"typescript\": \"^5.9.2\"\n  },",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       },
       {
         "path": "scripts/build-node.sh",
         "line": 80,
         "lang": "bash",
-        "code": "pushd \"$DIST_DIR\" >/dev/null\nnpm install --no-fund --no-audit"
+        "code": "pushd \"$DIST_DIR\" >/dev/null\nnpm install --no-fund --no-audit",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -680,18 +724,21 @@
         "path": "CONTRIBUTING.md",
         "line": 78,
         "lang": "text",
-        "code": "1. Update the version in `deno.json` **and** `server.ts` (it lives in both),\n   plus `CHANGELOG.md`."
+        "code": "1. Update the version in `deno.json` **and** `server.ts` (it lives in both),\n   plus `CHANGELOG.md`.",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       },
       {
         "path": "src/version.ts",
         "line": 15,
-        "code": "export const SERVER_VERSION = \"3.4.0\";"
+        "code": "export const SERVER_VERSION = \"3.4.0\";",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       },
       {
         "path": ".github/workflows/publish.yml",
         "line": 15,
         "lang": "yaml",
-        "code": "  release:\n    types: [published]"
+        "code": "  release:\n    types: [published]",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -713,7 +760,8 @@
         "path": "docs/ROADMAP.md",
         "line": 38,
         "lang": "text",
-        "code": "| Stock Ledger Timeline      | chart-viewer (line) + doclist-viewer | Stock movements over time with drill-down.                                                                                                                                                                                                        |"
+        "code": "| Stock Ledger Timeline      | chart-viewer (line) + doclist-viewer | Stock movements over time with drill-down.                                                                                                                                                                                                        |",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -733,7 +781,8 @@
         "path": "docs/ROADMAP.md",
         "line": 70,
         "lang": "text",
-        "code": "1. Create Company\n2. Create Price Lists (Standard Selling, Standard Buying)\n3. Create Warehouses (or use the ones auto-created by Company)\n4. Create Item Groups if needed\n5. Create UOMs if non-standard (Nos, Kg, etc. exist by default)"
+        "code": "1. Create Company\n2. Create Price Lists (Standard Selling, Standard Buying)\n3. Create Warehouses (or use the ones auto-created by Company)\n4. Create Item Groups if needed\n5. Create UOMs if non-standard (Nos, Kg, etc. exist by default)",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   },
@@ -755,7 +804,8 @@
       {
         "path": "src/tools/operations.ts",
         "line": 561,
-        "code": "    name: \"erpnext_doc_list\",\n    annotations: { readOnlyHint: true },"
+        "code": "    name: \"erpnext_doc_list\",\n    annotations: { readOnlyHint: true },",
+        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       }
     ]
   }

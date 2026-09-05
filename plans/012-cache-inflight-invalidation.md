@@ -23,19 +23,21 @@ request mới sau mutation.
 
 <!-- evidence: src/api/frappe-client.ts -->
 
-```typescript
-this.cache.set(cacheKey, res.data, getCacheTtlMs());
-return res.data;
+<!-- deno-fmt-ignore -->
+```text
+    this.cache.set(cacheKey, res.data, getCacheTtlMs());
+    return res.data;
 ```
 
 `src/api/frappe-client.ts:610`:
 
 <!-- evidence: src/api/frappe-client.ts -->
 
-```typescript
-cache.deleteByPrefix(`list:${doctype}:`);
-cache.deleteByPrefix(`resolve:miss:${doctype}:`);
-if (name) cache.delete(`get:${doctype}:${name}`);
+<!-- deno-fmt-ignore -->
+```text
+      cache.deleteByPrefix(`list:${doctype}:`);
+      cache.deleteByPrefix(`resolve:miss:${doctype}:`);
+      if (name) cache.delete(`get:${doctype}:${name}`);
 ```
 
 ## Quy ước cần giữ

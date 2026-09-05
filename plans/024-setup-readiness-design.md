@@ -23,6 +23,7 @@ ghi sai hoặc tự chạy setup.
 
 <!-- evidence: docs/ROADMAP.md -->
 
+<!-- deno-fmt-ignore -->
 ```text
 1. Create Company
 2. Create Price Lists (Standard Selling, Standard Buying)
@@ -134,11 +135,11 @@ không prototype bằng dữ liệu thật.
 
 ## Tiêu chí hoàn tất
 
-- [ ] Tài liệu thiết kế đạt rubric, có quyết định và unknown rõ ràng.
-- [ ] Review chỉ đọc không còn nhầm lỗi quyền thành thiếu dữ liệu.
-- [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
+- [x] Tài liệu thiết kế đạt rubric, có quyết định và unknown rõ ràng.
+- [x] Review chỉ đọc không còn nhầm lỗi quyền thành thiếu dữ liệu.
+- [x] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
-- [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/024.md`, cập
+- [x] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/024.md`, cập
       nhật trạng thái ở `plans/README.md`. Không ghi giá trị bí mật.
 
 ## Điều kiện dừng

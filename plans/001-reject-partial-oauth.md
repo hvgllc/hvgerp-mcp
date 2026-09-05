@@ -23,17 +23,19 @@ server nhận request.
 
 <!-- evidence: src/auth/config.ts -->
 
-```typescript
-if (tokens.size === 0 && !jwksUrl) return null;
+<!-- deno-fmt-ignore -->
+```text
+  if (tokens.size === 0 && !jwksUrl) return null;
 ```
 
 `server.ts:101`:
 
 <!-- evidence: server.ts -->
 
-```typescript
-const authConfig = httpFlag ? loadAuthConfig() : null;
-const authProvider = authConfig ? buildAuthProvider(authConfig) : undefined;
+<!-- deno-fmt-ignore -->
+```text
+  const authConfig = httpFlag ? loadAuthConfig() : null;
+  const authProvider = authConfig ? buildAuthProvider(authConfig) : undefined;
 ```
 
 ## Quy ước cần giữ

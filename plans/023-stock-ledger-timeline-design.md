@@ -23,6 +23,7 @@ và phân quyền, đồng thời không lặp lại truy vấn Stock Entry sai 
 
 <!-- evidence: docs/ROADMAP.md -->
 
+<!-- deno-fmt-ignore -->
 ```text
 | Stock Ledger Timeline      | chart-viewer (line) + doclist-viewer | Stock movements over time with drill-down.                                                                                                                                                                                                        |
 ```

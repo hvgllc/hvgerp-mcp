@@ -25,17 +25,19 @@ từ M lên L vì phải chứng minh ranh giới này cho tất cả đường 
 
 <!-- evidence: src/mrtr/link-disambiguation.ts -->
 
-```typescript
-try {
-  return { result: await options.execute(options.args), args: options.args };
+<!-- deno-fmt-ignore -->
+```text
+  try {
+    return { result: await options.execute(options.args), args: options.args };
 ```
 
 `src/client.ts:221`:
 
 <!-- evidence: src/client.ts -->
 
-```typescript
-execute: (callArgs) => tool.handler(callArgs, toolContext),
+<!-- deno-fmt-ignore -->
+```text
+            execute: (callArgs) => tool.handler(callArgs, toolContext),
 ```
 
 ## Quy ước cần giữ

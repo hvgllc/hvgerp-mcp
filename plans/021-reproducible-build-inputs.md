@@ -22,6 +22,7 @@ theo dõi cho cả đường Deno và Node, giữ nguyên phiên bản đã đư
 
 <!-- evidence: .gitignore -->
 
+<!-- deno-fmt-ignore -->
 ```text
 node_modules/
 deno.lock
@@ -32,19 +33,21 @@ dist-node/
 
 <!-- evidence: scripts/build-node.sh -->
 
-```json
-"devDependencies": {
-  "esbuild": "^0.25.12",
-  "tsx": "^4.20.6",
-  "typescript": "^5.9.2"
-},
+<!-- deno-fmt-ignore -->
+```text
+  "devDependencies": {
+    "esbuild": "^0.25.12",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.2"
+  },
 ```
 
 `scripts/build-node.sh:80`:
 
 <!-- evidence: scripts/build-node.sh -->
 
-```bash
+<!-- deno-fmt-ignore -->
+```text
 pushd "$DIST_DIR" >/dev/null
 npm install --no-fund --no-audit
 ```
@@ -154,32 +157,39 @@ diff chỉ đổi cơ chế lấy dependency, không đổi phiên bản đã ch
 
 ### Bước 3: Tạo và chạy gate tái lập độc lập
 
-Tạo scripts/verify-reproducible-build.mjs, CLI --node <đường dẫn binary> tùy
-chọn, mặc định process.execPath; kiểm version của binary được chọn là Node20
-hoặc22, khác thì exit1 và hướng dẫn chọn binary có sẵn, không tự tải. Script tạo
-hai thư mục tạm bằng mkdtemp, copy snapshot source hiện tại kể cả sửa chưa
-commit: allowlist src/, scripts/, deno.json, deno.lock, server.ts, mod.ts,
+Tạo scripts/verify-reproducible-build.mjs, CLI bắt buộc nhận cả
+`--node20 <đường dẫn binary Node 20>` và `--node22 <đường dẫn binary Node 22>`.
+Không có runtime mặc định. Kiểm riêng từng binary bằng `--version`, bắt buộc
+major tương ứng chính xác là 20 và 22; thiếu path, đảo hai path, hai path cùng
+major hoặc major khác phải exit 1 trước build. Ghi path thực và version mỗi
+binary trong evidence; chỉ dùng binary có sẵn, không tự tải hoặc cài runtime.
+Script tạo hai thư mục tạm bằng mkdtemp, copy snapshot source hiện tại kể cả sửa
+chưa commit: allowlist src/, scripts/, deno.json, deno.lock, server.ts, mod.ts,
 README.md, LICENSE nếu có; loại node_modules, src/ui/dist, .env*, .git,
 dist-node và mọi symlink thoát repo. Không dùng git archive HEAD vì sẽ bỏ sửa
 chưa commit. Trong mỗi workspace chạy npm ci cho UI, build7viewer, bash
 scripts/build-node.sh; thu npm ls --all --json trước và sau build. Chuẩn hóa
 đường dẫn tuyệt đối, so tên/version/resolved/integrity từ lock và graph, so
 SHA256 bundle và npm pack --dry-run --json file list ở dist-node/bin. Hash khác
-phải fail, không tự bỏ trường để lách. Dùng binary Node đã chọn chạy bundle
-stdio: môi trường allowlist tối thiểu, tắt cache warming, URL loopback không có
-ERP và credential giả; gửi initialize, notifications/initialized, tools/list và
-resources/list, kiểm JSON-RPC responses, version từ manifest, đúng7resource
-viewer, không gọi tool ERP. Timeout5giây và cleanup child bắt buộc. Script in vị
-trí evidence/temporary roots, không xóa worktree user; chỉ cleanup đúng thư mục
-do nó vừa tạo sau khi lưu báo cáo. Thêm --self-test với fixture graph bằng/khác,
-hash khác và runtime không hỗ trợ để chứng minh gate có thể fail. release:check
-vẫn là gate một build riêng, không gọi nó là bằng chứng hai build.
+phải fail, không tự bỏ trường để lách. Dùng Node 22 đã xác minh cho hai build;
+mỗi bundle đầu ra phải được chạy smoke riêng bằng cả Node 20 và Node 22, thành
+ma trận hai bundle x hai runtime. Không suy từ một runtime ra runtime kia. Chạy
+bundle stdio: môi trường allowlist tối thiểu, tắt cache warming, URL loopback
+không có ERP và credential giả; gửi initialize, notifications/initialized,
+tools/list và resources/list, kiểm JSON-RPC responses, version từ manifest,
+đúng7resource viewer, không gọi tool ERP. Timeout5giây và cleanup child bắt
+buộc. Script in vị trí evidence/temporary roots, không xóa worktree user; chỉ
+cleanup đúng thư mục do nó vừa tạo sau khi lưu báo cáo. Thêm --self-test với
+fixture graph bằng/khác, hash khác và runtime không hỗ trợ để chứng minh gate có
+thể fail. release:check vẫn là gate một build riêng, không gọi nó là bằng chứng
+hai build.
 
 **Kiểm tra:**
-`node scripts/verify-reproducible-build.mjs --self-test && node scripts/verify-reproducible-build.mjs`
-→ self-test đạt; gate chính exit0 với hai graph/hash/file list giống nhau và
-smoke20/22 đạt, hoặc BLOCKED khi thiếu binary20/22; release:check chạy riêng
-cũng phải đạt.
+`node scripts/verify-reproducible-build.mjs --self-test && node scripts/verify-reproducible-build.mjs --node20 "$NODE20_BINARY" --node22 "$NODE22_BINARY"`
+→ self-test đạt; gate chính exit0 với hai graph/hash/file list giống nhau và đủ
+bốn smoke đạt. `NODE20_BINARY` và `NODE22_BINARY` là hai path đã đối chiếu bằng
+lệnh version, không tự suy từ Node đang chạy helper. BLOCKED khi thiếu một trong
+hai binary; release:check chạy riêng cũng phải đạt.
 
 ## Kiểm thử
 
@@ -191,6 +201,8 @@ cũng phải đạt.
 - npm pack không đưa host testing007 hoặc build manifests nội bộ vào package.
 - Helper --self-test bắt graph/hash khác và runtime26; không dùng successful
   single build thay so sánh hai build.
+- Self-test từ chối thiếu một path, hai path cùng major, đảo path20/22 và ghi rõ
+  ma trận hai bundle x Node20/22; không dùng kết quả Node26 để qua gate.
 
 ## Tiêu chí hoàn tất
 

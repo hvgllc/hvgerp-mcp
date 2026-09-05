@@ -23,9 +23,10 @@ viewer thứ8 hoặc tool tổng hợp rộng quyền.
 
 <!-- evidence: src/tools/operations.ts -->
 
-```typescript
-name: "erpnext_doc_list",
-annotations: { readOnlyHint: true },
+<!-- deno-fmt-ignore -->
+```text
+    name: "erpnext_doc_list",
+    annotations: { readOnlyHint: true },
 ```
 
 ## Quy ước cần giữ

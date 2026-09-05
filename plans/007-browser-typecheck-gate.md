@@ -23,17 +23,19 @@ viewer mà không che lỗi hoặc kiểm nhầm môi trường.
 
 <!-- evidence: src/ui/tsconfig.json -->
 
-```json
-"include": ["**/*.ts", "**/*.tsx"],
-"exclude": ["node_modules", "dist"]
+<!-- deno-fmt-ignore -->
+```text
+  "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": ["node_modules", "dist"]
 ```
 
 `deno.json:16`:
 
 <!-- evidence: deno.json -->
 
-```json
-"check": "deno check mod.ts server.ts",
+<!-- deno-fmt-ignore -->
+```text
+    "check": "deno check mod.ts server.ts",
 ```
 
 ## Quy ước cần giữ
@@ -135,12 +137,13 @@ lỗi môi trường.
 
 ### Bước 2: Tách project browser mà giữ đủ coverage
 
-Include rõ các viewer src/**/*.tsx, src/**/_.ts cùng shared browser modules;
-exclude **/__test.ts và các root server resource helpers như mod.ts, viewers.ts,
-viewer-resource-paths.ts. Bật allowImportingTsExtensions với noEmit để shared
-pure .ts dùng được cả Deno; khai báo alias ~ tương ứng Vite. Chứng minh cả bảy
-main.tsx có mặt bằng --listFilesOnly, và Deno test vẫn kiểm shared tests. Thêm
-script typecheck trong src/ui/package.json gọi tsc --noEmit -p tsconfig.json.
+Include rõ các viewer `src/**/*.tsx`, `src/**/*.ts` cùng shared browser modules;
+exclude `**/*_test.ts` và các root server resource helpers như mod.ts,
+viewers.ts, viewer-resource-paths.ts. Bật allowImportingTsExtensions với noEmit
+để shared pure .ts dùng được cả Deno; khai báo alias ~ tương ứng Vite. Chứng
+minh cả bảy main.tsx có mặt bằng --listFilesOnly, và Deno test vẫn kiểm shared
+tests. Thêm script typecheck trong src/ui/package.json gọi tsc --noEmit -p
+tsconfig.json.
 
 **Kiểm tra:**
 `src/ui/node_modules/.bin/tsc --noEmit -p src/ui/tsconfig.json --listFilesOnly`

@@ -119,17 +119,29 @@ source bổ sung cho kiểm tự động. Chi tiết kết quả và sửa sau r
 [execution-notes.md](execution-notes.md).
 
 [manifest.json](manifest.json) là dữ liệu cho kiểm tra, không thay nội dung kế
-hoạch. Khi đổi scope/phụ thuộc/chứng cứ, cập nhật cả manifest lẫn kế hoạch.
-Validator kiểm chứng cứ TODO/IN_PROGRESS với source hiện tại; với DONE, đọc
-source tại Mốc soạn bằng git show để giữ được chứng cứ lỗi trước sửa. Cần Git
-history chứa mốc đó; đây không phải kiểm chứng hành vi sau sửa. Validator còn
-kiểm trạng thái trong kế hoạch khớp index, và yêu cầu evidence kèm verdict
-APPROVE cho mục DONE. Kết quả trong worktree được ghi riêng trong evidence;
-validator không thay thế việc review commit.
+hoạch. Khi đổi scope/phụ thuộc/chứng cứ, cập nhật cả manifest lẫn kế hoạch. Mỗi
+record evidence có `sourceRef` riêng trong manifest. Validator luôn đọc
+`git show sourceRef:path` và so đúng toàn bộ các dòng `code`, không xóa khoảng
+trắng trong literal hoặc token. Fenced evidence dùng `text` và marker
+`<!-- deno-fmt-ignore -->` riêng cho trích đoạn để formatter không đổi source.
+Validator vẫn so từng byte của các dòng đó, không miễn kiểm bằng marker này.
+TODO/IN_PROGRESS còn phải khớp đúng các dòng source hiện tại để bắt drift trước
+thực thi. Khi refresh, cập nhật đồng bộ code, line, sourceRef và fenced excerpt;
+đổi trạng thái không tự đổi baseline. Mốc soạn chỉ là metadata. Cần giữ Git
+history của các ref này, không fallback khi đọc Git thất bại.
 
-`test-validator.mjs` chạy sáu phép kiểm trong bộ nhớ: giữ baseline lịch sử của
-001, từ chối trích đoạn sai ở TODO và DONE, từ chối thiếu APPROVE, thiếu mốc
-soạn và Git object không đọc được. Fixture không ghi vào source hoặc kế hoạch.
+IN_PROGRESS/DONE chỉ hợp lệ nếu các prerequisite đã DONE. DONE còn yêu cầu có
+checklist trong mục Tiêu chí hoàn tất, không còn ô chưa đánh dấu, và field
+`review_verdict: APPROVE` duy nhất trong YAML frontmatter đầu evidence tương
+ứng. Chỉ thêm marker từ review có thật; lời kể có chữ APPROVE hoặc lời từ chối
+không phải verdict dương. Links Markdown được kiểm cả dưới evidence lồng nhau,
+tương đối với thư mục chứa file. Các kiểm tra này không thay review
+implementation, CI hoặc bằng chứng môi trường bắt buộc.
+
+`node --test plans/test-validator.mjs` chạy regression về checklist, verdict,
+phụ thuộc, baseline đã refresh, literal/token, drift và link lồng nhau, cùng
+contract kiểm tra của 007/011/021. Fixture chỉ thay nội dung đọc trong bộ nhớ và
+dùng Git source thật; không ghi source hoặc giả làm reviewer đã duyệt kế hoạch.
 
 ## Trạng thái sau này
 

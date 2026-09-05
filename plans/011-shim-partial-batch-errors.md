@@ -23,20 +23,22 @@ các entry chưa gọi là not executed.
 
 <!-- evidence: src/compat/legacy-shim.ts -->
 
-```typescript
-const outcome = await forwardOne(
+<!-- deno-fmt-ignore -->
+```text
+    const outcome = await forwardOne(
 ```
 
 `shim.ts:92`:
 
 <!-- evidence: shim.ts -->
 
-```typescript
-return Response.json({
-  jsonrpc: "2.0",
-  id: null,
-  error: { code: -32603, message: "Shim upstream failure" },
-}, { status: 502 });
+<!-- deno-fmt-ignore -->
+```text
+    return Response.json({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32603, message: "Shim upstream failure" },
+    }, { status: 502 });
 ```
 
 ## Quy ước cần giữ
@@ -66,6 +68,7 @@ Các file được sửa khi thực thi:
 - `docs/migration-mcp-spec-2026-07-28.md`
 - `plans/README.md`
 - `plans/evidence/011.md`
+- `plans/evidence/011/container-smoke.ts` (tạo mới, fixture cho container local)
 
 Ngoài phạm vi: không thay single-request transport hoặc auth pipeline; không
 replay batch, không đổi legacy versions hỗ trợ. Không sửa dữ liệu production,
@@ -140,14 +143,47 @@ không entry nào sau lỗi gọi upstream và completed reply không biến m�
 
 Kiểm malformed response, network reject, lỗi đọc body, mixed notification,
 non-JSON branch hiện có, 401/403, legacy revision. Chạy typecheck shim riêng và
-test boundary. Không cần Node bundle vì shim không được npm ship; không dựng
-Docker trong task nếu không cần kiểm dependency mới. Bắt buộc kiểm authorize
+test boundary. Không cần Node bundle vì shim không được npm ship; image shim
+thật phải được kiểm ở bước 4 dù không đổi dependency. Bắt buộc kiểm authorize
 throw/401 trong cả ba nhánh local và notification đầu batch; ghi HTTP status,
 headers, JSON-RPC ids và số mutation.
 
 **Kiểm tra:**
 `deno check shim.ts && deno test --allow-all src/runtime-boundary_test.ts src/compat/legacy-shim_test.ts`
 → exit 0; shim library vẫn platform-free.
+
+### Bước 4: Kiểm image shim thật và provenance
+
+Tạo fixture Deno `plans/evidence/011/container-smoke.ts`, chỉ dùng HTTP local,
+không credential thật. Fixture mở upstream giả ở `127.0.0.1:17655`, gửi request
+đến shim ở `127.0.0.1:7654`, đếm mutation và kiểm wire cho success/error/auth
+batch như bước 1-3. Mỗi ca reset trạng thái, assertion timeout hữu hạn và đóng
+server/stream trong finally; có ca control initialize hoặc ping thành công.
+
+Chạy `git diff --exit-code -- shim.ts src/compat/legacy-shim.ts Dockerfile.shim`
+để chắc source build đã nằm trong commit local đang gắn nhãn. Sau đó:
+
+```bash
+docker build -f Dockerfile.shim --build-arg VCS_REF="$(git rev-parse HEAD)" -t hvgerp-shim-plan011:local .
+docker image inspect hvgerp-shim-plan011:local --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}'
+docker run --rm -d --name hvgerp-shim-plan011 --network none -e SHIM_UPSTREAM=http://127.0.0.1:17655 hvgerp-shim-plan011:local
+docker run --rm --network container:hvgerp-shim-plan011 --mount "type=bind,src=$PWD/plans/evidence/011/container-smoke.ts,dst=/checks.ts,readonly" --entrypoint deno hvgerp-shim-plan011:local run --allow-net /checks.ts
+```
+
+Container fixture dùng chung network namespace với shim, nên upstream chỉ nằm
+trong loopback của hai container; không mở port ra host và không gọi ERPNext.
+Trước tạo container, kiểm tên chưa tồn tại; nếu trùng, dừng hoặc chọn tên khác
+và cập nhật cả hai lệnh, không dừng/xóa container của người dùng. Chỉ cleanup
+container vừa tạo bằng `docker stop hvgerp-shim-plan011`; `--rm` tự dọn nó. Lưu
+image ID, source commit, revision label, assertion summary và log container.
+Label phải bằng chính `git rev-parse HEAD`, không phải `unknown`. Không push
+image hoặc đổi deployment. Nếu Docker thiếu/không chạy được hoặc image không
+build được, ghi BLOCKED và không thay bằng test host-only.
+
+**Kiểm tra:** chạy đủ nhóm lệnh trên: build và fixture exit 0, nhãn revision
+khớp commit, image khởi động với đúng runtime Dockerfile.shim, partial replies,
+auth headers và mutation count đúng contract. Gate này chưa được chạy khi chỉ
+soạn hoặc cập nhật kế hoạch.
 
 ## Kiểm thử
 
@@ -166,6 +202,8 @@ headers, JSON-RPC ids và số mutation.
 - [ ] Client thấy toàn bộ kết quả đã biết và phân biệt unknown với not executed.
 - [ ] Mọi regression batch và gate shim/runtime boundary đạt.
 - [ ] Không làm giảm xác thực hoặc lộ chi tiết nội bộ.
+- [ ] Image Dockerfile.shim thật build và container smoke đạt; revision label
+      khớp source commit, có image ID/log/assertion và cleanup rõ ràng.
 - [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
 - [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/011.md`, cập
