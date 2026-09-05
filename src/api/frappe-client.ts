@@ -425,9 +425,8 @@ export class FrappeClient {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
-    let response: Response;
     try {
-      response = await fetch(url, {
+      const response = await fetch(url, {
         method,
         headers: this.buildHeaders(!multipart),
         body: body === undefined
@@ -437,8 +436,54 @@ export class FrappeClient {
           : JSON.stringify(body),
         signal: controller.signal,
       });
+      // Keep the timeout active until the response body has been consumed.
+      // Read as text first to tolerate incorrect JSON content-type headers.
+      const rawText = await response.text();
+      const contentType = response.headers.get("content-type") ?? "";
+      let responseBody: unknown = rawText;
+      if (contentType.includes("application/json") && rawText.length > 0) {
+        try {
+          responseBody = JSON.parse(rawText);
+        } catch {
+          // Server sent invalid JSON despite the content-type - keep the raw
+          // text so the FrappeAPIError carries something useful instead of
+          // crashing the whole request.
+          responseBody = rawText;
+        }
+      }
+
+      if (!response.ok) {
+        let msg = response.statusText;
+        if (typeof responseBody === "object" && responseBody !== null) {
+          const rb = responseBody as Record<string, unknown>;
+          const excType = rb.exc_type as string | undefined;
+          const baseMsg = (rb.message as string) ?? excType ??
+            response.statusText;
+
+          // Parse _server_messages: Frappe returns a JSON-encoded array of JSON-encoded strings
+          // e.g. "[\"{ \\\"message\\\": \\\"Row #1: Warehouse is required\\\" }\"]"
+          const serverDetails = extractServerMessages(rb._server_messages);
+          msg = serverDetails ? `${baseMsg}: ${serverDetails}` : baseMsg;
+        } else if (
+          typeof responseBody === "string" && responseBody.length > 0
+        ) {
+          // Truncate raw HTML / text bodies so error messages stay readable.
+          msg = responseBody.slice(0, 200);
+        }
+        const retryAfterMs = parseRetryAfter(
+          response.headers.get("retry-after"),
+        );
+        throw new FrappeAPIError(
+          `${method} ${path} failed: ${msg}`,
+          response.status,
+          responseBody,
+          retryAfterMs,
+        );
+      }
+
+      return responseBody as T;
     } catch (err) {
-      clearTimeout(timer);
+      if (err instanceof FrappeAPIError) throw err;
       if (err instanceof Error && err.name === "AbortError") {
         throw new FrappeAPIError(
           `Request timed out after ${this.timeoutMs}ms: ${method} ${path}`,
@@ -451,54 +496,9 @@ export class FrappeClient {
         0,
         null,
       );
+    } finally {
+      clearTimeout(timer);
     }
-    clearTimeout(timer);
-
-    // Read the body once as text, then attempt JSON parsing only if appropriate.
-    // Reading via response.text() first lets us recover gracefully when the
-    // server lies about content-type (e.g. HTML error pages with JSON CT).
-    const rawText = await response.text();
-    const contentType = response.headers.get("content-type") ?? "";
-    let responseBody: unknown = rawText;
-    if (contentType.includes("application/json") && rawText.length > 0) {
-      try {
-        responseBody = JSON.parse(rawText);
-      } catch {
-        // Server sent invalid JSON despite the content-type — keep the raw
-        // text so the FrappeAPIError carries something useful instead of
-        // crashing the whole request.
-        responseBody = rawText;
-      }
-    }
-
-    if (!response.ok) {
-      let msg = response.statusText;
-      if (typeof responseBody === "object" && responseBody !== null) {
-        const rb = responseBody as Record<string, unknown>;
-        const excType = rb.exc_type as string | undefined;
-        const baseMsg = (rb.message as string) ?? excType ??
-          response.statusText;
-
-        // Parse _server_messages — Frappe returns a JSON-encoded array of JSON-encoded strings
-        // e.g. "[\"{ \\\"message\\\": \\\"Row #1: Warehouse is required\\\" }\"]"
-        const serverDetails = extractServerMessages(rb._server_messages);
-        msg = serverDetails ? `${baseMsg}: ${serverDetails}` : baseMsg;
-      } else if (typeof responseBody === "string" && responseBody.length > 0) {
-        // Truncate raw HTML / text bodies so error messages stay readable.
-        msg = responseBody.slice(0, 200);
-      }
-      const retryAfterMs = parseRetryAfter(
-        response.headers.get("retry-after"),
-      );
-      throw new FrappeAPIError(
-        `${method} ${path} failed: ${msg}`,
-        response.status,
-        responseBody,
-        retryAfterMs,
-      );
-    }
-
-    return responseBody as T;
   }
 
   // ── Resource CRUD ───────────────────────────────────────────────────────────
