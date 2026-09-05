@@ -8,6 +8,20 @@ This package is a fork of
 deliberately still point at the upstream repository, where those commits, pull
 requests and tags actually live.
 
+## [Unreleased]
+
+### Added
+
+- `erpnext_stock_ledger_list`: read recent non-cancelled Stock Ledger Entries
+  for one required item and warehouse, with a bounded limit of 1 to 20 rows.
+
+### Fixed
+
+- The stock viewer's Recent Movements now uses the selected item and warehouse
+  instead of unfiltered site-wide Stock Entries. It shows voucher, posting
+  date/time and quantity change, reports permission errors, and discards late
+  results when the selected item or warehouse changes.
+
 ## [3.4.0] - 2026-08-31
 
 ### Added

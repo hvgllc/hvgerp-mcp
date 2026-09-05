@@ -17,10 +17,10 @@ src/
   tools/
     identity.ts       # 2 identity tools (whoami, my work)
     sales.ts          # 17 sales tools
-    inventory.ts      # 9 inventory tools
+    inventory.ts      # 10 inventory tools, including scoped stock ledger reads
     purchasing.ts     # 11 purchasing tools
-    accounting.ts     # 6 accounting tools
-    hr.ts             # 12 HR tools
+    accounting.ts     # 8 accounting tools
+    hr.ts             # 15 HR tools
     project.ts        # 9 project tools
     delivery.ts       # 5 delivery tools
     manufacturing.ts  # 7 manufacturing tools

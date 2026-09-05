@@ -52,19 +52,30 @@ read them before telling anyone they hold no roles or have no HR record.
 | `erpnext_quotation_get`        | Quotation     | Get with line items                          |
 | `erpnext_quotation_create`     | Quotation     | Create (Customer/Lead + items)               |
 
-## Inventory (9) → doclist-viewer / stock-viewer
+## Inventory (10) → doclist-viewer / stock-viewer
 
-| Tool                         | DocType     | Operations                                   |
-| ---------------------------- | ----------- | -------------------------------------------- |
-| `erpnext_item_list`          | Item        | List + filters (group, stock flag, disabled) |
-| `erpnext_item_get`           | Item        | Get by name/code                             |
-| `erpnext_item_create`        | Item        | Create (code, name, group, uom, rate)        |
-| `erpnext_item_update`        | Item        | Update fields                                |
-| `erpnext_stock_balance`      | Bin         | Stock balances by item/warehouse             |
-| `erpnext_warehouse_list`     | Warehouse   | List + filters (company, type)               |
-| `erpnext_stock_entry_list`   | Stock Entry | List + filters (type, dates)                 |
-| `erpnext_stock_entry_get`    | Stock Entry | Get with item details                        |
-| `erpnext_stock_entry_create` | Stock Entry | Create (type + items + warehouses)           |
+| Tool                         | DocType            | Operations                                                         |
+| ---------------------------- | ------------------ | ------------------------------------------------------------------ |
+| `erpnext_item_list`          | Item               | List + filters (group, stock flag, disabled)                       |
+| `erpnext_item_get`           | Item               | Get by name/code                                                   |
+| `erpnext_item_create`        | Item               | Create (code, name, group, uom, rate)                              |
+| `erpnext_item_update`        | Item               | Update fields                                                      |
+| `erpnext_stock_balance`      | Bin                | Stock balances by item/warehouse                                   |
+| `erpnext_stock_ledger_list`  | Stock Ledger Entry | Read recent non-cancelled rows for one required item and warehouse |
+| `erpnext_warehouse_list`     | Warehouse          | List + filters (company, type)                                     |
+| `erpnext_stock_entry_list`   | Stock Entry        | List + filters (type, dates)                                       |
+| `erpnext_stock_entry_get`    | Stock Entry        | Get with item details                                              |
+| `erpnext_stock_entry_create` | Stock Entry        | Create (type + items + warehouses)                                 |
+
+`erpnext_stock_ledger_list` requires `item_code` (Item ID or name, resolved
+server-side) and `warehouse` (exact warehouse ID). `limit` is an integer from 1
+to 20, default 5. It returns `{data: rows}` with `name`, `item_code`,
+`warehouse`, `posting_date`, `posting_time`, `voucher_type`, `voucher_no`,
+`actual_qty`, `qty_after_transaction`, and `stock_uom`, ordered by posting date,
+posting time, then name descending. Cancelled rows are excluded. The tool uses
+normal ERPNext read permissions and works with only the `inventory` category;
+permission errors never fall back to site-wide Stock Entries or generic
+operations. It has no standalone viewer binding.
 
 ## Purchasing (11) → doclist-viewer / invoice-viewer
 
@@ -82,7 +93,7 @@ read them before telling anyone they hold no roles or have no HR record.
 | `erpnext_purchase_receipt_get`    | Purchase Receipt   | Get with received items                       |
 | `erpnext_supplier_quotation_list` | Supplier Quotation | List + filters                                |
 
-## Accounting (6) → doclist-viewer
+## Accounting (8) → doclist-viewer
 
 | Tool                           | DocType       | Operations                                                  |
 | ------------------------------ | ------------- | ----------------------------------------------------------- |
@@ -93,7 +104,7 @@ read them before telling anyone they hold no roles or have no HR record.
 | `erpnext_payment_entry_list`   | Payment Entry | List + filters (type, party, dates)                         |
 | `erpnext_payment_entry_get`    | Payment Entry | Get with references                                         |
 
-## HR (12) → doclist-viewer
+## HR (15) → doclist-viewer
 
 | Tool                               | DocType           | Operations                                   |
 | ---------------------------------- | ----------------- | -------------------------------------------- |

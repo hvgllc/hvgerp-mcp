@@ -1,6 +1,6 @@
 # ERPNext MCP Library - Coverage
 
-## Covered (129 tools, 16 categories)
+## Covered (135 tools, 16 categories)
 
 ### Identity (2 tools)
 
@@ -35,21 +35,22 @@ is not: it reads four doctypes outside whatever surface was requested.
 | `erpnext_quotation_get`        | Quotation     | Get by name (with line items)                    | -              |
 | `erpnext_quotation_create`     | Quotation     | Create (Customer/Lead + items + dates)           | -              |
 
-### Inventory (9 tools)
+### Inventory (10 tools)
 
-| Tool                         | DocType     | Operations                                        | UI Viewer      |
-| ---------------------------- | ----------- | ------------------------------------------------- | -------------- |
-| `erpnext_item_list`          | Item        | List + filters (group, stock flag, disabled)      | doclist-viewer |
-| `erpnext_item_get`           | Item        | Get by name/code                                  | -              |
-| `erpnext_item_create`        | Item        | Create (code, name, group, uom, rate)             | -              |
-| `erpnext_item_update`        | Item        | Update (name, group, rate, description, disabled) | -              |
-| `erpnext_stock_balance`      | Bin         | List stock balances (item, warehouse)             | stock-viewer   |
-| `erpnext_warehouse_list`     | Warehouse   | List + filters (company, type)                    | doclist-viewer |
-| `erpnext_stock_entry_list`   | Stock Entry | List + filters (type, dates)                      | doclist-viewer |
-| `erpnext_stock_entry_get`    | Stock Entry | Get by name (with item details)                   | -              |
-| `erpnext_stock_entry_create` | Stock Entry | Create (type + items + warehouses)                | -              |
+| Tool                         | DocType            | Operations                                                                                              | UI Viewer      |
+| ---------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------- | -------------- |
+| `erpnext_item_list`          | Item               | List + filters (group, stock flag, disabled)                                                            | doclist-viewer |
+| `erpnext_item_get`           | Item               | Get by name/code                                                                                        | -              |
+| `erpnext_item_create`        | Item               | Create (code, name, group, uom, rate)                                                                   | -              |
+| `erpnext_item_update`        | Item               | Update (name, group, rate, description, disabled)                                                       | -              |
+| `erpnext_stock_balance`      | Bin                | List stock balances (item, warehouse)                                                                   | stock-viewer   |
+| `erpnext_stock_ledger_list`  | Stock Ledger Entry | Read recent rows for required item and warehouse; excludes cancelled entries; limit 1 to 20 (default 5) | -              |
+| `erpnext_warehouse_list`     | Warehouse          | List + filters (company, type)                                                                          | doclist-viewer |
+| `erpnext_stock_entry_list`   | Stock Entry        | List + filters (type, dates)                                                                            | doclist-viewer |
+| `erpnext_stock_entry_get`    | Stock Entry        | Get by name (with item details)                                                                         | -              |
+| `erpnext_stock_entry_create` | Stock Entry        | Create (type + items + warehouses)                                                                      | -              |
 
-### Accounting (6 tools)
+### Accounting (8 tools)
 
 | Tool                           | DocType       | Operations                                             | UI Viewer      |
 | ------------------------------ | ------------- | ------------------------------------------------------ | -------------- |
@@ -60,7 +61,7 @@ is not: it reads four doctypes outside whatever surface was requested.
 | `erpnext_payment_entry_list`   | Payment Entry | List + filters (type, party, dates)                    | doclist-viewer |
 | `erpnext_payment_entry_get`    | Payment Entry | Get by name (with references)                          | -              |
 
-### HR (12 tools)
+### HR (15 tools)
 
 | Tool                               | DocType           | Operations                                         | UI Viewer      |
 | ---------------------------------- | ----------------- | -------------------------------------------------- | -------------- |

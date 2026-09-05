@@ -5,8 +5,8 @@
 [![MCP](https://img.shields.io/badge/MCP-server-1f6feb?logo=modelcontextprotocol&logoColor=white)](https://modelcontextprotocol.io)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-MCP server for [ERPNext](https://erpnext.com) / Frappe ERP — **134 tools**
-across **16 categories**, with **7 interactive UI viewers**.
+MCP server for [ERPNext](https://erpnext.com) / Frappe ERP: **135 tools** across
+**16 categories**, with **7 interactive UI viewers**.
 
 Connect any MCP-compatible AI agent (Claude Desktop, Claude Code, VS Code
 Copilot, custom) to your ERPNext instance via the
@@ -223,11 +223,12 @@ npm install
 node build-all.mjs
 ```
 
-## Tools (134)
+## Tools (135)
 
-134 tools across 16 categories. Each `_list` tool returns interactive results
+135 tools across 16 categories. Most `_list` tools return interactive results
 via the doclist-viewer with row click, inline detail, and cross-viewer
-navigation.
+navigation. The read-only `erpnext_stock_ledger_list` instead returns bounded
+ledger rows for the stock viewer's Recent Movements panel.
 
 - **Identity** (2) — `erpnext_whoami` (who the server believes the caller is:
   User id, roles, linked Employee, and whether the connection is per-caller or a
@@ -239,7 +240,8 @@ navigation.
   CRUD, Submit, and Cancel.
 - **Purchasing** (11) — Suppliers, Purchase Orders, Purchase Invoices, Receipts,
   and Supplier Quotations.
-- **Inventory** (9) — Items, Stock Balance, Warehouses, and Stock Entries.
+- **Inventory** (10): Items, Stock Balance, Warehouses, Stock Entries, and
+  recent Stock Ledger Entries filtered by the required item and warehouse.
 - **Accounting** (8) — Chart of Accounts (filterable by `disabled`), Journal
   Entries, and Payment Entries, plus `erpnext_gl_entry_list` (the posted general
   ledger, cancelled entries excluded by default) and `erpnext_financial_report`,

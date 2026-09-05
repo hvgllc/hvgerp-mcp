@@ -11,6 +11,49 @@ import {
   viewerResourceUri,
 } from "./tools/viewer-meta.ts";
 
+Deno.test("inventory-only client exposes scoped stock ledger without operations", async () => {
+  const client = new ErpNextToolsClient({ categories: ["inventory"] });
+  const handlers = client.buildHandlersMap();
+  assert(
+    client.listTools().some((tool) =>
+      tool.name === "erpnext_stock_ledger_list"
+    ),
+  );
+  assertEquals(
+    client.listTools().some((tool) => tool.category === "operations"),
+    false,
+  );
+  assertEquals(handlers.has("erpnext_doc_list"), false);
+  const rows = [{ name: "SLE-A", item_code: "ITEM-A", warehouse: "W1" }];
+  setFrappeClient({
+    get: async () => ({ name: "ITEM-A" }),
+    list: async (
+      doctype: string,
+      options: { filters: unknown; limit: number },
+    ) => {
+      assertEquals(doctype, "Stock Ledger Entry");
+      assertEquals(options.filters, [["item_code", "=", "ITEM-A"], [
+        "warehouse",
+        "=",
+        "W1",
+      ], ["is_cancelled", "=", 0]]);
+      assertEquals(options.limit, 20);
+      return rows;
+    },
+  } as unknown as FrappeClient);
+  try {
+    assertEquals(
+      await handlers.get("erpnext_stock_ledger_list")!({
+        item_code: "ITEM-A",
+        warehouse: "W1",
+        limit: 20,
+      }),
+      { data: rows },
+    );
+  } finally {
+    setFrappeClient(null);
+  }
+});
 // Note: Error handling previously tested here (isError wrapping) has been moved
 // to the server layer via toolErrorMapper in server.ts. Handlers now throw
 // naturally and the server converts errors to isError results.
