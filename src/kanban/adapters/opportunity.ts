@@ -264,6 +264,7 @@ export const opportunityKanbanAdapter: KanbanAdapter = {
     const currentOpportunity = await ctx.client.get(
       "Opportunity",
       move.cardId,
+      { skipCache: true },
     ) as Record<string, unknown>;
     const serverColumn = columnIdForOpportunityStatus(
       currentOpportunity.status,
@@ -303,11 +304,24 @@ export const opportunityKanbanAdapter: KanbanAdapter = {
       };
     }
 
+    const modified = currentOpportunity.modified;
+    if (typeof modified !== "string" || !modified.trim()) {
+      return {
+        ok: false,
+        cardId: move.cardId,
+        fromColumn: serverColumn,
+        toColumn: move.toColumn,
+        errorMessage:
+          "Cannot move Opportunity without a modified timestamp. Refresh the board and try again.",
+      };
+    }
+
     const serverOpportunity = await ctx.client.update(
       "Opportunity",
       move.cardId,
       {
         status,
+        modified,
       },
     ) as Record<string, unknown>;
 

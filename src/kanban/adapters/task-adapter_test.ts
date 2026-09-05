@@ -2,6 +2,37 @@ import { assert, assertEquals } from "@std/assert";
 import { taskKanbanAdapter } from "./task.ts";
 import type { ErpNextToolContext } from "../../tools/types.ts";
 
+for (const modified of [undefined, null, "", "   ", 42]) {
+  Deno.test(
+    "task kanban adapter - rejects missing modified " +
+      JSON.stringify(modified),
+    async () => {
+      let writes = 0;
+      const ctx: ErpNextToolContext = {
+        client: {
+          get: async (_doctype: string, _name: string, options: unknown) => {
+            assertEquals(options, { skipCache: true });
+            return { name: "MOVE-001", status: "Open", modified };
+          },
+          update: async () => {
+            writes++;
+            return {};
+          },
+        } as unknown as ErpNextToolContext["client"],
+      };
+      const result = await taskKanbanAdapter.executeMove({
+        doctype: "Task",
+        cardId: "MOVE-001",
+        fromColumn: "open",
+        toColumn: "working",
+      }, ctx);
+      assertEquals(result.ok, false);
+      assert(result.errorMessage?.includes("modified"));
+      assertEquals(writes, 0);
+    },
+  );
+}
+
 Deno.test("task kanban adapter - exposes Task columns and allowed transitions", () => {
   const columns = taskKanbanAdapter.getColumns();
   const allowedTransitions = taskKanbanAdapter.getAllowedTransitions();
@@ -91,6 +122,7 @@ Deno.test("task kanban adapter - executes an allowed move through Task update", 
         subject: "Draft protocol",
         project: "Alpha",
         status: "Open",
+        modified: "2026-09-05 10:00:00.000001",
         priority: "High",
         progress: 80,
       }),
@@ -123,7 +155,10 @@ Deno.test("task kanban adapter - executes an allowed move through Task update", 
 
   assertEquals(capturedDoctype, "Task");
   assertEquals(capturedName, "TASK-0001");
-  assertEquals(capturedData, { status: "Working" });
+  assertEquals(capturedData, {
+    status: "Working",
+    modified: "2026-09-05 10:00:00.000001",
+  });
   assertEquals(result.ok, true);
   assertEquals(result.toColumn, "working");
   assertEquals(result.serverCard?.columnId, "working");
