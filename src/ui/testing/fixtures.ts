@@ -112,6 +112,17 @@ export function viewerFixture(
             qty: 2,
             rate: 15,
             amount: 30,
+          }, {
+            item_code: null,
+            item_name: "Local service without item code",
+            qty: 1,
+            rate: 0,
+            amount: 0,
+          }, {
+            item_name: "Local service with omitted item code",
+            qty: 1,
+            rate: 0,
+            amount: 0,
           }],
         },
       };

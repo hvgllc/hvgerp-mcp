@@ -42,6 +42,7 @@ const TOOL_CALL_TIMEOUT_MS = 10_000;
 import {
   consumeViewerResult,
   getErrorPresentation,
+  getInvoiceItemCode,
 } from "~/shared/presentation";
 import type { InvoiceData } from "~/shared/presentation";
 
@@ -594,7 +595,9 @@ export function InvoiceViewer() {
               </thead>
               <tbody>
                 {items.map((item, idx) => {
-                  const isExpanded = expandedIdx === idx;
+                  const itemCode = getInvoiceItemCode(item);
+                  const canInspect = Boolean(hasServerTools && itemCode);
+                  const isExpanded = canInspect && expandedIdx === idx;
                   return (
                     <tr key={idx}>
                       <td colSpan={4} style={{ padding: 0 }}>
@@ -602,17 +605,17 @@ export function InvoiceViewer() {
                           style={{
                             display: "grid",
                             gridTemplateColumns: "35% 15% 25% 25%",
-                            cursor: hasServerTools ? "pointer" : "default",
+                            cursor: canInspect ? "pointer" : "default",
                             transition: "background 0.1s",
                             background: isExpanded
                               ? colors.bg.hover
                               : "transparent",
                           }}
-                          onClick={hasServerTools
+                          onClick={canInspect
                             ? () => setExpandedIdx(isExpanded ? null : idx)
                             : undefined}
                           onMouseEnter={(e) => {
-                            if (!isExpanded) {
+                            if (canInspect && !isExpanded) {
                               (e.currentTarget as HTMLElement).style
                                 .background = colors.bg.hover;
                             }
@@ -631,9 +634,9 @@ export function InvoiceViewer() {
                                 color: colors.text.primary,
                               }}
                             >
-                              {item.item_name ?? item.item_code}
+                              {item.item_name ?? itemCode ?? "Unnamed item"}
                             </div>
-                            {item.item_name && (
+                            {item.item_name && itemCode && (
                               <div
                                 style={{
                                   fontSize: 11,
@@ -641,7 +644,7 @@ export function InvoiceViewer() {
                                   fontFamily: fonts.mono,
                                 }}
                               >
-                                {item.item_code}
+                                {itemCode}
                               </div>
                             )}
                           </div>
@@ -675,10 +678,10 @@ export function InvoiceViewer() {
                             {formatCurrency(item.amount, ccy)}
                           </div>
                         </div>
-                        {isExpanded && (
+                        {isExpanded && itemCode && (
                           <ItemDetailPanel
                             app={app}
-                            itemCode={item.item_code}
+                            itemCode={itemCode}
                             onClose={() => setExpandedIdx(null)}
                           />
                         )}

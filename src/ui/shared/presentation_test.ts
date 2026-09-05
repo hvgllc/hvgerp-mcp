@@ -1,5 +1,9 @@
 import { assert, assertEquals, assertStrictEquals } from "@std/assert";
-import { consumeViewerResult, getErrorPresentation } from "./presentation.ts";
+import {
+  consumeViewerResult,
+  getErrorPresentation,
+  getInvoiceItemCode,
+} from "./presentation.ts";
 import type { ViewerState } from "./presentation.ts";
 
 const initial: ViewerState<never> = {
@@ -254,6 +258,92 @@ Deno.test("chart enum fields reject arrays that stringify to a valid name", () =
       },
     ]
   ) assert(consumeViewerResult("chart", successResult(payload), initial).error);
+});
+
+for (const itemCode of [null, undefined]) {
+  Deno.test(`invoice service line with ${itemCode === null ? "null" : "missing"} item code hydrates initially and on refresh`, () => {
+    const item = {
+      ...(itemCode === undefined ? {} : { item_code: itemCode }),
+      item_name: "Consulting service",
+      qty: 2,
+      rate: 15,
+      amount: 30,
+    };
+    const payload = {
+      data: { ...payloads.invoice.data, items: [item] },
+      refreshRequest: {
+        toolName: "erpnext_sales_invoice_get",
+        arguments: { name: "INV-SERVICE" },
+      },
+    };
+    const loaded = consumeViewerResult(
+      "invoice",
+      successResult(payload),
+      initial,
+    );
+    assertEquals(loaded.error, null);
+    assertEquals<unknown>(loaded.data?.items?.[0], item);
+    assertEquals(loaded.loading, false);
+    const failed = consumeViewerResult("invoice", {
+      isError: true,
+      content: [{ type: "text", text: "Temporary failure" }],
+    }, loaded);
+    assertStrictEquals(failed.data, loaded.data);
+    const refreshedItem = { ...item, qty: 3, amount: 45 };
+    const refreshed = consumeViewerResult(
+      "invoice",
+      successResult({
+        data: { ...payload.data, grand_total: 45, items: [refreshedItem] },
+      }),
+      failed,
+    );
+    assertEquals(refreshed.error, null);
+    assertEquals<unknown>(refreshed.data?.items?.[0], refreshedItem);
+    assertStrictEquals(refreshed.refreshRequest, loaded.refreshRequest);
+  });
+}
+
+Deno.test("invoice service allowance still rejects object and array item codes without losing previous data", () => {
+  const loaded = consumeViewerResult(
+    "invoice",
+    successResult(payloads.invoice),
+    initial,
+  );
+  for (const item_code of [{ name: "ITEM" }, ["ITEM"]]) {
+    const invalid = successResult({
+      data: {
+        ...payloads.invoice.data,
+        items: [{ item_code, item_name: "Broken", qty: 1, rate: 1, amount: 1 }],
+      },
+    });
+    const first = consumeViewerResult("invoice", invalid, initial);
+    assert(first.error);
+    assertEquals(first.data, null);
+    const refreshed = consumeViewerResult("invoice", invalid, loaded);
+    assert(refreshed.error);
+    assertStrictEquals(refreshed.data, loaded.data);
+  }
+});
+
+Deno.test("invoice detail lookup requires a nonempty item code, not a service line name", () => {
+  const service = {
+    item_name: "Consulting service",
+    qty: 1,
+    rate: 0,
+    amount: 0,
+  };
+  for (
+    const item of [service, { ...service, item_code: null }, {
+      ...service,
+      item_code: "",
+    }, { ...service, item_code: "   " }]
+  ) {
+    assertEquals(getInvoiceItemCode(item), null);
+  }
+  assertEquals(
+    getInvoiceItemCode({ ...service, item_code: "ITEM-LOCAL" }),
+    "ITEM-LOCAL",
+  );
 });
 
 Deno.test("chart schema accepts scatter and recursive treemap with empty generic series", () => {

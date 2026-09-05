@@ -30,11 +30,17 @@ export function getErrorPresentation(
 import type { ToolResultPayload, UiRefreshRequestData } from "./refresh.ts";
 
 export interface InvoiceItem {
-  item_code: string;
-  item_name?: string;
+  item_code?: string | null;
+  item_name?: string | null;
   qty: number;
   rate: number;
   amount: number;
+}
+
+export function getInvoiceItemCode(item: InvoiceItem): string | null {
+  return typeof item.item_code === "string" && item.item_code.trim().length > 0
+    ? item.item_code
+    : null;
 }
 
 export interface InvoiceData {
@@ -261,9 +267,9 @@ const validators: {
       "outstanding_amount",
     ], number) &&
     (value.items == null || array(value.items, (item) =>
-      record(item) && text(item.item_code) &&
+      record(item) &&
       ["qty", "rate", "amount"].every((key) => number(item[key])) &&
-      optionalFields(item, ["item_name"], text))),
+      optionalFields(item, ["item_code", "item_name"], text))),
   stock: (value): value is StockData =>
     record(value) && (value.count === null || number(value.count)) &&
     optionalFields(value, ["count_error"], text) && array(value.data, (entry) =>
