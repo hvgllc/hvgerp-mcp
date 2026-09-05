@@ -638,3 +638,24 @@ backlog, GitHub, commit hoặc push.
   offset/viewer binding; không tự xây feature hoặc mở rộng sang replenishment.
 - Quyền riêng framework002 và khóa graph/npm021 vẫn chờ trả lời. Root app và ba
   file cá nhân giữ SHA-256 cũ, không release/publish hoặc tác động production.
+
+## Tiếp tục goal sau 11:44 UTC ngày 2026-09-05
+
+- PR41/014 đã merge b409cbb, tree bằng HEAD đã kiểm; CI33963042257 thật JSR
+  1385/0/4 hai lần, Codex sạch tại 2d2617e. Root đánh dấu 014 DONE.
+- PR42/023 đã merge ffcfee0, tree bằng integration41f9621, gate1385/0/4;
+  CI33963631502 thật JSR1363/0/4 hai lần, Codex sạch tại b2e7a40. Root đánh dấu
+  023 DONE chỉ cho thiết kế defer, không shipped timeline.
+- Tiến độ: 20 DONE, 016/020 IN_PROGRESS, 002 BLOCKED, 021/022 TODO. Đã đối chiếu
+  020 với main b409cbb (months dòng338), giao executor trong worktree riêng.
+- PR25 đã sửa và trả lời cả ba finding3940332280/282/286. HEAD ca793fa,
+  CI33963630544 xanh, helper187 và full1363 trước push. Chờ Codex HEAD mới; tiếp
+  tục đồng bộ metadata sau các merge, không dùng review cũ để kết luận sạch.
+- Browser016 trên f79 có các control button move/queue, đổi board/offset và
+  save-readback-error đạt. Ca CUA kéo thật phát hiện không có read bù sau drop:
+  nghi source node unmount trước dragend. Đã lưu trace/PNG trước sửa, dừng Vite,
+  giao executor xác minh và thêm regression đỏ/xanh. Chưa đánh dấu 016 DONE.
+- Tab hidden thật chưa được chứng minh: cả hai tab vẫn visible sau các thao tác
+  được hỗ trợ. Không spoof document.visibilityState hoặc coi test VM là Browser.
+- Quyền thay framework của002 và pin dependency/npm cùng native lock021 vẫn chưa
+  có câu trả lời rõ cho câu hỏi riêng; không suy từ permission downloadNode.

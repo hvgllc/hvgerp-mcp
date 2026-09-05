@@ -9,7 +9,7 @@
 - Mục audit: 14; loại: `bug`.
 - Ưu tiên: P1; công sức: S; rủi ro sửa: thấp; lọc cùng business population.
 - Phụ thuộc: `005`, `006`, `013`.
-- Mốc soạn: `bce7d25`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
+- Mốc soạn: `bce7d25`, 2026-09-05. Trạng thái thực thi: `DONE`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 Sales chart có ba nhánh customer/item/status dùng ba quy tắc docstatus khác
@@ -148,12 +148,12 @@ behavior, không đổi public shape.
 
 ## Tiêu chí hoàn tất
 
-- [ ] Chín tổ hợp dimension/option có expected total đúng và cancelled luôn
+- [x] Chín tổ hợp dimension/option có expected total đúng và cancelled luôn
       vắng.
-- [ ] Gate server qua, không làm khác aggregate ngoài population draft.
-- [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
+- [x] Gate server qua, không làm khác aggregate ngoài population draft.
+- [x] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
-- [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/014.md`, cập
+- [x] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/014.md`, cập
       nhật trạng thái ở `plans/README.md`. Không ghi giá trị bí mật.
 
 ## Điều kiện dừng

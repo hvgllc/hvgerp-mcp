@@ -45,16 +45,16 @@ là ước lượng công sức/rủi ro sửa, không phải cam kết thời h
 | 011 | [Giữ kết quả batch đã thực thi khi upstream ném lỗi](011-shim-partial-batch-errors.md)              | P1      | M / vừa; semantics JSON-RPC batch                         | không         | DONE        |
 | 012 | [Không tái nạp snapshot cũ sau cache invalidation](012-cache-inflight-invalidation.md)              | P1      | M / vừa; phối hợp cache nhiều caller                      | không         | DONE        |
 | 013 | [Dùng ngày site cho cửa sổ analytics](013-analytics-site-date-windows.md)                           | P1      | M / thấp; sửa cận thời gian                               | 005, 006      | DONE        |
-| 014 | [Áp include_drafts nhất quán cho sales chart](014-sales-chart-draft-filter.md)                      | P1      | S / thấp; lọc cùng business population                    | 005, 006, 013 | IN_PROGRESS |
+| 014 | [Áp include_drafts nhất quán cho sales chart](014-sales-chart-draft-filter.md)                      | P1      | S / thấp; lọc cùng business population                    | 005, 006, 013 | DONE        |
 | 015 | [Hiện đúng chuyển động theo mặt hàng và kho](015-stock-item-movement-query.md)                      | P1      | M / vừa; đổi nguồn đọc lịch sử                            | 007           | DONE        |
 | 016 | [Bỏ snapshot board cũ và giữ refresh sau mutation](016-kanban-refresh-generation.md)                | P1      | M / vừa; phối hợp queue và optimistic updates             | 007, 009      | IN_PROGRESS |
 | 017 | [Hiển thị lỗi tải đầu và giữ dữ liệu khi refresh lỗi](017-viewer-initial-error-state.md)            | P1      | M / MED                                                   | 007           | DONE        |
 | 018 | [Giới hạn số entry và thu hồi cache hết hạn](018-bound-memory-cache.md)                             | P2      | M / MED                                                   | không         | DONE        |
 | 019 | [Tách giá trị cache khỏi đối tượng bên ghi](019-cache-write-value-isolation.md)                     | P2      | S / LOW                                                   | 018           | DONE        |
-| 020 | [Đồng bộ schema trạng thái Kanban và giới hạn tháng doanh thu](020-align-tool-schema-boundaries.md) | P2      | M / MED                                                   | 014           | TODO        |
+| 020 | [Đồng bộ schema trạng thái Kanban và giới hạn tháng doanh thu](020-align-tool-schema-boundaries.md) | P2      | M / MED                                                   | 014           | IN_PROGRESS |
 | 021 | [Khóa đầu vào dependency của bản build](021-reproducible-build-inputs.md)                           | P2      | L / HIGH                                                  | không         | TODO        |
 | 022 | [Sửa hướng dẫn release và chính sách hỗ trợ lỗi thời](022-release-security-documentation.md)        | P2      | S / LOW                                                   | 021           | TODO        |
-| 023 | [Khảo sát thiết kế dòng thời gian biến động tồn kho](023-stock-ledger-timeline-design.md)           | P3      | M / LOW                                                   | 015           | IN_PROGRESS |
+| 023 | [Khảo sát thiết kế dòng thời gian biến động tồn kho](023-stock-ledger-timeline-design.md)           | P3      | M / LOW                                                   | 015           | DONE        |
 | 024 | [Khảo sát kiểm tra điều kiện khởi tạo ERPNext](024-setup-readiness-design.md)                       | P3      | M / LOW                                                   | không         | DONE        |
 | 025 | [Khảo sát hồ sơ khách hàng tổng hợp](025-customer-360-design.md)                                    | P3      | M / LOW                                                   | 005, 006      | DONE        |
 

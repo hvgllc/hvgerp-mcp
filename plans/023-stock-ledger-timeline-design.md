@@ -9,7 +9,7 @@
 - Mục audit: Hướng phát triển 1; loại: `direction`.
 - Ưu tiên: P3; công sức: M; rủi ro sửa: LOW.
 - Phụ thuộc: `015`.
-- Mốc soạn: `174cd29`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
+- Mốc soạn: `174cd29`, 2026-09-05. Trạng thái thực thi: `DONE`.
 - Độ tin cậy: cao về vị trí cơ hội trong roadmap; nhu cầu người dùng và khả năng
   ERP cần khảo sát, chưa coi là đã chứng minh.
 
@@ -130,12 +130,12 @@ biện, chốt hoặc ghi câu hỏi chặn, không mở rộng sang replenishme
 
 ## Tiêu chí hoàn tất
 
-- [ ] Tài liệu thiết kế đủ rubric và có quyết định implement/defer rõ ràng.
-- [ ] Một reviewer chỉ đọc kiểm giả thuyết, query và8ca; lỗi ảnh hưởng quyết
+- [x] Tài liệu thiết kế đủ rubric và có quyết định implement/defer rõ ràng.
+- [x] Một reviewer chỉ đọc kiểm giả thuyết, query và8ca; lỗi ảnh hưởng quyết
       định đã sửa.
-- [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
+- [x] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
-- [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/023.md`, cập
+- [x] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/023.md`, cập
       nhật trạng thái ở `plans/README.md`. Không ghi giá trị bí mật.
 
 ## Điều kiện dừng

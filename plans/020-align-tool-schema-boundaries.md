@@ -9,7 +9,7 @@
 - Mục audit: 20; loại: `bug`.
 - Ưu tiên: P2; công sức: M; rủi ro sửa: MED.
 - Phụ thuộc: `014`.
-- Mốc soạn: `bce7d25`, 2026-09-05. Trạng thái thực thi: `TODO`.
+- Mốc soạn: `b409cbb`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 Schema Kanban chỉ khai báo trạng thái Opportunity dù Issue adapter nhận trạng
@@ -31,7 +31,7 @@ tạo mảng. Hai biên này cần được kiểm cả ở schema lẫn handler
         },
 ```
 
-`src/tools/analytics.ts:332`:
+`src/tools/analytics.ts:338`:
 
 <!-- evidence: src/tools/analytics.ts -->
 
@@ -186,3 +186,8 @@ dòng 331. Chưa đổi schema hoặc triển khai 020; chờ 013/014 theo phụ
 Đối chiếu sau 013 tại main `bce7d2513783058a8b160b0cbe6ab55299f90991`: quote
 months chuyển sang dòng 332, schema vẫn nguyên byte. Helper ngày của 013 không
 thay việc kiểm schema/handler tại 020; vẫn chờ 014 hoàn tất.
+
+Đối chiếu sau 014 tại main `b409cbb760c6d68b8cffde435978b13772ec4cbe`: quote
+months nguyên byte tại dòng 338; schema Kanban vẫn ở dòng 111. Draft policy của
+014 chỉ thay population sales chart. Phụ thuộc đã DONE, bắt đầu 020 trên main
+này; giữ company/currency/date và complete-read budget hiện có.
