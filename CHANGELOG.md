@@ -19,6 +19,10 @@ requests and tags actually live.
 - Stock valuation and estimated margins now use warehouses belonging to the
   selected company and stock quantities. Missing costs or incompatible selling
   price currency/UOM raise an error instead of producing misleading values.
+- Analytics split large ownership filters into encoded-size-bounded requests
+  while keeping a global row limit. Previously unordered scoped reads now use
+  `modified desc`. Receivable snapshots and aging use one site date per call
+  instead of the host's UTC date.
 
 ## [3.4.0] - 2026-08-31
 

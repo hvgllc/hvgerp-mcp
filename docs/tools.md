@@ -379,6 +379,11 @@ IDs. Report totals and non-invoice vouchers are excluded. The report is run
 synchronously with `ignore_prepared_report: true`, so it does not create a
 Prepared Report.
 
+All three receivable tools resolve the site date once per call through the
+existing timezone lookup (including its UTC fallback when unavailable). The
+report snapshot, overdue comparison, and aging day boundaries use that same date
+even if the request finishes after midnight.
+
 Gross profit/margin remain estimates from current Bin valuation, not historical
 ledger gross profit. They multiply valuation rate by `stock_qty`; missing costs
 raise an error. Price-vs-quantity accepts only the selected selling price in the
@@ -397,6 +402,17 @@ remain; parent and Warehouse ownership lookups are capped at 1,000 rows each.
 Large datasets can therefore be partial. Use authoritative ERPNext reports for
 complete financial statements; do not treat these charts as reconciliation
 totals.
+
+Ownership IDs are split by encoded request-target length (6,000 bytes for the
+API path and query, leaving headroom for a proxy prefix). A single ID plus the
+other query fields that cannot fit raises an error instead of being omitted.
+Each chunk reads at most the original row limit N, then results are merged and
+cut to N globally. This can read up to N times the number of chunks; it is not
+pagination or a completeness guarantee. Existing explicit numeric ordering is
+preserved; scoped reads without an order now explicitly use `modified desc`.
+Estimated gross-margin cost still uses the first positive Bin valuation in that
+ordered set. Equal sort values retain chunk order and then server order within
+the chunk, without promising equivalence to database tie ordering.
 
 | Tool                        | Viewer | Description                                           |
 | --------------------------- | ------ | ----------------------------------------------------- |

@@ -1064,7 +1064,7 @@ export const analyticsTools: ErpNextTool[] = [
     inputSchema: { type: "object", properties: {} },
     handler: async (_input, ctx, context) => {
       const { currency } = context;
-      const reportDate = new Date().toISOString().slice(0, 10);
+      const reportDate = await siteToday(ctx);
       const reportRows = await receivableInvoiceRows(
         ctx,
         context.company,
@@ -1237,16 +1237,14 @@ export const analyticsTools: ErpNextTool[] = [
     inputSchema: { type: "object", properties: {} },
     handler: async (_input, ctx, context) => {
       const { currency } = context;
-      const today = new Date().toISOString().split("T")[0];
-
-      const reportDate = new Date().toISOString().slice(0, 10);
+      const reportDate = await siteToday(ctx);
       const reportRows = await receivableInvoiceRows(
         ctx,
         context.company,
         currency,
         reportDate,
       );
-      const invoices = reportRows.filter((row) => row.due_date < today);
+      const invoices = reportRows.filter((row) => row.due_date < reportDate);
 
       const count = new Set(invoices.map((row) => row.voucher_no)).size;
       const total = invoices.reduce(
@@ -1439,7 +1437,7 @@ export const analyticsTools: ErpNextTool[] = [
       const limit = normalizeLimit((input.limit as number) ?? 10);
       const chartType = (input.type as string) ?? "stacked-bar";
 
-      const reportDate = new Date().toISOString().slice(0, 10);
+      const reportDate = await siteToday(ctx);
       const reportRows = await receivableInvoiceRows(
         ctx,
         context.company,
@@ -1448,7 +1446,7 @@ export const analyticsTools: ErpNextTool[] = [
       );
       const invoices = reportRows;
 
-      const today = new Date();
+      const today = new Date(reportDate);
       const BUCKETS = [
         { label: "0-30 days", min: 0, max: 30, color: "#4ade80" },
         { label: "31-60 days", min: 31, max: 60, color: "#fbbf24" },

@@ -114,7 +114,20 @@ function makeCompanyMockClient(
   const list = overrides.list ?? (async () => []);
   return makeMockClient({
     ...overrides,
-    callMethod: overrides.callMethod ?? (async (method) => {
+    callMethod: overrides.callMethod ?? (async (method, args, opts) => {
+      if (
+        method === "frappe.client.get_value" ||
+        method === "frappe.client.get_time_zone"
+      ) {
+        assertEquals(opts, { httpMethod: "GET" });
+        assertEquals(
+          args,
+          method === "frappe.client.get_value"
+            ? { doctype: "System Settings", fieldname: "time_zone" }
+            : {},
+        );
+        return { time_zone: "UTC" };
+      }
       assertEquals(method, "frappe.desk.query_report.run");
       const rows = await list("Sales Invoice", {});
       return {
@@ -166,6 +179,143 @@ function getTool(name: string) {
   const tool = analyticsTools.find((t) => t.name === name);
   if (!tool) throw new Error(`Tool not found: ${name}`);
   return tool;
+}
+
+for (
+  const toolName of [
+    "erpnext_kpi_outstanding",
+    "erpnext_kpi_overdue",
+    "erpnext_ar_aging",
+  ]
+) {
+  Deno.test(`AR site date - ${toolName} keeps timezone fallback separate from report permission errors`, async () => {
+    const calls: string[] = [];
+    let denyReport = false;
+    const denied = new Error("Accounts Receivable permission denied");
+    const client = makeMockClient({
+      get: async () => ({ name: "Vietnam Company", default_currency: "VND" }),
+      callMethod: async (method, args, opts) => {
+        calls.push(method);
+        assertEquals(opts, { httpMethod: "GET" });
+        if (method === "frappe.client.get_value") {
+          assertEquals(args, {
+            doctype: "System Settings",
+            fieldname: "time_zone",
+          });
+          throw new Error("System Settings permission denied");
+        }
+        if (method === "frappe.client.get_time_zone") {
+          assertEquals(args, {});
+          return { time_zone: "Asia/Ho_Chi_Minh" };
+        }
+        assertEquals(method, "frappe.desk.query_report.run");
+        if (denyReport) throw denied;
+        return { columns: [], result: [] };
+      },
+    });
+    await getTool(toolName).handler(
+      { company: "Vietnam Company" },
+      makeCtx(client),
+    );
+    assertEquals(calls, [
+      "frappe.client.get_value",
+      "frappe.client.get_time_zone",
+      "frappe.desk.query_report.run",
+    ]);
+    denyReport = true;
+    assertEquals(
+      await assertRejects(() =>
+        getTool(toolName).handler(
+          { company: "Vietnam Company" },
+          makeCtx(client),
+        )
+      ),
+      denied,
+    );
+    assertEquals(calls.slice(3), calls.slice(0, 3));
+  });
+  for (
+    const scenario of [
+      {
+        now: "2026-09-04T18:30:00Z",
+        zone: "Asia/Ho_Chi_Minh",
+        date: "2026-09-05",
+      },
+      {
+        now: "2026-09-05T02:30:00Z",
+        zone: "America/Los_Angeles",
+        date: "2026-09-04",
+      },
+    ]
+  ) {
+    Deno.test(`AR site date - ${toolName} uses one ${scenario.zone} snapshot at bucket boundaries`, async () => {
+      const OriginalDate = globalThis.Date;
+      let now = OriginalDate.parse(scenario.now);
+      globalThis.Date = new Proxy(OriginalDate, {
+        construct: (target, args) =>
+          Reflect.construct(target, args.length ? args : [now]),
+        get: (target, property) =>
+          property === "now" ? () => now : Reflect.get(target, property),
+      });
+      try {
+        let zoneReads = 0;
+        let reports = 0;
+        const client = makeMockClient({
+          get: async () => ({
+            name: "Vietnam Company",
+            default_currency: "VND",
+          }),
+          callMethod: async (method, args, opts) => {
+            assertEquals(opts, { httpMethod: "GET" });
+            if (method === "frappe.client.get_value") {
+              zoneReads++;
+              assertEquals(args, {
+                doctype: "System Settings",
+                fieldname: "time_zone",
+              });
+              return { time_zone: scenario.zone };
+            }
+            assertEquals(method, "frappe.desk.query_report.run");
+            reports++;
+            assertEquals(args.filters.report_date, scenario.date);
+            // Mô phỏng report trả về sau nửa đêm: phân loại vẫn phải dùng snapshot đã chọn.
+            now += 2 * 86400000;
+            return {
+              columns: [],
+              result: [-1, 0, 1, 30, 31, 60, 61, 90, 91].map((days, index) => ({
+                voucher_type: "Sales Invoice",
+                voucher_no: `INV-${index}`,
+                party: "Customer",
+                party_account: "Receivables",
+                currency: "VND",
+                outstanding: 100,
+                posting_date: "2026-01-01",
+                due_date: new OriginalDate(
+                  OriginalDate.parse(scenario.date) - days * 86400000,
+                ).toISOString().slice(0, 10),
+              })),
+            };
+          },
+        });
+        const result = await getTool(toolName).handler({
+          company: "Vietnam Company",
+        }, makeCtx(client)) as any;
+        assertEquals([zoneReads, reports], [1, 1]);
+        if (toolName === "erpnext_kpi_outstanding") {
+          assertEquals(result.value, 900);
+        } else if (toolName === "erpnext_kpi_overdue") {
+          assertEquals(result.value, 7);
+        } else {
+          assertEquals(
+            result.datasets.map((dataset: any) => dataset.values),
+            [[400], [200], [200], [100]],
+          );
+        }
+      } finally {
+        globalThis.Date = OriginalDate;
+      }
+    });
+  }
 }
 
 function makeVndAnalyticsClient(
@@ -537,6 +687,19 @@ for (
       },
       get: async () => ({ name: "Vietnam Company", default_currency: "VND" }),
       callMethod: async (method, args, opts) => {
+        if (
+          method === "frappe.client.get_value" ||
+          method === "frappe.client.get_time_zone"
+        ) {
+          assertEquals(opts, { httpMethod: "GET" });
+          assertEquals(
+            args,
+            method === "frappe.client.get_value"
+              ? { doctype: "System Settings", fieldname: "time_zone" }
+              : {},
+          );
+          return { time_zone: "UTC" };
+        }
         assertEquals(method, "frappe.desk.query_report.run");
         assertEquals(opts, { httpMethod: "GET" });
         assertEquals(args.ignore_prepared_report, true);

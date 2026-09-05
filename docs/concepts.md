@@ -26,7 +26,9 @@ the party account currency. The analytics tools instead read the standard
 Accounts Receivable report with `in_party_currency: 0` and no `party_account`
 filter, verifying each invoice row's currency. Account-specific rows for one
 invoice contribute their separate balances, while the invoice count remains one.
-Prepared Reports are disabled for this read-only path.
+Prepared Reports are disabled for this read-only path. The snapshot and all
+overdue/aging comparisons share one site calendar date per call, using the
+existing timezone lookup and its fallback policy.
 
 Gross margin still estimates cost from current stock valuation and stock UOM
 quantities; it is not historical accounting profit. A missing cost is unknown,
@@ -40,6 +42,11 @@ source and permission requirements. Financial charts retain row limits,
 including 1,000 parent documents and 1,000 warehouses for ownership resolution.
 Those limits are not proof of completeness. Pure count/quantity tools retain
 their scope; funnel Lead counts remain site-wide among visible records.
+Ownership filters are divided into encoded-size-bounded requests. Each chunk can
+contribute up to N candidates, but the merged result remains capped at N. Scoped
+reads now explicitly order by `modified desc` when no order was set; the
+previous API call did not guarantee an order. This makes the first-positive Bin
+cost estimate follow that ordered set, not an assumed accounting rule.
 
 ## How link resolution works — and why writes are stricter
 
