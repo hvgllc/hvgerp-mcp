@@ -69,6 +69,45 @@ A `tools/list` request uses the same envelope and changes `Mcp-Method` and
 `method` to `tools/list`. Its response includes `resultType: "complete"`, server
 information in `_meta`, and the public one-hour cache hint.
 
+## Legacy shim partial batches
+
+The optional legacy shim executes batch entries sequentially and never retries
+them. If forwarding an entry fails, the response retains completed replies,
+marks the current request `Outcome unknown`, and marks later requests
+`Not executed`. The failed operation may already have committed. Notifications
+can also have committed, but never receive JSON-RPC replies in the batch.
+
+Local validation and locally answered methods still require the upstream
+authorization probe. If that probe fails after an earlier entry was forwarded,
+completed replies remain in the response. The current request is marked
+`Not executed: authorization unavailable` for a probe exception, or
+`Not executed: authorization denied` for a blocking authorization response.
+Later entries are not sent. Before any entry is forwarded, a blocking probe
+response is passed through unchanged.
+
+Partial failure responses use HTTP 502 for unavailable or unreadable upstream
+results, preserving an available upstream error status such as 401 or 403.
+Authentication is not downgraded to HTTP 200. The reconstructed response keeps
+the legacy protocol version, upstream CORS policy, and available
+`WWW-Authenticate`, `Proxy-Authenticate`, and `Retry-After` headers. A failed
+notification-only batch has the failure HTTP status and an empty body.
+
+A blocking authorization status that forbids a response body, such as 304, is
+normalized to 502 only when rebuilding a partial batch. The per-entry error
+still names the original status; before any forwarding, the original blocking
+response is unchanged. An id-less malformed request is not a notification:
+missing or invalid `jsonrpc` and unstructured `params` produce an Invalid
+Request reply with `id: null`, after authorization and before forwarding. Only
+valid JSON-RPC notifications suppress replies, including those whose method
+parameters fail MCP validation.
+
+Clients must read a JSON batch body even when the HTTP status is non-2xx; an
+HTTP error alone does not mean no writes occurred. Do not automatically replay
+the entire batch, including after refreshing credentials. Reconcile unknown
+outcomes separately before deciding what to retry. Clients that discard error
+bodies cannot use the per-entry recovery information and must still avoid
+automatic batch retries. Single-request transport behavior is unchanged.
+
 ## Optional MRTR link disambiguation
 
 Some ERPNext links accept an ID or a human-readable identifier. Where a lookup
