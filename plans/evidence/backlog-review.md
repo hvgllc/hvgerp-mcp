@@ -1341,3 +1341,36 @@ definition ref bị từ chối rồi phục hồi đúng khi fetch local ref th
 build ứng dụng, Browser, GitHub, push hoặc publish. Kết quả này chỉ là kiểm
 consistency offline, không chứng thực danh tính reviewer. Source và evidence mới
 còn chờ review độc lập, không tự ghi APPROVE.
+
+### Bổ sung theo review: không nối inline span qua block mới
+
+Reviewer phát hiện thiếu sót trong source b4ef4ba: chỉ tách đoạn trống chưa đủ.
+Backtick mở ở paragraph trước có thể ghép với backtick sau heading/list mới, làm
+che link thật trong block đó. Executor tái hiện trên HEAD5cb87fb bằng lệnh:
+
+```sh
+node --test --test-name-pattern='Markdown inline code (cannot cross a structural|retains multiline)' plans/test-validator.mjs
+```
+
+Red **1 passed, 2 failed, 0 cancelled**, exit 1: heading chứa link thiếu và list
+chứa link unsafe đều bị helper nhận sai với exit 0. Control inline code nhiều
+dòng trong cùng paragraph đã qua. Sau sửa focused ba ca đều xanh.
+
+Source mới `a9a5e738bb22889ca70cdbd6ff2a8a4a27d2474c`, tree
+`7cf60e4ddc45335e43c42326d24acd54752c9fda`. Bộ chia paragraph nay dừng span tại
+heading ATX, dòng setext/thematic break, list marker, quote marker và đoạn
+trống. Heading được xử lý riêng để opener trong heading cũng không che paragraph
+sau. Ordered list nhận marker số bất kỳ theo `[0-9]+[.)]`; có controls `2.` và
+`42)` bên cạnh `1.`/`1)`. Đây là nhận diện boundary bảo thủ, không bổ sung
+parser CommonMark đầy đủ hoặc đổi grammar metadata/evidence. Multiline inline
+code không gặp boundary vẫn hoạt động. Giới hạn fence top-level và HTML ở trên
+vẫn giữ, không dùng chúng để phủ nhận lỗi block boundary vừa sửa.
+
+Thêm 14 tests, giữ 307 tests trước vòng bổ sung. Full
+`node --test plans/test-validator.mjs` đạt **321 passed, 0 failed**. Validator
+25, `deno fmt --no-config --check plans/` 75 file, lint ba helper và
+`git diff --check` đều đạt. Sau source commit sạch,
+`node --test plans/test-history.mjs` đạt **4 passed, 0 failed**, tổng **325**
+self/history, giữ đủ 273 tests trước hai findings Codex. Lệnh và phạm vi không
+mạng/build/metadata giống bảng trước. Report này ghi kết quả thực thi, chưa phải
+verdict review độc lập cho source a9a5e73 và không cho phép push/merge.
