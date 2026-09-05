@@ -379,6 +379,17 @@ IDs. Report totals and non-invoice vouchers are excluded. The report is run
 synchronously with `ignore_prepared_report: true`, so it does not create a
 Prepared Report.
 
+`erpnext_sales_chart` uses the same invoice population for `group_by=customer`,
+`item`, and `status`: omitted or false `include_drafts` includes submitted
+invoices only (`docstatus=1`); true includes draft and submitted invoices
+(`docstatus in [0,1]`). Cancelled invoices are always excluded, including
+through parent discovery for item rows. The option must be a boolean; direct
+calls also reject strings, numbers, and null. Company, currency and
+complete-read guards are unchanged. Customer/status use `base_grand_total`,
+while item uses `base_amount`, so taxes/discounts can make their sums differ.
+Top N still applies to customer/item groups, not to the status breakdown;
+displayed top-N sums are not necessarily whole-population totals.
+
 All three receivable tools resolve the site date once per call through the
 existing timezone lookup (including its UTC fallback when unavailable). The
 report snapshot, overdue comparison, and aging day boundaries use that same date
