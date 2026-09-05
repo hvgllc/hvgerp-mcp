@@ -9,7 +9,7 @@
 - Mục audit: 20; loại: `bug`.
 - Ưu tiên: P2; công sức: M; rủi ro sửa: MED.
 - Phụ thuộc: `014`.
-- Mốc soạn: `b409cbb`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
+- Mốc soạn: `b409cbb`, 2026-09-05. Trạng thái thực thi: `DONE`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 Schema Kanban chỉ khai báo trạng thái Opportunity dù Issue adapter nhận trạng
@@ -154,11 +154,11 @@ name hoặc response shape.
 
 ## Tiêu chí hoàn tất
 
-- [ ] Schema validation và direct-handler tests đều đạt.
-- [ ] Không còn cấp phát mảng từ months chưa kiểm tra.
-- [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
+- [x] Schema validation và direct-handler tests đều đạt.
+- [x] Không còn cấp phát mảng từ months chưa kiểm tra.
+- [x] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
-- [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/020.md`, cập
+- [x] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/020.md`, cập
       nhật trạng thái ở `plans/README.md`. Không ghi giá trị bí mật.
 
 ## Điều kiện dừng
