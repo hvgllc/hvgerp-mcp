@@ -1,10 +1,19 @@
 type Message = {
+  jsonrpc?: unknown;
   id?: number | string;
   method?: string;
   params?: Record<string, unknown>;
 };
 type Reply = { id: number; result?: unknown; error?: { message: string } };
-type Failure = "none" | "network" | "json" | "body" | "html" | "401" | "403";
+type Failure =
+  | "none"
+  | "network"
+  | "json"
+  | "body"
+  | "html"
+  | "401"
+  | "403"
+  | "304";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -33,6 +42,13 @@ async function handleUpstream(
 ): Promise<Response | undefined> {
   const message: Message = await request.json();
   calls.push(message);
+  if (message.jsonrpc !== "2.0") {
+    return Response.json({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32600, message: "Invalid Request" },
+    }, { status: 400 });
+  }
   check(
     request.headers.get("Mcp-Method") === message.method,
     "Translated method mismatch",
@@ -53,6 +69,13 @@ async function handleUpstream(
   }
 
   if (failing) {
+    if (failure === "304") {
+      check(
+        request.headers.get("If-None-Match") === '"fixture"',
+        "Conditional auth request header",
+      );
+      return new Response(null, { status: 304, headers });
+    }
     if (failure === "network" || failure === "body") {
       if (failure === "body") {
         await conn.write(new TextEncoder().encode(
@@ -189,6 +212,7 @@ async function send(messages: Message | Message[]): Promise<Response> {
       "Content-Type": "application/json",
       "MCP-Protocol-Version": "2025-06-18",
       Accept: "application/json",
+      "If-None-Match": '"fixture"',
     },
     body: JSON.stringify(
       Array.isArray(messages) ? messages.map(envelope) : envelope(messages),
@@ -308,7 +332,7 @@ try {
       cases += 1;
     }
     for (const local of localEntries) {
-      for (const nextFailure of ["network", "401", "403"] as const) {
+      for (const nextFailure of ["network", "401", "403", "304"] as const) {
         reset(nextFailure);
         const response = await send([
           write(notificationFirst ? undefined : 1),
@@ -318,7 +342,9 @@ try {
         ]);
         check(
           response.status ===
-            (nextFailure === "network" ? 502 : Number(nextFailure)),
+            (nextFailure === "network" || nextFailure === "304"
+              ? 502
+              : Number(nextFailure)),
           "Local auth HTTP status",
         );
         check(
@@ -373,6 +399,81 @@ try {
       }
     }
   }
+  for (const local of localEntries) {
+    reset("304", 1);
+    const response = await send([local, write(3)]);
+    check(response.status === 304, "First auth 304 remains unchanged");
+    check(await response.text() === "", "First auth 304 has no body");
+    check(
+      response.headers.get("WWW-Authenticate") === headers["WWW-Authenticate"],
+      "First auth 304 challenge",
+    );
+    check(
+      calls.length === 1 && mutations === 0,
+      "First auth 304 stops before writes",
+    );
+    cases += 1;
+  }
+
+  for (const revision of [undefined, "1.0", null, 2]) {
+    for (const mixed of [false, true]) {
+      reset();
+      const malformed = { jsonrpc: revision, method: "tools/list" };
+      const response = await send(
+        mixed ? [write(1), malformed, write(3)] : [malformed],
+      );
+      check(response.status === 200, "Invalid idless envelope HTTP status");
+      const replies = await response.json();
+      check(
+        JSON.stringify(replies.map((reply: Reply) => reply.id)) ===
+          (mixed ? "[1,null,3]" : "[null]"),
+        "Invalid idless envelope IDs",
+      );
+      check(
+        replies[mixed ? 1 : 0].error.code === -32600,
+        "Invalid idless envelope error",
+      );
+      check(
+        JSON.stringify(calls.map((call) => call.id)) ===
+          (mixed
+            ? '[1,"shim-authorization-probe",3]'
+            : '["shim-authorization-probe"]'),
+        "Invalid envelope never forwarded",
+      );
+      check(mutations === (mixed ? 2 : 0), "Invalid envelope does not mutate");
+      console.log(
+        `PASS invalid idless revision=${String(revision)} mixed=${mixed}`,
+      );
+      cases += 1;
+    }
+  }
+
+  reset();
+  const notification = await send([write()]);
+  check(notification.status === 202, "Valid notification HTTP status");
+  check(await notification.text() === "", "Valid notification has no reply");
+  check(
+    calls.length === 1 && mutations === 1,
+    "Valid notification still forwarded",
+  );
+  cases += 1;
+
+  reset("304");
+  const notificationBlocked = await send([write(), {
+    method: "tools/list",
+    params: [] as unknown as Record<string, unknown>,
+  }, write()]);
+  check(notificationBlocked.status === 502, "Notification-only 304 normalized");
+  check(
+    await notificationBlocked.text() === "",
+    "Notification-only blocked batch has no reply",
+  );
+  check(
+    calls.length === 2 && mutations === 1,
+    "Notification-only blocked batch stops",
+  );
+  cases += 1;
+
   check(serverErrors.length === 0, "Fixture server failed");
   console.log(`PASS container smoke: ${cases} cases, ${assertions} assertions`);
 } finally {

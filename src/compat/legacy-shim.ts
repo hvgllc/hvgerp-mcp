@@ -872,6 +872,14 @@ function copyCorsHeaders(from: Headers | undefined, to: Headers): void {
  * trong một HTTP 200 là giấu đi đúng thứ client cần thấy.
  */
 const AUTH_STATUSES = new Set([401, 403, 407, 429]);
+const NULL_BODY_STATUSES = new Set([101, 103, 204, 205, 304]);
+
+function isJsonRpcNotification(entry: unknown): boolean {
+  return isRecord(entry) && entry["jsonrpc"] === "2.0" &&
+    typeof entry["method"] === "string" && !("id" in entry) &&
+    (entry["params"] === undefined || isRecord(entry["params"]) ||
+      Array.isArray(entry["params"]));
+}
 
 function isProtocolErrorStatus(status: number): boolean {
   return status >= 400 && status < 500 && !AUTH_STATUSES.has(status);
@@ -1019,9 +1027,18 @@ function markNotExecuted(
   status: number,
 ): void {
   for (const skipped of messages.slice(index + 1)) {
-    if (!isRecord(skipped)) continue;
+    if (isJsonRpcNotification(skipped)) continue;
+    if (!isRecord(skipped) || skipped["id"] === undefined) {
+      replies.push(
+        jsonRpcError(
+          null,
+          -32600,
+          "Invalid Request: malformed batch entry was not executed",
+        ),
+      );
+      continue;
+    }
     const skippedId = skipped["id"];
-    if (skippedId === undefined) continue;
     replies.push(jsonRpcError(
       normalizeId(skippedId),
       -32000,
@@ -1742,6 +1759,9 @@ export async function handleShimRequest(
         typeof entry["method"] !== "string";
       const message = entry as JsonRpcMessage;
       const id = isRecord(entry) ? entry["id"] : undefined;
+      const notification = isJsonRpcNotification(entry);
+      const invalidIdless = Array.isArray(parsed) && id === undefined &&
+        !notification;
       const locallyAnswered = !missingMethod && id !== undefined &&
         LOCALLY_ANSWERED.has(message.method as string);
       const invalidField = missingMethod || locallyAnswered
@@ -1749,22 +1769,28 @@ export async function handleShimRequest(
         : describeInvalidFields(message);
 
       // Cả ba nhánh tự trả lời phải hỏi cùng một cổng quyền trước khi tạo reply.
-      if (missingMethod || locallyAnswered || invalidField !== undefined) {
+      if (
+        missingMethod || locallyAnswered || invalidField !== undefined ||
+        invalidIdless
+      ) {
         const auth = await authorize();
         if (auth.blocked !== undefined) {
           if (forwardedEntries === 0) return auth.blocked;
           upstreamHeaders = auth.upstream;
-          status = auth.blocked.status;
-          if (id !== undefined) {
+          const blockedStatus = auth.blocked.status;
+          // Fetch cấm body với 304; giữ mã đó ở đây sẽ làm mất cả batch khi
+          // constructor Response ném lỗi. Response chưa forward vẫn đi nguyên trạng.
+          status = NULL_BODY_STATUSES.has(blockedStatus) ? 502 : blockedStatus;
+          if (!notification) {
             replies.push(
               jsonRpcError(
                 normalizeId(id),
                 -32000,
-                `Not executed: authorization denied with HTTP ${status}`,
+                `Not executed: authorization denied with HTTP ${blockedStatus}`,
               ),
             );
           }
-          markNotExecuted(replies, messages, index, status);
+          markNotExecuted(replies, messages, index, blockedStatus);
           // Không để lỗi hủy thân che mất các kết quả đã gom.
           await discardBatchResponse(auth.blocked);
           break;
@@ -1778,6 +1804,19 @@ export async function handleShimRequest(
           -32600,
           "Invalid Request: missing 'method' field",
         ));
+        continue;
+      }
+
+      if (invalidIdless) {
+        // Không có id chỉ có nghĩa là notification khi envelope hợp lệ.
+        // Kiểm trước rewrite để không biến phong bì sai thành lời gọi hợp lệ.
+        replies.push(
+          jsonRpcError(
+            null,
+            -32600,
+            "Invalid Request: malformed id-less batch entry",
+          ),
+        );
         continue;
       }
 
@@ -1868,7 +1907,7 @@ export async function handleShimRequest(
       if (outcome.status >= 400) status = outcome.status;
       if (
         outcome.payload !== undefined &&
-        (!Array.isArray(parsed) || id !== undefined)
+        (!Array.isArray(parsed) || !notification)
       ) replies.push(outcome.payload);
 
       // Chỉ nhớ sau khi thoả thuận THÀNH CÔNG. Ghi trước lúc gọi nghĩa là một
@@ -1916,7 +1955,7 @@ export async function handleShimRequest(
         ? receivedResponse.status
         : 502;
       const id = isRecord(entry) ? entry["id"] : undefined;
-      if (id !== undefined) {
+      if (!isJsonRpcNotification(entry)) {
         replies.push(
           jsonRpcError(
             normalizeId(id),

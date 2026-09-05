@@ -445,6 +445,290 @@ Deno.test("single forwarding exception retains existing rejection contract", asy
   }
 });
 
+for (
+  const local of [
+    { jsonrpc: "2.0", id: 2 },
+    { jsonrpc: "2.0", id: 2, method: "ping" },
+    { jsonrpc: "2.0", id: 2, method: "tools/call", params: [] },
+  ]
+) {
+  for (const prior of ["none", "write", "notification"] as const) {
+    Deno.test(`batch local ${local.method ?? "missing"} 304 after ${prior} preserves wire contract`, async () => {
+      const originalFetch = globalThis.fetch;
+      const blocked = new Response(null, {
+        status: 304,
+        headers: partialHeaders,
+      });
+      const calls: unknown[] = [];
+      globalThis.fetch = async (_input, init) => {
+        const message = JSON.parse(String(init?.body));
+        calls.push(message.id);
+        if (message.id === "shim-authorization-probe") {
+          assertEquals(
+            new Headers(init?.headers).get("If-None-Match"),
+            '"fixture"',
+          );
+          return blocked;
+        }
+        return message.id === undefined
+          ? new Response(null, { status: 202 })
+          : Response.json({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: { saved: true },
+          });
+      };
+      try {
+        const request = partialPost([
+          ...(prior === "none"
+            ? []
+            : [batchWrite(prior === "write" ? 1 : undefined)]),
+          local,
+          batchWrite(3),
+          batchWrite(),
+        ]);
+        request.headers.set("If-None-Match", '"fixture"');
+        const response = await handleShimRequest(request, {
+          upstream: "http://fixture",
+        });
+        assertEquals(response.status, prior === "none" ? 304 : 502);
+        assertEquals(
+          response.headers.get("WWW-Authenticate"),
+          partialHeaders["WWW-Authenticate"],
+        );
+        assertEquals(
+          response.headers.get("Access-Control-Allow-Origin"),
+          partialHeaders["Access-Control-Allow-Origin"],
+        );
+        if (prior === "none") {
+          assertEquals(response, blocked);
+          assertEquals(await response.text(), "");
+          assertEquals(calls, ["shim-authorization-probe"]);
+        } else {
+          assertEquals(
+            response.headers.get("MCP-Protocol-Version"),
+            "2025-06-18",
+          );
+          const replies = await response.json();
+          assertEquals(
+            replies.map((reply: { id: number }) => reply.id),
+            prior === "write" ? [1, 2, 3] : [2, 3],
+          );
+          if (prior === "write") {
+            assertEquals(replies.shift().result, { saved: true });
+          }
+          assert(replies[0].error.message.includes("HTTP 304"));
+          assert(replies[1].error.message.includes("Not executed"));
+          assertEquals(calls, [
+            prior === "write" ? 1 : undefined,
+            "shim-authorization-probe",
+          ]);
+        }
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  }
+}
+
+const invalidIdlessEntries = [
+  { method: "tools/list" },
+  { jsonrpc: "1.0", method: "tools/list" },
+  { jsonrpc: null, method: "tools/list" },
+  { jsonrpc: 2, method: "tools/list" },
+  { jsonrpc: "2.0", method: "tools/list", params: null },
+  { jsonrpc: "2.0", method: "tools/list", params: "invalid" },
+];
+
+for (const malformed of invalidIdlessEntries) {
+  for (const mixed of [false, true]) {
+    Deno.test(`idless invalid batch envelope ${JSON.stringify(malformed)} mixed=${mixed} retains error`, async () => {
+      const originalFetch = globalThis.fetch;
+      const calls: unknown[] = [];
+      globalThis.fetch = async (_input, init) => {
+        const message = JSON.parse(String(init?.body));
+        calls.push(message.id);
+        if (message.id === "shim-authorization-probe") {
+          return Response.json({
+            jsonrpc: "2.0",
+            id: message.id,
+            error: { code: -32601, message: "Method not found" },
+          }, { status: 404, headers: partialHeaders });
+        }
+        if (message.id === undefined) {
+          return Response.json({
+            jsonrpc: "2.0",
+            id: null,
+            error: { code: -32600, message: "Invalid Request" },
+          }, { status: 400 });
+        }
+        return Response.json({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: { saved: true },
+        });
+      };
+      try {
+        const response = await handleShimRequest(
+          partialPost(
+            mixed ? [batchWrite(1), malformed, batchWrite(3)] : [malformed],
+          ),
+          { upstream: "http://fixture" },
+        );
+        assertEquals(response.status, 200);
+        const replies = await response.json();
+        assertEquals(
+          replies.map((reply: { id: unknown }) => reply.id),
+          mixed ? [1, null, 3] : [null],
+        );
+        assertEquals(replies[mixed ? 1 : 0].error.code, -32600);
+        assertEquals(
+          calls,
+          mixed
+            ? [1, "shim-authorization-probe", 3]
+            : ["shim-authorization-probe"],
+        );
+        if (mixed) {
+          assertEquals(replies[0].result, { saved: true });
+          assertEquals(replies[2].result, { saved: true });
+        }
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  }
+}
+
+Deno.test("valid idless batch notifications remain silent even for upstream errors", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return Response.json({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32601, message: "Method not found" },
+    }, { status: 404 });
+  };
+  try {
+    const response = await handleShimRequest(
+      partialPost([{ jsonrpc: "2.0", method: "missing" }]),
+      { upstream: "http://fixture" },
+    );
+    assertEquals(response.status, 202);
+    assertEquals(await response.text(), "");
+    assertEquals(calls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+for (const status of [204, 205]) {
+  Deno.test(`successful null-body auth probe ${status} stays authorized`, async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: unknown[] = [];
+    globalThis.fetch = async (_input, init) => {
+      const message = JSON.parse(String(init?.body));
+      calls.push(message.id);
+      return message.id === "shim-authorization-probe"
+        ? new Response(null, { status })
+        : Response.json({ jsonrpc: "2.0", id: message.id, result: {} });
+    };
+    try {
+      const response = await handleShimRequest(
+        partialPost([
+          batchWrite(1),
+          { jsonrpc: "2.0", id: 2, method: "ping" },
+          batchWrite(3),
+        ]),
+        { upstream: "http://fixture" },
+      );
+      assertEquals(response.status, 200);
+      assertEquals(
+        (await response.json()).map((reply: { id: number }) => reply.id),
+        [1, 2, 3],
+      );
+      assertEquals(calls, [1, "shim-authorization-probe", 3]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+}
+
+Deno.test("304 after notifications keeps empty failure response", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () =>
+    ++calls === 1
+      ? new Response(null, { status: 202 })
+      : new Response(null, { status: 304, headers: partialHeaders });
+  try {
+    const response = await handleShimRequest(
+      partialPost([batchWrite(), {
+        jsonrpc: "2.0",
+        method: "tools/list",
+        params: [],
+      }, batchWrite()]),
+      { upstream: "http://fixture" },
+    );
+    assertEquals(response.status, 502);
+    assertEquals(await response.text(), "");
+    assertEquals(
+      response.headers.get("WWW-Authenticate"),
+      partialHeaders["WWW-Authenticate"],
+    );
+    assertEquals(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+for (const failure of ["network", "401"] as const) {
+  Deno.test(`malformed idless entries remain represented after ${failure}`, async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async (_input, init) => {
+      calls += 1;
+      const message = JSON.parse(String(init?.body));
+      if (calls === 1) {
+        return Response.json({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: { saved: true },
+        });
+      }
+      assertEquals(message.id, "shim-authorization-probe");
+      return partialFailure(failure);
+    };
+    try {
+      const response = await handleShimRequest(
+        partialPost([
+          batchWrite(1),
+          { method: "tools/list" },
+          { jsonrpc: "1.0", method: "tools/call" },
+          batchWrite(),
+          batchWrite(4),
+        ]),
+        { upstream: "http://fixture" },
+      );
+      assertEquals(response.status, failure === "network" ? 502 : 401);
+      const replies = await response.json();
+      assertEquals(replies.map((reply: { id: unknown }) => reply.id), [
+        1,
+        null,
+        null,
+        4,
+      ]);
+      assertEquals(replies[0].result, { saved: true });
+      assertEquals(replies[2].error.code, -32600);
+      assert(replies[2].error.message.includes("not executed"));
+      assertEquals(calls, 2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+}
+
 interface CapturedRequest {
   method: string;
   url: string;

@@ -92,6 +92,15 @@ the legacy protocol version, upstream CORS policy, and available
 `WWW-Authenticate`, `Proxy-Authenticate`, and `Retry-After` headers. A failed
 notification-only batch has the failure HTTP status and an empty body.
 
+A blocking authorization status that forbids a response body, such as 304, is
+normalized to 502 only when rebuilding a partial batch. The per-entry error
+still names the original status; before any forwarding, the original blocking
+response is unchanged. An id-less malformed request is not a notification:
+missing or invalid `jsonrpc` and unstructured `params` produce an Invalid
+Request reply with `id: null`, after authorization and before forwarding. Only
+valid JSON-RPC notifications suppress replies, including those whose method
+parameters fail MCP validation.
+
 Clients must read a JSON batch body even when the HTTP status is non-2xx; an
 HTTP error alone does not mean no writes occurred. Do not automatically replay
 the entire batch, including after refreshing credentials. Reconcile unknown
