@@ -944,3 +944,59 @@ không thay thế review độc lập đã nêu trên. Probe tên lock ban đầ
 kiểm lại đúng `deno.lock` có SHA-256
 `f32268af50c10ba06223c9a0b7f2d7092555ffa90172cd573ecf8d3feb2d882a`. Không
 publish hoặc nâng dependency.
+
+## Review 5121099562: namespace Git và citation liền kề
+
+Parent giao finding `3940494459` và `3940494465` trên remote HEAD `ca793fa`.
+Executor bắt đầu tại `b65979a67f97dddf03445f4c817be566db6ab939`, chỉ sửa
+`validate-plans.mjs`, `test-validator.mjs` và báo cáo này. History helper giữ
+nguyên. Finding thứ ba về kế hoạch 021 do parent xử lý riêng, không nằm trong
+delta helper của executor.
+
+Baseline ban đầu có đúng bốn diagnostic thiếu definition/approval của 014/023.
+Sau reviewer độc lập APPROVE snapshot b65979a, parent tự thêm bốn trường vào hai
+report và validator gốc đạt 25/25. Các regression mới tự dựng target non-DONE
+trong VM và so diagnostic trước/sau, không tạo approval giả hoặc lấy diagnostic
+metadata đang thiếu làm bằng chứng đỏ.
+
+- `3940494459`: canonical scope guard từ chối thành phần `.git` ở mọi cấp, không
+  phân biệt hoa/thường, trước exemption file mới hoặc dependency-created. Áp
+  dụng cùng guard cho scope, newFiles và tra Git object. `.github`,
+  `.gitignore`, `src/git/` và tên có prefix `.git-` vẫn hợp lệ. Đây là ranh giới
+  namespace metadata Git, không phải bộ chuẩn hóa mọi alias filesystem.
+- Đã kiểm Git thật trong repository tạm với protectNTFS/protectHFS bật:
+  update-index từ chối `.git/config`, hooks, `.GIT`, `.GiT` và nested
+  `src/.git`/`src/.GIT` bằng `Invalid path`; bốn control tương ứng trên đạt. Chỉ
+  tạo blob fixture và index trong repository tạm, không tạo commit hoặc
+  approval; thư mục tạm được dọn sau phép kiểm.
+- `3940494465`: citation phải là dòng không rỗng liền trước marker của đúng
+  block evidence theo index manifest, có chính xác path và line. Blank lines và
+  deno-fmt-ignore hiện hữu vẫn được giữ. Citation đúng nằm ở prose nơi khác
+  không thể thay citation bị thiếu, stale, bị đổi chỗ hoặc bị ngăn bởi đoạn giải
+  thích khác. Historical/current source và fenced excerpt vẫn kiểm như cũ.
+
+Red trước sửa validator:
+
+```sh
+node --test --test-name-pattern='Git metadata namespace|Git namespace guard|evidence citation must|adjacent citations retain' plans/test-validator.mjs
+```
+
+Kết quả **5 passed, 16 failed**. Tám biến thể namespace được nhận sai do
+newFiles exemption; tám ca citation tại 001/003 giữ citation đúng ở nơi khác
+hoặc tráo hai nhãn mà validator cũ không có diagnostic. Ca 003 cùng một file
+source nhưng khác số dòng, ca 001 khác cả path; cả hai đều cần binding từng
+block. Bốn control tên file hợp lệ và control formatting/prose đúng đều đạt
+trước sửa. Không dùng exception, import hoặc lỗi Git làm red.
+
+Sau sửa: `node plans/validate-plans.mjs` đạt 25/25;
+`node --test plans/test-validator.mjs` đạt **204 passed, 0 failed, 0 skipped**,
+giữ 183 selftests cũ và thêm 21 ca mới. Format toàn plans đạt 73 file, lint ba
+helper với `--no-config` và `git diff --check` đều exit 0. Parent còn ba file
+metadata/kế hoạch chưa commit trong worktree; clean-history gate chỉ chạy sau
+khi các thay đổi đã review của parent và helper được commit, không bỏ assertion
+worktree sạch để lấy kết quả xanh.
+
+Không sửa source ứng dụng, plan/manifest/README hoặc approval; không chạy
+application build, network, Browser, push hay trả lời GitHub trong lượt này.
+Review độc lập helper mới do parent điều phối, không lấy verdict cũ làm approval
+cho delta này.

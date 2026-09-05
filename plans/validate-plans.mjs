@@ -135,7 +135,8 @@ function canonicalScopePath(path) {
     !path.startsWith("/") && !/^[A-Za-z]:/.test(path) &&
     !path.includes("\\") && !path.includes("\0") &&
     !path.split("/").some((part, index, parts) =>
-      part === "." || part === ".." || (!part && index !== parts.length - 1)
+      part.toLowerCase() === ".git" || part === "." || part === ".." ||
+      (!part && index !== parts.length - 1)
     );
 }
 function scopedObject(tree, path) {
@@ -600,10 +601,15 @@ for (const entry of manifest) {
         );
       }
     }
-    if (!body.includes(`\`${evidence.path}:${evidence.line}\``)) {
-      fail(entry.file + ": missing evidence line citation");
-    }
     const block = blocks[index];
+    const citation = block && body.slice(0, block.index).trimEnd()
+      .split(/\r?\n/).at(-1)?.trim();
+    if (citation !== `\`${evidence.path}:${evidence.line}\`:`) {
+      fail(
+        entry.file + ": missing adjacent evidence line citation " +
+          evidence.path + ":" + evidence.line,
+      );
+    }
     if (!block || block[1] !== evidence.path || block[2] !== evidence.code) {
       fail(entry.file + ": excerpt mismatch " + evidence.path);
     }

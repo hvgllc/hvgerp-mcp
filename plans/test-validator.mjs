@@ -204,6 +204,131 @@ function assertAdditionalFailure(replacements, pattern, gitOutput) {
   assert.match(added.join("\n"), pattern);
   return after;
 }
+for (
+  const path of [
+    ".git",
+    ".git/",
+    ".git/config",
+    ".git/hooks/pre-commit",
+    ".GIT/config",
+    ".GiT/hooks/pre-commit",
+    "src/.git/config",
+    "src/.GIT/hooks/pre-commit",
+  ]
+) {
+  test(
+    "Git metadata namespace is forbidden before new-file exemptions: " + path,
+    () => {
+      const setup = stale(
+        15,
+        "Namespace fixture explicitly uses non-DONE state",
+      );
+      const before = run(setup);
+      const after = run(compose(setup, scopePath(path, true)));
+      assert.equal(before.thrown, undefined);
+      assert.equal(after.thrown, undefined);
+      assert.deepEqual(
+        after.messages.filter((message) => !before.messages.includes(message)),
+        [
+          fileFor(15).slice(6) + ": invalid repo-relative scope path: " +
+          JSON.stringify(path),
+          fileFor(15).slice(6) + ": invalid repo-relative newFiles path: " +
+          JSON.stringify(path),
+        ],
+      );
+    },
+  );
+}
+for (
+  const path of [
+    ".github/fixture.yml",
+    ".gitignore",
+    "src/git/config.ts",
+    "src/.git-fixture.ts",
+  ]
+) {
+  test("Git namespace guard preserves unrelated names: " + path, () => {
+    const setup = stale(15, "Namespace control explicitly uses non-DONE state");
+    const before = run(setup);
+    const after = run(compose(setup, scopePath(path, true)));
+    assert.equal(before.thrown, undefined);
+    assert.equal(after.thrown, undefined);
+    assert.deepEqual(after.messages, before.messages);
+    assert.equal(after.exitCode, before.exitCode);
+  });
+}
+for (const id of [1, 3]) {
+  for (
+    const change of [
+      "swapped",
+      "missing with unrelated copy",
+      "separated by prose",
+      "stale with unrelated correct copy",
+    ]
+  ) {
+    test(
+      "evidence citation must bind its adjacent block: " + id + " " + change,
+      () => {
+        const entry = manifest.find((item) => item.id === id);
+        const [first, second] = entry.evidence.map((evidence) =>
+          tick + evidence.path + ":" + evidence.line + tick + ":"
+        );
+        const setup = stale(
+          id,
+          "Citation fixture explicitly uses non-DONE state",
+        );
+        const before = run(setup);
+        const after = run(compose(setup, {
+          [fileFor(id)]: (text) => {
+            if (change === "swapped") {
+              return text.replace(first, "CITATION_SWAP").replace(second, first)
+                .replace("CITATION_SWAP", second);
+            }
+            if (change === "separated by prose") {
+              return text.replace(
+                first,
+                first + "\n\nUnrelated explanatory paragraph.",
+              );
+            }
+            return text.replace(
+              first,
+              change === "missing with unrelated copy"
+                ? ""
+                : tick + entry.evidence[0].path + ":99999" + tick + ":",
+            ) + "\n\nUnrelated citation: " + first + "\n";
+          },
+        }));
+        assert.equal(before.thrown, undefined);
+        assert.equal(after.thrown, undefined);
+        const expected =
+          (change === "swapped" ? entry.evidence : entry.evidence.slice(0, 1))
+            .map((evidence) =>
+              entry.file + ": missing adjacent evidence line citation " +
+              evidence.path + ":" + evidence.line
+            );
+        assert.deepEqual(
+          after.messages.filter((message) =>
+            !before.messages.includes(message)
+          ),
+          expected,
+        );
+      },
+    );
+  }
+}
+test("adjacent citations retain blank lines formatter markers and unrelated prose elsewhere", () => {
+  const setup = stale(1, "Citation control explicitly uses non-DONE state");
+  const before = run(setup);
+  const after = run(compose(setup, {
+    [fileFor(1)]: (text) =>
+      text.replaceAll("<!-- evidence:", "\n\n<!-- evidence:") +
+      "\nUnrelated prose after all evidence.\n",
+  }));
+  assert.equal(before.thrown, undefined);
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(after.messages, before.messages);
+  assert.equal(after.exitCode, before.exitCode);
+});
 test("PR25 approval cannot be retargeted to the real definition commit and report", () => {
   const report = "plans/evidence/001.md";
   const blob = execFileSync(
