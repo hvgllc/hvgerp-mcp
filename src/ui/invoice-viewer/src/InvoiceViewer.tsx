@@ -21,7 +21,6 @@ import {
   canRequestUiRefresh,
   extractToolResultText,
   normalizeUiRefreshFailureMessage,
-  resolveUiRefreshRequest,
   type ToolResultPayload,
   type UiRefreshRequestData,
 } from "~/shared/refresh";
@@ -40,40 +39,11 @@ const TOOL_CALL_TIMEOUT_MS = 10_000;
 // Types
 // ============================================================================
 
-interface InvoiceItem {
-  item_code: string;
-  item_name?: string;
-  qty: number;
-  rate: number;
-  amount: number;
-}
-
-interface InvoiceData {
-  name: string;
-  customer?: string;
-  customer_name?: string;
-  supplier?: string;
-  supplier_name?: string;
-  company?: string;
-  posting_date: string;
-  due_date?: string;
-  status: string;
-  docstatus?: number;
-  grand_total: number;
-  net_total?: number;
-  total_taxes_and_charges?: number;
-  outstanding_amount?: number;
-  currency?: string;
-  items?: InvoiceItem[];
-  contact_email?: string;
-  address_display?: string;
-}
-
-interface InvoicePayload {
-  data?: InvoiceData;
-  refreshRequest?: UiRefreshRequestData;
-  [key: string]: unknown;
-}
+import {
+  consumeViewerResult,
+  getErrorPresentation,
+} from "~/shared/presentation";
+import type { InvoiceData } from "~/shared/presentation";
 
 // ============================================================================
 // Sub-components
@@ -228,35 +198,20 @@ export function InvoiceViewer() {
   const refreshInFlightRef = useRef(false);
   const lastRefreshStartedAtRef = useRef(0);
 
-  function hydrateData(nextData: InvoiceData) {
-    dataRef.current = nextData;
-    setData(nextData);
-  }
-
   function consumeToolResult(result: ToolResultPayload): boolean {
-    if (result.isError) {
-      const text = extractToolResultText(result);
-      setError(text ?? "Tool returned an error");
-      setLoading(false);
-      return false;
-    }
-    const text = extractToolResultText(result);
-    if (!text) return false;
-    try {
-      const parsed = JSON.parse(text) as InvoicePayload;
-      refreshRequestRef.current = resolveUiRefreshRequest(
-        parsed,
-        refreshRequestRef.current,
-      );
-      hydrateData((parsed.data ?? parsed) as InvoiceData);
-      setError(null);
-      setLoading(false);
-      return true;
-    } catch {
-      setError("Failed to parse invoice payload");
-      setLoading(false);
-      return false;
-    }
+    const next = consumeViewerResult("invoice", result, {
+      data: dataRef.current,
+      refreshRequest: refreshRequestRef.current,
+      error: null,
+      loading: false,
+    });
+    setLoading(next.loading);
+    setError(next.error);
+    if (next.error) return false;
+    dataRef.current = next.data;
+    refreshRequestRef.current = next.refreshRequest;
+    setData(next.data);
+    return true;
   }
 
   async function requestRefresh(options: { ignoreInterval?: boolean } = {}) {
@@ -285,8 +240,7 @@ export function InvoiceViewer() {
         name: request.toolName,
         arguments: request.arguments,
       }, { timeout: TOOL_CALL_TIMEOUT_MS });
-      if (!result.isError) consumeToolResult(result);
-      else setError("Refresh failed");
+      consumeToolResult(result);
     } catch (cause) {
       setError(normalizeUiRefreshFailureMessage(cause));
     } finally {
@@ -364,6 +318,23 @@ export function InvoiceViewer() {
     setExpandedIdx(null);
   }, [data?.name]);
 
+  const { blockingError, inlineError } = getErrorPresentation({ data, error });
+  if (blockingError) {
+    return (
+      <div
+        style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}
+      >
+        <ErpNextBrandHeader />
+        <div
+          role="alert"
+          style={{ padding: 24, color: colors.error, fontFamily: fonts.sans }}
+        >
+          {blockingError}
+        </div>
+        <ErpNextBrandFooter />
+      </div>
+    );
+  }
   if (loading) {
     return (
       <div
@@ -470,11 +441,10 @@ export function InvoiceViewer() {
         </div>
 
         {/* Feedback */}
-        {error && (
+        {inlineError && (
           <FeedbackBanner
             type="error"
-            message={error}
-            onDismiss={() => setError(null)}
+            message={inlineError}
           />
         )}
         {!error && actionMessage && (

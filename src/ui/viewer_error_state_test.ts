@@ -19,6 +19,23 @@ const VIEWERS: { source: string; emptyElement: string }[] = [
     source: "./kanban-viewer/src/KanbanViewer.tsx",
     emptyElement: "<EmptyState",
   },
+  {
+    source: "./invoice-viewer/src/InvoiceViewer.tsx",
+    emptyElement: "<InvoiceEmptyState",
+  },
+  {
+    source: "./stock-viewer/src/StockViewer.tsx",
+    emptyElement: "<StockEmptyState",
+  },
+  {
+    source: "./chart-viewer/src/ChartViewer.tsx",
+    emptyElement: "No chart data",
+  },
+  { source: "./kpi-viewer/src/KpiViewer.tsx", emptyElement: "No KPI data" },
+  {
+    source: "./funnel-viewer/src/FunnelViewer.tsx",
+    emptyElement: "<FunnelEmptyState",
+  },
 ];
 
 Deno.test("viewers render a blocking error before falling back to the empty state", async () => {
@@ -47,6 +64,48 @@ Deno.test("viewers render a blocking error before falling back to the empty stat
     assert(
       blockingIndex < emptyIndex,
       `${viewer.source}: the empty state is reached before the blocking error, so a failure renders as "no documents"`,
+    );
+  }
+});
+
+Deno.test("five passive viewers use the tested result transition for initial and refresh results", async () => {
+  for (const kind of ["invoice", "stock", "chart", "kpi", "funnel"]) {
+    const name = kind === "kpi" ? "Kpi" : kind[0].toUpperCase() + kind.slice(1);
+    const source = await Deno.readTextFile(
+      new URL(`./${kind}-viewer/src/${name}Viewer.tsx`, import.meta.url),
+    );
+    const consume = source.slice(
+      source.indexOf("function consumeToolResult"),
+      source.indexOf("async function requestRefresh"),
+    );
+    assert(consume.includes(`consumeViewerResult("${kind}", result,`));
+    assert(consume.includes("if (next.error) return false"));
+    assert(
+      consume.indexOf("if (next.error)") <
+        consume.indexOf("dataRef.current = next.data"),
+    );
+    assert(
+      consume.indexOf("if (next.error)") <
+        consume.indexOf("refreshRequestRef.current = next.refreshRequest"),
+    );
+    const refresh = source.slice(
+      source.indexOf("async function requestRefresh"),
+      source.indexOf("app.ontoolresult"),
+    );
+    assert(
+      refresh.includes("consumeToolResult(result)"),
+      `${kind}: refresh must use the same tested transition`,
+    );
+    assert(
+      /app\.ontoolresult\s*=[\s\S]*?consumeToolResult\(result\)/.test(source),
+    );
+    assert(
+      !source.includes("JSON.parse(text)"),
+      `${kind}: no unvalidated hydration bypass`,
+    );
+    assert(
+      !source.includes("setError(null)"),
+      `${kind}: only successful hydration clears the error`,
     );
   }
 });

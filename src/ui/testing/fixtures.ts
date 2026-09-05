@@ -11,6 +11,7 @@ export const SCENARIOS = [
   "board-race",
   "initial-error",
   "refresh-error",
+  "malformed-payload",
 ] as const;
 export type Scenario = typeof SCENARIOS[number];
 export const GENERATED_AT = "2026-09-05T00:00:00.000Z";
@@ -227,6 +228,27 @@ export function detailFixture(name: string, doctype = "Task") {
       _assign: "[]",
     },
   };
+}
+
+export function malformedViewerFixture(viewer: Viewer): object {
+  const payload = viewerFixture(viewer);
+  switch (viewer) {
+    case "invoice-viewer":
+      return {
+        ...payload,
+        data: { name: "INV-BROKEN", items: "not an array" },
+      };
+    case "stock-viewer":
+      return { ...payload, data: [null] };
+    case "chart-viewer":
+      return { ...payload, datasets: [{ label: "Broken", values: [null] }] };
+    case "kpi-viewer":
+      return { ...payload, sparkline: [0, "not a number"] };
+    case "funnel-viewer":
+      return { ...payload, stages: [null] };
+    default:
+      return { invalid: true };
+  }
 }
 
 export function createDetailFixtureStore() {

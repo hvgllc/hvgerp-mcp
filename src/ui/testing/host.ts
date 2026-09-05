@@ -5,6 +5,7 @@ import {
 import {
   boardFixture,
   createDetailFixtureStore,
+  malformedViewerFixture,
   SCENARIOS,
   TOOL_NAMES,
   toolArguments,
@@ -321,6 +322,9 @@ bridge.oninitialized = () => {
     if (scenario === "initial-error") {
       await bridge.sendToolResult(failure("Local initial error"));
       record({ outcome: "initial-error" });
+    } else if (scenario === "malformed-payload") {
+      await bridge.sendToolResult(result(malformedViewerFixture(viewer)));
+      record({ outcome: "malformed-payload", viewer });
     } else {
       await sendSuccess();
     }
