@@ -601,6 +601,35 @@ test("DONE requires a completion checklist", () => {
     /024.*completion checklist/,
   );
 });
+for (const marker of ["1.", "1)", "  12.", "42)"]) {
+  test("DONE ordered completion rejects an unchecked item: " + marker, () => {
+    invalid({
+      [fileFor(24)]: (text) =>
+        text.replace(
+          "## Tiêu chí hoàn tất\n",
+          `## Tiêu chí hoàn tất\n\n${marker} [ ] Pending release gate\n`,
+        ),
+    }, /024.*unchecked completion/);
+  });
+  test(
+    "DONE ordered completion accepts checked syntax but retains definition binding: " +
+      marker,
+    () => {
+      const result = run({
+        [fileFor(24)]: (text) => text.replace(/- \[[xX]\]/g, marker + " [X]"),
+      });
+      assert.equal(result.thrown, undefined);
+      assert.deepEqual(result.messages, definitionFailures(24));
+    },
+  );
+}
+test("DONE ordered completion ignores unchecked work in another section", () => {
+  const result = run({
+    [fileFor(24)]: (text) => text + "\n## Future work\n\n1. [ ] Future gate\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.deepEqual(result.messages, definitionFailures(24));
+});
 test("an unchecked checklist outside completion only invalidates the DONE definition", () => {
   const result = run({
     [fileFor(24)]: (text) =>
@@ -1019,6 +1048,96 @@ for (
     assert.equal(result.thrown, undefined);
     assert.equal(result.exitCode, 0, result.messages.join("\n"));
   });
+}
+for (const usage of ["[executor][report]", "[report][]", "[report]"]) {
+  test(
+    "Markdown reference rejects a missing nested destination: " + usage,
+    () => {
+      invalid({
+        "plans/evidence/backlog-review.md": (text) =>
+          text + `\n${usage}\n\n[report]: missing-reference.md\n`,
+      }, /backlog-review.*link hỏng missing-reference.md/);
+    },
+  );
+}
+for (
+  const target of [
+    "/etc/passwd",
+    "../../../outside-plan.md",
+    "C:/Windows/win.ini",
+    "..\\..\\outside-plan.md",
+  ]
+) {
+  test(
+    "Markdown reference rejects unsafe destination before lookup: " + target,
+    () => {
+      const report = "plans/evidence/backlog-review.md";
+      const resolved = resolve(repoRoot, dirname(report), target);
+      const result = run(
+        {
+          [report]: (text) =>
+            text + `\n[executor][report]\n\n[report]: ${target}\n`,
+        },
+        [],
+        { [relative(repoRoot, resolved)]: "file" },
+      );
+      assert.equal(result.thrown, undefined);
+      assert.equal(result.exitCode, 1);
+      assert.deepEqual(result.messages, [
+        "evidence/backlog-review.md: unsafe Markdown link " + target,
+      ]);
+      assert.equal(result.existenceChecks.includes(resolved), false);
+    },
+  );
+}
+for (
+  const destination of [
+    "../../README.md",
+    '<../../README.md#overview> "Repository"',
+    "../../src/../README.md 'Repository'",
+    "https://example.test/report",
+    "#local-anchor",
+  ]
+) {
+  test(
+    "Markdown reference preserves valid nested destination: " + destination,
+    () => {
+      const result = run({
+        "plans/evidence/backlog-review.md": (text) =>
+          text + `\n[executor][REPORT]\n\n[report]: ${destination}\n`,
+      });
+      assert.equal(result.thrown, undefined);
+      assert.equal(result.exitCode, 0, result.messages.join("\n"));
+    },
+  );
+}
+test("Markdown reference resolves the same relative name from its own directory", () => {
+  const result = run({
+    "plans/execution-notes.md": (text) =>
+      text + "\n[executor][report]\n\n[report]: README.md\n",
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[executor][report]\n\n[report]: ../README.md\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+for (
+  const definition of [
+    "[report]:\n  missing-reference.md",
+    "[report]: <../../README.md",
+    "[report]: ../../README.md unsupported title",
+  ]
+) {
+  test(
+    "Markdown reference rejects unsupported definition: " +
+      JSON.stringify(definition),
+    () => {
+      invalid({
+        "plans/evidence/backlog-review.md": (text) =>
+          text + `\n[executor][report]\n\n${definition}\n`,
+      }, /backlog-review.*unsupported Markdown reference definition/);
+    },
+  );
 }
 test("refreshed baseline retains historical source but DONE requires definition re-review", () => {
   const ref = "013a1cfda64d41b3e62658ff16f7e25be0b3b4c7";

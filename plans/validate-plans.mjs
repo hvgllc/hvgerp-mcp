@@ -499,7 +499,9 @@ for (const entry of manifest) {
     const completion =
       body.split("\n## Tiêu chí hoàn tất\n")[1]?.split(/\n## /)[0] ?? "";
     const items = [
-      ...completion.matchAll(/^[ \t]*[-*+][ \t]+\[([ xX])\][ \t]+\S/gm),
+      ...completion.matchAll(
+        /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\[([ xX])\][ \t]+\S/gm,
+      ),
     ];
     if (!items.length) {
       fail(entry.file + ": DONE requires a completion checklist");
@@ -622,7 +624,25 @@ for (const filePath of planFiles(planRoot)) {
     fail(file + ": contains U+2014");
   }
   if (file.endsWith(".md")) {
-    for (const [, target] of body.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)) {
+    const targets = [...body.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)]
+      .map((match) => match[1]);
+    // Kiểm mọi definition, kể cả chưa dùng; không phụ thuộc kiểu full/collapsed/shortcut.
+    for (
+      const definition of body.matchAll(/^[ \t]*\[[^\r\n]+\]:([^\r\n]*)$/gm)
+    ) {
+      const destination = definition[1].trim().match(
+        /^(?:<([^<>]*)>|([^\s<>]+))(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^)]*\)))?$/,
+      );
+      if (!destination) {
+        fail(
+          file + ": unsupported Markdown reference definition " +
+            definition[0].trim(),
+        );
+        continue;
+      }
+      targets.push(destination[1] ?? destination[2]);
+    }
+    for (const target of targets) {
       if (/^(https?:|#)/.test(target)) continue;
       const clean = target.split("#")[0];
       if (!clean) continue;
