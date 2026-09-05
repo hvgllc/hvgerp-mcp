@@ -190,27 +190,36 @@ README.md, LICENSE nếu có; loại node_modules, src/ui/dist, .env*, .git,
 dist-node và mọi symlink thoát repo. Không dùng git archive HEAD vì sẽ bỏ sửa
 chưa commit. Trong mỗi workspace chạy npm ci cho UI, build7viewer, bash
 scripts/build-node.sh; thu npm ls --all --json trước và sau build. Chuẩn hóa
-đường dẫn tuyệt đối, so tên/version/resolved/integrity từ lock và graph, so
-SHA256 bundle và npm pack --dry-run --json file list ở dist-node/bin. Hash khác
-phải fail, không tự bỏ trường để lách. Dùng Node 22 đã xác minh cho hai build;
-mỗi bundle đầu ra phải được chạy smoke riêng bằng cả Node 20 và Node 22, thành
-ma trận hai bundle x hai runtime. Không suy từ một runtime ra runtime kia. Chạy
-bundle stdio: môi trường allowlist tối thiểu, tắt cache warming, URL loopback
-không có ERP và credential giả; gửi initialize, notifications/initialized,
-tools/list và resources/list, kiểm JSON-RPC responses, version từ manifest,
-đúng7resource viewer, không gọi tool ERP. Timeout5giây và cleanup child bắt
-buộc. Script in vị trí evidence/temporary roots, không xóa worktree user; chỉ
-cleanup đúng thư mục do nó vừa tạo sau khi lưu báo cáo. Thêm --self-test với
-fixture graph bằng/khác, hash khác và runtime không hỗ trợ để chứng minh gate có
-thể fail. release:check vẫn là gate một build riêng, không gọi nó là bằng chứng
-hai build.
+đường dẫn tuyệt đối, so tên/version/resolved/integrity từ lock và graph, so toàn
+bộ nội dung package tại dist-node/bin. Dùng npm pack --dry-run --json để lấy tập
+path đóng gói, rồi so path, mode, kích thước và SHA-256 của từng file, bao gồm
+bundle, package.json và cả bảy HTML dưới ui-dist. Từ chối thiếu/thừa file hoặc
+path/symlink thoát package; chỉ chuẩn hóa metadata vận chuyển không thuộc nội
+dung như timestamp hoặc gzip header nếu kiểm tarball. Không chỉ so file list
+hoặc hash bundle, vì UI được copy riêng và resources/list không chứng minh byte
+HTML bằng nhau. Bất kỳ nội dung hoặc mode khác phải fail, không tự bỏ trường để
+lách. Dùng Node 22 đã xác minh cho hai build; mỗi bundle đầu ra phải được chạy
+smoke riêng bằng cả Node 20 và Node 22, thành ma trận hai bundle x hai runtime.
+Không suy từ một runtime ra runtime kia. Chạy bundle stdio: môi trường allowlist
+tối thiểu, tắt cache warming, URL loopback không có ERP và credential giả; gửi
+initialize, notifications/initialized, tools/list và resources/list, kiểm
+JSON-RPC responses, version từ manifest, đúng7resource viewer, không gọi tool
+ERP. Timeout5giây và cleanup child bắt buộc. Script in vị trí evidence/temporary
+roots, không xóa worktree user; chỉ cleanup đúng thư mục do nó vừa tạo sau khi
+lưu báo cáo. Thêm --self-test với fixture graph bằng/khác, hash khác và runtime
+không hỗ trợ để chứng minh gate có thể fail. Có negative control chỉ đổi byte
+một HTML nhưng giữ nguyên bundle, tên file và số resource; thêm ca thiếu/thừa
+file hoặc mode khác. Các ca này phải bị từ chối, còn hai package đầy đủ bằng
+nhau phải được chấp nhận. release:check vẫn là gate một build riêng, không gọi
+nó là bằng chứng hai build.
 
 **Kiểm tra:**
 `node scripts/verify-reproducible-build.mjs --self-test && node scripts/verify-reproducible-build.mjs --node20 "$NODE20_BINARY" --node22 "$NODE22_BINARY"`
-→ self-test đạt; gate chính exit0 với hai graph/hash/file list giống nhau và đủ
-bốn smoke đạt. `NODE20_BINARY` và `NODE22_BINARY` là hai path đã đối chiếu bằng
-lệnh version, không tự suy từ Node đang chạy helper. BLOCKED khi thiếu một trong
-hai binary; release:check chạy riêng cũng phải đạt.
+→ self-test đạt; gate chính exit0 với hai graph và manifest nội dung của toàn bộ
+file đóng gói giống nhau, gồm SHA-256 của từng HTML, và đủ bốn smoke đạt.
+`NODE20_BINARY` và `NODE22_BINARY` là hai path đã đối chiếu bằng lệnh version,
+không tự suy từ Node đang chạy helper. BLOCKED khi thiếu một trong hai binary;
+release:check chạy riêng cũng phải đạt.
 
 ## Kiểm thử
 
@@ -220,6 +229,9 @@ hai binary; release:check chạy riêng cũng phải đạt.
 - Normal Publish không nhận override; đường override vẫn phục vụ kiểm thử có
   đánh dấu.
 - npm pack không đưa host testing007 hoặc build manifests nội bộ vào package.
+- Chỉ đổi một HTML, hoặc thiếu/thừa file/mode khác, làm phép so package thất bại
+  dù bundle và resources/list vẫn bằng nhau. Lưu manifest nội dung của cả hai
+  package trong evidence, không chỉ in kết luận pass.
 - Helper --self-test bắt graph/hash khác và runtime26; không dùng successful
   single build thay so sánh hai build.
 - Self-test từ chối thiếu một path, hai path cùng major, đảo path20/22 và ghi rõ
@@ -230,7 +242,8 @@ hai binary; release:check chạy riêng cũng phải đạt.
 - [ ] Deno và Node build đều dùng lock được theo dõi.
 - [ ] npm CLI có phiên bản chính xác đã được duyệt, dùng nhất quán ở build,
       verifier, release preflight và Publish; sai phiên bản bị chặn trước build.
-- [ ] Hai build sạch và smoke runtime20/22 có chứng cứ; release:check đạt.
+- [ ] Hai build sạch có graph và byte/mode của toàn bộ file đóng gói bằng nhau,
+      gồm bảy HTML; bốn smoke runtime20/22 có chứng cứ; release:check đạt.
 - [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
 - [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/021.md`, cập
