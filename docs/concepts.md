@@ -1,10 +1,45 @@
 # Concepts
 
-This document explains the reasoning behind five design decisions you encounter
-when the server does something unexpected: a write failing where a read
-succeeds, a warning at startup, a question about which transport to use,
-uncertainty about what to do when no typed tool exists for a DocType, and
-confusion about which cache controls which data.
+This document explains the reasoning behind design decisions you encounter when
+the server does something unexpected: a write failing where a read succeeds, a
+warning at startup, a question about which transport to use, uncertainty about
+what to do when no typed tool exists for a DocType, and confusion about which
+cache controls which data.
+
+## Why monetary analytics require one company
+
+A document's currency and the company's accounting currency need not match.
+Adding USD and EUR invoice totals cannot produce a meaningful VND total by
+changing the label. Monetary analytics therefore resolve one visible Company,
+read its `default_currency`, and use recorded base amounts. No current exchange
+rate is applied to historical documents. Multiple visible companies require an
+explicit `company`; missing currency or permission failures are errors.
+
+Inventory belongs to a company through its Warehouse, and sales child rows
+through their parent document. Neither Bin nor sales child tables have a company
+field that can safely be filtered directly. Company-specific filters and lookup
+sets keep these reads separated in the existing request cache, and refresh
+arguments pin the resolved company.
+
+Receivables have a further distinction: Sales Invoice `outstanding_amount` is in
+the party account currency. The analytics tools instead read the standard
+Accounts Receivable report with `in_party_currency: 0` and no `party_account`
+filter, verifying each invoice row's currency. Account-specific rows for one
+invoice contribute their separate balances, while the invoice count remains one.
+Prepared Reports are disabled for this read-only path.
+
+Gross margin still estimates cost from current stock valuation and stock UOM
+quantities; it is not historical accounting profit. A missing cost is unknown,
+not zero. Selling-price comparisons similarly require a known stock UOM and a
+price already in company currency. This conservative error behavior preserves
+the chart response structure without inventing conversion rates.
+
+Single-company callers can keep omitting `company`, but now need permission to
+read Company and ownership records. P&L retains its existing report currency
+source and permission requirements. Financial charts retain row limits,
+including 1,000 parent documents and 1,000 warehouses for ownership resolution.
+Those limits are not proof of completeness. Pure count/quantity tools retain
+their scope; funnel Lead counts remain site-wide among visible records.
 
 ## How link resolution works — and why writes are stricter
 

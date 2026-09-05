@@ -361,6 +361,43 @@ can be absent from documents even when the DocType itself is readable.
 
 ## Analytics (17) → chart-viewer / kpi-viewer / funnel-viewer
 
+Monetary analytics accept optional `company`. It may be omitted only when
+exactly one Company is visible to the caller. With several visible companies,
+pass its exact name; with none, request Company access. Reading the company's
+`default_currency` is required. Permission failures and missing currency are
+reported, not replaced with a guessed currency or zero. Refresh requests retain
+the resolved company, including when the initial call omitted it. P&L retains
+its existing report-based currency source and company permissions.
+
+Revenue uses recorded `base_grand_total`, `base_amount`, and
+`base_opportunity_amount`, not today's exchange rate. Stock values are
+restricted through `Warehouse.company`, and child rows through their parent
+documents. Outstanding, overdue, and AR aging use the standard Accounts
+Receivable report in company currency, only positive Sales Invoice balances.
+Distinct account balances are added, but invoice counts use distinct voucher
+IDs. Report totals and non-invoice vouchers are excluded. The report is run
+synchronously with `ignore_prepared_report: true`, so it does not create a
+Prepared Report.
+
+Gross profit/margin remain estimates from current Bin valuation, not historical
+ledger gross profit. They multiply valuation rate by `stock_qty`; missing costs
+raise an error. Price-vs-quantity accepts only the selected selling price in the
+company currency and the item's verified stock UOM. Missing/mismatched currency
+or UOM raises an error; it never silently converts or falls back on bad data.
+Its quantity axis is stock quantity. The stock fallback applies only when no
+selling-price/order points exist.
+
+Pure stock-quantity and order-count tools retain their existing scope. Funnel
+Lead counts still cover all visible Leads; subsequent stages belong to the
+selected company. Radar values remain normalized 0-100; its money dimensions
+name the currency without treating count dimensions as money.
+
+These changes do not make capped list queries complete. Existing row limits
+remain; parent and Warehouse ownership lookups are capped at 1,000 rows each.
+Large datasets can therefore be partial. Use authoritative ERPNext reports for
+complete financial statements; do not treat these charts as reconciliation
+totals.
+
 | Tool                        | Viewer | Description                                           |
 | --------------------------- | ------ | ----------------------------------------------------- |
 | `erpnext_stock_chart`       | chart  | Bar chart of stock levels by item/warehouse           |
