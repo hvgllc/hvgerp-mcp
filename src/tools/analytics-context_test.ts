@@ -3,6 +3,7 @@ import { FrappeClient } from "../api/frappe-client.ts";
 import type { FrappeDoc, FrappeListOptions } from "../api/types.ts";
 import {
   analyticsNumber,
+  listAnalyticsItemUnits,
   resolveAnalyticsContext,
 } from "./analytics-context.ts";
 
@@ -26,10 +27,202 @@ function fixture(options: {
   };
 }
 
+for (const source of ["Sales Order", "Sales Invoice", "Warehouse"] as const) {
+  for (const total of [0, 1000, 1001, 2000]) {
+    Deno.test(`ownership discovery ${source} exhausts ${total} names before global top N`, async () => {
+      const names = Array.from(
+        { length: total },
+        (_, i) => `DOC-${String(i).padStart(5, "0")}`,
+      );
+      const offsets: number[] = [];
+      const bin = source === "Warehouse";
+      let childReads = 0;
+      const context = await resolveAnalyticsContext(
+        fixture({
+          list: async (doctype, options) => {
+            if (doctype === source) {
+              const offset = options?.limit_start ?? 0;
+              offsets.push(offset);
+              assertEquals(options?.order_by, "name asc");
+              assertEquals(options?.limit, 1000);
+              assertEquals(options?.filters, [
+                ...(bin
+                  ? []
+                  : [["docstatus", "!=", 2] as [string, string, number]]),
+                ["company", "=", "Vietnam Company"],
+              ]);
+              return names.slice(offset, offset + 1000).map((name) => ({
+                name,
+              }));
+            }
+            childReads++;
+            assertEquals(offsets.at(-1), Math.floor(total / 1000) * 1000);
+            const field = bin ? "warehouse" : "parent";
+            const chunk = options!.filters!.find((f) =>
+              f[0] === field
+            )![2] as string[];
+            return chunk.map((name) => ({
+              name,
+              [field]: name,
+              parenttype: source,
+              base_amount: names.indexOf(name),
+              stock_value: names.indexOf(name),
+            })).sort((a, b) => b.base_amount - a.base_amount).slice(0, 2);
+          },
+        }),
+        { company: "Vietnam Company" },
+      );
+      const read = () =>
+        bin
+          ? context.listBins({ limit: 2, order_by: "stock_value desc" })
+          : context.listItems(source, {
+            limit: 2,
+            order_by: "base_amount desc",
+            filters: [["docstatus", "!=", 2]],
+          });
+      assertEquals(
+        (await read()).map((row) => row.name),
+        names.slice(-2).reverse(),
+      );
+      assertEquals(
+        offsets,
+        Array.from(
+          { length: Math.floor(total / 1000) + 1 },
+          (_, i) => i * 1000,
+        ),
+      );
+      if (total === 0) assertEquals(childReads, 0);
+      if (bin) {
+        await read();
+        assertEquals(offsets.length, Math.floor(total / 1000) + 1);
+      }
+    });
+  }
+
+  for (const failure of ["error", "repeat", "missing", "blank", "wrong-type"]) {
+    Deno.test(`ownership discovery ${source} rejects later ${failure} without partial rows`, async () => {
+      let childReads = 0;
+      let pages = 0;
+      const denied = new Error("Ownership page denied");
+      const context = await resolveAnalyticsContext(
+        fixture({
+          list: async (doctype) => {
+            if (doctype !== source) {
+              childReads++;
+              return [];
+            }
+            if (++pages === 1 || failure === "repeat") {
+              return Array.from(
+                { length: 1000 },
+                (_, i) => ({ name: `DOC-${i}` }),
+              );
+            }
+            if (failure === "error") throw denied;
+            return [{
+              name: failure === "blank"
+                ? "  "
+                : failure === "wrong-type"
+                ? 42
+                : undefined,
+            }] as unknown as FrappeDoc[];
+          },
+        }),
+        { company: "Vietnam Company" },
+      );
+      const error = await assertRejects(() =>
+        source === "Warehouse"
+          ? context.listBins({})
+          : context.listItems(source, {})
+      );
+      if (failure === "error") assertEquals(error, denied);
+      assertEquals(pages, 2);
+      assertEquals(childReads, 0);
+    });
+  }
+}
+
 Deno.test("analytics context resolves the only visible VND company", async () => {
   const result = await resolveAnalyticsContext(fixture(), {});
   assertEquals(result.company, "Vietnam Company");
   assertEquals(result.currency, "VND");
+});
+
+Deno.test("ownership discovery fails explicitly at its resource guard instead of returning partial scope", async () => {
+  let pages = 0;
+  let childReads = 0;
+  const context = await resolveAnalyticsContext(
+    fixture({
+      list: async (doctype, options) => {
+        if (doctype !== "Warehouse") {
+          childReads++;
+          return [];
+        }
+        pages++;
+        const offset = options!.limit_start!;
+        return Array.from(
+          { length: offset === 100000 ? 1 : 1000 },
+          (_, i) => ({ name: `WH-${offset + i}` }),
+        );
+      },
+    }),
+    { company: "Vietnam Company" },
+  );
+  await assertRejects(
+    () => context.listBins({}),
+    Error,
+    "100000 name safety limit",
+  );
+  await assertRejects(
+    () => context.listBins({}),
+    Error,
+    "100000 name safety limit",
+  );
+  assertEquals(pages, 101);
+  assertEquals(childReads, 0);
+});
+
+Deno.test("ownership discovery rejects oversized pages and duplicate names within one page", async () => {
+  for (const oversized of [false, true]) {
+    const context = await resolveAnalyticsContext(
+      fixture({
+        list: async (doctype) => {
+          assertEquals(doctype, "Sales Invoice");
+          return oversized
+            ? Array.from({ length: 1001 }, (_, i) => ({ name: `INV-${i}` }))
+            : [{ name: "INV-1" }, { name: "INV-1" }];
+        },
+      }),
+      { company: "Vietnam Company" },
+    );
+    await assertRejects(
+      () => context.listItems("Sales Invoice", {}),
+      Error,
+      oversized ? "requested size" : "unique progress",
+    );
+  }
+});
+
+Deno.test("Item units lookup deduplicates requested IDs and skips an empty set", async () => {
+  let reads = 0;
+  const ctx = fixture({
+    list: async (doctype, options) => {
+      reads++;
+      assertEquals(doctype, "Item");
+      assertEquals(options, {
+        fields: ["name", "stock_uom"],
+        filters: [["name", "in", ["ITEM-1"]]],
+        limit: 1,
+        order_by: "name asc",
+      });
+      return [{ name: "ITEM-1", stock_uom: "Unit" }];
+    },
+  });
+  assertEquals(await listAnalyticsItemUnits(ctx, []), []);
+  assertEquals(await listAnalyticsItemUnits(ctx, ["ITEM-1", "ITEM-1"]), [{
+    name: "ITEM-1",
+    stock_uom: "Unit",
+  }]);
+  assertEquals(reads, 1);
 });
 
 Deno.test("analytics context rejects missing and ambiguous companies", async () => {
@@ -222,9 +415,9 @@ Deno.test("analytics numbers preserve zero and reject unknown values", () => {
 
 for (const source of ["Sales Order", "Sales Invoice", "Warehouse"] as const) {
   for (const longNames of [false, true]) {
-    Deno.test(`analytics scope URI - ${source} preserves global top N with ${longNames ? "long Unicode" : "1000"} names`, async () => {
+    Deno.test(`analytics scope URI - ${source} preserves global top N with ${longNames ? "long Unicode" : "1001"} names`, async () => {
       const names = Array.from(
-        { length: longNames ? 40 : 1000 },
+        { length: longNames ? 40 : 1001 },
         (_, i) =>
           `${String(i).padStart(4, "0")}-${
             longNames
@@ -267,7 +460,10 @@ for (const source of ["Sales Order", "Sales Invoice", "Warehouse"] as const) {
                 JSON.stringify(["company", "=", "Vietnam Company"])
             ),
           );
-          return Response.json({ data: names.map((name) => ({ name })) });
+          const offset = Number(url.searchParams.get("limit_start") ?? 0);
+          return Response.json({
+            data: names.slice(offset, offset + 1000).map((name) => ({ name })),
+          });
         }
         assertEquals(path, doctype);
         childRequests++;
@@ -344,7 +540,10 @@ for (const bin of [false, true]) {
           list: async (doctype, options) => {
             if (doctype === "Company") return [{ name: "Vietnam Company" }];
             if (doctype === (bin ? "Warehouse" : "Sales Order")) {
-              return names.map((name) => ({ name }));
+              return names.slice(
+                options?.limit_start ?? 0,
+                (options?.limit_start ?? 0) + 1000,
+              ).map((name) => ({ name }));
             }
             const scopeField = bin ? "warehouse" : "parent";
             const chunk = options!.filters!.find((filter) =>
@@ -414,7 +613,10 @@ Deno.test("analytics scope stable merge keeps the global cap when sort values ti
       list: async (doctype, options) => {
         if (doctype === "Company") return [{ name: "Vietnam Company" }];
         if (doctype === "Warehouse") {
-          return names.map((name) => ({ name }));
+          return names.slice(
+            options?.limit_start ?? 0,
+            (options?.limit_start ?? 0) + 1000,
+          ).map((name) => ({ name }));
         }
         requests++;
         const chunk = options!.filters!.find((filter) =>

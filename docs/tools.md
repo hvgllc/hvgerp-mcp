@@ -397,11 +397,14 @@ Lead counts still cover all visible Leads; subsequent stages belong to the
 selected company. Radar values remain normalized 0-100; its money dimensions
 name the currency without treating count dimensions as money.
 
-These changes do not make capped list queries complete. Existing row limits
-remain; parent and Warehouse ownership lookups are capped at 1,000 rows each.
-Large datasets can therefore be partial. Use authoritative ERPNext reports for
-complete financial statements; do not treat these charts as reconciliation
-totals.
+These changes do not make capped child/document queries complete. Their existing
+row limits remain, so large datasets can still be partial. Parent and Warehouse
+ownership discovery reads successive 1,000-name pages in name order, preserving
+company and document-status filters. It fails rather than returning partial
+scope on invalid/repeated names, a later-page error, or more than 100,000
+ownership names. These separate reads are not a transactional snapshot. Use
+authoritative ERPNext reports for complete financial statements; do not treat
+these charts as reconciliation totals.
 
 Ownership IDs are split by encoded request-target length (6,000 bytes for the
 API path and query, leaving headroom for a proxy prefix). A single ID plus the
@@ -413,6 +416,11 @@ preserved; scoped reads without an order now explicitly use `modified desc`.
 Estimated gross-margin cost still uses the first positive Bin valuation in that
 ordered set. Equal sort values retain chunk order and then server order within
 the chunk, without promising equivalence to database tie ordering.
+
+The Item stock-UOM lookup for price-vs-quantity uses the same 6,000-byte request
+budget, including fields, filters, order and limit. Every requested Item must be
+returned exactly once in its own chunk; missing, duplicate or unrelated rows
+raise an error. A failed chunk never produces a partial chart or stock fallback.
 
 | Tool                        | Viewer | Description                                           |
 | --------------------------- | ------ | ----------------------------------------------------- |

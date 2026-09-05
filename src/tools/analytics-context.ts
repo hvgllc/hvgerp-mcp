@@ -30,6 +30,69 @@ function listRequestTargetLength(
   return `/api/resource/${encodeURIComponent(doctype)}?${params}`.length;
 }
 
+function chunkRequestNames(
+  doctype: string,
+  names: string[],
+  queryOptions: (names: string[]) => FrappeListOptions,
+): string[][] {
+  const chunks: string[][] = [];
+  let current: string[] = [];
+  for (const name of new Set(names)) {
+    const candidate = [...current, name];
+    if (
+      listRequestTargetLength(doctype, queryOptions(candidate)) <=
+        SCOPE_REQUEST_TARGET_BUDGET
+    ) {
+      current = candidate;
+      continue;
+    }
+    if (current.length) chunks.push(current);
+    current = [name];
+    if (
+      listRequestTargetLength(doctype, queryOptions(current)) >
+        SCOPE_REQUEST_TARGET_BUDGET
+    ) {
+      throw new Error(
+        `Analytics ${doctype} scope cannot fit within the encoded request budget.`,
+      );
+    }
+  }
+  if (current.length) chunks.push(current);
+  return chunks;
+}
+
+export async function listAnalyticsItemUnits(
+  ctx: ErpNextToolContext,
+  names: string[],
+): Promise<FrappeDoc[]> {
+  const queryOptions = (chunk: string[]): FrappeListOptions => ({
+    fields: ["name", "stock_uom"],
+    filters: [["name", "in", chunk]],
+    limit: chunk.length,
+    order_by: "name asc",
+  });
+  const chunks = chunkRequestNames("Item", names, queryOptions);
+  const result: FrappeDoc[] = [];
+  for (const chunk of chunks) {
+    const rows = await ctx.client.list("Item", queryOptions(chunk));
+    const remaining = new Set(chunk);
+    for (const row of rows) {
+      if (typeof row?.name !== "string" || !remaining.delete(row.name)) {
+        throw new Error(
+          "Analytics Item lookup returned a duplicate or unrequested name.",
+        );
+      }
+    }
+    if (remaining.size) {
+      throw new Error(
+        "Analytics Item lookup is missing a requested item; verified stock UOM is unavailable.",
+      );
+    }
+    result.push(...rows);
+  }
+  return result;
+}
+
 async function listScoped(
   ctx: ErpNextToolContext,
   doctype: string,
@@ -62,29 +125,7 @@ async function listScoped(
     limit,
     order_by: orderBy,
   });
-  const chunks: string[][] = [];
-  let current: string[] = [];
-  for (const name of new Set(names)) {
-    const candidate = [...current, name];
-    if (
-      listRequestTargetLength(doctype, queryOptions(candidate)) <=
-        SCOPE_REQUEST_TARGET_BUDGET
-    ) {
-      current = candidate;
-      continue;
-    }
-    if (current.length) chunks.push(current);
-    current = [name];
-    if (
-      listRequestTargetLength(doctype, queryOptions(current)) >
-        SCOPE_REQUEST_TARGET_BUDGET
-    ) {
-      throw new Error(
-        `Analytics ${doctype} scope cannot fit within the encoded request budget.`,
-      );
-    }
-  }
-  if (current.length) chunks.push(current);
+  const chunks = chunkRequestNames(doctype, names, queryOptions);
 
   let result: FrappeDoc[] = [];
   for (const chunk of chunks) {
@@ -180,6 +221,51 @@ export interface AnalyticsContext {
   listBins: (options: FrappeListOptions) => Promise<FrappeDoc[]>;
 }
 
+async function listOwnershipNames(
+  listDocuments: AnalyticsContext["listDocuments"],
+  doctype: string,
+  filters: FrappeFilter[] = [],
+): Promise<string[]> {
+  const pageSize = 1000;
+  const maxNames = 100000;
+  const names = new Set<string>();
+  for (let offset = 0;; offset += pageSize) {
+    const rows = await listDocuments(doctype, {
+      fields: ["name"],
+      filters,
+      limit: pageSize,
+      limit_start: offset,
+      order_by: "name asc",
+    });
+    if (rows.length > pageSize) {
+      throw new Error(
+        `Analytics ${doctype} ownership page exceeds its requested size.`,
+      );
+    }
+    for (const row of rows) {
+      const name = row?.name;
+      if (typeof name !== "string" || name.trim() === "") {
+        throw new Error(
+          `Analytics ${doctype} ownership lookup returned an invalid name.`,
+        );
+      }
+      // Trang lặp hoặc dịch chuyển không được xem là tập ownership đầy đủ.
+      if (names.has(name)) {
+        throw new Error(
+          `Analytics ${doctype} ownership pagination did not make unique progress.`,
+        );
+      }
+      names.add(name);
+      if (names.size > maxNames) {
+        throw new Error(
+          `Analytics ${doctype} ownership lookup exceeds the ${maxNames} name safety limit.`,
+        );
+      }
+    }
+    if (rows.length < pageSize) return [...names];
+  }
+}
+
 export async function resolveAnalyticsContext(
   ctx: ErpNextToolContext,
   input: Record<string, unknown>,
@@ -205,18 +291,11 @@ export async function resolveAnalyticsContext(
       const parentFilters = (options.filters ?? []).filter((filter) =>
         filter[0] === "docstatus"
       );
-      const parents = await listDocuments(parentType, {
-        fields: ["name"],
-        filters: parentFilters,
-        limit: 1000,
-        order_by: "name asc",
-      });
-      const names = parents.map((row) => row.name);
-      if (names.some((name) => typeof name !== "string" || name === "")) {
-        throw new Error(
-          `Analytics ${parentType} lookup returned an invalid parent name.`,
-        );
-      }
+      const names = await listOwnershipNames(
+        listDocuments,
+        parentType,
+        parentFilters,
+      );
       if (names.length === 0) return [];
       return await listScoped(
         ctx,
@@ -243,15 +322,8 @@ export async function resolveAnalyticsContext(
       );
     },
     listBins: async (options) => {
-      warehouses ??= listDocuments("Warehouse", {
-        fields: ["name"],
-        limit: 1000,
-        order_by: "name asc",
-      }).then((rows) => rows.map((row) => row.name));
+      warehouses ??= listOwnershipNames(listDocuments, "Warehouse");
       const names = await warehouses;
-      if (names.some((name) => typeof name !== "string" || name === "")) {
-        throw new Error("Analytics Warehouse lookup returned an invalid name.");
-      }
       if (names.length === 0) return [];
       return await listScoped(
         ctx,

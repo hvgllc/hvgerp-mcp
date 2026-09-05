@@ -24,6 +24,7 @@ import { siteToday } from "./site-date.ts";
 import {
   analyticsNumber,
   companyAnalyticsTool,
+  listAnalyticsItemUnits,
   resolveReportCompany,
 } from "./analytics-context.ts";
 import { CHART_META, FUNNEL_META, KPI_META } from "./viewer-meta.ts";
@@ -943,11 +944,7 @@ export const analyticsTools: ErpNextTool[] = [
         };
       }
 
-      const itemDocs = await ctx.client.list("Item", {
-        fields: ["name", "stock_uom"],
-        filters: [["name", "in", limited]],
-        limit: limited.length,
-      });
+      const itemDocs = await listAnalyticsItemUnits(ctx, limited);
       const stockUnits = new Map(
         itemDocs.map((item) => [item.name, item.stock_uom]),
       );

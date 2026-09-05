@@ -38,15 +38,19 @@ the chart response structure without inventing conversion rates.
 
 Single-company callers can keep omitting `company`, but now need permission to
 read Company and ownership records. P&L retains its existing report currency
-source and permission requirements. Financial charts retain row limits,
-including 1,000 parent documents and 1,000 warehouses for ownership resolution.
-Those limits are not proof of completeness. Pure count/quantity tools retain
-their scope; funnel Lead counts remain site-wide among visible records.
-Ownership filters are divided into encoded-size-bounded requests. Each chunk can
-contribute up to N candidates, but the merged result remains capped at N. Scoped
-reads now explicitly order by `modified desc` when no order was set; the
-previous API call did not guarantee an order. This makes the first-positive Bin
-cost estimate follow that ordered set, not an assumed accounting rule.
+source and permission requirements. Financial charts retain child/document row
+limits, which are not proof of completeness. Ownership resolution now reads all
+parent/Warehouse pages, with an explicit failure above 100,000 names or when a
+page fails or repeats names, instead of silently using only the first 1,000. It
+does not provide a transactional snapshot across requests. Pure count/quantity
+tools retain their scope; funnel Lead counts remain site-wide among visible
+records. Ownership filters are divided into encoded-size-bounded requests. Each
+chunk can contribute up to N candidates, but the merged result remains capped at
+N. Scoped reads now explicitly order by `modified desc` when no order was set;
+the previous API call did not guarantee an order. This makes the first-positive
+Bin cost estimate follow that ordered set, not an assumed accounting rule. Item
+UOM verification also uses encoded-size-bounded requests and rejects incomplete
+or unrelated results without returning a partial price chart.
 
 ## How link resolution works — and why writes are stricter
 

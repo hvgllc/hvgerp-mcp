@@ -12,8 +12,172 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { SchemaValidator } from "@casys/mcp-server";
 import { analyticsTools } from "./analytics.ts";
-import type { FrappeClient } from "../api/frappe-client.ts";
+import { FrappeClient } from "../api/frappe-client.ts";
 import type { ErpNextToolContext } from "./types.ts";
+
+for (const kind of ["ordinary", "long", "Unicode"] as const) {
+  Deno.test(`scatter Item UOM lookup bounds actual URLs for 200 ${kind} codes`, async () => {
+    const names = Array.from(
+      { length: 200 },
+      (_, i) =>
+        `ITEM-CODE-2026-${String(i).padStart(8, "0")}-${
+          kind === "Unicode"
+            ? "Kho hàng 東京/&".repeat(8)
+            : kind === "long"
+            ? "X".repeat(100)
+            : "stock"
+        }`,
+    );
+    const original = globalThis.fetch;
+    const requested: string[] = [];
+    let itemReads = 0;
+    globalThis.fetch = async (input) => {
+      const url = new URL(String(input));
+      const path = decodeURIComponent(
+        url.pathname.replace("/api/resource/", ""),
+      );
+      if (path === "Company/Vietnam Company") {
+        return Response.json({
+          data: { name: "Vietnam Company", default_currency: "VND" },
+        });
+      }
+      if (path === "Item Price") {
+        return Response.json({
+          data: names.map((item_code, i) => ({
+            item_code,
+            currency: "VND",
+            uom: "Unit",
+            price_list_rate: i + 10,
+          })),
+        });
+      }
+      if (path === "Sales Order") {
+        return Response.json({ data: [{ name: "SO-1" }] });
+      }
+      if (path === "Sales Order Item") {
+        return Response.json({
+          data: names.map((item_code, i) => ({
+            name: `ROW-${i}`,
+            parent: "SO-1",
+            parenttype: "Sales Order",
+            item_code,
+            stock_qty: i + 1,
+          })),
+        });
+      }
+      assertEquals(path, "Item");
+      assert(
+        (url.pathname + url.search).length <= 6000,
+        "Actual Item request exceeds encoded budget",
+      );
+      itemReads++;
+      const filters = JSON.parse(url.searchParams.get("filters")!);
+      const chunk: string[] = filters[0][2];
+      assertEquals(filters, [["name", "in", chunk]]);
+      assertEquals(Number(url.searchParams.get("limit")), chunk.length);
+      assertEquals(JSON.parse(url.searchParams.get("fields")!), [
+        "name",
+        "stock_uom",
+      ]);
+      requested.push(...chunk);
+      return Response.json({
+        data: [...chunk].reverse().map((name) => ({ name, stock_uom: "Unit" })),
+      });
+    };
+    try {
+      const result = await getTool("erpnext_price_vs_qty").handler(
+        { company: "Vietnam Company", limit: 200 },
+        makeCtx(
+          new FrappeClient({
+            baseUrl: "https://fixture.invalid",
+            apiKey: "fixture",
+            apiSecret: "fixture",
+            retries: 0,
+          }),
+        ),
+      ) as any;
+      assert(itemReads > 1);
+      assertEquals(requested, names);
+      assertEquals(
+        result.scatterData[0].points,
+        names.map((label, i) => ({ x: i + 10, y: i + 1, label })),
+      );
+      assertEquals(result.xAxisLabel, "Selling Price (VND/stock unit)");
+      assertEquals(result.refreshRequest.arguments.company, "Vietnam Company");
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+}
+
+for (
+  const failure of [
+    "oversized",
+    "later-error",
+    "duplicate",
+    "outside",
+    "missing",
+  ]
+) {
+  Deno.test(`scatter Item UOM lookup rejects ${failure} without fallback or partial chart`, async () => {
+    const names = failure === "oversized"
+      ? ["東京".repeat(1000)]
+      : Array.from({ length: 200 }, (_, i) => `ITEM-${i}-${"X".repeat(100)}`);
+    const denied = new Error("Later Item lookup denied");
+    let itemReads = 0;
+    let fallbackReads = 0;
+    const client = makeMockClient({
+      get: async (_doctype, name) => ({ name, default_currency: "VND" }),
+      list: async (doctype, options) => {
+        if (doctype === "Item Price") {
+          return names.map((item_code) => ({
+            name: item_code,
+            item_code,
+            currency: "VND",
+            uom: "Unit",
+            price_list_rate: 10,
+          }));
+        }
+        if (doctype === "Sales Order") return [{ name: "SO-1" }];
+        if (doctype === "Sales Order Item") {
+          return names.map((item_code) => ({
+            name: item_code,
+            parent: "SO-1",
+            parenttype: "Sales Order",
+            item_code,
+            stock_qty: 1,
+          }));
+        }
+        if (doctype !== "Item") {
+          fallbackReads++;
+          return [];
+        }
+        itemReads++;
+        const chunk = options!.filters![0][2] as string[];
+        if (failure === "later-error" && itemReads === 2) throw denied;
+        const rows = chunk.map((name) => ({ name, stock_uom: "Unit" }));
+        if (failure === "duplicate") return [rows[0], ...rows];
+        if (failure === "outside") {
+          return [...rows, { name: names.at(-1)!, stock_uom: "Unit" }];
+        }
+        if (failure === "missing") return rows.slice(1);
+        return rows;
+      },
+    });
+    const error = await assertRejects(() =>
+      getTool("erpnext_price_vs_qty").handler({
+        company: "Vietnam Company",
+        limit: 200,
+      }, makeCtx(client))
+    );
+    if (failure === "later-error") {
+      assertEquals(error, denied);
+      assertEquals(itemReads, 2);
+    }
+    if (failure === "oversized") assertEquals(itemReads, 0);
+    assertEquals(fallbackReads, 0);
+  });
+}
 
 Deno.test("analytics currency - sales totals use recorded VND base amounts", async () => {
   const calls: { doctype: string; options: any }[] = [];
@@ -429,7 +593,11 @@ function makeVndAnalyticsClient(
       }
       if (doctype === "Item") {
         if (options.itemError) throw options.itemError;
-        return [1, 2].map((n) => ({ name: `ITEM-${n}`, stock_uom: "Unit" }));
+        const requested = opts.filters.find((f: unknown[]) =>
+          f[0] === "name"
+        )[2] as string[];
+        return [1, 2].map((n) => ({ name: `ITEM-${n}`, stock_uom: "Unit" }))
+          .filter((item) => requested.includes(item.name));
       }
       throw new Error(`Unexpected fixture doctype ${doctype}`);
     },
