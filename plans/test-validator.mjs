@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
@@ -53,16 +53,18 @@ function readGitFixture(
 }
 
 function run(replacements = {}, hidden = [], filesystem = {}, gitOutput) {
-  const messages = [], historicalReads = [];
+  const messages = [], historicalReads = [], existenceChecks = [];
   let gitSubprocesses = 0;
   const state = { exitCode: 0 };
   let thrown;
   try {
     runInNewContext(source, {
-      existsSync: (path) =>
-        !hidden.includes(relative(repoRoot, path)) &&
-        (Object.hasOwn(filesystem, relative(repoRoot, path)) ||
-          existsSync(path)),
+      existsSync: (path) => {
+        existenceChecks.push(path);
+        return !hidden.includes(relative(repoRoot, path)) &&
+          (Object.hasOwn(filesystem, relative(repoRoot, path)) ||
+            existsSync(path));
+      },
       lstatSync: (path) => {
         const kind = filesystem[relative(repoRoot, path)];
         return kind
@@ -94,6 +96,7 @@ function run(replacements = {}, hidden = [], filesystem = {}, gitOutput) {
           : readGitFixture(command, args, settings, execute);
       },
       dirname,
+      isAbsolute,
       Buffer,
       createHash,
       relative,
@@ -115,6 +118,7 @@ function run(replacements = {}, hidden = [], filesystem = {}, gitOutput) {
     historicalReads,
     thrown,
     gitSubprocesses,
+    existenceChecks,
   };
 }
 
@@ -958,6 +962,64 @@ test("nested Markdown resolves links from its containing directory", () => {
   const result = run();
   assert.equal(result.exitCode, 0, result.messages.join("\n"));
 });
+for (
+  const target of [
+    "/etc/passwd",
+    "../../../outside-plan.md",
+    "../../../backlog-sibling/outside-plan.md",
+    "../../src/../../../outside-plan.md",
+    "C:/Windows/win.ini",
+    "C:outside-plan.md",
+    "C:\\Windows\\win.ini",
+    "\\\\server\\share\\outside-plan.md",
+    "..\\..\\..\\outside-plan.md",
+    "//server/share/outside-plan.md",
+  ]
+) {
+  test(
+    "Markdown repository boundary rejects before filesystem lookup: " + target,
+    () => {
+      const report = "plans/evidence/backlog-review.md";
+      const resolved = resolve(repoRoot, dirname(report), target);
+      const result = run(
+        {
+          [report]: (text) => text + `\n[Boundary fixture](${target})\n`,
+        },
+        [],
+        { [relative(repoRoot, resolved)]: "file" },
+      );
+      assert.equal(result.thrown, undefined);
+      assert.equal(
+        result.exitCode,
+        1,
+        "Validator accepted an existing unsafe link",
+      );
+      assert.deepEqual(result.messages, [
+        "evidence/backlog-review.md: unsafe Markdown link " + target,
+      ]);
+      assert.equal(result.existenceChecks.includes(resolved), false);
+    },
+  );
+}
+for (
+  const target of [
+    "../../README.md",
+    "../../src/../README.md",
+    "./../evidence/../../README.md#overview",
+    "https://example.test/../outside-plan.md#overview",
+    "http://example.test/document",
+    "#local-anchor",
+  ]
+) {
+  test("Markdown repository boundary preserves valid target: " + target, () => {
+    const result = run({
+      "plans/evidence/backlog-review.md": (text) =>
+        text + `\n[Boundary fixture](${target})\n`,
+    });
+    assert.equal(result.thrown, undefined);
+    assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  });
+}
 test("refreshed baseline retains historical source but DONE requires definition re-review", () => {
   const ref = "013a1cfda64d41b3e62658ff16f7e25be0b3b4c7";
   const current = execFileSync("git", ["show", ref + ":src/auth/config.ts"], {

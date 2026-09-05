@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const planRoot = dirname(fileURLToPath(import.meta.url));
@@ -625,7 +625,19 @@ for (const filePath of planFiles(planRoot)) {
     for (const [, target] of body.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)) {
       if (/^(https?:|#)/.test(target)) continue;
       const clean = target.split("#")[0];
-      if (clean && !existsSync(resolve(dirname(filePath), clean))) {
+      if (!clean) continue;
+      if (isAbsolute(clean) || /^[a-z]:/i.test(clean) || clean.includes("\\")) {
+        fail(file + ": unsafe Markdown link " + target);
+        continue;
+      }
+      const resolved = resolve(dirname(filePath), clean);
+      const scoped = relative(repoRoot, resolved);
+      // Cho phép ../ trong repo, nhưng không hỏi filesystem về đường dẫn thoát repo.
+      if (isAbsolute(scoped) || scoped.split(/[\\/]/)[0] === "..") {
+        fail(file + ": unsafe Markdown link " + target);
+        continue;
+      }
+      if (!existsSync(resolved)) {
         fail(file + ": link hỏng " + target);
       }
     }
