@@ -1,11 +1,12 @@
-/** Inline detail panel for a stock line — shows item info, recent movements, and navigation */
+/** Chi tiết mặt hàng, chuyển động gần đây và điều hướng theo dòng kho đang chọn. */
 
 import { useEffect, useState } from "react";
-import { App } from "@modelcontextprotocol/ext-apps";
+import type { App } from "@modelcontextprotocol/ext-apps";
 import { colors, fonts, styles } from "~/shared/theme";
 import { InfoField } from "~/shared/InfoField";
 import { ActionButton } from "~/shared/ActionButton";
-import { extractToolResultText } from "~/shared/refresh";
+import { loadStockDetails } from "~/shared/stock-movements";
+import type { StockDetailsState } from "~/shared/stock-movements";
 
 const TOOL_CALL_TIMEOUT_MS = 10_000;
 
@@ -15,52 +16,27 @@ export function StockDetailPanel({ app, itemCode, warehouse, onClose }: {
   warehouse: string;
   onClose: () => void;
 }) {
-  const [itemData, setItemData] = useState<Record<string, unknown> | null>(
-    null,
-  );
-  const [movements, setMovements] = useState<Record<string, unknown>[] | null>(
-    null,
-  );
-  const [loading, setLoading] = useState(true);
+  const [details, setDetails] = useState<
+    { identity: string; state: StockDetailsState } | null
+  >(null);
+  const identity = JSON.stringify([itemCode, warehouse]);
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      try {
-        const [itemRes, moveRes] = await Promise.all([
-          app.callServerTool({
-            name: "erpnext_item_get",
-            arguments: { name: itemCode },
-          }, { timeout: TOOL_CALL_TIMEOUT_MS }),
-          app.callServerTool({
-            name: "erpnext_stock_entry_list",
-            arguments: { limit: 5, item_code: itemCode },
-          }, { timeout: TOOL_CALL_TIMEOUT_MS }),
-        ]);
-        if (cancelled) return;
-        if (!itemRes.isError) {
-          const t = extractToolResultText(itemRes);
-          if (t) {
-            const p = JSON.parse(t);
-            setItemData(p.data ?? p);
-          }
-        }
-        if (!moveRes.isError) {
-          const t = extractToolResultText(moveRes);
-          if (t) {
-            const p = JSON.parse(t);
-            setMovements(p.data ?? []);
-          }
-        }
-      } catch { /* ignore */ }
-      if (!cancelled) setLoading(false);
-    })();
+    void loadStockDetails(
+      (request) =>
+        app.callServerTool(request, { timeout: TOOL_CALL_TIMEOUT_MS }),
+      itemCode,
+      warehouse,
+      () => !cancelled,
+      (state) => setDetails({ identity, state }),
+    );
     return () => {
       cancelled = true;
     };
-  }, [itemCode]);
+  }, [app, itemCode, warehouse, identity]);
 
-  if (loading) {
+  if (!details || details.identity !== identity || details.state.itemLoading) {
     return (
       <div
         style={{
@@ -79,6 +55,9 @@ export function StockDetailPanel({ app, itemCode, warehouse, onClose }: {
       </div>
     );
   }
+
+  const { itemData, movements, itemError, movementsError, movementsLoading } =
+    details.state;
 
   return (
     <div
@@ -121,6 +100,11 @@ export function StockDetailPanel({ app, itemCode, warehouse, onClose }: {
       </div>
 
       {/* Item info */}
+      {itemError && (
+        <div role="alert" style={{ color: colors.error, marginBottom: 10 }}>
+          Item: {itemError}
+        </div>
+      )}
       {itemData && (
         <div
           style={{
@@ -153,6 +137,24 @@ export function StockDetailPanel({ app, itemCode, warehouse, onClose }: {
       )}
 
       {/* Recent movements */}
+      {movementsLoading && (
+        <div
+          role="status"
+          style={{ color: colors.text.muted, marginBottom: 10 }}
+        >
+          Loading recent movements…
+        </div>
+      )}
+      {movementsError && (
+        <div role="alert" style={{ color: colors.error, marginBottom: 10 }}>
+          {movementsError}
+        </div>
+      )}
+      {movements?.length === 0 && (
+        <div style={{ color: colors.text.muted, marginBottom: 10 }}>
+          No recent movements for this item and warehouse.
+        </div>
+      )}
       {movements && movements.length > 0 && (
         <div style={{ marginBottom: 10 }}>
           <div
@@ -166,9 +168,9 @@ export function StockDetailPanel({ app, itemCode, warehouse, onClose }: {
           >
             Recent Movements
           </div>
-          {movements.slice(0, 4).map((m, i) => (
+          {movements.map((m) => (
             <div
-              key={i}
+              key={m.name}
               style={{
                 display: "flex",
                 justifyContent: "space-between",
@@ -178,12 +180,16 @@ export function StockDetailPanel({ app, itemCode, warehouse, onClose }: {
               }}
             >
               <span style={{ color: colors.text.secondary }}>
-                {String(m.stock_entry_type ?? m.name ?? "—")}
+                {m.voucher_type} {m.voucher_no}
               </span>
               <span
                 style={{ fontFamily: fonts.mono, color: colors.text.primary }}
               >
-                {String(m.posting_date ?? "—")}
+                {m.posting_date} {m.posting_time}
+              </span>
+              <span>
+                {m.actual_qty > 0 ? "+" : ""}
+                {m.actual_qty} {m.stock_uom}
               </span>
             </div>
           ))}
