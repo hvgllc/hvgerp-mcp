@@ -35,6 +35,33 @@ const result = await ctx.client.callMethod("frappe.client.submit", {
 **Note**: `frappe.client.cancel` does NOT have this problem — it accepts
 `{doctype, name}`.
 
+### Guarded Kanban moves need fresh state and a timestamp (2026-09-05)
+
+**Symptom**: A cached status can agree with the board after another writer has
+already moved the document. Even an uncached GET leaves a race before PUT.
+
+**Applied fix**: Task, Opportunity and Issue adapters read with
+`{ skipCache: true }`, check `fromColumn`, then send `{ status, modified }` in
+the update. A missing, non-string or blank timestamp fails closed without PUT.
+The timestamp is forwarded unchanged. Conflict, permission and transport errors
+remain `FrappeAPIError`; adapters do not retry writes or report false success.
+
+**Upstream contract inspected**: Frappe commit
+`755b5cb81fabb431265690fca07f4a8038a5599a`:
+
+- [REST update_doc](https://github.com/frappe/frappe/blob/755b5cb81fabb431265690fca07f4a8038a5599a/frappe/api/v1.py#L46)
+  loads with `for_update=True`, applies the request fields and calls `save()`.
+- [Document save path](https://github.com/frappe/frappe/blob/755b5cb81fabb431265690fca07f4a8038a5599a/frappe/model/document.py#L353)
+  preserves the submitted timestamp as `_original_modified` and compares it
+  against another locked read before updating the database. A mismatch raises
+  `TimestampMismatchError`.
+
+This is source-level verification at that commit, not proof of the version or
+custom hooks on a deployed ERPNext site. Tests use the real client/cache with
+fake HTTP responses; they verify outgoing tokens and error propagation, not
+database locking. Recheck this contract when supporting a different Frappe
+version. Generic document updates and transition rules are unchanged.
+
 ### Item's unit of measure is `stock_uom`, not `uom`
 
 **Symptom**: `erpnext_item_create` accepted a `uom` argument and the created

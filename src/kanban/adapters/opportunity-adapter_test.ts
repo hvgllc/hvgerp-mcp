@@ -2,6 +2,37 @@ import { assert, assertEquals } from "@std/assert";
 import { opportunityKanbanAdapter } from "./opportunity.ts";
 import type { ErpNextToolContext } from "../../tools/types.ts";
 
+for (const modified of [undefined, null, "", "   ", 42]) {
+  Deno.test(
+    "opportunity kanban adapter - rejects missing modified " +
+      JSON.stringify(modified),
+    async () => {
+      let writes = 0;
+      const ctx: ErpNextToolContext = {
+        client: {
+          get: async (_doctype: string, _name: string, options: unknown) => {
+            assertEquals(options, { skipCache: true });
+            return { name: "MOVE-001", status: "Open", modified };
+          },
+          update: async () => {
+            writes++;
+            return {};
+          },
+        } as unknown as ErpNextToolContext["client"],
+      };
+      const result = await opportunityKanbanAdapter.executeMove({
+        doctype: "Opportunity",
+        cardId: "MOVE-001",
+        fromColumn: "open",
+        toColumn: "quotation",
+      }, ctx);
+      assertEquals(result.ok, false);
+      assert(result.errorMessage?.includes("modified"));
+      assertEquals(writes, 0);
+    },
+  );
+}
+
 Deno.test("opportunity kanban adapter - exposes Opportunity columns and filters", () => {
   const columns = opportunityKanbanAdapter.getColumns();
   const allowedTransitions = opportunityKanbanAdapter.getAllowedTransitions();
@@ -86,6 +117,7 @@ Deno.test("opportunity kanban adapter - executes an allowed move through Opportu
         title: "ACME renewal",
         party_name: "Acme Corp",
         status: "Open",
+        modified: "2026-09-05 10:00:00.000001",
       }),
       update: async (
         doctype: string,
@@ -119,7 +151,10 @@ Deno.test("opportunity kanban adapter - executes an allowed move through Opportu
 
   assertEquals(capturedDoctype, "Opportunity");
   assertEquals(capturedName, "CRM-OPP-2026-00001");
-  assertEquals(capturedData, { status: "Quotation" });
+  assertEquals(capturedData, {
+    status: "Quotation",
+    modified: "2026-09-05 10:00:00.000001",
+  });
   assertEquals(result.ok, true);
   assertEquals(result.serverCard?.columnId, "quotation");
 });
