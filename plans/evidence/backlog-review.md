@@ -808,3 +808,49 @@ worktree sạch: `node --test plans/test-validator.mjs plans/test-history.mjs` �
 Validator 25/25, format 60 file, lint ba helper và diff check đạt. Git diff xác
 nhận validator production, history helper, toàn bộ plan/manifest và 13 approval
 giữ nguyên so với d37b6d4. Không dùng trạng thái giả lập để sửa tiến độ thật.
+
+## Review bổ sung và đồng bộ sau khi 006/017 merge
+
+Reviewer `/root/goal_execute_006` APPROVE sửa fixture P2 tại
+`ca55a96fd4ed50de06e98f7d2acf05f117d8bdc9`, tree
+`2da9ac0784457deaf359022b07ba90549e0d2775`. Tự chạy 164 test, validator 25/25,
+format 60 file, lint ba helper, history và diff check đều đạt. Bỏ riêng bước
+thiết lập non-DONE trong VM làm cả tám control thất bại đúng premise; giữ bước
+này thì cả tám đạt. Không tạo approval giả, không nới production validator.
+
+Merge main `67896f3208caee923659f1900c399d87e99c403c` sạch vào backlog tại
+`2ce89ffb719a32ee3501d44a11d03fea0a0b2690`. Source ngoài plans bằng main này.
+Đồng bộ trạng thái DONE và proof thật của 006/017, 38 artifact 017 có sẵn từ
+merge; cập nhật quote 013/014/020 theo dòng mới của 006, không thay literal hoặc
+thu hẹp scope. 013 và 025 bắt đầu IN_PROGRESS, phụ thuộc 005/006 đã DONE.
+Snapshot tiến độ `ed1bd95affd1b09bf45d35c16e4279073fd7d004` chưa được tự cấp
+approval cho hai định nghĩa mới; validator báo đúng bốn diagnostic thiếu
+binding.
+
+Reviewer `/root/execute_integration_015_017` tìm qualifier host017 cũ chỉ nhắc
+malformed-payload, chưa phản ánh fixture ngày SO/QTN và held refresh của R2.
+Parent đọc diff source R2 và cập nhật qualifier cùng maintenance, giữ nguyên
+acceptance. Reviewer đọc lại và APPROVE riêng definition 006/017 tại snapshot
+`a6a80dfcd88094ecd6e2475f9cde6cba0af72b5d`:
+
+- Manifest blob: `db1f4a97d6de9e73608191b781537f8aa7f6c25b`.
+- Plan 006 blob: `4c006989f10e7e8ed9b687cca2da02a5dfd92b2f`.
+- Plan 017 blob: `7a75bd2b93a07aade32d08416d859ec84d4a51da`.
+
+Review xác nhận sáu implementation field, source scope và artifact của hai mục
+khớp Git thật; 13 DONE cũ giữ nguyên plan blob, manifest record và binding tại
+b9d6d02. Đây là supplemental definition/proof-ledger review, không xác thực danh
+tính reviewer bằng offline, không hồi tố rằng PR implementation chứa plan và
+không thay review source/CI đã có.
+
+Sau khi nhận APPROVE mới thêm bốn field của 006/017, commit
+`c2154bc59893bec940654bba459ddadacb5a456f`, tree
+`7ce0faa45e4f9f746f813d1e1928046200437cc8`. Parent tự chạy validator 25/25 và
+164 helper/history test: 0 failed, 0 skipped. Build lại trên source main mới:
+server check, lint 208 file, format 288 file với vendor ignored, UI typecheck,
+UI build 7 viewer, Node build/syntax, pack dry-run 10 file/7 HTML và full Deno
+1314 passed, 0 failed, 4 ignored đều đạt. Node bundle SHA-256
+`da72878ff0b321a5e5e0477425d28f2e70dc2d85f96178fa2b82cd21b84cca35` khớp build
+tích hợp 006 đã kiểm trước đó. Các gate local dùng workaround frozen, không thay
+JSR thật; cần CI và Codex mới sau push PR25. Giữ merge history, không
+squash/rebase các commit provenance được clean-clone test bảo vệ.
