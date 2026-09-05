@@ -6,6 +6,8 @@ import {
   boardFixture,
   createDetailFixtureStore,
   SCENARIOS,
+  stockInventoryFixture,
+  stockLedgerFixture,
   TOOL_NAMES,
   toolArguments,
   UI_VIEWERS,
@@ -23,6 +25,8 @@ const viewer = UI_VIEWERS.find((name) => name === query.get("viewer")) ??
   "doclist-viewer";
 const scenario = SCENARIOS.find((name) => name === query.get("scenario")) ??
   "smoke";
+const stockScenario = viewer === "stock-viewer" &&
+  scenario.startsWith("stock-");
 const chartTypes = ["bar", "horizontal-bar", "pie", "donut"] as const;
 const chartType = chartTypes.find((name) => name === query.get("chart")) ??
   "bar";
@@ -121,6 +125,11 @@ function responseFor(
   name: string,
   args: Record<string, unknown>,
 ): FixtureResult {
+  if (viewer === "stock-viewer" && name.startsWith("erpnext_doc_")) {
+    return failure(
+      "Generic operations are unavailable in the local inventory-only host",
+    );
+  }
   if (name === TOOL_NAMES[viewer]) {
     if (scenario === "refresh-error") return failure("Local refresh error");
     if (viewer === "kanban-viewer") {
@@ -131,6 +140,7 @@ function responseFor(
         ? result(structuredClone(requestedBoard))
         : failure("Unknown local board project");
     }
+    if (stockScenario) return result(stockInventoryFixture());
     return result(
       viewerFixture(viewer, chartType),
     );
@@ -185,8 +195,8 @@ function responseFor(
   ) {
     return result({
       data: {
-        name: "ITEM-LOCAL",
-        item_name: "Local Item",
+        name: typeof args.name === "string" ? args.name : "ITEM-LOCAL",
+        item_name: stockScenario ? `Local ${String(args.name)}` : "Local Item",
         item_group: "Local Group",
         stock_uom: "Nos",
         standard_rate: 15,
@@ -196,14 +206,33 @@ function responseFor(
   if (name === "erpnext_stock_balance" && viewer === "invoice-viewer") {
     return result(viewerFixture("stock-viewer"));
   }
-  if (name === "erpnext_stock_entry_list" && viewer === "stock-viewer") {
-    return result({
-      data: [{
-        name: "STOCK-LOCAL",
-        stock_entry_type: "Material Receipt",
-        posting_date: "2026-09-05",
-      }],
-    });
+  if (name === "erpnext_stock_ledger_list" && viewer === "stock-viewer") {
+    if (
+      typeof args.item_code !== "string" || !args.item_code.trim() ||
+      typeof args.warehouse !== "string" || !args.warehouse.trim() ||
+      (args.limit !== undefined &&
+        (typeof args.limit !== "number" || !Number.isInteger(args.limit) ||
+          args.limit < 1 || args.limit > 20))
+    ) {
+      return failure("Invalid local stock ledger query");
+    }
+    if (scenario === "stock-permission") {
+      return failure(
+        "Permission denied for Stock Ledger Entry (local fixture)",
+      );
+    }
+    if (scenario === "stock-malformed") {
+      return result({
+        data: [{ name: "INVALID-LEDGER-ROW", actual_qty: "not-a-number" }],
+      });
+    }
+    return result(
+      stockLedgerFixture(
+        args.item_code,
+        args.warehouse,
+        args.limit as number | undefined,
+      ),
+    );
   }
   return failure(`Unsupported local fixture tool: ${name}`);
 }
@@ -225,7 +254,8 @@ bridge.oncalltool = async (params, extra) => {
       detailMutations.has(params.name))) ||
     (scenario === "board-race" &&
       (params.name === "erpnext_kanban_get_board" ||
-        params.name === "erpnext_kanban_move_card"));
+        params.name === "erpnext_kanban_move_card")) ||
+    (scenario === "stock-race" && params.name === "erpnext_stock_ledger_list");
   const reply = responseFor(params.name, args);
   function applySuccessfulMove() {
     if (params.name !== "erpnext_kanban_move_card" || reply.isError) return;
@@ -301,7 +331,11 @@ bridge.onerror = (error) => {
 async function sendSuccess() {
   await bridge.sendToolResult(
     result(
-      viewer === "kanban-viewer" ? board : viewerFixture(viewer, chartType),
+      viewer === "kanban-viewer"
+        ? board
+        : stockScenario
+        ? stockInventoryFixture()
+        : viewerFixture(viewer, chartType),
     ),
   );
   record({
