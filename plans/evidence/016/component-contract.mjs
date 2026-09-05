@@ -13,7 +13,7 @@ const payload = (value) => ({
   content: [{ type: "text", text: JSON.stringify(value) }],
 });
 
-function harness({ initialBoard = true } = {}) {
+function harness({ initialBoard = true, hostContext = "normal" } = {}) {
   const slots = [];
   const effects = [];
   const calls = [];
@@ -56,7 +56,17 @@ function harness({ initialBoard = true } = {}) {
       return { serverTools: true };
     }
     getHostContext() {
-      return { toolInfo: { tool: { name: "erpnext_kanban_get_board" } } };
+      if (hostContext === "missing") return undefined;
+      if (hostContext === "empty") return {};
+      return {
+        toolInfo: {
+          tool: {
+            name: hostContext === "normal"
+              ? "erpnext_kanban_get_board"
+              : hostContext,
+          },
+        },
+      };
     }
     connect() {
       return Promise.resolve();
@@ -171,6 +181,120 @@ function harness({ initialBoard = true } = {}) {
     input: (args) => app.ontoolinput({ arguments: args }),
     result: (value) => app.ontoolresult(value),
   };
+}
+
+for (const hostContext of ["missing", "empty"]) {
+  for (const scope of ["cold", "project", "page", "doctype"]) {
+    for (const failure of ["error", "malformed"]) {
+      test(`component optional host metadata ${hostContext} ${scope} ${failure}`, async () => {
+        const h = harness({ initialBoard: scope !== "cold", hostContext });
+        const b = scope === "page"
+          ? h.fixtures.pagedBoardFixture(50)
+          : h.fixtures.boardFixture("B");
+        if (scope === "doctype") {
+          b.doctype = "Issue";
+          b.boardId = "issue-board";
+          b.refreshArguments = { doctype: "Issue", status: "Open" };
+        }
+        h.input(b.refreshArguments);
+        h.result(
+          failure === "error"
+            ? { isError: true, ...payload({ message: "Unavailable" }) }
+            : { content: [{ type: "text", text: "{" }] },
+        );
+        assert.ok(h.render().state.error);
+        if (scope !== "cold") {
+          h.render().requestMove(
+            h.render().state.board.cards[0],
+            "Working",
+            "Start",
+          );
+          assert.equal(h.calls.length, 0);
+        }
+        const retry = h.render().requestBoardRefresh({ ignoreInterval: true });
+        assert.equal(
+          h.calls.length,
+          1,
+          "optional toolInfo must not disable recovery",
+        );
+        assert.equal(h.calls[0].request.name, "erpnext_kanban_get_board");
+        assert.deepEqual(
+          JSON.parse(JSON.stringify(h.calls[0].request.arguments)),
+          JSON.parse(JSON.stringify(b.refreshArguments)),
+        );
+        h.calls[0].resolve(payload(b));
+        assert.equal(await retry, true);
+        assert.equal(h.render().state.board.title, b.title);
+        assert.equal(h.render().state.error, null);
+      });
+    }
+  }
+}
+
+for (
+  const args of [
+    undefined,
+    null,
+    [],
+    "Task",
+    {},
+    { doctype: "" },
+    { doctype: 1 },
+    { doctype: ["Task"] },
+    { doctype: "Sales Invoice" },
+  ]
+) {
+  test(`component missing metadata invalid arguments do not dispatch ${JSON.stringify(args)}`, async () => {
+    const h = harness({ hostContext: "empty" });
+    h.input(args);
+    h.result({ isError: true, ...payload({ message: "Unavailable" }) });
+    await h.render().requestBoardRefresh({ ignoreInterval: true });
+    assert.equal(h.calls.length, 0);
+  });
+}
+
+for (const hostContext of ["unknown_tool", "erpnext_kanban_move_card"]) {
+  test(`component explicit non-read host tool cannot become retry ${hostContext}`, async () => {
+    const h = harness({ hostContext });
+    h.input(h.fixtures.boardFixture("B").refreshArguments);
+    h.result({ isError: true, ...payload({ message: "Unavailable" }) });
+    const retry = h.render().requestBoardRefresh({ ignoreInterval: true });
+    assert.equal(h.calls.length, 0);
+    await retry;
+  });
+}
+
+for (const stage of ["waiting", "recovering"]) {
+  test(`component cannot open old detail while host ${stage}`, async () => {
+    const h = harness();
+    const oldCard = h.render().state.board.cards[0];
+    h.input(h.fixtures.boardFixture("B").refreshArguments);
+    if (stage === "recovering") {
+      h.result({ isError: true, ...payload({ message: "Unavailable" }) });
+    }
+    h.render().handleCardTitleClick(oldCard);
+    assert.equal(
+      h.calls.length,
+      0,
+      "old detail must not start a read in the new session",
+    );
+    assert.equal(h.render().state.detail.selectedCardId, null);
+    const b = h.fixtures.boardFixture("B");
+    if (stage === "waiting") h.result(payload(b));
+    else {
+      const retry = h.render().requestBoardRefresh({ ignoreInterval: true });
+      h.calls[0].resolve(payload(b));
+      await retry;
+    }
+    assert.equal(h.render().state.detail.selectedCardId, null);
+    const before = h.calls.length;
+    h.render().handleCardTitleClick(h.render().state.board.cards[0]);
+    assert.equal(h.calls.length, before + 1);
+    assert.equal(h.calls[before].request.arguments.name, b.cards[0].id);
+    h.calls[before].resolve(payload({ data: { name: b.cards[0].id } }));
+    await tick();
+    assert.equal(h.render().state.detail.cardDetail.name, b.cards[0].id);
+  });
 }
 
 for (const scope of ["A", "B", "page"]) {

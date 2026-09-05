@@ -1268,12 +1268,18 @@ export function KanbanViewer() {
   useEffect(() => {
     app.ontoolinput = (params: { arguments?: Record<string, unknown> }) => {
       moveErrorRef.current = null;
-      const toolName = app.getHostContext()?.toolInfo?.tool.name;
+      // toolInfo là metadata tùy chọn; viewer này chỉ được retry tool đọc Kanban.
+      const toolName = app.getHostContext()?.toolInfo?.tool.name ??
+        "erpnext_kanban_get_board";
+      const args = params.arguments;
       refreshController.receiveInput(
-        toolName && params.arguments
+        toolName === "erpnext_kanban_get_board" && args &&
+          typeof args === "object" && !Array.isArray(args) &&
+          typeof args.doctype === "string" &&
+          ["Task", "Opportunity", "Issue"].includes(args.doctype)
           ? {
             toolName,
-            arguments: params.arguments,
+            arguments: args,
           }
           : null,
       );
@@ -1410,7 +1416,7 @@ export function KanbanViewer() {
   }
 
   function handleCardTitleClick(card: KanbanCardData) {
-    if (!boardRef.current) return;
+    if (!boardRef.current || !refreshController.ready) return;
     const cardId = card.id;
     const session = selectCard(boardRef.current.doctype, cardId);
 
