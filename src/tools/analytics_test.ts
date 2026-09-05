@@ -12,8 +12,238 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { SchemaValidator } from "@casys/mcp-server";
 import { analyticsTools } from "./analytics.ts";
-import type { FrappeClient } from "../api/frappe-client.ts";
+import { FrappeClient } from "../api/frappe-client.ts";
 import type { ErpNextToolContext } from "./types.ts";
+
+for (const kind of ["ordinary", "long", "Unicode"] as const) {
+  Deno.test(`scatter Item UOM lookup bounds actual URLs for 200 ${kind} codes`, async () => {
+    const names = Array.from(
+      { length: 200 },
+      (_, i) =>
+        `ITEM-CODE-2026-${String(i).padStart(8, "0")}-${
+          kind === "Unicode"
+            ? "Kho hàng 東京/&".repeat(8)
+            : kind === "long"
+            ? "X".repeat(100)
+            : "stock"
+        }`,
+    );
+    const original = globalThis.fetch;
+    const requested: string[] = [];
+    let itemReads = 0;
+    globalThis.fetch = async (input) => {
+      const url = new URL(String(input));
+      const path = decodeURIComponent(
+        url.pathname.replace("/api/resource/", ""),
+      );
+      if (path === "Company/Vietnam Company") {
+        return Response.json({
+          data: { name: "Vietnam Company", default_currency: "VND" },
+        });
+      }
+      if (path === "Item Price") {
+        return Response.json({
+          data: names.map((item_code, i) => ({
+            item_code,
+            currency: "VND",
+            uom: "Unit",
+            price_list_rate: i + 10,
+          })),
+        });
+      }
+      if (path === "Sales Order") {
+        return Response.json({ data: [{ name: "SO-1" }] });
+      }
+      if (path === "Sales Order Item") {
+        return Response.json({
+          data: names.map((item_code, i) => ({
+            name: `ROW-${i}`,
+            parent: "SO-1",
+            parenttype: "Sales Order",
+            item_code,
+            stock_qty: i + 1,
+          })),
+        });
+      }
+      assertEquals(path, "Item");
+      assert(
+        (url.pathname + url.search).length <= 6000,
+        "Actual Item request exceeds encoded budget",
+      );
+      itemReads++;
+      const filters = JSON.parse(url.searchParams.get("filters")!);
+      const chunk: string[] = filters[0][2];
+      assertEquals(filters, [["name", "in", chunk]]);
+      assertEquals(Number(url.searchParams.get("limit")), chunk.length);
+      assertEquals(JSON.parse(url.searchParams.get("fields")!), [
+        "name",
+        "stock_uom",
+      ]);
+      requested.push(...chunk);
+      return Response.json({
+        data: [...chunk].reverse().map((name) => ({ name, stock_uom: "Unit" })),
+      });
+    };
+    try {
+      const result = await getTool("erpnext_price_vs_qty").handler(
+        { company: "Vietnam Company", limit: 200 },
+        makeCtx(
+          new FrappeClient({
+            baseUrl: "https://fixture.invalid",
+            apiKey: "fixture",
+            apiSecret: "fixture",
+            retries: 0,
+          }),
+        ),
+      ) as any;
+      assert(itemReads > 1);
+      assertEquals(requested, names);
+      assertEquals(
+        result.scatterData[0].points,
+        names.map((label, i) => ({ x: i + 10, y: i + 1, label })),
+      );
+      assertEquals(result.xAxisLabel, "Selling Price (VND/stock unit)");
+      assertEquals(result.refreshRequest.arguments.company, "Vietnam Company");
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+}
+
+for (
+  const failure of [
+    "oversized",
+    "later-error",
+    "duplicate",
+    "outside",
+    "missing",
+  ]
+) {
+  Deno.test(`scatter Item UOM lookup rejects ${failure} without fallback or partial chart`, async () => {
+    const names = failure === "oversized"
+      ? ["東京".repeat(1000)]
+      : Array.from({ length: 200 }, (_, i) => `ITEM-${i}-${"X".repeat(100)}`);
+    const denied = new Error("Later Item lookup denied");
+    let itemReads = 0;
+    let fallbackReads = 0;
+    const client = makeMockClient({
+      get: async (_doctype, name) => ({ name, default_currency: "VND" }),
+      list: async (doctype, options) => {
+        if (doctype === "Item Price") {
+          return names.map((item_code) => ({
+            name: item_code,
+            item_code,
+            currency: "VND",
+            uom: "Unit",
+            price_list_rate: 10,
+          }));
+        }
+        if (doctype === "Sales Order") return [{ name: "SO-1" }];
+        if (doctype === "Sales Order Item") {
+          return names.map((item_code) => ({
+            name: item_code,
+            parent: "SO-1",
+            parenttype: "Sales Order",
+            item_code,
+            stock_qty: 1,
+          }));
+        }
+        if (doctype !== "Item") {
+          fallbackReads++;
+          return [];
+        }
+        itemReads++;
+        const chunk = options!.filters![0][2] as string[];
+        if (failure === "later-error" && itemReads === 2) throw denied;
+        const rows = chunk.map((name) => ({ name, stock_uom: "Unit" }));
+        if (failure === "duplicate") return [rows[0], ...rows];
+        if (failure === "outside") {
+          return [...rows, { name: names.at(-1)!, stock_uom: "Unit" }];
+        }
+        if (failure === "missing") return rows.slice(1);
+        return rows;
+      },
+    });
+    const error = await assertRejects(() =>
+      getTool("erpnext_price_vs_qty").handler({
+        company: "Vietnam Company",
+        limit: 200,
+      }, makeCtx(client))
+    );
+    if (failure === "later-error") {
+      assertEquals(error, denied);
+      assertEquals(itemReads, 2);
+    }
+    if (failure === "oversized") assertEquals(itemReads, 0);
+    assertEquals(fallbackReads, 0);
+  });
+}
+
+Deno.test("analytics currency - sales totals use recorded VND base amounts", async () => {
+  const calls: { doctype: string; options: any }[] = [];
+  const client = makeMockClient({
+    get: async (doctype, name) => {
+      assertEquals(doctype, "Company");
+      return { name, default_currency: "VND" };
+    },
+    list: async (doctype, options) => {
+      calls.push({ doctype, options });
+      if (doctype === "Company") return [{ name: "Vietnam Company" }];
+      assertEquals(doctype, "Sales Invoice");
+      return [{
+        name: "INV-USD",
+        company: "Vietnam Company",
+        customer: "C1",
+        customer_name: "Customer",
+        currency: "USD",
+        grand_total: 10,
+        base_grand_total: 250000,
+      }, {
+        name: "INV-EUR",
+        company: "Vietnam Company",
+        customer: "C1",
+        customer_name: "Customer",
+        currency: "EUR",
+        grand_total: 20,
+        base_grand_total: 560000,
+      }];
+    },
+  });
+  const result = await getTool("erpnext_sales_chart").handler(
+    {},
+    makeCtx(client),
+  ) as any;
+  assertEquals(result.currency, "VND");
+  assertEquals(result.datasets[0].values, [810000]);
+  const invoiceCall = calls.find((call) => call.doctype === "Sales Invoice")!;
+  assert(invoiceCall.options.fields.includes("base_grand_total"));
+  assert(
+    invoiceCall.options.filters.some((filter: unknown) =>
+      JSON.stringify(filter) ===
+        JSON.stringify(["company", "=", "Vietnam Company"])
+    ),
+  );
+  assertEquals(result.refreshRequest.arguments.company, "Vietnam Company");
+});
+
+Deno.test("analytics currency - multiple companies require explicit company", async () => {
+  let financialReads = 0;
+  const client = makeMockClient({
+    list: async (doctype) => {
+      if (doctype === "Company") {
+        return [{ name: "Vietnam Company" }, { name: "US Company" }];
+      }
+      financialReads++;
+      return [];
+    },
+  });
+  await assertRejects(
+    () => getTool("erpnext_sales_chart").handler({}, makeCtx(client)),
+    Error,
+    "'company' is required",
+  );
+  assertEquals(financialReads, 0);
+});
 
 /** Generate an ISO date N months back from today, day 15 — keeps tests robust
  *  against the system clock (the analytics tools window-filter from `now`). */
@@ -41,6 +271,70 @@ function makeMockClient(overrides: Record<string, AnyFn> = {}): FrappeClient {
   return mock as unknown as FrappeClient;
 }
 
+/** Fixture cũ kiểm hình dạng viewer; các test currency bên trên dùng client riêng nghiêm ngặt. */
+function makeCompanyMockClient(
+  overrides: Record<string, AnyFn> = {},
+): FrappeClient {
+  const list = overrides.list ?? (async () => []);
+  return makeMockClient({
+    ...overrides,
+    callMethod: overrides.callMethod ?? (async (method, args, opts) => {
+      if (
+        method === "frappe.client.get_value" ||
+        method === "frappe.client.get_time_zone"
+      ) {
+        assertEquals(opts, { httpMethod: "GET" });
+        assertEquals(
+          args,
+          method === "frappe.client.get_value"
+            ? { doctype: "System Settings", fieldname: "time_zone" }
+            : {},
+        );
+        return { time_zone: "UTC" };
+      }
+      assertEquals(method, "frappe.desk.query_report.run");
+      const rows = await list("Sales Invoice", {});
+      return {
+        columns: [{
+          fieldname: "outstanding",
+          fieldtype: "Currency",
+          options: "currency",
+        }],
+        result: rows.map((row: Record<string, unknown>, index: number) => ({
+          voucher_type: "Sales Invoice",
+          voucher_no: `INV-${index}`,
+          currency: "EUR",
+          party: `CUSTOMER-${index}`,
+          party_account: "Receivables",
+          posting_date: "2026-01-01",
+          due_date: "2026-01-01",
+          ...row,
+          outstanding: row.outstanding_amount,
+        })),
+      };
+    }),
+    get: async (_doctype, name) => ({ name, default_currency: "EUR" }),
+    list: async (doctype, options) => {
+      if (doctype === "Company") return [{ name: "Fixture Company" }];
+      if (doctype === "Warehouse") return [{ name: "W1" }, { name: "W2" }];
+      if (
+        (doctype === "Sales Invoice" || doctype === "Sales Order") &&
+        options?.fields?.length === 1 && options.fields[0] === "name"
+      ) {
+        return [{ name: "SINV-001" }];
+      }
+      const rows = await list(doctype, options);
+      return rows.map((row: Record<string, unknown>) => ({
+        ...(doctype === "Bin" ? { warehouse: "W1" } : {}),
+        ...(doctype.endsWith(" Item")
+          ? { parent: "SINV-001", parenttype: doctype.slice(0, -5) }
+          : {}),
+        ...row,
+      }));
+    },
+  });
+}
+
 function makeCtx(client: FrappeClient): ErpNextToolContext {
   return { client };
 }
@@ -51,10 +345,648 @@ function getTool(name: string) {
   return tool;
 }
 
+for (
+  const toolName of [
+    "erpnext_kpi_outstanding",
+    "erpnext_kpi_overdue",
+    "erpnext_ar_aging",
+  ]
+) {
+  Deno.test(`AR site date - ${toolName} keeps timezone fallback separate from report permission errors`, async () => {
+    const calls: string[] = [];
+    let denyReport = false;
+    const denied = new Error("Accounts Receivable permission denied");
+    const client = makeMockClient({
+      get: async () => ({ name: "Vietnam Company", default_currency: "VND" }),
+      callMethod: async (method, args, opts) => {
+        calls.push(method);
+        assertEquals(opts, { httpMethod: "GET" });
+        if (method === "frappe.client.get_value") {
+          assertEquals(args, {
+            doctype: "System Settings",
+            fieldname: "time_zone",
+          });
+          throw new Error("System Settings permission denied");
+        }
+        if (method === "frappe.client.get_time_zone") {
+          assertEquals(args, {});
+          return { time_zone: "Asia/Ho_Chi_Minh" };
+        }
+        assertEquals(method, "frappe.desk.query_report.run");
+        if (denyReport) throw denied;
+        return { columns: [], result: [] };
+      },
+    });
+    await getTool(toolName).handler(
+      { company: "Vietnam Company" },
+      makeCtx(client),
+    );
+    assertEquals(calls, [
+      "frappe.client.get_value",
+      "frappe.client.get_time_zone",
+      "frappe.desk.query_report.run",
+    ]);
+    denyReport = true;
+    assertEquals(
+      await assertRejects(() =>
+        getTool(toolName).handler(
+          { company: "Vietnam Company" },
+          makeCtx(client),
+        )
+      ),
+      denied,
+    );
+    assertEquals(calls.slice(3), calls.slice(0, 3));
+  });
+  for (
+    const scenario of [
+      {
+        now: "2026-09-04T18:30:00Z",
+        zone: "Asia/Ho_Chi_Minh",
+        date: "2026-09-05",
+      },
+      {
+        now: "2026-09-05T02:30:00Z",
+        zone: "America/Los_Angeles",
+        date: "2026-09-04",
+      },
+    ]
+  ) {
+    Deno.test(`AR site date - ${toolName} uses one ${scenario.zone} snapshot at bucket boundaries`, async () => {
+      const OriginalDate = globalThis.Date;
+      let now = OriginalDate.parse(scenario.now);
+      globalThis.Date = new Proxy(OriginalDate, {
+        construct: (target, args) =>
+          Reflect.construct(target, args.length ? args : [now]),
+        get: (target, property) =>
+          property === "now" ? () => now : Reflect.get(target, property),
+      });
+      try {
+        let zoneReads = 0;
+        let reports = 0;
+        const client = makeMockClient({
+          get: async () => ({
+            name: "Vietnam Company",
+            default_currency: "VND",
+          }),
+          callMethod: async (method, args, opts) => {
+            assertEquals(opts, { httpMethod: "GET" });
+            if (method === "frappe.client.get_value") {
+              zoneReads++;
+              assertEquals(args, {
+                doctype: "System Settings",
+                fieldname: "time_zone",
+              });
+              return { time_zone: scenario.zone };
+            }
+            assertEquals(method, "frappe.desk.query_report.run");
+            reports++;
+            assertEquals(args.filters.report_date, scenario.date);
+            // Mô phỏng report trả về sau nửa đêm: phân loại vẫn phải dùng snapshot đã chọn.
+            now += 2 * 86400000;
+            return {
+              columns: [],
+              result: [-1, 0, 1, 30, 31, 60, 61, 90, 91].map((days, index) => ({
+                voucher_type: "Sales Invoice",
+                voucher_no: `INV-${index}`,
+                party: "Customer",
+                party_account: "Receivables",
+                currency: "VND",
+                outstanding: 100,
+                posting_date: "2026-01-01",
+                due_date: new OriginalDate(
+                  OriginalDate.parse(scenario.date) - days * 86400000,
+                ).toISOString().slice(0, 10),
+              })),
+            };
+          },
+        });
+        const result = await getTool(toolName).handler({
+          company: "Vietnam Company",
+        }, makeCtx(client)) as any;
+        assertEquals([zoneReads, reports], [1, 1]);
+        if (toolName === "erpnext_kpi_outstanding") {
+          assertEquals(result.value, 900);
+        } else if (toolName === "erpnext_kpi_overdue") {
+          assertEquals(result.value, 7);
+        } else {
+          assertEquals(
+            result.datasets.map((dataset: any) => dataset.values),
+            [[400], [200], [200], [100]],
+          );
+        }
+      } finally {
+        globalThis.Date = OriginalDate;
+      }
+    });
+  }
+}
+
+function makeVndAnalyticsClient(
+  options: {
+    missingBase?: boolean;
+    missingCost?: boolean;
+    priceCurrency?: string;
+    priceUom?: unknown;
+    priceRate?: unknown;
+    itemError?: Error;
+    priceRows?: Record<string, unknown>[];
+  } = {},
+) {
+  const calls: { doctype: string; options: any }[] = [];
+  const documents = [1, 2].map((n) => ({
+    name: `DOC-${n}`,
+    company: "Vietnam Company",
+    customer: `CUSTOMER-${n}`,
+    customer_name: `Customer ${n}`,
+    currency: n === 1 ? "USD" : "EUR",
+    grand_total: n * 10,
+    base_grand_total: options.missingBase ? undefined : n * 250000,
+    opportunity_amount: n * 10,
+    base_opportunity_amount: n * 250000,
+    status: "Draft",
+    transaction_date: relativeMonth(0),
+  }));
+  const client = makeMockClient({
+    get: async (doctype, name) => {
+      assertEquals(doctype, "Company");
+      return { name, default_currency: "VND" };
+    },
+    list: async (doctype, opts) => {
+      calls.push({ doctype, options: opts });
+      if (doctype === "Company") return [{ name: "Vietnam Company" }];
+      if (
+        [
+          "Sales Invoice",
+          "Sales Order",
+          "Quotation",
+          "Opportunity",
+          "Warehouse",
+        ].includes(doctype)
+      ) {
+        assert(
+          opts.filters.some((f: unknown) =>
+            JSON.stringify(f) ===
+              JSON.stringify(["company", "=", "Vietnam Company"])
+          ),
+        );
+        return doctype === "Warehouse" ? [{ name: "WH-VND" }] : documents;
+      }
+      if (doctype === "Lead") {
+        assert(!opts.filters.some((f: string[]) => f[0] === "company"));
+        return [{ name: "LEAD-1" }, { name: "LEAD-2" }];
+      }
+      if (doctype === "Bin") {
+        assert(!opts.filters.some((f: string[]) => f[0] === "company"));
+        assert(
+          opts.filters.some((f: unknown) =>
+            JSON.stringify(f) ===
+              JSON.stringify(["warehouse", "in", ["WH-VND"]])
+          ),
+        );
+        const item = opts.filters.find((f: string[]) =>
+          f[0] === "item_code" && f[1] === "="
+        )?.[2];
+        return options.missingCost
+          ? []
+          : [1, 2].filter((n) => !item || item === `ITEM-${n}`).map((n) => ({
+            name: `BIN-${n}`,
+            item_code: `ITEM-${n}`,
+            warehouse: "WH-VND",
+            stock_value: n * 100000,
+            actual_qty: n * 2,
+            valuation_rate: 50000,
+          }));
+      }
+      if (doctype.endsWith(" Item")) {
+        assert(!opts.filters.some((f: string[]) => f[0] === "company"));
+        assert(
+          opts.filters.some((f: unknown) =>
+            JSON.stringify(f) ===
+              JSON.stringify(["parent", "in", ["DOC-1", "DOC-2"]])
+          ),
+        );
+        return [1, 2].map((n) => ({
+          name: `ROW-${n}`,
+          parent: `DOC-${n}`,
+          parenttype: doctype.slice(0, -5),
+          item_code: `ITEM-${n}`,
+          item_name: `Item ${n}`,
+          qty: n,
+          stock_qty: n * 2,
+          uom: "Box",
+          stock_uom: "Unit",
+          conversion_factor: 2,
+          amount: n * 10,
+          base_amount: options.missingBase ? undefined : n * 250000,
+        }));
+      }
+      if (doctype === "Item Price") {
+        if (options.priceRows) return options.priceRows;
+        return [1, 2].map((n) => ({
+          name: `PRICE-${n}`,
+          item_code: `ITEM-${n}`,
+          currency: options.priceCurrency ?? "VND",
+          price_list_rate: options.priceRate ?? n * 100000,
+          uom: options.priceUom === undefined ? "Unit" : options.priceUom,
+        }));
+      }
+      if (doctype === "Item") {
+        if (options.itemError) throw options.itemError;
+        const requested = opts.filters.find((f: unknown[]) =>
+          f[0] === "name"
+        )[2] as string[];
+        return [1, 2].map((n) => ({ name: `ITEM-${n}`, stock_uom: "Unit" }))
+          .filter((item) => requested.includes(item.name));
+      }
+      throw new Error(`Unexpected fixture doctype ${doctype}`);
+    },
+  });
+  return { client, calls };
+}
+
+const baseCurrencyCases: {
+  name: string;
+  input?: Record<string, unknown>;
+  check: (result: any) => void;
+}[] = [
+  {
+    name: "erpnext_sales_chart",
+    check: (r) => assertEquals(r.datasets[0].values, [500000, 250000]),
+  },
+  {
+    name: "erpnext_sales_chart",
+    input: { group_by: "status" },
+    check: (r) => assertEquals(r.datasets[0].values, [750000]),
+  },
+  {
+    name: "erpnext_sales_chart",
+    input: { group_by: "item" },
+    check: (r) => assertEquals(r.datasets[0].values, [500000, 250000]),
+  },
+  {
+    name: "erpnext_revenue_trend",
+    input: { months: 1 },
+    check: (r) => assertEquals(r.datasets[0].values, [750000]),
+  },
+  {
+    name: "erpnext_revenue_trend",
+    input: { months: 1, group_by: "customer" },
+    check: (r) =>
+      assertEquals(r.datasets.map((d: any) => d.values[0]), [500000, 250000]),
+  },
+  {
+    name: "erpnext_order_breakdown",
+    input: { type: "pie" },
+    check: (r) => assertEquals(r.datasets[0].values, [500000, 250000]),
+  },
+  {
+    name: "erpnext_order_breakdown",
+    check: (r) => assertEquals(r.datasets[0].values, [500000, 250000]),
+  },
+  {
+    name: "erpnext_revenue_vs_orders",
+    check: (r) => {
+      assertEquals(r.datasets[0].values, [500000, 250000]);
+      assertEquals(r.datasets[1].values, [1, 1]);
+    },
+  },
+  {
+    name: "erpnext_stock_treemap",
+    check: (r) =>
+      assertEquals(r.treeData.map((d: any) => d.value), [200000, 100000]),
+  },
+  {
+    name: "erpnext_stock_treemap",
+    input: { group_by: "warehouse" },
+    check: (r) => assertEquals(r.treeData[0].value, 300000),
+  },
+  {
+    name: "erpnext_kpi_revenue",
+    check: (r) => {
+      assertEquals(r.value, 750000);
+      assertEquals(r.sparkline[5], 750000);
+    },
+  },
+  {
+    name: "erpnext_sales_funnel",
+    check: (r) => {
+      assertEquals(r.stages.slice(1).map((s: any) => s.value), [
+        750000,
+        750000,
+        750000,
+      ]);
+      assertEquals(r.stages[0].count, 2);
+    },
+  },
+];
+
+for (const testCase of baseCurrencyCases) {
+  Deno.test(`analytics VND matrix - ${testCase.name} ${JSON.stringify(testCase.input ?? {})}`, async () => {
+    const { client } = makeVndAnalyticsClient();
+    const tool = getTool(testCase.name);
+    const input = testCase.input ?? {};
+    const result = await tool.handler(input, makeCtx(client)) as any;
+    assertEquals(result.currency, "VND");
+    testCase.check(result);
+    assertEquals(result.refreshRequest, {
+      toolName: testCase.name,
+      arguments: { ...input, company: "Vietnam Company" },
+    });
+    assertEquals(result._meta, tool._meta);
+    const validator = new SchemaValidator();
+    validator.addSchema(tool.name, tool.inputSchema as Record<string, unknown>);
+    assert(validator.validate(tool.name, input).valid);
+    assert(
+      validator.validate(tool.name, { ...input, company: "Vietnam Company" })
+        .valid,
+    );
+  });
+}
+
+Deno.test("analytics VND matrix - radar normalizes only same-company money and preserves count dimensions", async () => {
+  const { client } = makeVndAnalyticsClient();
+  const result = await getTool("erpnext_product_radar").handler({
+    items: ["ITEM-1", "ITEM-2"],
+  }, makeCtx(client)) as any;
+  assertEquals(result.labels, [
+    "Stock Qty",
+    "Stock Value (VND)",
+    "Order Lines",
+    "Revenue (VND)",
+  ]);
+  assertEquals(result.datasets[0].values, [50, 50, 100, 50]);
+  assertEquals(result.datasets[1].values, [100, 100, 100, 100]);
+  assertEquals(result.currency, undefined);
+  assertEquals(result.refreshRequest.arguments.company, "Vietnam Company");
+});
+
+Deno.test("analytics VND matrix - missing recorded base amount is not silently zero", async () => {
+  const { client } = makeVndAnalyticsClient({ missingBase: true });
+  await assertRejects(
+    () => getTool("erpnext_sales_chart").handler({}, makeCtx(client)),
+    Error,
+    "base_grand_total",
+  );
+});
+
+for (const name of ["erpnext_kpi_gross_margin", "erpnext_gross_profit"]) {
+  Deno.test(`analytics VND matrix - ${name} uses stock quantity and reports missing cost`, async () => {
+    const { client } = makeVndAnalyticsClient();
+    const result = await getTool(name).handler({}, makeCtx(client)) as any;
+    if (name === "erpnext_kpi_gross_margin") {
+      assertEquals(result.value, 60);
+      assertEquals(result.unit, "%");
+    } else {
+      assertEquals(result.currency, "VND");
+      assertEquals(result.datasets[0].values, [500000, 250000]);
+      assertEquals(result.datasets[1].values, [60, 60]);
+      const customer = await getTool(name).handler(
+        { group_by: "customer" },
+        makeCtx(client),
+      ) as any;
+      assertEquals(customer.datasets[0].values, [500000, 250000]);
+      assertEquals(customer.datasets[1].values, [60, 60]);
+    }
+    const missing = makeVndAnalyticsClient({ missingCost: true });
+    await assertRejects(
+      () => getTool(name).handler({}, makeCtx(missing.client)),
+      Error,
+      "Missing estimated stock cost",
+    );
+    assertEquals(result.refreshRequest.arguments.company, "Vietnam Company");
+  });
+}
+
+Deno.test("analytics VND matrix - scatter uses verified stock-UOM prices and stock quantity", async () => {
+  for (const priceRate of [100000, "100000"]) {
+    const { client } = makeVndAnalyticsClient({ priceRate });
+    const result = await getTool("erpnext_price_vs_qty").handler(
+      {},
+      makeCtx(client),
+    ) as any;
+    assertEquals(result.scatterData[0].points.map((p: any) => [p.x, p.y]), [[
+      100000,
+      2,
+    ], [100000, 4]]);
+    assertEquals(result.xAxisLabel, "Selling Price (VND/stock unit)");
+    assertEquals(result.refreshRequest.arguments.company, "Vietnam Company");
+  }
+});
+
+Deno.test("analytics VND matrix - scatter refuses currency and UOM mismatches instead of falling back", async () => {
+  for (
+    const options of [
+      { priceCurrency: "USD" },
+      { priceCurrency: "" },
+      { priceUom: "Box" },
+      { priceUom: null },
+      { priceUom: "" },
+      { priceRate: "not-a-number" },
+    ]
+  ) {
+    const { client } = makeVndAnalyticsClient(options);
+    await assertRejects(
+      () => getTool("erpnext_price_vs_qty").handler({}, makeCtx(client)),
+      Error,
+    );
+  }
+  const denied = new Error("Item permission denied");
+  const { client } = makeVndAnalyticsClient({ itemError: denied });
+  assertEquals(
+    await assertRejects(() =>
+      getTool("erpnext_price_vs_qty").handler({}, makeCtx(client))
+    ),
+    denied,
+  );
+});
+
+Deno.test("analytics VND matrix - scatter keeps the newest selected price and validates only relevant prices", async () => {
+  const prices = [
+    {
+      item_code: "UNRELATED",
+      currency: "USD",
+      uom: "Unknown",
+      price_list_rate: 999,
+    },
+    { item_code: "ITEM-1", currency: "VND", uom: "Unit", price_list_rate: 0 },
+    { item_code: "ITEM-1", currency: "USD", uom: "Box", price_list_rate: 999 },
+  ];
+  const { client } = makeVndAnalyticsClient({ priceRows: prices });
+  const result = await getTool("erpnext_price_vs_qty").handler(
+    {},
+    makeCtx(client),
+  ) as any;
+  assertEquals(result.scatterData[0].points, [{ x: 0, y: 2, label: "ITEM-1" }]);
+  const invalid = makeVndAnalyticsClient({ priceRows: [prices[2], prices[1]] });
+  await assertRejects(
+    () => getTool("erpnext_price_vs_qty").handler({}, makeCtx(invalid.client)),
+    Error,
+    "currency",
+  );
+});
+
+Deno.test("analytics VND matrix - scatter fallback uses VND warehouse valuation only when no price points exist", async () => {
+  const { client } = makeVndAnalyticsClient({ priceRows: [] });
+  const result = await getTool("erpnext_price_vs_qty").handler(
+    {},
+    makeCtx(client),
+  ) as any;
+  assertEquals(result.title, "Valuation Rate vs Stock Qty");
+  assertEquals(result.xAxisLabel, "Valuation Rate (VND/stock unit)");
+  assertEquals(result.scatterData[0].points.map((p: any) => [p.x, p.y]), [[
+    50000,
+    2,
+  ], [50000, 4]]);
+});
+
+for (
+  const name of [
+    "erpnext_kpi_outstanding",
+    "erpnext_kpi_overdue",
+    "erpnext_ar_aging",
+  ]
+) {
+  Deno.test(`analytics VND matrix - ${name} uses report company balances without counting subtotal or other vouchers`, async () => {
+    const client = makeMockClient({
+      list: async (doctype) => {
+        assertEquals(doctype, "Company");
+        return [{ name: "Vietnam Company" }];
+      },
+      get: async () => ({ name: "Vietnam Company", default_currency: "VND" }),
+      callMethod: async (method, args, opts) => {
+        if (
+          method === "frappe.client.get_value" ||
+          method === "frappe.client.get_time_zone"
+        ) {
+          assertEquals(opts, { httpMethod: "GET" });
+          assertEquals(
+            args,
+            method === "frappe.client.get_value"
+              ? { doctype: "System Settings", fieldname: "time_zone" }
+              : {},
+          );
+          return { time_zone: "UTC" };
+        }
+        assertEquals(method, "frappe.desk.query_report.run");
+        assertEquals(opts, { httpMethod: "GET" });
+        assertEquals(args.ignore_prepared_report, true);
+        assertEquals(args.filters.company, "Vietnam Company");
+        assertEquals(args.filters.in_party_currency, 0);
+        assertEquals(args.filters.presentation_currency, undefined);
+        assertEquals(args.filters.party_account, undefined);
+        return {
+          columns: [],
+          result: [
+            {
+              voucher_type: "Sales Invoice",
+              voucher_no: "INV-USD",
+              party: "Customer",
+              party_account: "Receivables",
+              posting_date: "2020-01-01",
+              due_date: "2020-02-01",
+              currency: "VND",
+              outstanding: 250000,
+              outstanding_in_account_currency: 10,
+              account_currency: "USD",
+            },
+            {
+              voucher_type: "Sales Invoice",
+              voucher_no: "INV-EUR",
+              party: "Customer",
+              party_account: "Receivables",
+              posting_date: "2020-01-01",
+              due_date: "2020-02-01",
+              currency: "VND",
+              outstanding: "500000",
+              outstanding_in_account_currency: 20,
+              account_currency: "EUR",
+            },
+            {
+              voucher_type: "Sales Invoice",
+              voucher_no: "INV-USD",
+              party: "Customer",
+              party_account: "Other Receivables",
+              posting_date: "2020-01-01",
+              due_date: "2020-02-01",
+              currency: "VND",
+              outstanding: 125000,
+            },
+            { party: "Total", outstanding: 875000 },
+            {
+              voucher_type: "Journal Entry",
+              voucher_no: "JE-1",
+              outstanding: 999999,
+            },
+          ],
+        };
+      },
+    });
+    const result = await getTool(name).handler({}, makeCtx(client)) as any;
+    if (name === "erpnext_kpi_outstanding") {
+      assertEquals(result.value, 875000);
+      assertEquals(result.currency, "VND");
+      assert(result.formattedValue.startsWith("2 inv. / "));
+    } else if (name === "erpnext_kpi_overdue") {
+      assertEquals(result.value, 2);
+      assert(result.formattedValue.includes("875,000"));
+    } else {
+      assertEquals(result.currency, "VND");
+      assertEquals(result.datasets[3].values, [875000]);
+      const tree = await getTool(name).handler(
+        { type: "treemap" },
+        makeCtx(client),
+      ) as any;
+      assertEquals(tree.treeData[0].value, 875000);
+    }
+    assertEquals(result.refreshRequest.arguments.company, "Vietnam Company");
+  });
+}
+
 function assertChartMeta(result: any, viewerName = "chart-viewer") {
   assert(result._meta, "Result should have _meta");
   assertEquals(result._meta.ui.resourceUri, `ui://hvgerp-mcp/${viewerName}`);
 }
+
+Deno.test("all monetary analytics preserve company ambiguity and permission failures", async () => {
+  for (
+    const tool of analyticsTools.filter((tool) =>
+      !["erpnext_stock_chart", "erpnext_kpi_orders", "erpnext_profit_loss"]
+        .includes(tool.name)
+    )
+  ) {
+    const validator = new SchemaValidator();
+    validator.addSchema(tool.name, tool.inputSchema as Record<string, unknown>);
+    assert(validator.validate(tool.name, {}).valid, tool.name);
+    assert(
+      validator.validate(tool.name, { company: "Vietnam Company" }).valid,
+      tool.name,
+    );
+    const ambiguous = makeMockClient({
+      list: async (doctype) => {
+        assertEquals(doctype, "Company");
+        return [{ name: "Vietnam Company" }, { name: "US Company" }];
+      },
+    });
+    await assertRejects(
+      () => tool.handler({}, makeCtx(ambiguous)),
+      Error,
+      "'company' is required",
+    );
+    const denied = new Error(`${tool.name} Company permission denied`);
+    const privateCompany = makeMockClient({
+      get: async () => {
+        throw denied;
+      },
+    });
+    assertEquals(
+      await assertRejects(() =>
+        tool.handler({ company: "Private" }, makeCtx(privateCompany))
+      ),
+      denied,
+    );
+  }
+});
 
 // ── Legacy pipeline surface removed ─────────────────────────────────────────
 
@@ -124,11 +1056,11 @@ Deno.test("erpnext_stock_chart - uses horizontal-bar for many items", async () =
 // ── erpnext_sales_chart ─────────────────────────────────────────────────────
 
 Deno.test("erpnext_sales_chart - status grouping returns donut", async () => {
-  const mockClient = makeMockClient({
+  const mockClient = makeCompanyMockClient({
     list: async () => [
-      { name: "SINV-001", status: "Paid", grand_total: 5000 },
-      { name: "SINV-002", status: "Paid", grand_total: 3000 },
-      { name: "SINV-003", status: "Unpaid", grand_total: 2000 },
+      { name: "SINV-001", status: "Paid", base_grand_total: 5000 },
+      { name: "SINV-002", status: "Paid", base_grand_total: 3000 },
+      { name: "SINV-003", status: "Unpaid", base_grand_total: 2000 },
     ],
   });
 
@@ -145,10 +1077,10 @@ Deno.test("erpnext_sales_chart - status grouping returns donut", async () => {
 });
 
 Deno.test("erpnext_sales_chart - customer grouping returns horizontal-bar", async () => {
-  const mockClient = makeMockClient({
+  const mockClient = makeCompanyMockClient({
     list: async () => [
-      { customer: "C1", customer_name: "Customer One", grand_total: 5000 },
-      { customer: "C2", customer_name: "Customer Two", grand_total: 3000 },
+      { customer: "C1", customer_name: "Customer One", base_grand_total: 5000 },
+      { customer: "C2", customer_name: "Customer Two", base_grand_total: 3000 },
     ],
   });
 
@@ -166,16 +1098,16 @@ Deno.test("erpnext_sales_chart - customer grouping returns horizontal-bar", asyn
 // ── erpnext_revenue_trend ───────────────────────────────────────────────────
 
 Deno.test("erpnext_revenue_trend - returns line chart with monthly data", async () => {
-  const mockClient = makeMockClient({
+  const mockClient = makeCompanyMockClient({
     list: async () => [
       {
         customer_name: "Acme",
-        grand_total: 5000,
+        base_grand_total: 5000,
         transaction_date: relativeMonth(0, 10),
       },
       {
         customer_name: "Acme",
-        grand_total: 3000,
+        base_grand_total: 3000,
         transaction_date: relativeMonth(1, 15),
       },
     ],
@@ -194,16 +1126,16 @@ Deno.test("erpnext_revenue_trend - returns line chart with monthly data", async 
 });
 
 Deno.test("erpnext_revenue_trend - customer grouping produces multiple datasets", async () => {
-  const mockClient = makeMockClient({
+  const mockClient = makeCompanyMockClient({
     list: async () => [
       {
         customer_name: "Acme",
-        grand_total: 5000,
+        base_grand_total: 5000,
         transaction_date: relativeMonth(0, 10),
       },
       {
         customer_name: "Globex",
-        grand_total: 3000,
+        base_grand_total: 3000,
         transaction_date: relativeMonth(1, 15),
       },
     ],
@@ -222,15 +1154,15 @@ Deno.test("erpnext_revenue_trend - customer grouping produces multiple datasets"
 // ── erpnext_order_breakdown ─────────────────────────────────────────────────
 
 Deno.test("erpnext_order_breakdown - stacked-bar groups by customer and status", async () => {
-  const mockClient = makeMockClient({
+  const mockClient = makeCompanyMockClient({
     list: async () => [
-      { customer_name: "Acme", status: "Draft", grand_total: 1000 },
+      { customer_name: "Acme", status: "Draft", base_grand_total: 1000 },
       {
         customer_name: "Acme",
         status: "To Deliver and Bill",
-        grand_total: 2000,
+        base_grand_total: 2000,
       },
-      { customer_name: "Globex", status: "Draft", grand_total: 500 },
+      { customer_name: "Globex", status: "Draft", base_grand_total: 500 },
     ],
   });
 
@@ -248,10 +1180,10 @@ Deno.test("erpnext_order_breakdown - stacked-bar groups by customer and status",
 });
 
 Deno.test("erpnext_order_breakdown - pie mode returns single dataset", async () => {
-  const mockClient = makeMockClient({
+  const mockClient = makeCompanyMockClient({
     list: async () => [
-      { customer_name: "Acme", status: "Draft", grand_total: 3000 },
-      { customer_name: "Globex", status: "Draft", grand_total: 1000 },
+      { customer_name: "Acme", status: "Draft", base_grand_total: 3000 },
+      { customer_name: "Globex", status: "Draft", base_grand_total: 1000 },
     ],
   });
 
@@ -269,11 +1201,11 @@ Deno.test("erpnext_order_breakdown - pie mode returns single dataset", async () 
 // ── erpnext_revenue_vs_orders ───────────────────────────────────────────────
 
 Deno.test("erpnext_revenue_vs_orders - returns composed chart with dual axis", async () => {
-  const mockClient = makeMockClient({
+  const mockClient = makeCompanyMockClient({
     list: async () => [
-      { customer_name: "Acme", grand_total: 5000 },
-      { customer_name: "Acme", grand_total: 3000 },
-      { customer_name: "Globex", grand_total: 2000 },
+      { customer_name: "Acme", base_grand_total: 5000 },
+      { customer_name: "Acme", base_grand_total: 3000 },
+      { customer_name: "Globex", base_grand_total: 2000 },
     ],
   });
 
@@ -295,7 +1227,7 @@ Deno.test("erpnext_revenue_vs_orders - returns composed chart with dual axis", a
 // ── erpnext_stock_treemap ───────────────────────────────────────────────────
 
 Deno.test("erpnext_stock_treemap - returns treemap data", async () => {
-  const mockClient = makeMockClient({
+  const mockClient = makeCompanyMockClient({
     list: async () => [
       { item_code: "ITEM-A", warehouse: "W1", stock_value: 5000 },
       { item_code: "ITEM-B", warehouse: "W1", stock_value: 3000 },
@@ -313,7 +1245,7 @@ Deno.test("erpnext_stock_treemap - returns treemap data", async () => {
 });
 
 Deno.test("erpnext_stock_treemap - group by warehouse aggregates", async () => {
-  const mockClient = makeMockClient({
+  const mockClient = makeCompanyMockClient({
     list: async () => [
       { item_code: "ITEM-A", warehouse: "W1", stock_value: 5000 },
       { item_code: "ITEM-B", warehouse: "W1", stock_value: 3000 },
@@ -336,7 +1268,7 @@ Deno.test("erpnext_stock_treemap - group by warehouse aggregates", async () => {
 
 Deno.test("erpnext_product_radar - returns radar with auto-selected items", async () => {
   let callCount = 0;
-  const mockClient = makeMockClient({
+  const mockClient = makeCompanyMockClient({
     list: async (doctype: string) => {
       if (doctype === "Bin") {
         callCount++;
@@ -407,7 +1339,7 @@ Deno.test("erpnext_product_radar - the schema bounds the fan-out and still allow
 
 Deno.test("erpnext_product_radar - auto-select still works with no items given", async () => {
   // Guards the behaviour the schema must keep reachable, end to end.
-  const mockClient = makeMockClient({
+  const mockClient = makeCompanyMockClient({
     list: async (doctype: string, opts?: { limit?: number }) => {
       if (doctype !== "Bin") return [];
       return opts?.limit === 4
@@ -427,7 +1359,7 @@ Deno.test("erpnext_product_radar - auto-select still works with no items given",
 
 Deno.test("erpnext_price_vs_qty - falls back to Bin data when no Item Price", async () => {
   let callCount = 0;
-  const mockClient = makeMockClient({
+  const mockClient = makeCompanyMockClient({
     list: async (doctype: string) => {
       callCount++;
       if (doctype === "Item Price") return [];
@@ -463,10 +1395,10 @@ Deno.test("erpnext_kpi_revenue - returns KPI with sparkline (single API call)", 
       "T",
     )[0];
 
-  const mockClient = makeMockClient({
+  const mockClient = makeCompanyMockClient({
     list: async () => [
-      { grand_total: 5000, transaction_date: thisMonth },
-      { grand_total: 3000, transaction_date: lastMonth },
+      { base_grand_total: 5000, transaction_date: thisMonth },
+      { base_grand_total: 3000, transaction_date: lastMonth },
     ],
   });
 
@@ -487,7 +1419,7 @@ Deno.test("erpnext_kpi_revenue - returns KPI with sparkline (single API call)", 
 // ── erpnext_kpi_outstanding ─────────────────────────────────────────────────
 
 Deno.test("erpnext_kpi_outstanding - sums outstanding invoices", async () => {
-  const mockClient = makeMockClient({
+  const mockClient = makeCompanyMockClient({
     list: async () => [
       { outstanding_amount: 2000 },
       { outstanding_amount: 3000 },
@@ -507,7 +1439,7 @@ Deno.test("erpnext_kpi_outstanding - sums outstanding invoices", async () => {
 
 Deno.test("erpnext_kpi_orders - counts orders this month", async () => {
   const mockClient = makeMockClient({
-    list: async () => [{ grand_total: 1000 }, { grand_total: 2000 }],
+    list: async () => [{ base_grand_total: 1000 }, { base_grand_total: 2000 }],
   });
 
   const tool = getTool("erpnext_kpi_orders");
@@ -523,13 +1455,13 @@ Deno.test("erpnext_kpi_orders - counts orders this month", async () => {
 
 Deno.test("erpnext_kpi_gross_margin - computes margin from SO items and Bin", async () => {
   let callIdx = 0;
-  const mockClient = makeMockClient({
+  const mockClient = makeCompanyMockClient({
     list: async (doctype: string) => {
       callIdx++;
       if (doctype === "Sales Order Item") {
         return [
-          { item_code: "ITEM-A", qty: 10, amount: 5000 },
-          { item_code: "ITEM-B", qty: 5, amount: 2500 },
+          { item_code: "ITEM-A", stock_qty: 10, base_amount: 5000 },
+          { item_code: "ITEM-B", stock_qty: 5, base_amount: 2500 },
         ];
       }
       if (doctype === "Bin") {
@@ -555,7 +1487,7 @@ Deno.test("erpnext_kpi_gross_margin - computes margin from SO items and Bin", as
 // ── erpnext_kpi_overdue ─────────────────────────────────────────────────────
 
 Deno.test("erpnext_kpi_overdue - counts overdue invoices", async () => {
-  const mockClient = makeMockClient({
+  const mockClient = makeCompanyMockClient({
     list: async () => [
       { outstanding_amount: 1500, due_date: "2026-01-01" },
       { outstanding_amount: 500, due_date: "2025-12-15" },
@@ -574,20 +1506,22 @@ Deno.test("erpnext_kpi_overdue - counts overdue invoices", async () => {
 // ── erpnext_sales_funnel ────────────────────────────────────────────────────
 
 Deno.test("erpnext_sales_funnel - returns 4-stage funnel with conversion rates", async () => {
-  const mockClient = makeMockClient({
+  const mockClient = makeCompanyMockClient({
     list: async (doctype: string) => {
       if (doctype === "Lead") {
         return [{ name: "L1" }, { name: "L2" }, { name: "L3" }, { name: "L4" }];
       }
       if (doctype === "Opportunity") {
-        return [{ name: "O1", opportunity_amount: 5000 }, {
+        return [{ name: "O1", base_opportunity_amount: 5000 }, {
           name: "O2",
-          opportunity_amount: 3000,
+          base_opportunity_amount: 3000,
         }];
       }
-      if (doctype === "Quotation") return [{ name: "Q1", grand_total: 4000 }];
+      if (doctype === "Quotation") {
+        return [{ name: "Q1", base_grand_total: 4000 }];
+      }
       if (doctype === "Sales Order") {
-        return [{ name: "SO1", grand_total: 3500 }];
+        return [{ name: "SO1", base_grand_total: 3500 }];
       }
       return [];
     },
@@ -619,7 +1553,7 @@ Deno.test("erpnext_ar_aging - groups invoices into aging buckets", async () => {
   const d100 = new Date(today);
   d100.setDate(today.getDate() - 100);
 
-  const mockClient = makeMockClient({
+  const mockClient = makeCompanyMockClient({
     list: async () => [
       {
         customer_name: "Acme",
@@ -654,12 +1588,22 @@ Deno.test("erpnext_ar_aging - groups invoices into aging buckets", async () => {
 // ── erpnext_gross_profit ────────────────────────────────────────────────────
 
 Deno.test("erpnext_gross_profit - returns composed chart with margin line", async () => {
-  const mockClient = makeMockClient({
+  const mockClient = makeCompanyMockClient({
     list: async (doctype: string) => {
       if (doctype === "Sales Invoice Item") {
         return [
-          { item_code: "ITEM-A", qty: 10, amount: 5000, parent: "SINV-001" },
-          { item_code: "ITEM-B", qty: 5, amount: 2500, parent: "SINV-001" },
+          {
+            item_code: "ITEM-A",
+            stock_qty: 10,
+            base_amount: 5000,
+            parent: "SINV-001",
+          },
+          {
+            item_code: "ITEM-B",
+            stock_qty: 5,
+            base_amount: 2500,
+            parent: "SINV-001",
+          },
         ];
       }
       if (doctype === "Sales Invoice") {

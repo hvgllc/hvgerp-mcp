@@ -361,6 +361,67 @@ can be absent from documents even when the DocType itself is readable.
 
 ## Analytics (17) → chart-viewer / kpi-viewer / funnel-viewer
 
+Monetary analytics accept optional `company`. It may be omitted only when
+exactly one Company is visible to the caller. With several visible companies,
+pass its exact name; with none, request Company access. Reading the company's
+`default_currency` is required. Permission failures and missing currency are
+reported, not replaced with a guessed currency or zero. Refresh requests retain
+the resolved company, including when the initial call omitted it. P&L retains
+its existing report-based currency source and company permissions.
+
+Revenue uses recorded `base_grand_total`, `base_amount`, and
+`base_opportunity_amount`, not today's exchange rate. Stock values are
+restricted through `Warehouse.company`, and child rows through their parent
+documents. Outstanding, overdue, and AR aging use the standard Accounts
+Receivable report in company currency, only positive Sales Invoice balances.
+Distinct account balances are added, but invoice counts use distinct voucher
+IDs. Report totals and non-invoice vouchers are excluded. The report is run
+synchronously with `ignore_prepared_report: true`, so it does not create a
+Prepared Report.
+
+All three receivable tools resolve the site date once per call through the
+existing timezone lookup (including its UTC fallback when unavailable). The
+report snapshot, overdue comparison, and aging day boundaries use that same date
+even if the request finishes after midnight.
+
+Gross profit/margin remain estimates from current Bin valuation, not historical
+ledger gross profit. They multiply valuation rate by `stock_qty`; missing costs
+raise an error. Price-vs-quantity accepts only the selected selling price in the
+company currency and the item's verified stock UOM. Missing/mismatched currency
+or UOM raises an error; it never silently converts or falls back on bad data.
+Its quantity axis is stock quantity. The stock fallback applies only when no
+selling-price/order points exist.
+
+Pure stock-quantity and order-count tools retain their existing scope. Funnel
+Lead counts still cover all visible Leads; subsequent stages belong to the
+selected company. Radar values remain normalized 0-100; its money dimensions
+name the currency without treating count dimensions as money.
+
+These changes do not make capped child/document queries complete. Their existing
+row limits remain, so large datasets can still be partial. Parent and Warehouse
+ownership discovery reads successive 1,000-name pages in name order, preserving
+company and document-status filters. It fails rather than returning partial
+scope on invalid/repeated names, a later-page error, or more than 100,000
+ownership names. These separate reads are not a transactional snapshot. Use
+authoritative ERPNext reports for complete financial statements; do not treat
+these charts as reconciliation totals.
+
+Ownership IDs are split by encoded request-target length (6,000 bytes for the
+API path and query, leaving headroom for a proxy prefix). A single ID plus the
+other query fields that cannot fit raises an error instead of being omitted.
+Each chunk reads at most the original row limit N, then results are merged and
+cut to N globally. This can read up to N times the number of chunks; it is not
+pagination or a completeness guarantee. Existing explicit numeric ordering is
+preserved; scoped reads without an order now explicitly use `modified desc`.
+Estimated gross-margin cost still uses the first positive Bin valuation in that
+ordered set. Equal sort values retain chunk order and then server order within
+the chunk, without promising equivalence to database tie ordering.
+
+The Item stock-UOM lookup for price-vs-quantity uses the same 6,000-byte request
+budget, including fields, filters, order and limit. Every requested Item must be
+returned exactly once in its own chunk; missing, duplicate or unrelated rows
+raise an error. A failed chunk never produces a partial chart or stock fallback.
+
 | Tool                        | Viewer | Description                                           |
 | --------------------------- | ------ | ----------------------------------------------------- |
 | `erpnext_stock_chart`       | chart  | Bar chart of stock levels by item/warehouse           |

@@ -17,9 +17,412 @@ import {
   setFrappeClient,
 } from "./frappe-client.ts";
 import { MemoryCache } from "../cache/memory.ts";
+import { NoopCache } from "../cache/noop.ts";
 import { taskKanbanAdapter } from "../kanban/adapters/task.ts";
 import { opportunityKanbanAdapter } from "../kanban/adapters/opportunity.ts";
 import { issueKanbanAdapter } from "../kanban/adapters/issue.ts";
+
+for (const readKind of ["get", "list"] as const) {
+  Deno.test(`FrappeClient inflight ${readKind} remains invalidated across capacity-one eviction`, async () => {
+    const originalFetch = globalThis.fetch;
+    const started = Promise.withResolvers<void>();
+    const deferred = Promise.withResolvers<Response>();
+    const cache = new MemoryCache(1);
+    const client = makeClient({ cache, retries: 0 });
+    let taskReads = 0;
+    let otherReads = 0;
+    const value = (revision: number) =>
+      readKind === "get"
+        ? { name: "TASK-001", revision }
+        : [{ name: "TASK-001", revision }];
+    const read = () =>
+      readKind === "get" ? client.get("Task", "TASK-001") : client.list("Task");
+    globalThis.fetch = async (input, init) => {
+      if (init?.method !== "GET") {
+        return Response.json({ data: { name: "TASK-001" } });
+      }
+      if (String(input).includes("Customer")) {
+        otherReads++;
+        return Response.json({ data: { name: "CUSTOMER-001" } });
+      }
+      if (++taskReads === 1) {
+        started.resolve();
+        return await deferred.promise;
+      }
+      return Response.json({ data: value(1) });
+    };
+    let pending: ReturnType<typeof read> | undefined;
+    try {
+      pending = read();
+      await started.promise;
+      await client.update("Task", "TASK-001", {});
+      assertEquals(await read(), value(1));
+      await client.get("Customer", "CUSTOMER-001");
+      deferred.resolve(Response.json({ data: value(0) }));
+      assertEquals(await pending, value(0));
+      await client.get("Customer", "CUSTOMER-001");
+      assertEquals(
+        otherReads,
+        1,
+        "late Task fill must not evict the unrelated fresh entry",
+      );
+      assertEquals(await read(), value(1));
+      assertEquals(await read(), value(1));
+      assertEquals(taskReads, 3);
+    } finally {
+      deferred.resolve(Response.json({ data: value(0) }));
+      try {
+        await pending;
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    }
+  });
+
+  Deno.test(`FrappeClient ${readKind} cache miss returns data isolated from later cache hits`, async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    const doc = {
+      name: "TASK-001",
+      nested: { status: "Open" },
+      rows: [{ qty: 1 }],
+    };
+    const data = readKind === "get" ? doc : [doc];
+    globalThis.fetch = async () => {
+      calls++;
+      return Response.json({ data });
+    };
+    try {
+      const client = makeClient({ cache: new MemoryCache(1), retries: 0 });
+      const read = () =>
+        readKind === "get"
+          ? client.get<typeof doc>("Task", "TASK-001")
+          : client.list<typeof doc>("Task");
+      const first = await read();
+      const firstDoc = Array.isArray(first) ? first[0] : first;
+      firstDoc.name = "CHANGED";
+      firstDoc.nested.status = "Changed";
+      firstDoc.rows[0].qty = 99;
+      firstDoc.rows.push({ qty: 2 });
+      if (Array.isArray(first)) first.push(firstDoc);
+      const second = await read();
+      assertEquals(second, data);
+      const secondDoc = Array.isArray(second) ? second[0] : second;
+      secondDoc.rows[0].qty = 200;
+      assertEquals(await read(), data);
+      assertEquals(calls, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+}
+
+for (const readKind of ["get", "list"] as const) {
+  for (const skipCache of [false, true]) {
+    for (
+      const mutation of [
+        "update",
+        "create",
+        "delete",
+        "invalidate",
+        "invalidate-doctype",
+        "method",
+      ] as const
+    ) {
+      Deno.test(`inflight ${readKind} skipCache=${skipCache} cannot refill after ${mutation}`, async () => {
+        const originalFetch = globalThis.fetch;
+        const started = Promise.withResolvers<void>();
+        const deferred = Promise.withResolvers<Response>();
+        const cache = new MemoryCache();
+        const client = makeClient({ cache, retries: 0 });
+        let reads = 0;
+        let revision = 0;
+        const value = (version: number) =>
+          readKind === "get"
+            ? { name: "TASK-001", revision: version }
+            : [{ name: "TASK-001", revision: version }];
+        const read = (bypass = false) =>
+          readKind === "get"
+            ? client.get("Task", "TASK-001", { skipCache: bypass })
+            : client.list("Task", {}, { skipCache: bypass });
+        if (skipCache) {
+          cache.set(
+            readKind === "get" ? "get:Task:TASK-001" : "list:Task:{}",
+            value(-1),
+            60000,
+          );
+        }
+        globalThis.fetch = async (_input, init) => {
+          if (init?.method === "GET") {
+            reads += 1;
+            if (reads === 1) {
+              started.resolve();
+              return await deferred.promise;
+            }
+            return Response.json({ data: value(revision) });
+          }
+          revision += 1;
+          return Response.json({
+            data: { name: "TASK-001", revision },
+            message: {},
+          });
+        };
+        let pending: ReturnType<typeof read> | undefined;
+        try {
+          pending = read(skipCache);
+          await started.promise;
+          if (mutation === "update") {
+            await client.update("Task", "TASK-001", { subject: "new" });
+          } else if (mutation === "create") {
+            await client.create("Task", { name: "TASK-001" });
+          } else if (mutation === "delete") {
+            await client.delete("Task", "TASK-001");
+          } else {
+            if (mutation === "method") await client.callMethod("fixture.write");
+            else revision += 1;
+            client.invalidate(
+              "Task",
+              mutation === "invalidate-doctype" ? undefined : "TASK-001",
+            );
+          }
+          deferred.resolve(Response.json({ data: value(0) }));
+          assertEquals(
+            await pending,
+            value(0),
+            "the original read may retain its snapshot",
+          );
+          // invalidate không có name vẫn giữ get đã cache theo API hiện tại;
+          // response đang bay không được ghi đè snapshot đã có đó.
+          const retainsCachedGet = readKind === "get" && skipCache &&
+            mutation === "invalidate-doctype";
+          const expected = value(retainsCachedGet ? -1 : 1);
+          assertEquals(
+            await read(),
+            expected,
+            "new reads must not hit the late old snapshot",
+          );
+          assertEquals(
+            await read(),
+            expected,
+            "the retained or fresh response should still be cached",
+          );
+          assertEquals(reads, retainsCachedGet ? 1 : 2);
+        } finally {
+          deferred.resolve(Response.json({ data: value(0) }));
+          try {
+            await pending;
+          } finally {
+            globalThis.fetch = originalFetch;
+          }
+        }
+      });
+    }
+  }
+}
+
+for (const readKind of ["get", "list"] as const) {
+  for (const freshBeforeRelease of [false, true]) {
+    Deno.test(`inflight ${readKind} shared cache freshBeforeRelease=${freshBeforeRelease} rejects old fill`, async () => {
+      const originalFetch = globalThis.fetch;
+      const cache = new MemoryCache();
+      const reader = makeClient({ cache, retries: 0 });
+      const writer = makeClient({ cache, retries: 0 });
+      const started = Promise.withResolvers<void>();
+      const deferred = Promise.withResolvers<Response>();
+      let reads = 0;
+      const value = (revision: number) =>
+        readKind === "get"
+          ? { name: "TASK-001", revision }
+          : [{ name: "TASK-001", revision }];
+      const read = () =>
+        readKind === "get"
+          ? reader.get("Task", "TASK-001")
+          : reader.list("Task");
+      globalThis.fetch = async (_input, init) => {
+        if (init?.method !== "GET") {
+          return Response.json({ data: { name: "TASK-001" } });
+        }
+        if (++reads === 1) {
+          started.resolve();
+          return await deferred.promise;
+        }
+        return Response.json({ data: value(1) });
+      };
+      let pending: ReturnType<typeof read> | undefined;
+      try {
+        pending = read();
+        await started.promise;
+        await writer.update("Task", "TASK-001", { subject: "new" });
+        if (freshBeforeRelease) assertEquals(await read(), value(1));
+        deferred.resolve(Response.json({ data: value(0) }));
+        assertEquals(await pending, value(0));
+        assertEquals(await read(), value(1));
+        assertEquals(await read(), value(1));
+        assertEquals(reads, 2);
+      } finally {
+        deferred.resolve(Response.json({ data: value(0) }));
+        try {
+          await pending;
+        } finally {
+          globalThis.fetch = originalFetch;
+        }
+      }
+    });
+  }
+}
+
+for (const readKind of ["get", "list"] as const) {
+  for (const related of [false, true]) {
+    Deno.test(`inflight ${readKind} generation uses doctype boundary related=${related}`, async () => {
+      const originalFetch = globalThis.fetch;
+      const deferred = Promise.withResolvers<Response>();
+      const started = Promise.withResolvers<void>();
+      const client = makeClient({ retries: 0 });
+      let reads = 0;
+      const value = (revision: number) =>
+        readKind === "get"
+          ? { name: "TASK-001", revision }
+          : [{ name: "TASK-001", revision }];
+      const read = () =>
+        readKind === "get"
+          ? client.get("Task", "TASK-001")
+          : client.list("Task");
+      globalThis.fetch = async (_input, init) => {
+        if (init?.method !== "GET") {
+          return Response.json({ data: { name: "OTHER" } });
+        }
+        if (++reads === 1) {
+          started.resolve();
+          return await deferred.promise;
+        }
+        return Response.json({ data: value(1) });
+      };
+      let pending: ReturnType<typeof read> | undefined;
+      try {
+        pending = read();
+        await started.promise;
+        await client.update(related ? "Task" : "Customer", "OTHER", {});
+        deferred.resolve(Response.json({ data: value(0) }));
+        assertEquals(await pending, value(0));
+        assertEquals(await read(), value(related ? 1 : 0));
+        assertEquals(reads, related ? 2 : 1);
+      } finally {
+        deferred.resolve(Response.json({ data: value(0) }));
+        try {
+          await pending;
+        } finally {
+          globalThis.fetch = originalFetch;
+        }
+      }
+    });
+  }
+
+  Deno.test(`inflight ${readKind} still fills cache after failed mutation`, async () => {
+    const originalFetch = globalThis.fetch;
+    const deferred = Promise.withResolvers<Response>();
+    const started = Promise.withResolvers<void>();
+    const client = makeClient({ retries: 0 });
+    let reads = 0;
+    const value = readKind === "get"
+      ? { name: "TASK-001", revision: 0 }
+      : [{ name: "TASK-001", revision: 0 }];
+    const read = () =>
+      readKind === "get" ? client.get("Task", "TASK-001") : client.list("Task");
+    globalThis.fetch = async (_input, init) => {
+      if (init?.method !== "GET") {
+        return Response.json({ message: "Write denied" }, { status: 403 });
+      }
+      if (++reads === 1) {
+        started.resolve();
+        return await deferred.promise;
+      }
+      return Response.json({ data: value });
+    };
+    let pending: ReturnType<typeof read> | undefined;
+    try {
+      pending = read();
+      await started.promise;
+      const error = await assertRejects(
+        () => client.update("Task", "TASK-001", {}),
+        FrappeAPIError,
+      );
+      assertEquals(error.status, 403);
+      deferred.resolve(Response.json({ data: value }));
+      assertEquals(await pending, value);
+      assertEquals(await read(), value);
+      assertEquals(reads, 1);
+    } finally {
+      deferred.resolve(Response.json({ data: value }));
+      try {
+        await pending;
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    }
+  });
+
+  Deno.test(`failed ${readKind} does not cache errors`, async () => {
+    const originalFetch = globalThis.fetch;
+    let reads = 0;
+    const client = makeClient({ retries: 0 });
+    const value = readKind === "get"
+      ? { name: "TASK-001" }
+      : [{ name: "TASK-001" }];
+    globalThis.fetch = async () =>
+      ++reads === 1
+        ? Response.json({ message: "Read denied" }, { status: 403 })
+        : Response.json({ data: value });
+    const read = () =>
+      readKind === "get" ? client.get("Task", "TASK-001") : client.list("Task");
+    try {
+      await assertRejects(read, FrappeAPIError);
+      assertEquals(await read(), value);
+      assertEquals(await read(), value);
+      assertEquals(reads, 2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  Deno.test(`inflight ${readKind} remains uncached with NoopCache`, async () => {
+    const originalFetch = globalThis.fetch;
+    const deferred = Promise.withResolvers<Response>();
+    const started = Promise.withResolvers<void>();
+    const client = makeClient({ cache: new NoopCache(), retries: 0 });
+    let reads = 0;
+    const value = (revision: number) =>
+      readKind === "get"
+        ? { name: "TASK-001", revision }
+        : [{ name: "TASK-001", revision }];
+    const read = () =>
+      readKind === "get" ? client.get("Task", "TASK-001") : client.list("Task");
+    globalThis.fetch = async () => {
+      if (++reads === 1) {
+        started.resolve();
+        return await deferred.promise;
+      }
+      return Response.json({ data: value(reads) });
+    };
+    let pending: ReturnType<typeof read> | undefined;
+    try {
+      pending = read();
+      await started.promise;
+      client.invalidate("Task", "TASK-001");
+      deferred.resolve(Response.json({ data: value(0) }));
+      assertEquals(await pending, value(0));
+      assertEquals(await read(), value(2));
+      assertEquals(await read(), value(3));
+      assertEquals(reads, 3);
+    } finally {
+      deferred.resolve(Response.json({ data: value(0) }));
+      try {
+        await pending;
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    }
+  });
+}
 
 const guardedMoveCases = [
   {
