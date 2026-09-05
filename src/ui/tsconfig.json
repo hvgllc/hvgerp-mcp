@@ -12,10 +12,17 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "paths": {
       "~/*": ["./*"]
     }
   },
-  "include": ["**/*.ts", "**/*.tsx"],
-  "exclude": ["node_modules", "dist"]
+  "include": [
+    "*-viewer/src/**/*.ts",
+    "*-viewer/src/**/*.tsx",
+    "shared/**/*.ts",
+    "shared/**/*.tsx",
+    "testing/**/*.ts"
+  ],
+  "exclude": ["node_modules", "dist", "**/*_test.ts", "**/*.test.ts"]
 }
