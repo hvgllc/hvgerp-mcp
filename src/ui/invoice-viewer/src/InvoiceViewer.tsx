@@ -42,6 +42,7 @@ const TOOL_CALL_TIMEOUT_MS = 10_000;
 import {
   consumeViewerResult,
   getErrorPresentation,
+  getInvoiceDate,
   getInvoiceItemCode,
 } from "~/shared/presentation";
 import type { InvoiceData } from "~/shared/presentation";
@@ -530,7 +531,7 @@ export function InvoiceViewer() {
           <span>
             <span style={{ color: colors.text.muted }}>Date</span>
             <span style={{ color: colors.text.primary, fontWeight: 500 }}>
-              {data.posting_date}
+              {getInvoiceDate(data)}
             </span>
           </span>
           {data.due_date && (

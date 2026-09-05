@@ -43,14 +43,23 @@ export function getInvoiceItemCode(item: InvoiceItem): string | null {
     : null;
 }
 
-export interface InvoiceData {
+export type InvoiceDate =
+  | { posting_date: string; transaction_date?: string | null }
+  | { posting_date?: null; transaction_date: string };
+
+export function getInvoiceDate(data: InvoiceDate): string {
+  return typeof data.posting_date === "string"
+    ? data.posting_date
+    : data.transaction_date!;
+}
+
+export type InvoiceData = InvoiceDate & {
   name: string;
   customer?: string;
   customer_name?: string;
   supplier?: string;
   supplier_name?: string;
   company?: string;
-  posting_date: string;
   due_date?: string;
   status: string;
   docstatus?: number;
@@ -62,7 +71,7 @@ export interface InvoiceData {
   items?: InvoiceItem[];
   contact_email?: string;
   address_display?: string;
-}
+};
 
 export interface StockEntry {
   item_code: string;
@@ -219,6 +228,8 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 const text = (value: unknown): value is string => typeof value === "string";
+const dateText = (value: unknown): value is string =>
+  text(value) && value.trim().length > 0;
 const number = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
 const boolean = (value: unknown): value is boolean =>
@@ -247,7 +258,9 @@ const validators: {
 } = {
   invoice: (value): value is InvoiceData =>
     record(value) &&
-    ["name", "posting_date", "status"].every((key) => text(value[key])) &&
+    ["name", "status"].every((key) => text(value[key])) &&
+    optionalFields(value, ["posting_date", "transaction_date"], dateText) &&
+    (dateText(value.posting_date) || dateText(value.transaction_date)) &&
     number(value.grand_total) &&
     optionalFields(value, [
       "customer",

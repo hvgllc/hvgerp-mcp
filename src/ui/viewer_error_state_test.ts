@@ -109,3 +109,11 @@ Deno.test("five passive viewers use the tested result transition for initial and
     );
   }
 });
+
+Deno.test("invoice viewer renders the validated posting or transaction date through the shared helper", async () => {
+  const source = await Deno.readTextFile(
+    new URL("./invoice-viewer/src/InvoiceViewer.tsx", import.meta.url),
+  );
+  assert(source.includes("{getInvoiceDate(data)}"));
+  assert(!source.includes("{data.posting_date}"));
+});

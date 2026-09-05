@@ -2,9 +2,13 @@ import { assert, assertEquals, assertStrictEquals } from "@std/assert";
 import {
   consumeViewerResult,
   getErrorPresentation,
+  getInvoiceDate,
   getInvoiceItemCode,
 } from "./presentation.ts";
 import type { ViewerState } from "./presentation.ts";
+import type { FrappeClient } from "../../api/frappe-client.ts";
+import { salesTools } from "../../tools/sales.ts";
+import { withUiRefreshRequest } from "../../tools/ui-refresh.ts";
 
 const initial: ViewerState<never> = {
   data: null,
@@ -41,6 +45,262 @@ const payloads = {
     stages: [{ label: "Lead", count: 10, value: 5000, color: "#2563eb" }],
   },
 };
+
+const invoiceDateCases = [
+  {
+    doctype: "Sales Invoice",
+    entity: "sales_invoice",
+    date: "posting_date",
+    operations: ["get", "create", "submit"],
+  },
+  {
+    doctype: "Sales Order",
+    entity: "sales_order",
+    date: "transaction_date",
+    operations: ["get", "create", "submit"],
+  },
+  {
+    doctype: "Quotation",
+    entity: "quotation",
+    date: "transaction_date",
+    operations: ["get", "create"],
+  },
+] as const;
+
+for (const entry of invoiceDateCases) {
+  for (const operation of entry.operations) {
+    Deno.test(`invoice accepts the actual ${entry.entity}_${operation} handler envelope with a mock ERP client`, async () => {
+      const toolName = `erpnext_${entry.entity}_${operation}`;
+      const tool = salesTools.find((candidate) => candidate.name === toolName);
+      assert(tool);
+      const doc = {
+        name: "LOCAL-DATE",
+        doctype: entry.doctype,
+        [entry.date]: "2026-09-05",
+        status: "Draft",
+        grand_total: 30,
+        items: payloads.invoice.data.items,
+      };
+      const client = {
+        get: async () => doc,
+        create: async () => doc,
+        callMethod: async () => doc,
+        invalidate: () => {},
+      } as unknown as FrappeClient;
+      const args = {
+        name: doc.name,
+        customer: "LOCAL-CUSTOMER",
+        quotation_to: "Customer",
+        party_name: "LOCAL-CUSTOMER",
+        items: doc.items,
+      };
+      const response = withUiRefreshRequest(
+        await tool.handler(args, { client }),
+        toolName,
+        args,
+      );
+      assert(
+        response !== null && typeof response === "object" && "data" in response,
+      );
+      for (
+        const result of [
+          { structuredContent: response },
+          successResult(response),
+        ]
+      ) {
+        const state = consumeViewerResult("invoice", result, initial);
+        assertEquals(state.error, null);
+        assertEquals<unknown>(state.data, doc);
+      }
+    });
+    Deno.test(`invoice date contract accepts ${entry.doctype} ${operation} initially and after refresh failure`, () => {
+      const doc = {
+        name: `${entry.entity}-LOCAL`,
+        doctype: entry.doctype,
+        [entry.date]: "2026-09-04",
+        status: operation === "submit"
+          ? (entry.entity === "sales_order" ? "To Deliver and Bill" : "Unpaid")
+          : "Draft",
+        grand_total: 30,
+        items: payloads.invoice.data.items,
+      };
+      const request = {
+        toolName: `erpnext_${entry.entity}_get`,
+        arguments: { name: doc.name },
+      };
+      const envelope = {
+        data: doc,
+        refreshRequest: request,
+        ...(operation === "get"
+          ? {}
+          : { message: `${entry.doctype} succeeded` }),
+        ...(operation === "submit" ? { warnings: [] } : {}),
+      };
+      const loaded = consumeViewerResult("invoice", {
+        structuredContent: envelope,
+      }, initial);
+      assertEquals(loaded.error, null);
+      assert(loaded.data);
+      assertEquals(getInvoiceDate(loaded.data), "2026-09-04");
+      assertStrictEquals<unknown>(loaded.data, doc);
+      assertStrictEquals(loaded.refreshRequest, request);
+      const failed = consumeViewerResult("invoice", {
+        isError: true,
+        content: [{ type: "text", text: "Temporary date document failure" }],
+      }, loaded);
+      assertStrictEquals(failed.data, loaded.data);
+      assertStrictEquals(failed.refreshRequest, request);
+      assertEquals(
+        getErrorPresentation(failed).inlineError,
+        "Temporary date document failure",
+      );
+      const nextDoc = { ...doc, [entry.date]: "2026-09-05", grand_total: 45 };
+      const recovered = consumeViewerResult(
+        "invoice",
+        successResult({ ...envelope, data: nextDoc }),
+        failed,
+      );
+      assertEquals(recovered.error, null);
+      assert(recovered.data);
+      assertEquals(getInvoiceDate(recovered.data), "2026-09-05");
+      assertEquals<unknown>(recovered.data, nextDoc);
+      assertEquals(recovered.refreshRequest, request);
+      assertEquals(recovered.loading, false);
+    });
+  }
+}
+
+for (const entity of ["sales_order", "quotation"]) {
+  Deno.test(`invoice refresh accepts ${entity} transaction date over existing data`, () => {
+    const loaded = consumeViewerResult(
+      "invoice",
+      successResult(payloads.invoice),
+      initial,
+    );
+    const doc = {
+      name: `${entity}-LOCAL`,
+      transaction_date: "2026-09-05",
+      status: "Draft",
+      grand_total: 45,
+    };
+    const refreshed = consumeViewerResult(
+      "invoice",
+      successResult({ data: doc }),
+      loaded,
+    );
+    assertEquals(refreshed.error, null);
+    assertEquals<unknown>(refreshed.data, doc);
+  });
+}
+
+Deno.test("invoice transaction dates accept null or omitted posting dates in raw and wrapped documents", () => {
+  for (const posting of [{}, { posting_date: null }]) {
+    const doc = {
+      name: "SO-DATE",
+      status: "Draft",
+      grand_total: 0,
+      transaction_date: "2026-09-05",
+      ...posting,
+    };
+    for (const payload of [doc, { data: doc }]) {
+      const state = consumeViewerResult(
+        "invoice",
+        successResult(payload),
+        initial,
+      );
+      assertEquals(state.error, null);
+      assertEquals<unknown>(state.data, doc);
+      const failed = consumeViewerResult("invoice", { isError: true }, state);
+      assertStrictEquals(failed.data, state.data);
+      const recovered = consumeViewerResult(
+        "invoice",
+        successResult(payload),
+        failed,
+      );
+      assertEquals(recovered.error, null);
+      assertEquals<unknown>(recovered.data, doc);
+      const failedInitial = consumeViewerResult(
+        "invoice",
+        { isError: true },
+        initial,
+      );
+      assertEquals(
+        consumeViewerResult("invoice", successResult(payload), failedInitial)
+          .error,
+        null,
+      );
+    }
+  }
+});
+
+Deno.test("invoice date display prefers posting date when both date fields exist", () => {
+  assertEquals(
+    getInvoiceDate({
+      posting_date: "2026-09-04",
+      transaction_date: "2026-09-05",
+    }),
+    "2026-09-04",
+  );
+  assertEquals(
+    getInvoiceDate({ posting_date: "2026-09-04", transaction_date: null }),
+    "2026-09-04",
+  );
+  assertEquals(
+    getInvoiceDate({ posting_date: null, transaction_date: "2026-09-05" }),
+    "2026-09-05",
+  );
+  assertEquals(
+    getInvoiceDate({ transaction_date: "2026-09-05" }),
+    "2026-09-05",
+  );
+});
+
+Deno.test("invoice date fields reject malformed values initially and on refresh without losing state", () => {
+  const loaded = consumeViewerResult(
+    "invoice",
+    successResult({
+      ...payloads.invoice,
+      refreshRequest: {
+        toolName: "erpnext_sales_invoice_get",
+        arguments: { name: "INV-LOCAL" },
+      },
+    }),
+    initial,
+  );
+  const base = { name: "INVALID-DATE", status: "Draft", grand_total: 0 };
+  const invalidDates: Record<string, unknown>[] = [{}, {
+    posting_date: null,
+    transaction_date: null,
+  }];
+  for (const invalid of [{}, [], 123, true, "", "   "]) {
+    invalidDates.push({
+      posting_date: invalid,
+      transaction_date: "2026-09-05",
+    });
+    invalidDates.push({
+      posting_date: "2026-09-05",
+      transaction_date: invalid,
+    });
+  }
+  for (const dates of invalidDates) {
+    const result = successResult({
+      data: { ...base, ...dates },
+      refreshRequest: { toolName: "wrong", arguments: {} },
+    });
+    const first = consumeViewerResult("invoice", result, initial);
+    assertEquals(first.error, "Invalid invoice payload");
+    assertEquals(first.data, null);
+    const failed = consumeViewerResult("invoice", result, loaded);
+    assertEquals(failed.error, "Invalid invoice payload");
+    assertStrictEquals(failed.data, loaded.data);
+    assertStrictEquals(failed.refreshRequest, loaded.refreshRequest);
+    assertEquals(
+      consumeViewerResult("invoice", successResult(payloads.invoice), failed)
+        .error,
+      null,
+    );
+  }
+});
 
 for (const kind of kinds) {
   const payload = {
