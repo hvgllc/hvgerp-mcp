@@ -60,6 +60,9 @@ deno fmt          # format (or `deno fmt --check` to verify)
 deno lint         # lint
 deno task check   # type check
 deno task test    # tests
+npm --prefix src/ui ci
+npm --prefix src/ui run typecheck # browser viewers and the local test host
+npm --prefix src/ui run build
 ```
 
 Or the full local release preflight (no publish): `deno task release:check`.
