@@ -1386,6 +1386,9 @@ export function KanbanViewer() {
       }
     } catch {
       setError("Failed to read dragged kanban card");
+    } finally {
+      // Thẻ có thể đổi cột trước dragend; chỉ drain sau khi move đã mở mutation.
+      handleDragEnd();
     }
   }
 

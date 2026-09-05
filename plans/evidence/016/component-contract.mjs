@@ -109,7 +109,7 @@ function harness() {
         marker,
         `
         capture({ state, requestMove, requestBoardRefresh, handleDragStart,
-          handleDragEnd, handleCardTitleClick, handleSaveDetail,
+          handleDragEnd, handleDropCard, handleCardTitleClick, handleSaveDetail,
           handleAssignDetail, handleUnassignDetail });
         ${marker}`,
       );
@@ -165,6 +165,113 @@ function harness() {
   send(fixtures.boardFixture());
   return { calls, render, send, fixtures };
 }
+
+function dragEvent() {
+  const data = new Map();
+  return {
+    preventDefault() {},
+    dataTransfer: {
+      setData: (type, value) => data.set(type, value),
+      getData: (type) => data.get(type) ?? "",
+    },
+  };
+}
+
+for (const oldFirst of [true, false]) {
+  for (const failed of [false, true]) {
+    test(`component drop without source dragend drains once oldFirst=${oldFirst} failed=${failed}`, async () => {
+      const h = harness();
+      const old = h.render().requestBoardRefresh({ ignoreInterval: true });
+      const event = dragEvent();
+      h.render().handleDragStart(h.render().state.board.cards[0], event);
+      h.render().handleDropCard("Working", event);
+      // Thẻ đã đổi cột; không gọi dragend từ article nguồn đã bị thay thế.
+      assert.equal(h.render().state.board.cards[0].columnId, "Working");
+      assert.equal(h.calls.length, 2);
+      assert.equal(h.calls[1].request.name, "erpnext_kanban_move_card");
+      if (oldFirst) {
+        h.calls[0].resolve(payload(h.fixtures.boardFixture()));
+        await old;
+        assert.equal(h.render().state.board.cards[0].columnId, "Working");
+        assert.equal(h.calls.length, 2);
+      }
+      if (failed) h.calls[1].reject(new Error("Forbidden"));
+      else h.calls[1].resolve(payload({ ok: true }));
+      await tick();
+      if (!oldFirst) {
+        h.calls[0].resolve(payload(h.fixtures.boardFixture()));
+        await old;
+      }
+      assert.equal(
+        h.render().state.board.cards[0].columnId,
+        failed ? "Open" : "Working",
+      );
+      assert.equal(h.calls.length, 3);
+      assert.equal(h.calls[2].request.name, "erpnext_kanban_get_board");
+      // dragend đến muộn hoặc lặp lại không tạo read song song.
+      h.render().handleDragEnd();
+      h.render().handleDragEnd();
+      assert.equal(h.calls.length, 3);
+      h.calls[2].resolve(payload(h.render().state.board));
+      await tick();
+      assert.equal(h.calls.length, 3);
+    });
+  }
+}
+
+for (
+  const drop of ["empty", "malformed", "throw", "unknown", "same", "blocked"]
+) {
+  test(`component drop ${drop} releases pending read without dragend`, async () => {
+    const h = harness();
+    const old = h.render().requestBoardRefresh({ ignoreInterval: true });
+    const event = dragEvent();
+    h.render().handleDragStart(h.render().state.board.cards[0], event);
+    h.calls[0].resolve(payload(h.fixtures.boardFixture()));
+    await old;
+    assert.equal(h.calls.length, 1);
+    if (drop === "empty") event.dataTransfer.setData("application/json", "");
+    if (drop === "malformed") {
+      event.dataTransfer.setData("application/json", "{");
+    }
+    if (drop === "unknown") {
+      event.dataTransfer.setData("application/json", '{"cardId":"missing"}');
+    }
+    if (drop === "throw") {
+      event.dataTransfer.getData = () => {
+        throw new Error("Unreadable transfer");
+      };
+    }
+    h.render().handleDropCard(
+      drop === "same" ? "Open" : drop === "blocked" ? "Completed" : "Working",
+      event,
+    );
+    assert.equal(h.calls.length, 2);
+    assert.equal(h.calls[1].request.name, "erpnext_kanban_get_board");
+    assert.equal(h.render().state.board.cards[0].columnId, "Open");
+    h.calls[1].resolve(payload(h.render().state.board));
+    await tick();
+    assert.equal(h.calls.length, 2);
+  });
+}
+
+test("component drop begins mutation before draining an idle pending read", async () => {
+  const h = harness();
+  const event = dragEvent();
+  h.render().handleDragStart(h.render().state.board.cards[0], event);
+  await h.render().requestBoardRefresh({ ignoreInterval: true });
+  assert.equal(h.calls.length, 0);
+  h.render().handleDropCard("Working", event);
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.calls[0].request.name, "erpnext_kanban_move_card");
+  h.calls[0].resolve(payload({ ok: true }));
+  await tick();
+  assert.equal(h.calls.length, 2);
+  assert.equal(h.calls[1].request.name, "erpnext_kanban_get_board");
+  h.calls[1].resolve(payload(h.render().state.board));
+  await tick();
+  assert.equal(h.calls.length, 2);
+});
 
 for (const oldFirst of [true, false]) {
   test(`component move retains actual board when old read returns first=${oldFirst}`, async () => {
