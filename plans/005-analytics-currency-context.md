@@ -10,7 +10,7 @@
 - Ưu tiên: P1; công sức: L; rủi ro sửa: vừa; thay ý nghĩa số tiền đang hiển thị
   sai.
 - Phụ thuộc: không.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `TODO`.
+- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 Các chart/KPI cộng grand_total, amount, outstanding_amount mà không mang đơn vị
@@ -63,6 +63,7 @@ Các file được sửa khi thực thi:
 
 - `src/tools/analytics.ts`
 - `src/tools/analytics_test.ts`
+- `src/client_test.ts` (chỉ fixture của test direct-execution bounded radar)
 - `src/tools/analytics-context.ts` (tạo mới)
 - `src/tools/analytics-context_test.ts` (tạo mới)
 - `src/tools/query-report.ts`
@@ -80,9 +81,9 @@ tự nâng dependency. Định danh, chuỗi lỗi và commit bằng tiếng Anh
 thích tiếng Việt có dấu, không dùng ký tự U+2014.
 
 Trước khi sửa, chạy `git status --short`,
-`git diff --stat d2c5305..HEAD -- src/tools/analytics.ts src/tools/analytics_test.ts src/tools/analytics-context.ts src/tools/analytics-context_test.ts src/tools/query-report.ts src/tools/query-report_test.ts docs/tools.md docs/concepts.md CHANGELOG.md`
+`git diff --stat d2c5305..HEAD -- src/tools/analytics.ts src/tools/analytics_test.ts src/tools/analytics-context.ts src/tools/analytics-context_test.ts src/tools/query-report.ts src/tools/query-report_test.ts src/client_test.ts docs/tools.md docs/concepts.md CHANGELOG.md`
 và
-`git diff -- src/tools/analytics.ts src/tools/analytics_test.ts src/tools/analytics-context.ts src/tools/analytics-context_test.ts src/tools/query-report.ts src/tools/query-report_test.ts docs/tools.md docs/concepts.md CHANGELOG.md`.
+`git diff -- src/tools/analytics.ts src/tools/analytics_test.ts src/tools/analytics-context.ts src/tools/analytics-context_test.ts src/tools/query-report.ts src/tools/query-report_test.ts src/client_test.ts docs/tools.md docs/concepts.md CHANGELOG.md`.
 Bảo toàn thay đổi có sẵn. Nếu phụ thuộc đã thực thi, đối chiếu diff và làm mới
 kế hoạch này theo code mới trước khi sửa; sai khác chưa giải thích được là điều
 kiện dừng.
@@ -135,10 +136,10 @@ Tạo analytics-context.ts cho resolve company/currency và metadata đơn vị 
 chung. Test company duy nhất VND, hai company VND/USD không input, company chỉ
 định, Company permission error, currency rỗng. Fixture chứng từ foreign currency
 có base amount riêng: số tổng phải theo base đã ghi nhận, không theo tỷ giá hôm
-nay. Với receivables dùng báo cáo chuẩn Accounts Receivable có filter
-company/presentation currency đã xác minh; không mặc định outstanding_amount là
-base currency. Nếu không có đường đổi đáng tin, trả lỗi rõ cho dữ liệu mixed
-thay vì số sai.
+nay. Với receivables dùng báo cáo chuẩn Accounts Receivable có filter company và
+chế độ company currency đã xác minh; không mặc định outstanding_amount là base
+currency. Nếu không có đường đổi đáng tin, trả lỗi rõ cho dữ liệu mixed thay vì
+số sai.
 
 **Kiểm tra:**
 `deno test --allow-all src/tools/analytics-context_test.ts src/tools/analytics_test.ts`
@@ -202,6 +203,38 @@ input hợp lệ cũ trên site một company.
   hoặc cần sửa ngoài phạm vi.
 - Thiếu quyền/công cụ/chứng cứ bắt buộc sau các cách kiểm tra hợp lệ; không đánh
   dấu DONE bằng dữ liệu giả thay cho môi trường bắt buộc.
+
+## Chính sách đơn vị đã chốt ngày 2026-09-05
+
+Mở scope kiểm thử tối thiểu sau full suite đỏ 885/1/4: fixture trong
+src/client_test.ts:238 chưa có Company nên auto-select hợp lệ bị từ chối bởi
+contract mới. Parent đã đọc test và xác nhận file không drift d2c5305..c1e7485.
+Chỉ thêm Company list/get với currency VND vào mock; giữ nguyên assertion
+over-limit không gọi query và auto-select vẫn gọi query, không sửa client
+source.
+
+Đã đối chiếu ERPNext version-15 tại revision
+`1a0bf0bf6c4aeaae5acde90c74b186312f49b95c`. Executor lưu liên kết nguồn chính
+thức và test từng đường trong evidence/005.md.
+
+- Accounts Receivable dùng `company`, `in_party_currency: 0`, không đặt
+  `party_account` hoặc filter `presentation_currency` không được implementation
+  hỗ trợ. Gọi report read-only với `ignore_prepared_report: true`; không chia
+  payment terms hoặc group. Chỉ lấy Sales Invoice có outstanding dương, bỏ dòng
+  tổng và đếm voucher duy nhất. Kiểm currency của dòng đúng company; thiếu hoặc
+  khác currency phải lỗi rõ, không gắn nhãn thay đơn vị.
+- Gross margin/profit dùng `base_amount` và `stock_qty` cùng company với kho.
+  Giữ cách chọn valuation rate hiện có của từng tool, mô tả rõ là ước tính theo
+  giá kho, không phải lợi nhuận kế toán thực tế. Thiếu giá vốn phải lỗi rõ.
+- Scatter giữ cách chọn selling price mới nhất hiện có. Với điểm thực sự được
+  dùng, Item Price currency phải đúng company currency và UOM phải khớp
+  `Item.stock_uom`; trục lượng dùng `Sales Order Item.stock_qty`. Thiếu hoặc
+  khác currency/UOM phải lỗi, không lọc bỏ âm thầm, không tự đổi tỷ giá hay UOM
+  hiện tại cho chứng từ lịch sử. Fallback Bin chỉ khi không có điểm hợp lệ do
+  thiếu giao dịch/giá, không được che lỗi dữ liệu. Nhãn ghi rõ currency và stock
+  unit, không thay response shape.
+- Các phép tổng còn giới hạn số dòng vẫn thuộc 006, phải ghi giới hạn trung
+  thực. Không mở rộng allowlist, dependency hoặc API ngoài phạm vi này.
 
 ## Bảo trì
 

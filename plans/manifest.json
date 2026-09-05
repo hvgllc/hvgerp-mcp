@@ -138,6 +138,7 @@
       "src/tools/analytics-context_test.ts",
       "src/tools/query-report.ts",
       "src/tools/query-report_test.ts",
+      "src/client_test.ts",
       "docs/tools.md",
       "docs/concepts.md",
       "CHANGELOG.md"
@@ -336,6 +337,7 @@
       "src/kanban/adapters/opportunity-adapter_test.ts",
       "src/kanban/adapters/issue-adapter_test.ts",
       "src/api/frappe-client_test.ts",
+      "src/tools/kanban_test.ts",
       "docs/erpnext-quirks.md"
     ],
     "newFiles": [],
@@ -364,10 +366,10 @@
       "src/compat/legacy-shim_test.ts",
       "shim.ts",
       "docs/migration-mcp-spec-2026-07-28.md",
-      "plans/evidence/011/container-smoke.ts"
+      "plans/evidence/011/"
     ],
     "newFiles": [
-      "plans/evidence/011/container-smoke.ts"
+      "plans/evidence/011/"
     ],
     "evidence": [
       {
@@ -582,6 +584,7 @@
       "src/ui/shared/presentation_test.ts",
       "src/ui/viewer_error_state_test.ts",
       "src/ui/testing/fixtures.ts",
+      "src/ui/testing/host.ts",
       "plans/evidence/017/"
     ],
     "newFiles": [

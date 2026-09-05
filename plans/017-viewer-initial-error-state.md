@@ -9,12 +9,25 @@
 - Mục audit: 17; loại: `bug`.
 - Ưu tiên: P1; công sức: M; rủi ro sửa: MED.
 - Phụ thuộc: `007`.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `TODO`.
+- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 Invoice và Stock có thể đi vào empty state trước khi trình bày lỗi. Các viewer
 biểu đồ còn ép payload thành dữ liệu mà chưa thống nhất xử lý isError. Người
 dùng cần phân biệt không có dữ liệu với không đọc được dữ liệu.
+
+## Đối chiếu trước thực thi
+
+Parent đối chiếu source từ d2c5305 đến main 99b1fa3: chỉ ChartViewer nhận sửa
+kiểu/click index của 007; các viewer khác và helper trong scope không đổi.
+Fixture/host được thêm ở 007, CSV đổi ở 008, detail-race đổi ở 009, phải giữ
+nguyên contract đã được kiểm. Snippet Invoice vẫn exact. 007 đã DONE qua PR27.
+
+Host hiện có initial-error và refresh-error, nhưng chưa có malformed-payload;
+chỉ thêm tên scenario ở fixtures không tự gửi malformed response. Parent mở
+scope tối thiểu thêm src/ui/testing/host.ts cho dispatch fixture malformed của
+năm viewer; không sửa host để che lỗi hoặc lọc response thay viewer. Lưu trace
+thật cùng ảnh của 15 ca Browser; không thay bằng regex test.
 
 ## Hiện trạng và chứng cứ
 
@@ -78,6 +91,8 @@ Các file được sửa khi thực thi:
 - `src/ui/shared/presentation_test.ts`
 - `src/ui/viewer_error_state_test.ts`
 - `src/ui/testing/fixtures.ts`
+- `src/ui/testing/host.ts` (chỉ dispatch scenario malformed-payload đúng
+  contract)
 - `plans/evidence/017/` (tạo mới)
 - `plans/README.md`
 - `plans/evidence/017.md`
@@ -89,9 +104,9 @@ dependency. Định danh, chuỗi lỗi và commit bằng tiếng Anh; phần gi
 Việt có dấu, không dùng ký tự U+2014.
 
 Trước khi sửa, chạy `git status --short`,
-`git diff --stat d2c5305..HEAD -- src/ui/invoice-viewer/src/InvoiceViewer.tsx src/ui/stock-viewer/src/StockViewer.tsx src/ui/chart-viewer/src/ChartViewer.tsx src/ui/kpi-viewer/src/KpiViewer.tsx src/ui/funnel-viewer/src/FunnelViewer.tsx src/ui/shared/presentation.ts src/ui/shared/presentation_test.ts src/ui/viewer_error_state_test.ts src/ui/testing/fixtures.ts`
+`git diff --stat d2c5305..HEAD -- src/ui/invoice-viewer/src/InvoiceViewer.tsx src/ui/stock-viewer/src/StockViewer.tsx src/ui/chart-viewer/src/ChartViewer.tsx src/ui/kpi-viewer/src/KpiViewer.tsx src/ui/funnel-viewer/src/FunnelViewer.tsx src/ui/shared/presentation.ts src/ui/shared/presentation_test.ts src/ui/viewer_error_state_test.ts src/ui/testing/fixtures.ts src/ui/testing/host.ts`
 và
-`git diff -- src/ui/invoice-viewer/src/InvoiceViewer.tsx src/ui/stock-viewer/src/StockViewer.tsx src/ui/chart-viewer/src/ChartViewer.tsx src/ui/kpi-viewer/src/KpiViewer.tsx src/ui/funnel-viewer/src/FunnelViewer.tsx src/ui/shared/presentation.ts src/ui/shared/presentation_test.ts src/ui/viewer_error_state_test.ts src/ui/testing/fixtures.ts`.
+`git diff -- src/ui/invoice-viewer/src/InvoiceViewer.tsx src/ui/stock-viewer/src/StockViewer.tsx src/ui/chart-viewer/src/ChartViewer.tsx src/ui/kpi-viewer/src/KpiViewer.tsx src/ui/funnel-viewer/src/FunnelViewer.tsx src/ui/shared/presentation.ts src/ui/shared/presentation_test.ts src/ui/viewer_error_state_test.ts src/ui/testing/fixtures.ts src/ui/testing/host.ts`.
 Bảo toàn thay đổi có sẵn. Nếu phụ thuộc đã thực thi, đối chiếu diff và làm mới
 kế hoạch này theo code mới trước khi sửa; sai khác chưa giải thích được là điều
 kiện dừng.

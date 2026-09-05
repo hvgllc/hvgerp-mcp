@@ -9,7 +9,7 @@
 - Mục audit: 11; loại: `bug`.
 - Ưu tiên: P1; công sức: M; rủi ro sửa: vừa; semantics JSON-RPC batch.
 - Phụ thuộc: không.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `TODO`.
+- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 forwardOne throw trong entry thứ hai làm mất replies của entry đầu; shim.ts trả
@@ -18,6 +18,11 @@ batch. Đích là giữ kết quả thành công, đánh dấu entry lỗi là o
 các entry chưa gọi là not executed.
 
 ## Hiện trạng và chứng cứ
+
+Đối chiếu trước thực thi với main `e09537b`: bốn file source/test/docs trong
+phạm vi chưa thay đổi so với `d2c5305`. Docker client và server đều 29.4.0, đang
+hoạt động. Executor dùng worktree riêng; không đổi workspace người dùng. Đây mới
+là kiểm điều kiện chạy, chưa phải bằng chứng container smoke đã đạt.
 
 `src/compat/legacy-shim.ts:1783`:
 
@@ -68,7 +73,7 @@ Các file được sửa khi thực thi:
 - `docs/migration-mcp-spec-2026-07-28.md`
 - `plans/README.md`
 - `plans/evidence/011.md`
-- `plans/evidence/011/container-smoke.ts` (tạo mới, fixture cho container local)
+- `plans/evidence/011/` (tạo mới; chứa `container-smoke.ts` cho container local)
 
 Ngoài phạm vi: không thay single-request transport hoặc auth pipeline; không
 replay batch, không đổi legacy versions hỗ trợ. Không sửa dữ liệu production,

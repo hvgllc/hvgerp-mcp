@@ -129,3 +129,71 @@ Reviewer đọc toàn bộ diff, kiểm phạm vi, đọc assertion và chạy l
 đa hai vòng yêu cầu sửa cho mỗi kế hoạch, sau đó BLOCK nếu vẫn không đạt. Kế
 hoạch phụ thuộc chỉ chạy sau DONE. Không đổi lỗi thiếu môi trường thành test đã
 qua và không lấy fixture thay bằng chứng bắt buộc từ hệ thống thật.
+
+## Đồng bộ chọn lọc sau review 0af23a9
+
+Reviewer độc lập APPROVE commit `0af23a9263ae12b9465b7b5263176eadac545439`.
+Parent đã đọc toàn delta và tự chạy validator 25/25, regression 81/81, format 51
+file, lint hai script, diff check và so source ngoài plans với main
+`99b1fa319590e60730faabdb033a5b48a44e1862`: đều đạt. Approval này áp dụng
+revision đó, không tự chấp thuận delta quản trị tiến độ tiếp theo.
+
+Đồng bộ root chỉ các hiện vật đã review: validator/test, binding evidence
+001/003/004/007/008/024, kế hoạch/evidence 009 cùng 7 PNG, 2 JSON và script kiểm
+host, catalog scope của 015 và hướng dẫn index. Source root vẫn d2c5305; 016/022
+giữ sourceRef, line và fenced excerpt riêng của root, không chép baseline mới
+của backlog. Giữ nguyên quyền/thiết kế 002 và mọi ghi chú có sẵn trong journal.
+Không sửa ba file người dùng ngoài plans hoặc nhận source các nhánh chưa merge.
+
+005, 010, 011 và 017 đang IN_PROGRESS, không phải DONE. Sao chép ghi chú
+preflight/chính sách 005/010/011 từ root và ghi chú 017 đã được parent duyệt từ
+worktree executor. Scope 005 giữ fixture src/client_test.ts; 011 dùng thư mục
+plans/evidence/011/ chứa container-smoke.ts; 017 thêm host.ts chỉ dispatch
+malformed-payload. Không giảm tiêu chí hoặc dùng fixture để che lỗi viewer.
+
+Đã đọc evidence executor 005 và 011 làm nguồn tiến độ. 011 có image thật,
+revision label đã đối chiếu source, smoke 32 ca/452 assertion và review độc lập
+local; các hiện vật implementation chưa được nhập vào backlog. Parent xác nhận
+CI [33950610743](https://github.com/hvgllc/hvgerp-mcp/actions/runs/33950610743)
+thành công đúng HEAD `0eced8c`: 960 passed, 0 failed, 4 ignored, release-check
+OK và JSR 0.25.0. [PR29](https://github.com/hvgllc/hvgerp-mcp/pull/29) đã reply
+hai finding tại 3939765479/3939765516, đang chờ review mới, không dùng review
+b896576 cũ. CI
+[33950670879](https://github.com/hvgllc/hvgerp-mcp/actions/runs/33950670879)
+thành công đúng HEAD `620d925`: 942 passed, 0 failed, 4 ignored, release-check
+OK và JSR 0.25.0. [PR31](https://github.com/hvgllc/hvgerp-mcp/pull/31) có
+trigger 5550065503 lúc 06:46:00Z. Review 5120223946 lúc 06:52:46Z đúng HEAD
+620d925 còn hai finding hợp lệ: 3939783865 về response 304 của local auth probe
+không được mang body, và 3939783866 về envelope thiếu id/jsonrpc không phải
+notification hợp lệ, cần giữ Invalid Request. Parent đã đối chiếu code; đang chờ
+executor sửa, chưa merge. Lượt quản trị plans này không sửa source 011.
+
+009 DONE theo [PR30](https://github.com/hvgllc/hvgerp-mcp/pull/30), merge lúc
+2026-09-05T06:31:28Z tại `99b1fa319590e60730faabdb033a5b48a44e1862`. HEAD
+`306a8aea336dad45697d9c670b784ed201468687` có
+[CI 33949707596](https://github.com/hvgllc/hvgerp-mcp/actions/runs/33949707596)
+thành công: 899 passed, 0 failed, 4 ignored, release preflight OK và JSR 0.25.0.
+Codex clean comment 5549973097 đúng HEAD, findings_error false, findings rỗng,
+review threads 0; tree HEAD bằng tree merge
+`d731bed844f689d2bb3a429e2cebf877f82b49c3`. Chi tiết binding và giới hạn ở
+[evidence/009.md](evidence/009.md).
+
+Tổng trạng thái sau đồng bộ: 7 DONE, 1 BLOCKED (002), 4 IN_PROGRESS (005, 010,
+011, 017), 13 TODO. Việc IN_PROGRESS phản ánh executor đã bắt đầu trong worktree
+riêng, không tuyên bố implementation đã có ở source root/backlog.
+
+Scope 010 được parent mở hẹp thêm `src/tools/kanban_test.ts`: full suite 944
+passed, 3 failed, 4 ignored do ba happy-path fixture Task/Opportunity/Issue
+thiếu modified. Chỉ sửa ba fixture và assertion skipCache/PUT modified, không
+đổi handler hoặc mock chung. Kế hoạch, manifest và diff commands root/backlog đã
+ghi cùng phạm vi; chưa nhập source executor hoặc đánh DONE.
+
+Gate sau đồng bộ: backlog validator 25/25, regression 81/81, format 51 file,
+lint hai script và diff check đều đạt; source ngoài plans vẫn bằng main 99b1fa3.
+Root validator 25/25, format 52 file và lint hai script đạt. Root không chạy
+regression cần source mới, không chạy app build/test hoặc install. Đã kiểm hash
+các file bảo vệ không đổi; journal và report root giữ nguyên prefix nội dung
+trước lượt này. So sâu manifest root chỉ đổi record 010/011/015/017; 005/009 và
+baseline 016/022 giữ nguyên. Mười artifact 009, kể cả bảy PNG, khớp byte giữa
+backlog và root. Delta quản trị này chỉ ở plans, commit local do agent quản trị
+tạo; push/review tiếp do parent quyết định.

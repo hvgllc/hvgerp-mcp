@@ -10,7 +10,7 @@
 - Ưu tiên: P1; công sức: M; rủi ro sửa: vừa; phụ thuộc hợp đồng optimistic
   locking của Frappe.
 - Phụ thuộc: không.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `TODO`.
+- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
 - Độ tin cậy: cao về GET cache; cơ chế compare-and-write cần xác minh.
 
 Ba adapter GET bình thường rồi so fromColumn, sau đó update chỉ status. Cache có
@@ -19,6 +19,19 @@ PUT. Done cần chứng minh cả fresh read và cơ chế ngăn ghi đè, khôn
 GET là khóa nguyên tử.
 
 ## Hiện trạng và chứng cứ
+
+Đối chiếu trước execute từ `d2c5305` đến main `99b1fa3`: chỉ
+`src/api/frappe-client_test.ts` thêm 219 dòng regression timeout của 004; mọi
+adapter và hợp đồng update trong scope không đổi. Thực thi ở worktree 010 riêng
+từ main này, không cập nhật source root. Cơ chế modified đã đối chiếu mã Frappe
+`755b5cb81fabb431265690fca07f4a8038a5599a`; executor phải đọc lại và lưu bằng
+chứng primary, không coi fake server là bằng chứng transaction upstream.
+
+Mở scope tối thiểu đã được parent duyệt: full suite 944 passed, 3 failed, 4
+ignored; đúng ba happy-path move Task/Opportunity/Issue trong
+`src/tools/kanban_test.ts` có GET fixture thiếu modified. Chỉ bổ sung modified
+cho ba fixture này và assertion fresh GET với skipCache/PUT mang modified; không
+đổi handler, mock chung hoặc nới kiểm lỗi để suite xanh.
 
 `src/kanban/adapters/task.ts:218`:
 
@@ -69,6 +82,7 @@ Các file được sửa khi thực thi:
 - `src/kanban/adapters/opportunity-adapter_test.ts`
 - `src/kanban/adapters/issue-adapter_test.ts`
 - `src/api/frappe-client_test.ts`
+- `src/tools/kanban_test.ts` (chỉ fixture ba happy-path move và assertion guard)
 - `docs/erpnext-quirks.md`
 - `plans/README.md`
 - `plans/evidence/010.md`
@@ -80,9 +94,9 @@ tự nâng dependency. Định danh, chuỗi lỗi và commit bằng tiếng Anh
 thích tiếng Việt có dấu, không dùng ký tự U+2014.
 
 Trước khi sửa, chạy `git status --short`,
-`git diff --stat d2c5305..HEAD -- src/kanban/adapters/task.ts src/kanban/adapters/opportunity.ts src/kanban/adapters/issue.ts src/kanban/adapters/task-adapter_test.ts src/kanban/adapters/opportunity-adapter_test.ts src/kanban/adapters/issue-adapter_test.ts src/api/frappe-client_test.ts docs/erpnext-quirks.md`
+`git diff --stat d2c5305..HEAD -- src/kanban/adapters/task.ts src/kanban/adapters/opportunity.ts src/kanban/adapters/issue.ts src/kanban/adapters/task-adapter_test.ts src/kanban/adapters/opportunity-adapter_test.ts src/kanban/adapters/issue-adapter_test.ts src/api/frappe-client_test.ts src/tools/kanban_test.ts docs/erpnext-quirks.md`
 và
-`git diff -- src/kanban/adapters/task.ts src/kanban/adapters/opportunity.ts src/kanban/adapters/issue.ts src/kanban/adapters/task-adapter_test.ts src/kanban/adapters/opportunity-adapter_test.ts src/kanban/adapters/issue-adapter_test.ts src/api/frappe-client_test.ts docs/erpnext-quirks.md`.
+`git diff -- src/kanban/adapters/task.ts src/kanban/adapters/opportunity.ts src/kanban/adapters/issue.ts src/kanban/adapters/task-adapter_test.ts src/kanban/adapters/opportunity-adapter_test.ts src/kanban/adapters/issue-adapter_test.ts src/api/frappe-client_test.ts src/tools/kanban_test.ts docs/erpnext-quirks.md`.
 Bảo toàn thay đổi có sẵn. Nếu phụ thuộc đã thực thi, đối chiếu diff và làm mới
 kế hoạch này theo code mới trước khi sửa; sai khác chưa giải thích được là điều
 kiện dừng.
@@ -135,9 +149,9 @@ không hỗ trợ, dừng phần compare-and-write và đề xuất method site 
 riêng; không giả vờ prefetch là atomic.
 
 **Kiểm tra:**
-`deno test --allow-all src/kanban/adapters/ src/api/frappe-client_test.ts` →
-exit 0; conflict không ghi, fresh GET không đi cache, PUT mang phiên bản đã xác
-minh.
+`deno test --allow-all src/kanban/adapters/ src/api/frappe-client_test.ts src/tools/kanban_test.ts`
+→ exit 0; conflict không ghi, fresh GET không đi cache, PUT mang phiên bản đã
+xác minh.
 
 ### Bước 3: Kiểm cả ba DocType và hợp đồng lỗi
 
