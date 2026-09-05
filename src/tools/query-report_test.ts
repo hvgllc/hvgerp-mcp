@@ -15,12 +15,144 @@ import {
   FINANCIAL_REPORTS,
   periodColumns,
   type QueryReportResult,
+  receivableInvoiceRows,
   runQueryReport,
 } from "./query-report.ts";
 import type { FrappeClient } from "../api/frappe-client.ts";
 import type { ErpNextToolContext } from "./types.ts";
 
 type AnyFn = (...args: any[]) => any;
+
+const arInvoice = {
+  voucher_type: "Sales Invoice",
+  voucher_no: "INV-USD",
+  currency: "VND",
+  account_currency: "USD",
+  outstanding: "250000",
+  outstanding_in_account_currency: 10,
+  posting_date: "2026-01-01",
+  due_date: "2026-01-31",
+  party: "Customer",
+  party_account: "Receivables - VND",
+};
+
+Deno.test("receivable invoice rows lock company currency and avoid Prepared Report writes", async () => {
+  const ctx = makeCtx(async (method, args, options) => {
+    assertEquals(method, "frappe.desk.query_report.run");
+    assertEquals(options, { httpMethod: "GET" });
+    assertEquals(args, {
+      report_name: "Accounts Receivable",
+      filters: {
+        company: "Vietnam Company",
+        report_date: "2026-09-05",
+        in_party_currency: 0,
+        based_on_payment_terms: 0,
+        group_by_party: 0,
+      },
+      ignore_prepared_report: true,
+    });
+    return {
+      columns: [],
+      result: [arInvoice, { outstanding: 250000 }, {
+        ...arInvoice,
+        voucher_type: "Journal Entry",
+        outstanding: 100000,
+      }, { ...arInvoice, voucher_no: "INV-PAID", outstanding: 0 }],
+    };
+  });
+  assertEquals(
+    await receivableInvoiceRows(ctx, "Vietnam Company", "VND", "2026-09-05"),
+    [{
+      voucher_no: "INV-USD",
+      customer_name: "Customer",
+      outstanding_amount: 250000,
+      posting_date: "2026-01-01",
+      due_date: "2026-01-31",
+    }],
+  );
+});
+
+Deno.test("receivable invoice rows reject mixed and missing currency instead of reporting zero", async () => {
+  for (const currency of ["USD", "", undefined]) {
+    const ctx = makeCtx(async () => ({
+      columns: [],
+      result: [{ ...arInvoice, currency }],
+    }));
+    await assertRejects(
+      () => receivableInvoiceRows(ctx, "Vietnam Company", "VND", "2026-09-05"),
+      Error,
+      "currency",
+    );
+  }
+});
+
+Deno.test("receivable invoice rows reject malformed amount and missing voucher identity", async () => {
+  for (
+    const overrides of [
+      { outstanding: null },
+      { outstanding: "" },
+      { outstanding: "NaN" },
+      { voucher_no: "" },
+      { posting_date: "invalid" },
+      { party: "" },
+    ]
+  ) {
+    const ctx = makeCtx(async () => ({
+      columns: [],
+      result: [{ ...arInvoice, ...overrides }],
+    }));
+    await assertRejects(
+      () => receivableInvoiceRows(ctx, "Vietnam Company", "VND", "2026-09-05"),
+      Error,
+      "Accounts Receivable",
+    );
+  }
+});
+
+Deno.test("receivable invoice rows propagate report permission errors unchanged", async () => {
+  const denied = new Error("Report permission denied");
+  const ctx = makeCtx(async () => {
+    throw denied;
+  });
+  assertEquals(
+    await assertRejects(() =>
+      receivableInvoiceRows(ctx, "Vietnam Company", "VND", "2026-09-05")
+    ),
+    denied,
+  );
+});
+
+Deno.test("receivable invoice rows retain distinct accounts but reject duplicate ledger keys", async () => {
+  const ctx = makeCtx(async () => ({
+    columns: [],
+    result: [arInvoice, {
+      ...arInvoice,
+      party_account: "Other Receivables - VND",
+      outstanding: 125000,
+    }],
+  }));
+  const rows = await receivableInvoiceRows(
+    ctx,
+    "Vietnam Company",
+    "VND",
+    "2026-09-05",
+  );
+  assertEquals(
+    rows.reduce((total, row) => total + row.outstanding_amount, 0),
+    375000,
+  );
+  assertEquals(new Set(rows.map((row) => row.voucher_no)).size, 1);
+  const duplicate = makeCtx(async () => ({
+    columns: [],
+    result: [arInvoice, { ...arInvoice }],
+  }));
+  await assertRejects(
+    () =>
+      receivableInvoiceRows(duplicate, "Vietnam Company", "VND", "2026-09-05"),
+    Error,
+    "duplicate ledger balance",
+  );
+});
 
 function makeCtx(callMethod: AnyFn): ErpNextToolContext {
   const client = {

@@ -166,3 +166,99 @@ export function cellNumber(value: unknown): number | null {
   }
   return null;
 }
+
+export interface ReceivableInvoiceRow {
+  voucher_no: string;
+  customer_name: string;
+  outstanding_amount: number;
+  due_date: string;
+  posting_date: string;
+}
+
+/** Đọc số dư sổ thanh toán theo company currency, không đổi FX từ số dư tài khoản. */
+export async function receivableInvoiceRows(
+  ctx: ErpNextToolContext,
+  company: string,
+  currency: string,
+  reportDate: string,
+): Promise<ReceivableInvoiceRow[]> {
+  const report = await runQueryReport(ctx, "Accounts Receivable", {
+    company,
+    report_date: reportDate,
+    in_party_currency: 0,
+    based_on_payment_terms: 0,
+    group_by_party: 0,
+  });
+  const invoices: ReceivableInvoiceRow[] = [];
+  const voucherKeys = new Set<string>();
+  for (const row of report.result) {
+    if (row === null || typeof row !== "object" || Array.isArray(row)) {
+      throw new Error("Accounts Receivable returned an invalid row.");
+    }
+    // Dòng tổng không có voucher_type; các loại voucher khác không phải Sales Invoice.
+    if (row.voucher_type !== "Sales Invoice") continue;
+    if (typeof row.voucher_no !== "string" || row.voucher_no === "") {
+      throw new Error(
+        "Accounts Receivable returned a Sales Invoice without voucher_no.",
+      );
+    }
+    if (
+      typeof row.party_account !== "string" || row.party_account === "" ||
+      typeof row.party !== "string" || row.party === ""
+    ) {
+      throw new Error(
+        `Accounts Receivable invoice '${row.voucher_no}' has no ledger ownership key.`,
+      );
+    }
+    const key = JSON.stringify([
+      row.party_account,
+      row.voucher_type,
+      row.voucher_no,
+      row.party,
+    ]);
+    if (voucherKeys.has(key)) {
+      throw new Error(
+        `Accounts Receivable returned a duplicate ledger balance for invoice '${row.voucher_no}'.`,
+      );
+    }
+    voucherKeys.add(key);
+    if (row.currency !== currency) {
+      throw new Error(
+        `Accounts Receivable invoice '${row.voucher_no}' has missing or unexpected currency; expected ${currency}.`,
+      );
+    }
+    const amount = cellNumber(row.outstanding);
+    if (amount === null) {
+      throw new Error(
+        `Accounts Receivable invoice '${row.voucher_no}' has an invalid outstanding amount.`,
+      );
+    }
+    if (amount <= 0) continue;
+    const postingDate = row.posting_date;
+    const dueDate = row.due_date || postingDate;
+    for (const value of [postingDate, dueDate]) {
+      if (
+        typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+        !Number.isFinite(Date.parse(value))
+      ) {
+        throw new Error(
+          `Accounts Receivable invoice '${row.voucher_no}' has an invalid date.`,
+        );
+      }
+    }
+    const name = row.customer_name || row.party_name || row.party;
+    if (typeof name !== "string" || name === "") {
+      throw new Error(
+        `Accounts Receivable invoice '${row.voucher_no}' has no customer identity.`,
+      );
+    }
+    invoices.push({
+      voucher_no: row.voucher_no,
+      customer_name: name,
+      outstanding_amount: amount,
+      posting_date: postingDate as string,
+      due_date: dueDate as string,
+    });
+  }
+  return invoices;
+}
