@@ -1036,3 +1036,60 @@ Definition020 snapshot `55bb74697d3d731bda0c3cb297fcdce29f8e9045` được revie
 scope/tiêu chí không giảm,20definition cũ nguyên byte. Snapshot lúc chưa có bốn
 definition fields thất bại đúng hai diagnostic020; parent chỉ thêm binding sau
 review, chưa push snapshot thiếu approval. Tổng metadata nay21DONE.
+
+## Sửa finding 3940650166: ranh giới link Markdown
+
+Executor bắt đầu ở `8436a48f687a5e119bfff164bc6ffeaf591db922`, source sửa tại
+`42d1b51057c669994217bb7743797c6c6ce41945`. Chỉ sửa hai helper
+`plans/validate-plans.mjs`, `plans/test-validator.mjs` và bổ sung mục báo cáo
+này. P1 ancestry là nhiệm vụ riêng của parent, không nằm trong bản sửa này.
+
+Validator cũ resolve link rồi hỏi `existsSync`, do đó đường dẫn tuyệt đối hoặc
+`../` thoát repository có thể được nhận khi file ngoài checkout tồn tại. Test
+mới chèn link vào báo cáo nested trong VM và khai báo file đích tồn tại trong
+fixture filesystem. Không đọc nội dung file hệ thống, không phụ thuộc máy chạy
+có thật file đích, không tạo source hoặc approval giả.
+
+Red thực chạy trước sửa validator:
+
+```sh
+node --test --test-name-pattern='Markdown repository boundary' plans/test-validator.mjs
+```
+
+Kết quả exit 1, **6 passed, 10 failed**. Cả mười ca sai đều thất bại ở assertion
+validator đã nhận link không an toàn với exit 0; không dùng lỗi import, Git,
+exception hoặc thiếu file làm bằng chứng đỏ. Sáu control hợp lệ đã qua trước
+sửa.
+
+Guard mới từ chối đường dẫn tuyệt đối, dạng drive Windows kể cả `C:relative`,
+UNC và backslash trước resolve. Với đường dẫn tương đối, resolve từ thư mục chứa
+Markdown rồi kiểm kết quả `relative(repoRoot, resolved)` không ra ngoài repo
+trước `existsSync`. Không dùng so prefix chuỗi có thể nhận nhầm thư mục anh em.
+Relative `../` hoặc `./` vẫn được nhận nếu kết quả nằm trong repo; HTTP/HTTPS và
+anchor giữ semantics cũ. Đường dẫn hợp lệ nhưng thiếu file vẫn bị guard link
+hỏng hiện hữu từ chối.
+
+Mười negative control bao gồm POSIX absolute, traversal trực tiếp và qua segment
+trung gian, thư mục anh em, Windows drive/drive-relative/UNC và backslash. Mỗi
+ca phải có đúng một diagnostic `unsafe Markdown link`, không exception, và danh
+sách lookup ghi nhận trong VM không chứa đích bị chặn. Sáu positive control bao
+gồm relative về README repo, normalization `src/..`, fragment nội bộ, HTTP,
+HTTPS và anchor. Đây là ranh giới lexical của link mà parser hiện tại nhận được,
+không tuyên bố đã viết lại parser CommonMark hoặc kiểm mọi alias/symlink
+filesystem.
+
+Gate sau sửa:
+
+- Focused 16 passed, 0 failed; `node plans/validate-plans.mjs` đạt 25/25.
+- `node --test plans/test-validator.mjs`: 220 passed, 0 failed, 0 skipped, giữ
+  204 selftests cũ và thêm 16 ca.
+- `deno fmt --check plans/`: 74 file; lint ba helper với `--no-config` và
+  `git diff --check` đều exit 0.
+- Sau commit source sạch, `node --test plans/test-history.mjs`: 4 passed, 0
+  failed, 0 skipped. Giữ nguyên helper history và toàn bộ provenance merges;
+  clone một nhánh dùng Git transport local, không cần mạng. Tổng self/history là
+  224 ca, giữ toàn bộ 208 ca trước sửa.
+
+Không sửa plan/manifest/README, approval metadata, source ứng dụng hoặc
+dependency. Không chạy application build, Browser, Publish, push hoặc thao tác
+GitHub. Đây là evidence executor; review độc lập delta mới do parent điều phối.
