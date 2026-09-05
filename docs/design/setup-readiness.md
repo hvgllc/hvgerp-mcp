@@ -22,9 +22,10 @@ công.
 - `src/tools/inventory.ts` có `erpnext_warehouse_list`, hỗ trợ filter `company`,
   trả về `name`, `warehouse_name`, `warehouse_type`, `company` và mang
   `readOnlyHint: true`.
-- `src/tools/operations.ts` có `erpnext_doc_list`, cho phép chọn `fields`,
-  `filters`, `limit` cho DocType bất kỳ và mang `readOnlyHint: true`. Đây là
-  đường đọc hiện có cho Price List, Item Group và UOM.
+- `src/tools/operations.ts` có `erpnext_doc_list`, cho phép caller yêu cầu
+  `fields`, `filters`, `limit` cho DocType bất kỳ và mang `readOnlyHint: true`.
+  Khả năng chuyển tiếp tên field không chứng minh field đó tồn tại hoặc có cùng
+  semantics trên các phiên bản ERPNext.
 - `docs/erpnext-quirks.md` ghi nhận instance chưa hoàn tất setup wizard từng làm
   submit lỗi do giá trị rounding chưa được khởi tạo. Đây là bằng chứng rằng năm
   phép kiểm master data không tương đương trạng thái hoàn tất wizard.
@@ -56,31 +57,43 @@ là caller không yêu cầu tên custom nào, không có nghĩa mọi Item Grou
 
 Allowlist chỉ gồm các phép list sau, chạy bằng quyền hiện tại của caller:
 
-| Nhóm       | Tool/query hiện có                                                                 | Fields thật                                             | Scope                                                                          | Predicate `present`                                                                                |
-| ---------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| Company    | `erpnext_company_list`, hoặc `erpnext_doc_list` trên `Company` để filter chính xác | `name`, `abbr`, `default_currency`, `country`, `domain` | `name = company`                                                               | Query thành công và có đúng một Company khớp tên                                                   |
-| Price List | `erpnext_doc_list` trên `Price List`                                               | `name`, `selling`, `buying`, `enabled`                  | Hai tên Price List được chỉ định; không có field Company trong bằng chứng repo | Selling list có `selling = 1`, buying list có `buying = 1`, và cả hai không có `enabled = 0`       |
-| Warehouse  | `erpnext_warehouse_list` với `company`                                             | `name`, `warehouse_name`, `warehouse_type`, `company`   | `company = input.company`                                                      | Query thành công và có ít nhất một Warehouse thuộc đúng Company                                    |
-| Item Group | `erpnext_doc_list` trên `Item Group`                                               | `name`, `is_group`                                      | Mỗi tên trong `requiredItemGroups`; không scope theo Company                   | Mọi tên được yêu cầu tồn tại; group hay leaf phải do use case chỉ định, không tự suy từ `is_group` |
-| UOM        | `erpnext_doc_list` trên `UOM`                                                      | `name`, `enabled`                                       | Mỗi tên trong `requiredUoms`; không scope theo Company                         | Mọi tên được yêu cầu tồn tại và không có `enabled = 0`                                             |
+| Nhóm       | Tool/query hiện có                                                                 | Field được repo xác minh                                | Field/predicate cần xác minh thêm                                            | Scope và predicate `present`                                                                                                                       |
+| ---------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Company    | `erpnext_company_list`, hoặc `erpnext_doc_list` trên `Company` để filter chính xác | `name`, `abbr`, `default_currency`, `country`, `domain` | Không                                                                        | Có đúng một Company khớp `name = company`, response đầy đủ và phạm vi đọc đã được xác minh                                                         |
+| Price List | `erpnext_doc_list` trên `Price List`                                               | Chỉ khả năng yêu cầu `name` qua generic list            | `selling`, `buying`, `enabled` và semantics business của chúng chưa có nguồn | Hai tên tồn tại trong phạm vi đọc đã xác minh; kiểm vai trò selling/buying hoặc enabled là `unknown` cho đến khi schema và semantics được xác minh |
+| Warehouse  | `erpnext_warehouse_list` với `company`                                             | `name`, `warehouse_name`, `warehouse_type`, `company`   | Có cần loại group warehouse hay không                                        | Có ít nhất một Warehouse với `company = input.company`, response đầy đủ và phạm vi đọc đã được xác minh                                            |
+| Item Group | `erpnext_doc_list` trên `Item Group`                                               | Chỉ khả năng yêu cầu `name` qua generic list            | `is_group` và yêu cầu group/leaf chưa có nguồn                               | Mọi tên trong `requiredItemGroups` tồn tại trong phạm vi đọc đã xác minh; kiểm group/leaf được defer                                               |
+| UOM        | `erpnext_doc_list` trên `UOM`                                                      | Chỉ khả năng yêu cầu `name` qua generic list            | `enabled` và semantics của nó chưa có nguồn                                  | Mọi tên trong `requiredUoms` tồn tại trong phạm vi đọc đã xác minh; kiểm enabled là `unknown` cho đến khi schema và semantics được xác minh        |
+
+Không được diễn giải một field không có trong response là hợp lệ. Ví dụ,
+`enabled === undefined` không đồng nghĩa với enabled. Nếu check yêu cầu vai trò
+Price List, trạng thái enabled hoặc group/leaf mà schema chưa được xác minh,
+nhóm phải là `unknown` hoặc check đó phải được defer rõ ràng, không được báo
+ready.
 
 Mỗi nhóm có một trong ba trạng thái:
 
 - `present`: query thành công trên toàn bộ scope của nhóm và predicate đúng.
-- `missing`: query thành công trên toàn bộ scope nhưng không có đủ bản ghi đáp
-  ứng predicate. Chỉ response thành công mới được kết luận `missing`.
+- `missing`: query thành công nhưng không tìm thấy bản ghi trong phạm vi đọc đã
+  được xác minh là đầy đủ cho check. Đây không phải tuyên bố bản ghi vắng mặt
+  toàn cục nếu ERPNext áp dụng record permissions.
 - `unknown`: không thể đánh giá toàn bộ scope, bao gồm `403`, timeout, lỗi mạng,
-  `5xx`, response không hợp lệ hoặc kết quả bị cắt bởi limit.
+  `5xx`, response không hợp lệ, schema chưa xác minh, thiếu check, kết quả bị
+  cắt bởi limit hoặc không chứng minh được caller nhìn thấy toàn bộ scope cần
+  kiểm.
 
-Không chuyển lỗi quyền hay lỗi hạ tầng thành `missing`. Query phải dùng filter
-chính xác và limit đủ cho scope nhỏ đã biết; nếu server không thể bảo đảm kết
-quả đầy đủ thì trả `unknown`.
+Response list `200` chỉ chứng minh dữ liệu caller được phép nhìn thấy. Không
+chuyển lỗi quyền, lỗi hạ tầng hay danh sách rỗng với record-permission chưa rõ
+thành `missing`. Query phải dùng filter chính xác và limit đủ cho scope nhỏ đã
+biết. Nếu implementation không xác minh được phạm vi đọc đầy đủ, nó trả
+`unknown` và đề nghị quản trị viên kiểm tra quyền hoặc dữ liệu, không gợi ý tạo
+bản ghi vì có nguy cơ tạo trùng.
 
 Output dự kiến:
 
 ```json
 {
-  "overall": "ready-for-specified-checks",
+  "overall": "unknown",
   "checkedAt": "2026-09-05T08:00:00.000Z",
   "checks": [
     {
@@ -88,6 +101,30 @@ Output dự kiến:
       "status": "present",
       "scope": { "company": "Example Co" },
       "evidence": [{ "name": "Example Co" }]
+    },
+    {
+      "group": "Price List",
+      "status": "unknown",
+      "scope": { "names": ["Standard Selling", "Standard Buying"] },
+      "reason": "Price List role fields are not verified by repository evidence."
+    },
+    {
+      "group": "Warehouse",
+      "status": "present",
+      "scope": { "company": "Example Co" },
+      "evidence": [{ "name": "Stores - EC", "company": "Example Co" }]
+    },
+    {
+      "group": "Item Group",
+      "status": "present",
+      "scope": { "names": ["Products"] },
+      "evidence": [{ "name": "Products" }]
+    },
+    {
+      "group": "UOM",
+      "status": "unknown",
+      "scope": { "names": ["Box"] },
+      "reason": "UOM enabled semantics are not verified by repository evidence."
     }
   ],
   "limitations": [
@@ -97,28 +134,34 @@ Output dự kiến:
 }
 ```
 
-`overall` là `unknown` nếu có bất kỳ nhóm nào `unknown`; nếu không thì là
-`incomplete` khi có nhóm `missing`, còn lại là `ready-for-specified-checks`.
-`checkedAt` là thời điểm UTC lúc bắt đầu kiểm tra. `limitations` luôn nêu giới
-hạn setup wizard và phạm vi input. `recommendations` chỉ là hướng dẫn để người
-duyệt quyết định, không chứa hoặc kích hoạt mutation. Tool không đọc credential,
-không gọi create/update/delete/submit/cancel và không đề nghị tự động sửa.
+Một response hợp lệ phải có đúng một check cho cả năm nhóm. Check bị thiếu làm
+`overall = unknown`, không được ngầm coi là `present`. `overall` là `unknown`
+nếu có bất kỳ nhóm nào `unknown`; nếu không thì là `incomplete` khi có nhóm
+`missing`, còn lại là `ready-for-specified-checks`. `checkedAt` là thời điểm UTC
+lúc bắt đầu kiểm tra. `limitations` luôn nêu giới hạn setup wizard và phạm vi
+input. `recommendations` chỉ là hướng dẫn để người duyệt quyết định, không chứa
+hoặc kích hoạt mutation. Tool không đọc credential, không gọi
+create/update/delete/submit/cancel và không đề nghị tự động sửa.
 
 ## Verification
 
-Các ca dưới đây dùng mock client hoặc fetch giả, không gọi ERPNext thật:
+Các ca dưới đây là walkthrough thiết kế để định nghĩa test sau này. Chúng chưa
+được chạy bằng mock client hay fetch giả, và không gọi ERPNext thật:
 
-| Ca                       | Input/tình huống                                                                                           | Kết quả quan sát                            | Phân loại                             | Khuyến nghị không mutation                                    |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------- | ------------------------------------- | ------------------------------------------------------------- |
-| 1. Đầy đủ                | Company `ACME`, hai Price List mặc định, một Warehouse đúng Company, các Item Group/UOM yêu cầu đều hợp lệ | Mọi predicate đúng                          | `ready-for-specified-checks`          | Cho phép người duyệt tiếp tục kiểm tra giao dịch              |
-| 2. Thiếu Company         | Query Company thành công, không có `ACME`                                                                  | Company `missing`, tổng thể `incomplete`    | Thiếu dữ liệu                         | Yêu cầu quản trị viên xem xét tạo Company                     |
-| 3. Thiếu Price List      | Selling list không tồn tại trong response thành công                                                       | Price List `missing`, tổng thể `incomplete` | Thiếu dữ liệu                         | Nêu đúng tên và vai trò Price List cần xem xét                |
-| 4. Warehouse sai Company | Chỉ có Warehouse của `OTHER`                                                                               | Warehouse `missing`, tổng thể `incomplete`  | Thiếu trong scope                     | Yêu cầu kiểm tra Warehouse thuộc `ACME`                       |
-| 5. Thiếu UOM custom      | `requiredUoms = ["Box"]`, query thành công nhưng không có `Box`                                            | UOM `missing`, tổng thể `incomplete`        | Thiếu dữ liệu                         | Yêu cầu xem xét UOM `Box`; không tự tạo                       |
-| 6. Forbidden             | Bất kỳ query nào trả `403`                                                                                 | Nhóm đó `unknown`, tổng thể `unknown`       | Không đủ quyền, không phải thiếu      | Yêu cầu caller có quyền đọc hoặc quản trị viên xác minh       |
-| 7. Server error          | Bất kỳ query nào trả `500`                                                                                 | Nhóm đó `unknown`, tổng thể `unknown`       | Lỗi server                            | Thử lại sau hoặc kiểm tra server, không sửa master data       |
-| 8. Timeout               | Bất kỳ query nào hết thời gian                                                                             | Nhóm đó `unknown`, tổng thể `unknown`       | Lỗi kết nối                           | Thử lại có kiểm soát; không kết luận dữ liệu thiếu            |
-| 9. Phản chứng wizard     | Cả năm nhóm đều `present`, nhưng setup wizard chưa hoàn tất và submit vẫn lỗi                              | `ready-for-specified-checks` kèm limitation | Không phát hiện giả trạng thái wizard | Dừng trước submit nếu quy trình yêu cầu xác nhận wizard riêng |
+| Ca                       | Input/tình huống                                                                               | Kết quả quan sát                            | Phân loại                              | Khuyến nghị không mutation                                     |
+| ------------------------ | ---------------------------------------------------------------------------------------------- | ------------------------------------------- | -------------------------------------- | -------------------------------------------------------------- |
+| 1. Đầy đủ                | Schema, semantics và phạm vi đọc đã xác minh; cả năm nhóm đáp ứng predicate được chỉ định      | Mọi predicate đúng                          | `ready-for-specified-checks`           | Cho phép người duyệt tiếp tục kiểm tra giao dịch               |
+| 2. Thiếu Company         | Quyền đọc toàn scope Company đã xác minh; query thành công, không có `ACME`                    | Company `missing`, tổng thể `incomplete`    | Không tìm thấy trong scope đã xác minh | Yêu cầu quản trị viên đối chiếu dữ liệu, không tự tạo          |
+| 3. Thiếu Price List      | Quyền đọc toàn scope đã xác minh; tên Price List yêu cầu không có trong response đầy đủ        | Price List `missing`, tổng thể `incomplete` | Không tìm thấy tên trong scope         | Nêu đúng tên cần đối chiếu; defer kiểm vai trò chưa xác minh   |
+| 4. Warehouse sai Company | Quyền đọc toàn scope đã xác minh; chỉ có Warehouse của `OTHER`                                 | Warehouse `missing`, tổng thể `incomplete`  | Không tìm thấy trong scope Company     | Yêu cầu quản trị viên đối chiếu Warehouse thuộc `ACME`         |
+| 5. Thiếu UOM custom      | Quyền đọc toàn scope đã xác minh; `requiredUoms = ["Box"]`, response đầy đủ không có tên `Box` | UOM `missing`, tổng thể `incomplete`        | Không tìm thấy tên trong scope         | Yêu cầu đối chiếu UOM `Box`; defer kiểm enabled chưa xác minh  |
+| 6. Forbidden             | Bất kỳ query nào trả `403`                                                                     | Nhóm đó `unknown`, tổng thể `unknown`       | Không đủ quyền, không phải thiếu       | Yêu cầu caller có quyền đọc hoặc quản trị viên xác minh        |
+| 7. Server error          | Bất kỳ query nào trả `500`                                                                     | Nhóm đó `unknown`, tổng thể `unknown`       | Lỗi server                             | Thử lại sau hoặc kiểm tra server, không sửa master data        |
+| 8. Timeout               | Bất kỳ query nào hết thời gian                                                                 | Nhóm đó `unknown`, tổng thể `unknown`       | Lỗi kết nối                            | Thử lại có kiểm soát; không kết luận dữ liệu thiếu             |
+| 9. Phản chứng wizard     | Cả năm nhóm đều `present`, nhưng setup wizard chưa hoàn tất và submit vẫn lỗi                  | `ready-for-specified-checks` kèm limitation | Không phát hiện giả trạng thái wizard  | Dừng trước submit nếu quy trình yêu cầu xác nhận wizard riêng  |
+| 10. Schema chưa xác minh | Price List trả `name`, nhưng field vai trò hoặc enabled không được schema đã xác minh bảo đảm  | Price List `unknown`, tổng thể `unknown`    | Không đủ bằng chứng schema             | Xác minh schema và semantics trước khi bật check               |
+| 11. Thiếu check          | Response aggregator không có check UOM                                                         | Tổng thể `unknown`                          | Response không đầy đủ                  | Sửa implementation hoặc chạy lại, không suy ra UOM `present`   |
+| 12. Phạm vi đọc chưa rõ  | List trả `200` và rỗng, nhưng record permissions của caller chưa được chứng minh               | Nhóm `unknown`, tổng thể `unknown`          | Không chứng minh vắng mặt toàn cục     | Nhờ quản trị viên kiểm tra quyền hoặc dữ liệu, không tạo trùng |
 
 Test contract cần xác nhận ưu tiên `unknown` hơn `incomplete`, không trộn
 response rỗng thành công với lỗi, không gọi ngoài allowlist và không có
@@ -144,9 +187,12 @@ theo phiên bản ERPNext hỗ trợ, trì hoãn triển khai vẫn là lựa ch
 - ERPNext có setup flag ổn định, được hỗ trợ qua REST và đọc được bằng quyền tối
   thiểu nào trên toàn bộ phiên bản mục tiêu? Chưa có bằng chứng trong repo nên
   không đưa vào predicate.
+- Schema và semantics thật của `selling`, `buying`, `enabled` trên Price List,
+  cùng `enabled` trên UOM, ổn định ở những phiên bản ERPNext nào? Repo hiện chỉ
+  chứng minh generic list chuyển tiếp field caller yêu cầu, chưa xác minh các
+  field này.
 - Price List có cần kiểm thêm currency, country hoặc Company theo cấu hình cụ
-  thể không? Bằng chứng hiện tại chỉ hỗ trợ `name`, `selling`, `buying`,
-  `enabled`.
+  thể không?
 - Warehouse hợp lệ có cần loại group warehouse qua field `is_group` không? Tool
   chuyên dụng hiện chưa trả field này.
 - `requiredItemGroups` cần phân biệt parent group và leaf theo từng luồng tạo
