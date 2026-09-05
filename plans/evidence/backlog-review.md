@@ -854,3 +854,71 @@ UI build 7 viewer, Node build/syntax, pack dry-run 10 file/7 HTML và full Deno
 tích hợp 006 đã kiểm trước đó. Các gate local dùng workaround frozen, không thay
 JSR thật; cần CI và Codex mới sau push PR25. Giữ merge history, không
 squash/rebase các commit provenance được clean-clone test bảo vệ.
+
+## Review 5120906080: khóa implementation binding và tập artifact
+
+Parent giao ba finding `3940332280`, `3940332282`, `3940332286` trên PR25.
+Executor bắt đầu tại `7fcfc9da79bfd5344e1b5e75de0d08e96bf83c3e`, chỉ sửa
+validator, hai test helper có tên thực `test-validator.mjs`/`test-history.mjs`
+và báo cáo này. Không sửa định nghĩa kế hoạch, manifest, README, source ứng dụng
+hoặc metadata approval.
+
+Baseline ban đầu có đúng bốn diagnostic: mỗi 013/025 thiếu definition snapshot
+và reviewer approval evidence. Trong lúc executor viết regression, parent nhận
+supplemental APPROVE thật cho snapshot trên và bổ sung metadata riêng tại
+`184c0ba2a8162aabf956c2662736c2378fb9bf46`. Validator gốc sau metadata đạt
+25/25. Executor không tự tạo approval để làm xanh; regression mới đối chiếu
+diagnostic trước/sau cùng fixture nên không lấy lỗi thiếu metadata làm red.
+
+### Ba thay đổi
+
+- `3940332280`: sáu field implementation hiện tại phải bằng frontmatter trong
+  `definition_commit:plans/evidence/NNN.md`. Snapshot này được đọc từ Git thật,
+  đúng path/blob; field phải duy nhất và không thiếu. Không yêu cầu report của
+  PR implementation cũ chứa metadata bổ sung về sau, không viết lại history.
+  Commit/tree/report blob của implementation và scope equality cũ vẫn được kiểm.
+  Đây là kiểm nhất quán offline, không xác thực danh tính người review.
+- `3940332282`: artifact trong scope plans được so đủ tập path, Git object và
+  mode với completed snapshot, dùng Git index thực gồm cả staged changes. Sau đó
+  duyệt filesystem và kiểm byte/mode từng file. File thừa trong thư mục approval
+  bị từ chối kể cả untracked hoặc ignored; symlink cũng không được chấp nhận.
+  Thư mục rỗng không phải Git artifact nên không tính; file nằm ngoài đúng
+  boundary thư mục không bị bắt nhầm. Không áp freeze artifact cho source ứng
+  dụng đã tiến triển sau implementation.
+- `3940332286`: kiểm mọi bullet trong danh sách scope trước `Ngoài phạm vi:`;
+  bullet file phải theo dạng backtick hiện có, qualifier nằm trong ngoặc và có
+  thể wrap. Plain bullet, marker khác, numbered/indented bullet, thiếu backtick
+  hoặc qualifier malformed không được im lặng bỏ qua. Giữ ngoại lệ hai file quản
+  trị và phân loại tạo mới; positive fixture vẫn tự dựng non-DONE.
+
+### Red và green thực
+
+- Trước sửa validator, năm regression ban đầu chạy bằng
+  `node --test --test-name-pattern='PR25' plans/test-validator.mjs`: **0 passed,
+  5 failed**. Đổi đồng thời reviewed/completed cùng report blob sang definition
+  commit thật, thêm entry index artifact và ba kiểu plain scope bullet đều không
+  tạo diagnostic cần thiết. Các phép đọc Git còn nguyên, không tạo approval
+  object giả hoặc dùng exception không liên quan làm red.
+- Ca artifact được kiểm thêm bằng clone một nhánh thật của HEAD `184c0ba`: tạo
+  file mới trong `plans/evidence/007/` rồi `git add`; validator cũ vẫn trả
+  exit 0. Test riêng **0 passed, 1 failed**, đúng assertion `0 !== 1`. Sau sửa
+  và commit, cùng test đạt, gồm staged, untracked, staged nhưng bị xóa khỏi
+  working tree, executable-mode drift, symlink và ignored file. Control ngoài
+  boundary đạt; clone cuối sạch và thư mục tạm được dọn.
+- Source helper commit: `5f9527db1ccc9a46fc9319ed91d4619bd8cdccf8`, tree
+  `8f6ffc52be97b53d57d7691934bd7b1a580fb5c9`.
+- Trên source commit sạch,
+  `node --test plans/test-validator.mjs plans/test-history.mjs`: **187 passed, 0
+  failed, 0 skipped**. Giữ 161 validator test và ba history test cũ; thêm 22
+  validator test và một history test thực. Clean clone/provenance ancestry và
+  hai historical negative vẫn đạt, không giảm gate.
+- Cache vẫn chỉ giữ Git output bất biến. Run đo cold 126 subprocess, warm 3, cả
+  hai ghi 126 historicalReads; index đọc lại giữa các run, callback lỗi hoặc
+  biến đổi Git output vẫn bypass cache và không nhiễm lượt sau.
+- Validator đạt 25/25; format toàn plans 66 file, lint ba helper với
+  `--no-config` và `git diff --check` đều exit 0. Không chạy application/UI
+  build trong lượt helper-only này; không dùng 187 test thay CI JSR thật.
+
+Không sửa workspace root, definition/manifest/README hoặc 17 report approval.
+Không push, trả lời GitHub, Browser, release hoặc publish. Delta helper mới cần
+review độc lập và vòng Codex/CI tiếp do parent điều phối.
