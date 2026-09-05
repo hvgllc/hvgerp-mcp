@@ -1374,3 +1374,19 @@ Thêm 14 tests, giữ 307 tests trước vòng bổ sung. Full
 self/history, giữ đủ 273 tests trước hai findings Codex. Lệnh và phạm vi không
 mạng/build/metadata giống bảng trước. Report này ghi kết quả thực thi, chưa phải
 verdict review độc lập cho source a9a5e73 và không cho phép push/merge.
+
+### Review độc lập sau correction
+
+Reviewer độc lập đã đọc snapshot cuối
+`e22aa790e3c440b9db309d383b5f9cde8dbb73fe`, tree
+`049df1932df9b86f8df1926b7848fc7aa54cdc2c` và report
+`bc9c6456d0ea53156496b700325e79d089e5514b`. Reviewer tái hiện source cũ che sai
+hai link thật qua heading/list, xác nhận source mới chặn cả hai ca và vẫn cho
+phép inline code nhiều dòng trong cùng paragraph. Toàn bộ 307 test trước
+correction được so sánh byte-preserved.
+
+Verdict: **APPROVE**, không có finding trong phạm vi parser đã công bố. Gate độc
+lập đạt 321 selftests cộng 4 history tests, validator 25 kế hoạch, format 75
+file, lint 3 helper và `git diff --check`. Review này chỉ xác nhận consistency
+source/report offline; không thay thế xác minh CI, GitHub hay danh tính
+reviewer, và không tự cho phép merge.
