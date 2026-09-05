@@ -9,7 +9,7 @@
 - Mục audit: 8; loại: `security`.
 - Ưu tiên: P1; công sức: S; rủi ro sửa: thấp; cần giữ kiểu số.
 - Phụ thuộc: `007`.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `TODO`.
+- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `DONE`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 exportCsv dùng formatCell rồi chỉ quote comma/quote, bỏ sót CR/LF và header. Văn
@@ -17,6 +17,13 @@ bản từ ERP còn có thể bị spreadsheet hiểu là công thức. Đích l
 có quy tắc kiểu rõ, bọc DOM download giữ nguyên thao tác người dùng.
 
 ## Hiện trạng và chứng cứ
+
+Đối chiếu trước thực thi tại main `0cf6a69`: helper xuất CSV chưa đổi so với
+`d2c5305`; dependency 007 đã merge PR #27. File testing/fixtures.ts được tạo bởi
+007 với payload Doclist ba dòng, có Unicode, multiline, formula text và số âm.
+Đã đọc toàn bộ fixture và browser QA 007 tái hiện lỗi cũ bằng download thật; 008
+sẽ giữ host/handshake và đối chiếu artifact mới sau khi sửa. Không coi artifact
+cũ là bằng chứng đã sửa.
 
 `src/ui/doclist-viewer/src/helpers.ts:92`:
 
@@ -165,13 +172,13 @@ ERP; dùng browser skill sẵn có, không thêm dependency.
 
 ## Tiêu chí hoàn tất
 
-- [ ] Unit serializer tests đạt với expected bytes và round-trip cấu trúc.
-- [ ] Export từ viewer thật tạo file đúng bằng serializer; có bằng chứng
+- [x] Unit serializer tests đạt với expected bytes và round-trip cấu trúc.
+- [x] Export từ viewer thật tạo file đúng bằng serializer; có bằng chứng
       artifact.
-- [ ] Typecheck UI và Deno tests đạt.
-- [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
+- [x] Typecheck UI và Deno tests đạt.
+- [x] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
-- [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/008.md`, cập
+- [x] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/008.md`, cập
       nhật trạng thái ở `plans/README.md`. Không ghi giá trị bí mật.
 
 ## Điều kiện dừng

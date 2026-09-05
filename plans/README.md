@@ -39,7 +39,7 @@ là ước lượng công sức/rủi ro sửa, không phải cam kết thời h
 | 005 | [Tính analytics trong company và đồng tiền xác định](005-analytics-currency-context.md)             | P1      | L / vừa; thay ý nghĩa số tiền đang hiển thị sai           | không         | TODO     |
 | 006 | [Tổng hợp đủ dữ liệu trước khi tạo KPI và top N](006-complete-analytics-aggregates.md)              | P1      | L / vừa; lượng truy vấn và ngữ nghĩa tổng                 | 005           | TODO     |
 | 007 | [Thiết lập typecheck thực cho mã browser](007-browser-typecheck-gate.md)                            | P1      | M / thấp; không nới strict                                | không         | DONE     |
-| 008 | [Xuất CSV đúng cấu trúc và giữ văn bản là văn bản](008-safe-csv-export.md)                          | P1      | S / thấp; cần giữ kiểu số                                 | 007           | TODO     |
+| 008 | [Xuất CSV đúng cấu trúc và giữ văn bản là văn bản](008-safe-csv-export.md)                          | P1      | S / thấp; cần giữ kiểu số                                 | 007           | DONE     |
 | 009 | [Chỉ áp kết quả bất đồng bộ vào đúng phiên mở thẻ](009-kanban-detail-request-identity.md)           | P1      | M / vừa; không hủy mutation đã gửi                        | 007           | TODO     |
 | 010 | [Kiểm trạng thái Kanban bằng dữ liệu mới và bảo vệ ghi](010-kanban-conflict-protection.md)          | P1      | M / vừa; phụ thuộc hợp đồng optimistic locking của Frappe | không         | TODO     |
 | 011 | [Giữ kết quả batch đã thực thi khi upstream ném lỗi](011-shim-partial-batch-errors.md)              | P1      | M / vừa; semantics JSON-RPC batch                         | không         | TODO     |
@@ -112,10 +112,10 @@ git status --short
 ```
 
 Validator kiểm đúng25file, ánh xạ audit, mục bắt buộc, SHA, scope có thật hoặc
-được kế hoạch phụ thuộc tạo, trích đoạn khớp source sau chuẩn hóa whitespace,
-links nội bộ, ký tự cấm và phụ thuộc không chu trình. Nó không chứng minh tính
-đúng đắn của các bản sửa chưa tồn tại. Review độc lập đối chiếu các kế hoạch với
-source bổ sung cho kiểm tự động. Chi tiết kết quả và sửa sau review ở
+được kế hoạch phụ thuộc tạo, trích đoạn exact text khớp source, links nội bộ, ký
+tự cấm và phụ thuộc không chu trình. Nó không chứng minh tính đúng đắn của các
+bản sửa chưa tồn tại. Review độc lập đối chiếu các kế hoạch với source bổ sung
+cho kiểm tự động. Chi tiết kết quả và sửa sau review ở
 [execution-notes.md](execution-notes.md).
 
 [manifest.json](manifest.json) là dữ liệu cho kiểm tra, không thay nội dung kế
@@ -125,10 +125,18 @@ record evidence có `sourceRef` riêng trong manifest. Validator luôn đọc
 trắng trong literal hoặc token. Fenced evidence dùng `text` và marker
 `<!-- deno-fmt-ignore -->` riêng cho trích đoạn để formatter không đổi source.
 Validator vẫn so từng byte của các dòng đó, không miễn kiểm bằng marker này.
-TODO/IN_PROGRESS còn phải khớp đúng các dòng source hiện tại để bắt drift trước
-thực thi. Khi refresh, cập nhật đồng bộ code, line, sourceRef và fenced excerpt;
-đổi trạng thái không tự đổi baseline. Mốc soạn chỉ là metadata. Cần giữ Git
-history của các ref này, không fallback khi đọc Git thất bại.
+TODO/IN_PROGRESS/BLOCKED còn phải khớp đúng các dòng source hiện tại để bắt
+drift trước thực thi. Khi refresh, cập nhật đồng bộ code, line, sourceRef và
+fenced excerpt; đổi trạng thái không tự đổi baseline. Mốc soạn chỉ là metadata.
+Cần giữ Git history của các ref này, không fallback khi đọc Git thất bại.
+
+Phụ thuộc được đối chiếu theo tập ID giữa manifest, metadata kế hoạch và cột
+README; whitespace/backtick và thứ tự trình bày không đổi ý nghĩa. Scope trong
+manifest phải khớp danh sách file ở Phạm vi và Git, ngoài hai file quản trị
+README/evidence NNN mặc định. Chỉ STALE và DONE bỏ kiểm current source, nhưng
+vẫn kiểm Git source lịch sử. BLOCKED gặp drift phải refresh bằng chứng hoặc
+chuyển STALE rõ ràng trước khi tiếp tục thực thi. Quy tắc review hẹp nằm tại
+[AGENTS.md](AGENTS.md); không thay quyền/phạm vi goal.
 
 IN_PROGRESS/DONE chỉ hợp lệ nếu các prerequisite đã DONE. DONE còn yêu cầu có
 checklist trong mục Tiêu chí hoàn tất, không còn ô chưa đánh dấu, và field

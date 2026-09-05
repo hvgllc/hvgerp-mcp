@@ -10,6 +10,16 @@ const manifest = JSON.parse(
 );
 const failures = [];
 const fail = (message) => failures.push(message);
+const sameSet = (left, right) =>
+  left.length === new Set(left).size && right.length === new Set(right).size &&
+  left.length === right.length && left.every((item) => right.includes(item));
+function dependencies(value) {
+  if (value === undefined) return undefined;
+  const text = value.replaceAll("`", "").trim().replace(/\.$/, "").trim();
+  if (text === "không") return [];
+  if (!/^\d{3}(?:\s*,\s*\d{3})*$/.test(text)) return undefined;
+  return text.split(",").map((id) => Number(id.trim()));
+}
 const sourceCache = new Map();
 function evidenceSource(sourcePath, sourceRef) {
   const key = sourceRef + ":" + sourcePath;
@@ -131,6 +141,26 @@ for (const entry of manifest) {
     continue;
   }
   const body = readFileSync(path, "utf8");
+  const dependencyFields = [...body.matchAll(/^- Phụ thuộc:\s*(.*)$/gm)];
+  const planDependencies = dependencies(dependencyFields[0]?.[1]);
+  if (
+    dependencyFields.length !== 1 || !planDependencies ||
+    !sameSet(planDependencies, entry.depends)
+  ) {
+    fail(entry.file + ": plan and manifest dependencies differ");
+  }
+  const scopeSection = body.split("## Phạm vi và Git\n")[1]
+    ?.split("Ngoài phạm vi:")[0] ?? "";
+  const administrativeFiles = [
+    "plans/README.md",
+    "plans/evidence/" + String(entry.id).padStart(3, "0") + ".md",
+  ];
+  const planScope = [...scopeSection.matchAll(/^- `([^`]+)`/gm)]
+    .map((match) => match[1])
+    .filter((file) => !administrativeFiles.includes(file));
+  if (!sameSet(planScope, entry.scope)) {
+    fail(entry.file + ": plan and manifest scope differ");
+  }
   for (const heading of headings) {
     if (!body.includes(`## ${heading}\n`)) {
       fail(`${entry.file}: thiếu ${heading}`);
@@ -233,7 +263,7 @@ for (const entry of manifest) {
           ":" + evidence.path + ":" + evidence.line,
       );
     }
-    if (executionStatus === "TODO" || executionStatus === "IN_PROGRESS") {
+    if (["TODO", "IN_PROGRESS", "BLOCKED"].includes(executionStatus)) {
       const currentPath = resolve(repoRoot, evidence.path);
       if (
         !existsSync(currentPath) ||
@@ -285,6 +315,10 @@ else {
     const rowStatus = row?.match(
       /\|\s*(TODO|IN_PROGRESS|BLOCKED|DONE|STALE)\s*\|$/,
     )?.[1];
+    const indexDependencies = dependencies(row?.split("|")[5]);
+    if (!indexDependencies || !sameSet(indexDependencies, entry.depends)) {
+      fail(entry.file + ": index and manifest dependencies differ");
+    }
     const planStatus = readFileSync(resolve(planRoot, entry.file), "utf8")
       .match(/Trạng thái thực thi:\s*`(TODO|IN_PROGRESS|BLOCKED|DONE|STALE)`/)
       ?.[1];

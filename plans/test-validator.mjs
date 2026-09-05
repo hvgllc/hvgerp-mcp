@@ -329,6 +329,154 @@ test("manifest covers every physical numbered plan file", () => {
     /Numbered plan file missing from manifest:/,
   );
 });
+function planDependencies(text, value) {
+  return text.replace(/^- Phụ thuộc:.*$/m, "- Phụ thuộc: " + value + ".");
+}
+function indexDependencies(text, id, value) {
+  return text.split("\n").map((line) => {
+    const cells = line.split("|");
+    if (cells[1]?.trim() === String(id).padStart(3, "0")) cells[5] = value;
+    return cells.join("|");
+  }).join("\n");
+}
+for (const [id, value] of [[6, "không"], [5, "007"]]) {
+  test("plan dependency mismatch in either direction: " + id, () => {
+    invalid(
+      { [fileFor(id)]: (text) => planDependencies(text, value) },
+      /plan and manifest dependencies differ/,
+    );
+  });
+  test("index dependency mismatch in either direction: " + id, () => {
+    invalid(
+      { "plans/README.md": (text) => indexDependencies(text, id, value) },
+      /index and manifest dependencies differ/,
+    );
+  });
+}
+test("removing manifest prerequisite cannot bypass active plan docs", () => {
+  invalid({
+    ...status(6, "IN_PROGRESS"),
+    "plans/manifest.json": editManifest((entries) => {
+      entries.find((entry) => entry.id === 6).depends = [];
+    }),
+  }, /plan and manifest dependencies differ/);
+});
+test("adding manifest prerequisite requires matching docs", () => {
+  invalid({
+    "plans/manifest.json": editManifest((entries) => {
+      entries.find((entry) => entry.id === 5).depends = [7];
+    }),
+  }, /plan and manifest dependencies differ/);
+});
+test("dependency sets allow whitespace backticks and different order", () => {
+  const result = run({
+    [fileFor(13)]: (text) =>
+      planDependencies(text, "  " + tick + "006" + tick + " , 005  "),
+    "plans/README.md": (text) =>
+      indexDependencies(text, 13, " 006 , " + tick + "005" + tick + " "),
+    [fileFor(5)]: (text) =>
+      planDependencies(text, "  " + tick + "không" + tick + "  "),
+  });
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+for (const direction of ["remove", "add"]) {
+  test("scope must match plan file list: " + direction, () => {
+    invalid({
+      "plans/manifest.json": editManifest((entries) => {
+        const entry = entries.find((entry) => entry.id === 15);
+        if (direction === "remove") entry.scope.shift();
+        else entry.scope.push("src/runtime.ts");
+      }),
+    }, /plan and manifest scope differ/);
+  });
+}
+const blockedDrift = {
+  "src/mrtr/link-disambiguation.ts": (text) =>
+    text.replace(
+      "result: await options.execute",
+      "result: await options.changedExecute",
+    ),
+};
+test("BLOCKED detects current source drift", () => {
+  invalid(
+    { ...status(2, "BLOCKED"), ...blockedDrift },
+    /002.*current source drift/,
+  );
+});
+test("explicit STALE accepts current drift but still reads historical source", () => {
+  const result = run({ ...status(2, "STALE"), ...blockedDrift });
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  assert(
+    result.historicalReads.some((path) =>
+      path.endsWith(":src/mrtr/link-disambiguation.ts")
+    ),
+  );
+});
+test("STALE rejects invalid historical evidence", () => {
+  invalid({
+    ...status(2, "STALE"),
+    ...blockedDrift,
+    "plans/manifest.json": editManifest((entries) => {
+      entries.find((entry) => entry.id === 2).evidence[0].code += "INVALID";
+    }),
+  }, /002.*historical source mismatch/);
+});
+test("STALE rejects unreadable historical Git source", () => {
+  invalid({
+    ...status(2, "STALE"),
+    "plans/manifest.json": editManifest((entries) => {
+      entries.find((entry) => entry.id === 2).evidence[0].sourceRef = "deadbee";
+    }),
+  }, /Cannot read historical source deadbee:/);
+});
+test("unrelated prose does not affect source dependency or scope invariants", () => {
+  const result = run({
+    [fileFor(15)]: (text) => text + "\nGhi chú trình bày bổ sung.\n",
+  });
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+function assertInventoryPlan(text, entry) {
+  for (
+    const required of [
+      "erpnext_stock_ledger_list",
+      'categories: ["inventory"]',
+      'required: ["item_code", "warehouse"]',
+      "readOnlyHint: true",
+    ]
+  ) {
+    assert(
+      text.includes(required),
+      "Missing inventory-only contract: " + required,
+    );
+  }
+  for (
+    const path of [
+      "src/tools/inventory.ts",
+      "src/tools/inventory_test.ts",
+      "src/client_test.ts",
+      "src/ui/testing/host.ts",
+    ]
+  ) {
+    assert(entry.scope.includes(path), "Missing inventory-only scope: " + path);
+  }
+  assert(!entry.scope.includes("src/tools/operations_test.ts"));
+}
+test("015 keeps movements available for inventory-only clients", () => {
+  assertInventoryPlan(
+    readFileSync(resolve(repoRoot, fileFor(15)), "utf8"),
+    manifest.find((entry) => entry.id === 15),
+  );
+});
+test("015 contract rejects operations tool as its requested ledger tool", () => {
+  const text = readFileSync(resolve(repoRoot, fileFor(15)), "utf8").replaceAll(
+    "erpnext_stock_ledger_list",
+    "erpnext_doc_list",
+  );
+  assert.throws(
+    () => assertInventoryPlan(text, manifest.find((entry) => entry.id === 15)),
+    /Missing inventory-only contract: erpnext_stock_ledger_list/,
+  );
+});
 test("021 requires both explicit Node runtime paths", () => {
   const text = readFileSync(resolve(repoRoot, fileFor(21)), "utf8");
   assert(text.includes("--node20"));

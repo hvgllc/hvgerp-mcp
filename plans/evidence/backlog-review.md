@@ -170,3 +170,68 @@ Gate tài liệu sau sửa: backlog format 43 file, lint hai script, diff check 
 format bốn file chạm và diff check plans exit 0. Full format root còn một dòng
 chưa wrap trong ghi chú 005 của parent, nằm ngoài delta này; không tự sửa file
 đó. Root source vẫn d2c5305; không chạy regression phụ thuộc source mới ở root.
+
+## Codex vòng tiếp: review 5119983762
+
+Đọc đủ ba comment trên HEAD `9fd274a` bằng GitHub API. Trước sửa, backlog nhận
+source main `e09537b25e133c21b2c1915b15937d78c6dd0bbc` bằng merge `7275cb9`.
+Validator ngay sau merge chỉ đỏ hai trích đoạn của 008 đã sửa; đối chiếu
+evidence APPROVE, CSV/browser, CI và merge proof thật rồi chuyển 008 DONE.
+Record lịch sử 008 vẫn giữ d2c5305. Các kế hoạch TODO khác không có drift cần
+refresh vì 008.
+
+- Finding
+  [3939631487](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3939631487):
+  sáu ca thêm/bỏ dependency ở plan, README hoặc manifest được chấp nhận sai
+  trước sửa. Ca bỏ manifest prerequisite đồng thời cho 006 IN_PROGRESS không còn
+  lách được tài liệu vẫn yêu cầu 005. Sau sửa, parser so cả ba tập ID, không phụ
+  thuộc thứ tự, whitespace hoặc backtick. Hai ca thêm/bỏ scope cũng đỏ trước
+  sửa, xanh sau guard đồng bộ scope; đây là kiểm thêm invariant cùng lớp, không
+  mở rộng source implementation.
+- Finding
+  [3939631491](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3939631491):
+  thay đúng dòng execute trong source hiện tại của BLOCKED 002 trước sửa vẫn
+  exit 0. Sau sửa, exit 1 diagnostic current source drift. STALE tường minh cho
+  phép current drift nhưng vẫn đọc sourceRef; code lịch sử sai hoặc ref Git
+  không đọc được đều bị từ chối riêng. Không dùng lỗi unrelated làm ca đỏ.
+- Finding
+  [3939631490](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3939631490):
+  contract 015 đỏ vì chưa có tool ledger thuộc inventory. Đọc stock_entry_list,
+  category filter client và host thật: inventory-only có balance nhưng không có
+  doc_list. Kế hoạch mới thêm tool đọc hẹp, item/kho required, fields/filter/
+  sort cố định, kiểm client category thật, fixture typed và lỗi rõ. Scope thêm
+  inventory/test, client_test, host và CHANGELOG; bỏ operations_test. Không sửa
+  schema/nghĩa tool cũ, category filter, version hoặc triển khai source 015.
+
+Đọc schema upstream ERPNext version-15 tại commit
+`1a0bf0bf6c4aeaae5acde90c74b186312f49b95c`; link và field thực ghi trong 015.
+Sort thời gian/name là lựa chọn request được chốt từ field thực, không nhầm với
+sort mặc định modified của DocType. Chưa kiểm schema/permission site người dùng;
+executor phải đối chiếu phiên bản mục tiêu, không để fixture định nghĩa ERP.
+
+Kết quả đỏ: 49 test, 39 pass, 10 fail đúng các assertion nêu trên. Sau sửa:
+49/49 test và validator 25/25 xanh. Ca thay tool ledger bằng operations bị
+contract test từ chối. Các fixture chỉ đổi dữ liệu đọc trong bộ nhớ, không ghi
+source hoặc giả review. Chưa dùng verdict cũ làm APPROVE cho delta này.
+
+Theo mục Repeat findings của skill codex-pr-review-loop, thêm đúng hai rule hẹp
+tại plans/AGENTS.md, không sửa AGENTS.md gốc của người dùng. Quy tắc được kiểm
+local theo ba nhóm: vi phạm source/dep/scope bị từ chối; ngoại lệ STALE với
+historical hợp lệ và dependency khác whitespace/order được chấp nhận; ghi chú
+trình bày không liên quan vẫn qua. Đây là bằng chứng regression cho invariant,
+chưa phải bằng chứng Codex vòng sau đã áp rule đúng. Parent phải đánh giá lại
+khi review mới đến, không dùng rule miễn finding hoặc giảm gate.
+
+Gate cuối: backlog validator 25/25, regression 49/49, format 47 file, lint hai
+script và diff check đều exit 0; diff source ngoài plans so với main e09537b
+rỗng. Root validator 25/25, format toàn plans 48 file và diff check plans exit
+0. Không chạy application build/test cùng parent trong lượt này; review/CI fresh
+của HEAD mới vẫn cần parent điều phối.
+
+Đồng bộ root chỉ thay record 015 trong manifest, các record khác so sâu giữ
+nguyên, gồm 005/009 scope mới và 022 sourceRef d2c5305. Hash tám file bảo vệ
+(002, hồ sơ quyền 002, 005, 009, 022 và ba file cá nhân/quy tắc gốc) không đổi;
+journal giữ nguyên prefix và chỉ append kết quả. Ghi chú trước execute 008 được
+giữ và đưa vào snapshot backlog. Plan/evidence 007 giữ nguyên; CSV/PNG 008 được
+copy và cmp byte-identical. Root 6 DONE, 1 BLOCKED, 2 IN_PROGRESS (005, 009), 16
+TODO; backlog giữ TODO cho 005/009 vì chưa tích hợp implementation.

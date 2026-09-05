@@ -490,8 +490,12 @@
       "src/ui/shared/stock-movements.ts",
       "src/ui/shared/stock-movements_test.ts",
       "src/ui/testing/fixtures.ts",
-      "src/tools/operations_test.ts",
+      "src/ui/testing/host.ts",
+      "src/tools/inventory.ts",
+      "src/tools/inventory_test.ts",
+      "src/client_test.ts",
       "docs/tools.md",
+      "CHANGELOG.md",
       "plans/evidence/015/"
     ],
     "newFiles": [
@@ -507,10 +511,16 @@
         "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
       },
       {
-        "path": "src/tools/operations.ts",
-        "line": 582,
-        "code": "        filters: {\n          type: \"array\",",
-        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
+        "path": "src/tools/inventory.ts",
+        "line": 341,
+        "code": "    name: \"erpnext_stock_entry_list\",\n    annotations: { readOnlyHint: true },\n    _meta: DOCLIST_META,\n    description: \"List Stock Entries (material transfers, receipts, issues). \" +\n      \"Fields: name, stock_entry_type, posting_date, from_warehouse, to_warehouse, total_amount. \" +\n      \"Filterable by stock_entry_type, date range.\",\n    category: \"inventory\",",
+        "sourceRef": "e09537b25e133c21b2c1915b15937d78c6dd0bbc"
+      },
+      {
+        "path": "src/client.ts",
+        "line": 137,
+        "code": "      const selected = options.categories.flatMap((cat) =>\n        getToolsByCategory(cat)\n      );",
+        "sourceRef": "e09537b25e133c21b2c1915b15937d78c6dd0bbc"
       }
     ]
   },
