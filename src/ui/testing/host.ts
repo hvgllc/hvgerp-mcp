@@ -4,8 +4,10 @@ import {
 } from "@modelcontextprotocol/ext-apps/app-bridge";
 import {
   boardFixture,
+  captureHostBoard,
   createDetailFixtureStore,
   malformedViewerFixture,
+  pagedBoardFixture,
   SCENARIOS,
   stockInventoryFixture,
   stockLedgerFixture,
@@ -70,7 +72,12 @@ function failure(message: string) {
   return { isError: true, content: [{ type: "text" as const, text: message }] };
 }
 type FixtureResult = ReturnType<typeof result> | ReturnType<typeof failure>;
-const boards = [boardFixture("A"), boardFixture("B")];
+const boards = [
+  boardFixture("A"),
+  boardFixture("B"),
+  pagedBoardFixture(0),
+  pagedBoardFixture(50),
+];
 const details = createDetailFixtureStore();
 const detailMutations = new Set([
   "erpnext_doc_update",
@@ -145,7 +152,9 @@ function responseFor(
     if (scenario === "refresh-error") return failure("Local refresh error");
     if (viewer === "kanban-viewer") {
       const requestedBoard = boards.find((entry) =>
-        entry.refreshArguments.project === args.project
+        entry.refreshArguments.project === args.project &&
+        (entry.refreshArguments.offset ?? 0) === (args.offset ?? 0) &&
+        (entry.refreshArguments.limit ?? 20) === (args.limit ?? 20)
       );
       return requestedBoard
         ? result(structuredClone(requestedBoard))
@@ -267,7 +276,9 @@ bridge.oncalltool = async (params, extra) => {
         detailMutations.has(params.name))) ||
     (scenario === "board-race" &&
       (params.name === "erpnext_kanban_get_board" ||
-        params.name === "erpnext_kanban_move_card")) ||
+        params.name === "erpnext_kanban_move_card" ||
+        params.name === "erpnext_doc_get" ||
+        detailMutations.has(params.name))) ||
     (scenario === "stock-race" && params.name === "erpnext_stock_ledger_list");
   const reply = responseFor(params.name, args);
   function applySuccessfulMove() {
@@ -384,17 +395,87 @@ bridge.oninitialized = () => {
     record({ outcome: "initialization-error", message: String(error) });
   });
 };
+async function sendBoard(next: typeof board) {
+  board = next;
+  await bridge.sendToolInput({ arguments: board.refreshArguments });
+  record({ outcome: "tool-input", arguments: board.refreshArguments });
+  await sendSuccess();
+}
 boardButton.onclick = () => {
-  board = boards[1];
-  void sendSuccess().catch((error: unknown) =>
+  void sendBoard(boards[1]).catch((error: unknown) =>
     record({ outcome: "send-error", message: String(error) })
   );
 };
+if (viewer === "kanban-viewer") {
+  for (
+    const [label, index] of [["Gửi board A", 0], ["Gửi trang 0", 2], [
+      "Gửi trang 50",
+      3,
+    ]] as const
+  ) {
+    const button = document.createElement("button");
+    button.textContent = label;
+    button.onclick = () => {
+      void sendBoard(boards[index]).catch((error: unknown) =>
+        record({ outcome: "send-error", message: String(error) })
+      );
+    };
+    boardButton.after(button);
+  }
+}
 successButton.onclick = () => {
   void sendSuccess().catch((error: unknown) =>
     record({ outcome: "send-error", message: String(error) })
   );
 };
+if (viewer === "kanban-viewer" && scenario === "board-race") {
+  let nextHostId = 1;
+  let holdingHost = false;
+  for (const [label, index] of [["A", 0], ["B", 1], ["trang 50", 3]] as const) {
+    const button = document.createElement("button");
+    button.textContent = `Giữ host ${label}`;
+    button.onclick = () => {
+      if (holdingHost) return;
+      holdingHost = true;
+      board = boards[index];
+      const captured = captureHostBoard(board);
+      const hostId = nextHostId++;
+      void bridge.sendToolInput({ arguments: captured.arguments }).then(() => {
+        record({ outcome: "host-input-held", hostId, ...captured });
+        const row = document.createElement("li");
+        row.textContent = `Host #${hostId} ${label} `;
+        for (const kind of ["success", "error", "malformed"] as const) {
+          const release = document.createElement("button");
+          release.textContent = `Host #${hostId} ${kind}`;
+          release.onclick = () => {
+            const reply = kind === "success"
+              ? result(captured.board)
+              : kind === "error"
+              ? failure(`Local host error #${hostId}`)
+              : {
+                isError: false,
+                content: [{ type: "text" as const, text: "{" }],
+              };
+            row.remove();
+            void bridge.sendToolResult(reply).then(() => {
+              holdingHost = false;
+              record({ outcome: `host-${kind}-released`, hostId, reply });
+            }).catch((error: unknown) => {
+              holdingHost = false;
+              record({ outcome: "send-error", hostId, message: String(error) });
+            });
+          };
+          row.append(release);
+        }
+        pendingList.append(row);
+      }).catch((error: unknown) => {
+        holdingHost = false;
+        record({ outcome: "send-error", hostId, message: String(error) });
+      });
+    };
+    boardButton.after(button);
+  }
+}
 if (dateFixture) {
   const malformedButton = document.createElement("button");
   malformedButton.textContent = "Gửi ngày sai kiểu";

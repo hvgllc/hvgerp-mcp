@@ -1,0 +1,3210 @@
+{
+  "sourceCommit": "1f54272cbdbb87f4b1c4b44ad05d2b7e6d2d7612",
+  "reportCommit": "0ef90d27e6143458265c4c957f038fc9a8ecd09f",
+  "htmlSha256": "8b3fc11d0ff177fdb0b95671bff8b9718355a94512e3efe85628ea774fdf8b1e",
+  "url": "http://127.0.0.1:5178/testing/host.html?viewer=kanban-viewer&scenario=board-race&chart=bar",
+  "title": "HVGERP Local Test Host",
+  "console": [],
+  "limitations": [
+    "Local fixture with real AppBridge and built iframe, not ERPNext production.",
+    "Setup request timed out during manual staging; exploratory record retained.",
+    "Board reads can time out between batches and focus may request extra reads; this is not a claim of one read in the whole trace.",
+    "DOM and trace are sequential observations, not atomic. Duplicate rendered Trace text is omitted when a separate parsed trace is present.",
+    "Assignment fixture recomputes the document when released; old snapshot overwrite is proven by regression tests, Browser proves serialization through the real controls."
+  ],
+  "records": [
+    {
+      "case": "setup-timeout-exploratory",
+      "at": "2026-09-05T13:12:01.730Z",
+      "dom": "- heading \"Host kiểm thử local HVGERP\" [level=1]\n- paragraph: Chỉ dùng fixture local. Không kết nối ERPNext hoặc đọc credential.\n- text: Viewer\n- combobox \"Viewer\":\n  - option \"invoice-viewer\"\n  - option \"stock-viewer\"\n  - option \"doclist-viewer\"\n  - option \"chart-viewer\"\n  - option \"kpi-viewer\"\n  - option \"funnel-viewer\"\n  - option \"kanban-viewer\" [selected]\n- text: Kịch bản\n- combobox \"Kịch bản\":\n  - option \"smoke\"\n  - option \"csv\"\n  - option \"detail-race\"\n  - option \"board-race\" [selected]\n  - option \"initial-error\"\n  - option \"refresh-error\"\n  - option \"malformed-payload\"\n  - option \"sales-order-date\"\n  - option \"quotation-date\"\n  - option \"stock-movements\"\n  - option \"stock-permission\"\n  - option \"stock-malformed\"\n  - option \"stock-race\"\n- text: Biểu đồ\n- combobox \"Biểu đồ\":\n  - option \"bar\" [selected]\n  - option \"horizontal-bar\"\n  - option \"pie\"\n  - option \"donut\"\n- button \"Đặt lại\"\n- button \"Gửi board B\"\n- button \"Gửi trang 50\"\n- button \"Gửi trang 0\"\n- button \"Gửi board A\"\n- button \"Gửi lại dữ liệu thành công\"\n- status: Đã kết nối\n- iframe [active] [id=\"viewer-frame\"]:\n  - generic: H\n  - generic: Havi Group\n  - generic: ERP · OPERATIONS\n  - generic: Local board A\n  - generic: 2 cards · Task · move tool erpnext_kanban_move_card\n  - generic: Open\n  - generic: \"2\"\n  - article:\n    - button \"Task A one\"\n    - button \"Move Task A one to Start\": Start\n  - article:\n    - button \"Task A two\"\n    - button \"Move Task A two to Start\": Start\n  - generic: Working\n  - generic: \"0\"\n  - generic: Completed\n  - generic: \"0\"\n  - 'dialog \"Detail: Task A one\"':\n    - generic: Task A one\n    - generic: TASK-A-1\n    - button \"Close detail\" [active]: ✕\n    - generic: \"MCP error -32001: Request timed out\"\n    - generic: Move to\n    - button \"Start\": Start\n    - button \"Open in doclist\"\n    - button \"Timesheets\"\n- heading \"Yêu cầu đang giữ\" [level=2]\n- paragraph: Chọn đúng ID để trả kết quả theo thứ tự mong muốn. Viewer giữ timeout thật.\n- list\n- heading \"Trace\" [level=2]\n- generic \"Trace\": \"[ { \\\"outcome\\\": \\\"initialized\\\", \\\"viewer\\\": \\\"kanban-viewer\\\", \\\"scenario\\\": \\\"board-race\\\" }, { \\\"outcome\\\": \\\"tool-input\\\" }, { \\\"outcome\\\": \\\"tool-result\\\", \\\"viewer\\\": \\\"kanban-viewer\\\", \\\"boardId\\\": \\\"task-board\\\", \\\"refreshArguments\\\": { \\\"doctype\\\": \\\"Task\\\", \\\"project\\\": \\\"PROJECT-A\\\" } }, { \\\"id\\\": 1, \\\"tool\\\": \\\"erpnext_kanban_get_board\\\", \\\"args\\\": { \\\"doctype\\\": \\\"Task\\\", \\\"project\\\": \\\"PROJECT-A\\\" }, \\\"outcome\\\": \\\"received\\\" }, { \\\"id\\\": 1, \\\"outcome\\\": \\\"held\\\" }, { \\\"id\\\": 2, \\\"tool\\\": \\\"erpnext_doc_get\\\", \\\"args\\\": { \\\"doctype\\\": \\\"Task\\\", \\\"name\\\": \\\"TASK-A-1\\\" }, \\\"outcome\\\": \\\"received\\\" }, { \\\"id\\\": 2, \\\"outcome\\\": \\\"held\\\" }, { \\\"id\\\": 1, \\\"outcome\\\": \\\"cancelled\\\" }, { \\\"id\\\": 2, \\\"outcome\\\": \\\"cancelled\\\" }, { \\\"id\\\": 3, \\\"tool\\\": \\\"erpnext_kanban_get_board\\\", \\\"args\\\": { \\\"doctype\\\": \\\"Task\\\", \\\"project\\\": \\\"PROJECT-A\\\" }, \\\"outcome\\\": \\\"received\\\" }, { \\\"id\\\": 3, \\\"outcome\\\": \\\"held\\\" }, { \\\"id\\\": 3, \\\"outcome\\\": \\\"cancelled\\\" }, { \\\"id\\\": 4, \\\"tool\\\": \\\"erpnext_kanban_get_board\\\", \\\"args\\\": { \\\"doctype\\\": \\\"Task\\\", \\\"project\\\": \\\"PROJECT-A\\\" }, \\\"outcome\\\": \\\"received\\\" }, { \\\"id\\\": 4, \\\"outcome\\\": \\\"held\\\" }, { \\\"id\\\": 4, \\\"outcome\\\": \\\"cancelled\\\" } ]\""
+    },
+    {
+      "case": "assign-save",
+      "stage": "both-clicked-only-assign-sent",
+      "at": "2026-09-05T13:12:52.797Z",
+      "dom": "- heading \"Host kiểm thử local HVGERP\" [level=1]\n- paragraph: Chỉ dùng fixture local. Không kết nối ERPNext hoặc đọc credential.\n- text: Viewer\n- combobox \"Viewer\":\n  - option \"invoice-viewer\"\n  - option \"stock-viewer\"\n  - option \"doclist-viewer\"\n  - option \"chart-viewer\"\n  - option \"kpi-viewer\"\n  - option \"funnel-viewer\"\n  - option \"kanban-viewer\" [selected]\n- text: Kịch bản\n- combobox \"Kịch bản\":\n  - option \"smoke\"\n  - option \"csv\"\n  - option \"detail-race\"\n  - option \"board-race\" [selected]\n  - option \"initial-error\"\n  - option \"refresh-error\"\n  - option \"malformed-payload\"\n  - option \"sales-order-date\"\n  - option \"quotation-date\"\n  - option \"stock-movements\"\n  - option \"stock-permission\"\n  - option \"stock-malformed\"\n  - option \"stock-race\"\n- text: Biểu đồ\n- combobox \"Biểu đồ\":\n  - option \"bar\" [selected]\n  - option \"horizontal-bar\"\n  - option \"pie\"\n  - option \"donut\"\n- button \"Đặt lại\"\n- button \"Gửi board B\"\n- button \"Gửi trang 50\"\n- button \"Gửi trang 0\"\n- button \"Gửi board A\"\n- button \"Gửi lại dữ liệu thành công\"\n- status: Đã kết nối\n- iframe [active] [id=\"viewer-frame\"]:\n  - generic: H\n  - generic: Havi Group\n  - generic: ERP · OPERATIONS\n  - generic: Local board A\n  - generic: 2 cards · Task · move tool erpnext_kanban_move_card\n  - generic: Open\n  - generic: \"2\"\n  - article:\n    - button \"Task A one\"\n    - button \"Move Task A one to Start\": Start\n  - article:\n    - button \"Task A two\"\n    - button \"Move Task A two to Start\": Start\n  - generic: Working\n  - generic: \"0\"\n  - generic: Completed\n  - generic: \"0\"\n  - 'dialog \"Detail: Task A one\"':\n    - textbox \"Subject\"\n    - generic: TASK-A-1\n    - generic: Open\n    - button \"Medium\"\n    - button \"Close detail\": ✕\n    - generic: Assigned to\n    - generic: Unassigned\n    - combobox \"Assign to user\" [disabled]:\n      - option \"Assign to…\"\n      - option \"Local User (local-user@example.test)\" [selected]\n    - button \"Assigning…\" [disabled]\n    - generic: Description\n    - textbox\n    - button \"Saving…\" [disabled]\n    - button \"Discard\"\n    - generic: Move to\n    - button \"Start\": Start\n    - button \"Open in doclist\"\n    - button \"Timesheets\"\n- heading \"Yêu cầu đang giữ\" [level=2]\n- paragraph: Chọn đúng ID để trả kết quả theo thứ tự mong muốn. Viewer giữ timeout thật.\n- list:\n  - text: \"#6 erpnext_kanban_get_board {\\\"doctype\\\":\\\"Task\\\",\\\"project\\\":\\\"PROJECT-A\\\"}\"\n  - 'button \"Trả kết quả #6\"'\n  - 'button \"Trả lỗi #6\"'\n  - text: \"#7 erpnext_doc_assign {\\\"doctype\\\":\\\"Task\\\",\\\"name\\\":\\\"TASK-A-1\\\",\\\"assign_to\\\":\\\"local-user@example.test\\\"}\"\n  - 'button \"Trả kết quả #7\"'\n  - 'button \"Trả lỗi #7\"'",
+      "trace": [
+        {
+          "outcome": "initialized",
+          "viewer": "kanban-viewer",
+          "scenario": "board-race"
+        },
+        {
+          "outcome": "tool-input"
+        },
+        {
+          "outcome": "tool-result",
+          "viewer": "kanban-viewer",
+          "boardId": "task-board",
+          "refreshArguments": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          }
+        },
+        {
+          "id": 1,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 1,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 2,
+          "outcome": "held"
+        },
+        {
+          "id": 1,
+          "outcome": "released"
+        },
+        {
+          "id": 3,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 3,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "outcome": "released"
+        },
+        {
+          "id": 4,
+          "tool": "erpnext_user_list",
+          "args": {
+            "limit": 100
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 4,
+          "outcome": "resolved"
+        },
+        {
+          "id": 3,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 5,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 5,
+          "outcome": "held"
+        },
+        {
+          "id": 5,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 6,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 6,
+          "outcome": "held"
+        },
+        {
+          "id": 7,
+          "tool": "erpnext_doc_assign",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "assign_to": "local-user@example.test"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 7,
+          "outcome": "held"
+        }
+      ]
+    },
+    {
+      "case": "assign-save",
+      "stage": "assign-released-update-started",
+      "at": "2026-09-05T13:12:53.180Z",
+      "dom": "- heading \"Host kiểm thử local HVGERP\" [level=1]\n- paragraph: Chỉ dùng fixture local. Không kết nối ERPNext hoặc đọc credential.\n- text: Viewer\n- combobox \"Viewer\":\n  - option \"invoice-viewer\"\n  - option \"stock-viewer\"\n  - option \"doclist-viewer\"\n  - option \"chart-viewer\"\n  - option \"kpi-viewer\"\n  - option \"funnel-viewer\"\n  - option \"kanban-viewer\" [selected]\n- text: Kịch bản\n- combobox \"Kịch bản\":\n  - option \"smoke\"\n  - option \"csv\"\n  - option \"detail-race\"\n  - option \"board-race\" [selected]\n  - option \"initial-error\"\n  - option \"refresh-error\"\n  - option \"malformed-payload\"\n  - option \"sales-order-date\"\n  - option \"quotation-date\"\n  - option \"stock-movements\"\n  - option \"stock-permission\"\n  - option \"stock-malformed\"\n  - option \"stock-race\"\n- text: Biểu đồ\n- combobox \"Biểu đồ\":\n  - option \"bar\" [selected]\n  - option \"horizontal-bar\"\n  - option \"pie\"\n  - option \"donut\"\n- button \"Đặt lại\"\n- button \"Gửi board B\"\n- button \"Gửi trang 50\"\n- button \"Gửi trang 0\"\n- button \"Gửi board A\"\n- button \"Gửi lại dữ liệu thành công\"\n- status: Đã kết nối\n- iframe [active] [id=\"viewer-frame\"]:\n  - generic: H\n  - generic: Havi Group\n  - generic: ERP · OPERATIONS\n  - generic: Local board A\n  - generic: 2 cards · Task · move tool erpnext_kanban_move_card\n  - generic: Open\n  - generic: \"2\"\n  - article:\n    - button \"Task A one\"\n    - button \"Move Task A one to Start\": Start\n  - article:\n    - button \"Task A two\"\n    - button \"Move Task A two to Start\": Start\n  - generic: Working\n  - generic: \"0\"\n  - generic: Completed\n  - generic: \"0\"\n  - 'dialog \"Detail: Task A one\"':\n    - textbox \"Subject\"\n    - generic: TASK-A-1\n    - generic: Open\n    - button \"Medium\"\n    - button \"Close detail\" [active]: ✕\n    - generic: Assigned to\n    - text: local-user@example.test\n    - button \"Unassign local-user@example.test\": ×\n    - combobox \"Assign to user\":\n      - option \"Assign to…\" [selected]\n    - generic: Description\n    - textbox\n    - button \"Saving…\" [disabled]\n    - button \"Discard\"\n    - generic: Move to\n    - button \"Start\": Start\n    - button \"Open in doclist\"\n    - button \"Timesheets\"\n- heading \"Yêu cầu đang giữ\" [level=2]\n- paragraph: Chọn đúng ID để trả kết quả theo thứ tự mong muốn. Viewer giữ timeout thật.\n- list:\n  - text: \"#6 erpnext_kanban_get_board {\\\"doctype\\\":\\\"Task\\\",\\\"project\\\":\\\"PROJECT-A\\\"}\"\n  - 'button \"Trả kết quả #6\"'\n  - 'button \"Trả lỗi #6\"'\n  - text: \"#8 erpnext_doc_update {\\\"doctype\\\":\\\"Task\\\",\\\"name\\\":\\\"TASK-A-1\\\",\\\"data\\\":{\\\"subject\\\":\\\"Serialized latest subject\\\"}}\"\n  - 'button \"Trả kết quả #8\"'\n  - 'button \"Trả lỗi #8\"'",
+      "trace": [
+        {
+          "outcome": "initialized",
+          "viewer": "kanban-viewer",
+          "scenario": "board-race"
+        },
+        {
+          "outcome": "tool-input"
+        },
+        {
+          "outcome": "tool-result",
+          "viewer": "kanban-viewer",
+          "boardId": "task-board",
+          "refreshArguments": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          }
+        },
+        {
+          "id": 1,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 1,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 2,
+          "outcome": "held"
+        },
+        {
+          "id": 1,
+          "outcome": "released"
+        },
+        {
+          "id": 3,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 3,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "outcome": "released"
+        },
+        {
+          "id": 4,
+          "tool": "erpnext_user_list",
+          "args": {
+            "limit": 100
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 4,
+          "outcome": "resolved"
+        },
+        {
+          "id": 3,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 5,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 5,
+          "outcome": "held"
+        },
+        {
+          "id": 5,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 6,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 6,
+          "outcome": "held"
+        },
+        {
+          "id": 7,
+          "tool": "erpnext_doc_assign",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "assign_to": "local-user@example.test"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 7,
+          "outcome": "held"
+        },
+        {
+          "id": 7,
+          "outcome": "released"
+        },
+        {
+          "id": 8,
+          "tool": "erpnext_doc_update",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "data": {
+              "subject": "Serialized latest subject"
+            }
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 8,
+          "outcome": "held"
+        }
+      ]
+    },
+    {
+      "case": "assign-save",
+      "stage": "update-released-readback-held",
+      "at": "2026-09-05T13:12:53.563Z",
+      "dom": "- heading \"Host kiểm thử local HVGERP\" [level=1]\n- paragraph: Chỉ dùng fixture local. Không kết nối ERPNext hoặc đọc credential.\n- text: Viewer\n- combobox \"Viewer\":\n  - option \"invoice-viewer\"\n  - option \"stock-viewer\"\n  - option \"doclist-viewer\"\n  - option \"chart-viewer\"\n  - option \"kpi-viewer\"\n  - option \"funnel-viewer\"\n  - option \"kanban-viewer\" [selected]\n- text: Kịch bản\n- combobox \"Kịch bản\":\n  - option \"smoke\"\n  - option \"csv\"\n  - option \"detail-race\"\n  - option \"board-race\" [selected]\n  - option \"initial-error\"\n  - option \"refresh-error\"\n  - option \"malformed-payload\"\n  - option \"sales-order-date\"\n  - option \"quotation-date\"\n  - option \"stock-movements\"\n  - option \"stock-permission\"\n  - option \"stock-malformed\"\n  - option \"stock-race\"\n- text: Biểu đồ\n- combobox \"Biểu đồ\":\n  - option \"bar\" [selected]\n  - option \"horizontal-bar\"\n  - option \"pie\"\n  - option \"donut\"\n- button \"Đặt lại\"\n- button \"Gửi board B\"\n- button \"Gửi trang 50\"\n- button \"Gửi trang 0\"\n- button \"Gửi board A\"\n- button \"Gửi lại dữ liệu thành công\"\n- status: Đã kết nối\n- iframe [id=\"viewer-frame\"]:\n  - generic: H\n  - generic: Havi Group\n  - generic: ERP · OPERATIONS\n  - generic: Local board A\n  - generic: 2 cards · Task · move tool erpnext_kanban_move_card\n  - generic: Open\n  - generic: \"2\"\n  - article:\n    - button \"Task A one\"\n    - button \"Move Task A one to Start\": Start\n  - article:\n    - button \"Task A two\"\n    - button \"Move Task A two to Start\": Start\n  - generic: Working\n  - generic: \"0\"\n  - generic: Completed\n  - generic: \"0\"\n  - 'dialog \"Detail: Task A one\"':\n    - textbox \"Subject\"\n    - generic: TASK-A-1\n    - generic: Open\n    - button \"Medium\"\n    - button \"Close detail\": ✕\n    - generic: Assigned to\n    - text: local-user@example.test\n    - button \"Unassign local-user@example.test\": ×\n    - combobox \"Assign to user\":\n      - option \"Assign to…\" [selected]\n    - generic: Description\n    - textbox\n    - button \"Saving…\" [disabled]\n    - button \"Discard\"\n    - generic: Move to\n    - button \"Start\": Start\n    - button \"Open in doclist\"\n    - button \"Timesheets\"\n- heading \"Yêu cầu đang giữ\" [level=2]\n- paragraph: Chọn đúng ID để trả kết quả theo thứ tự mong muốn. Viewer giữ timeout thật.\n- list:\n  - text: \"#6 erpnext_kanban_get_board {\\\"doctype\\\":\\\"Task\\\",\\\"project\\\":\\\"PROJECT-A\\\"}\"\n  - 'button \"Trả kết quả #6\"'\n  - 'button \"Trả lỗi #6\"'\n  - text: \"#9 erpnext_doc_get {\\\"doctype\\\":\\\"Task\\\",\\\"name\\\":\\\"TASK-A-1\\\"}\"\n  - 'button \"Trả kết quả #9\"'\n  - 'button \"Trả lỗi #9\"'",
+      "trace": [
+        {
+          "outcome": "initialized",
+          "viewer": "kanban-viewer",
+          "scenario": "board-race"
+        },
+        {
+          "outcome": "tool-input"
+        },
+        {
+          "outcome": "tool-result",
+          "viewer": "kanban-viewer",
+          "boardId": "task-board",
+          "refreshArguments": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          }
+        },
+        {
+          "id": 1,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 1,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 2,
+          "outcome": "held"
+        },
+        {
+          "id": 1,
+          "outcome": "released"
+        },
+        {
+          "id": 3,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 3,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "outcome": "released"
+        },
+        {
+          "id": 4,
+          "tool": "erpnext_user_list",
+          "args": {
+            "limit": 100
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 4,
+          "outcome": "resolved"
+        },
+        {
+          "id": 3,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 5,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 5,
+          "outcome": "held"
+        },
+        {
+          "id": 5,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 6,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 6,
+          "outcome": "held"
+        },
+        {
+          "id": 7,
+          "tool": "erpnext_doc_assign",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "assign_to": "local-user@example.test"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 7,
+          "outcome": "held"
+        },
+        {
+          "id": 7,
+          "outcome": "released"
+        },
+        {
+          "id": 8,
+          "tool": "erpnext_doc_update",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "data": {
+              "subject": "Serialized latest subject"
+            }
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 8,
+          "outcome": "held"
+        },
+        {
+          "id": 8,
+          "outcome": "released"
+        },
+        {
+          "id": 9,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 9,
+          "outcome": "held"
+        }
+      ]
+    },
+    {
+      "case": "assign-save",
+      "stage": "completed",
+      "at": "2026-09-05T13:12:54.229Z",
+      "dom": "- heading \"Host kiểm thử local HVGERP\" [level=1]\n- paragraph: Chỉ dùng fixture local. Không kết nối ERPNext hoặc đọc credential.\n- text: Viewer\n- combobox \"Viewer\":\n  - option \"invoice-viewer\"\n  - option \"stock-viewer\"\n  - option \"doclist-viewer\"\n  - option \"chart-viewer\"\n  - option \"kpi-viewer\"\n  - option \"funnel-viewer\"\n  - option \"kanban-viewer\" [selected]\n- text: Kịch bản\n- combobox \"Kịch bản\":\n  - option \"smoke\"\n  - option \"csv\"\n  - option \"detail-race\"\n  - option \"board-race\" [selected]\n  - option \"initial-error\"\n  - option \"refresh-error\"\n  - option \"malformed-payload\"\n  - option \"sales-order-date\"\n  - option \"quotation-date\"\n  - option \"stock-movements\"\n  - option \"stock-permission\"\n  - option \"stock-malformed\"\n  - option \"stock-race\"\n- text: Biểu đồ\n- combobox \"Biểu đồ\":\n  - option \"bar\" [selected]\n  - option \"horizontal-bar\"\n  - option \"pie\"\n  - option \"donut\"\n- button \"Đặt lại\"\n- button \"Gửi board B\"\n- button \"Gửi trang 50\"\n- button \"Gửi trang 0\"\n- button \"Gửi board A\"\n- button \"Gửi lại dữ liệu thành công\"\n- status: Đã kết nối\n- iframe [id=\"viewer-frame\"]:\n  - generic: H\n  - generic: Havi Group\n  - generic: ERP · OPERATIONS\n  - generic: Local board A\n  - generic: 2 cards · Task · move tool erpnext_kanban_move_card\n  - generic: Open\n  - generic: \"2\"\n  - article:\n    - button \"Task A one\"\n    - button \"Move Task A one to Start\": Start\n  - article:\n    - button \"Task A two\"\n    - button \"Move Task A two to Start\": Start\n  - generic: Working\n  - generic: \"0\"\n  - generic: Completed\n  - generic: \"0\"\n  - 'dialog \"Detail: Task A one\"':\n    - textbox \"Subject\"\n    - generic: TASK-A-1\n    - generic: Open\n    - button \"Medium\"\n    - button \"Close detail\": ✕\n    - generic: Assigned to\n    - text: local-user@example.test\n    - button \"Unassign local-user@example.test\": ×\n    - combobox \"Assign to user\":\n      - option \"Assign to…\" [selected]\n    - generic: Description\n    - textbox\n    - button \"Save\" [disabled]\n    - generic: Saved\n    - generic: Move to\n    - button \"Start\": Start\n    - button \"Open in doclist\"\n    - button \"Timesheets\"\n- heading \"Yêu cầu đang giữ\" [level=2]\n- paragraph: Chọn đúng ID để trả kết quả theo thứ tự mong muốn. Viewer giữ timeout thật.\n- list:\n  - text: \"#10 erpnext_kanban_get_board {\\\"doctype\\\":\\\"Task\\\",\\\"project\\\":\\\"PROJECT-A\\\"}\"\n  - 'button \"Trả kết quả #10\"'\n  - 'button \"Trả lỗi #10\"'",
+      "trace": [
+        {
+          "outcome": "initialized",
+          "viewer": "kanban-viewer",
+          "scenario": "board-race"
+        },
+        {
+          "outcome": "tool-input"
+        },
+        {
+          "outcome": "tool-result",
+          "viewer": "kanban-viewer",
+          "boardId": "task-board",
+          "refreshArguments": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          }
+        },
+        {
+          "id": 1,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 1,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 2,
+          "outcome": "held"
+        },
+        {
+          "id": 1,
+          "outcome": "released"
+        },
+        {
+          "id": 3,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 3,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "outcome": "released"
+        },
+        {
+          "id": 4,
+          "tool": "erpnext_user_list",
+          "args": {
+            "limit": 100
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 4,
+          "outcome": "resolved"
+        },
+        {
+          "id": 3,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 5,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 5,
+          "outcome": "held"
+        },
+        {
+          "id": 5,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 6,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 6,
+          "outcome": "held"
+        },
+        {
+          "id": 7,
+          "tool": "erpnext_doc_assign",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "assign_to": "local-user@example.test"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 7,
+          "outcome": "held"
+        },
+        {
+          "id": 7,
+          "outcome": "released"
+        },
+        {
+          "id": 8,
+          "tool": "erpnext_doc_update",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "data": {
+              "subject": "Serialized latest subject"
+            }
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 8,
+          "outcome": "held"
+        },
+        {
+          "id": 8,
+          "outcome": "released"
+        },
+        {
+          "id": 9,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 9,
+          "outcome": "held"
+        },
+        {
+          "id": 9,
+          "outcome": "released"
+        },
+        {
+          "id": 6,
+          "outcome": "released"
+        },
+        {
+          "id": 10,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 10,
+          "outcome": "held"
+        }
+      ]
+    },
+    {
+      "case": "assign-save",
+      "stage": "final-observation",
+      "at": "2026-09-05T13:13:33.370Z",
+      "dom": "- heading \"Host kiểm thử local HVGERP\" [level=1]\n- paragraph: Chỉ dùng fixture local. Không kết nối ERPNext hoặc đọc credential.\n- text: Viewer\n- combobox \"Viewer\":\n  - option \"invoice-viewer\"\n  - option \"stock-viewer\"\n  - option \"doclist-viewer\"\n  - option \"chart-viewer\"\n  - option \"kpi-viewer\"\n  - option \"funnel-viewer\"\n  - option \"kanban-viewer\" [selected]\n- text: Kịch bản\n- combobox \"Kịch bản\":\n  - option \"smoke\"\n  - option \"csv\"\n  - option \"detail-race\"\n  - option \"board-race\" [selected]\n  - option \"initial-error\"\n  - option \"refresh-error\"\n  - option \"malformed-payload\"\n  - option \"sales-order-date\"\n  - option \"quotation-date\"\n  - option \"stock-movements\"\n  - option \"stock-permission\"\n  - option \"stock-malformed\"\n  - option \"stock-race\"\n- text: Biểu đồ\n- combobox \"Biểu đồ\":\n  - option \"bar\" [selected]\n  - option \"horizontal-bar\"\n  - option \"pie\"\n  - option \"donut\"\n- button \"Đặt lại\"\n- button \"Gửi board B\"\n- button \"Gửi trang 50\"\n- button \"Gửi trang 0\"\n- button \"Gửi board A\"\n- button \"Gửi lại dữ liệu thành công\"\n- status: Đã kết nối\n- iframe [id=\"viewer-frame\"]:\n  - generic: H\n  - generic: Havi Group\n  - generic: ERP · OPERATIONS\n  - generic: Local board A\n  - generic: 2 cards · Task · move tool erpnext_kanban_move_card\n  - generic: Open\n  - generic: \"2\"\n  - article:\n    - button \"Task A one\"\n    - button \"Move Task A one to Start\": Start\n  - article:\n    - button \"Task A two\"\n    - button \"Move Task A two to Start\": Start\n  - generic: Working\n  - generic: \"0\"\n  - generic: Completed\n  - generic: \"0\"\n  - 'dialog \"Detail: Task A one\"':\n    - textbox \"Subject\"\n    - generic: TASK-A-1\n    - generic: Open\n    - button \"Medium\"\n    - button \"Close detail\": ✕\n    - generic: Assigned to\n    - text: local-user@example.test\n    - button \"Unassign local-user@example.test\": ×\n    - combobox \"Assign to user\":\n      - option \"Assign to…\" [selected]\n    - generic: Description\n    - textbox\n    - button \"Save\" [disabled]\n    - generic: Saved\n    - generic: Move to\n    - button \"Start\": Start\n    - button \"Open in doclist\"\n    - button \"Timesheets\"\n- heading \"Yêu cầu đang giữ\" [level=2]\n- paragraph: Chọn đúng ID để trả kết quả theo thứ tự mong muốn. Viewer giữ timeout thật.\n- list",
+      "trace": [
+        {
+          "outcome": "initialized",
+          "viewer": "kanban-viewer",
+          "scenario": "board-race"
+        },
+        {
+          "outcome": "tool-input"
+        },
+        {
+          "outcome": "tool-result",
+          "viewer": "kanban-viewer",
+          "boardId": "task-board",
+          "refreshArguments": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          }
+        },
+        {
+          "id": 1,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 1,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 2,
+          "outcome": "held"
+        },
+        {
+          "id": 1,
+          "outcome": "released"
+        },
+        {
+          "id": 3,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 3,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "outcome": "released"
+        },
+        {
+          "id": 4,
+          "tool": "erpnext_user_list",
+          "args": {
+            "limit": 100
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 4,
+          "outcome": "resolved"
+        },
+        {
+          "id": 3,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 5,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 5,
+          "outcome": "held"
+        },
+        {
+          "id": 5,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 6,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 6,
+          "outcome": "held"
+        },
+        {
+          "id": 7,
+          "tool": "erpnext_doc_assign",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "assign_to": "local-user@example.test"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 7,
+          "outcome": "held"
+        },
+        {
+          "id": 7,
+          "outcome": "released"
+        },
+        {
+          "id": 8,
+          "tool": "erpnext_doc_update",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "data": {
+              "subject": "Serialized latest subject"
+            }
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 8,
+          "outcome": "held"
+        },
+        {
+          "id": 8,
+          "outcome": "released"
+        },
+        {
+          "id": 9,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 9,
+          "outcome": "held"
+        },
+        {
+          "id": 9,
+          "outcome": "released"
+        },
+        {
+          "id": 6,
+          "outcome": "released"
+        },
+        {
+          "id": 10,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 10,
+          "outcome": "held"
+        },
+        {
+          "id": 10,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 11,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 11,
+          "outcome": "held"
+        },
+        {
+          "id": 11,
+          "outcome": "cancelled"
+        }
+      ],
+      "subject": "Serialized latest subject"
+    },
+    {
+      "case": "save-unassign",
+      "stage": "both-clicked-only-update-sent",
+      "at": "2026-09-05T13:14:04.145Z",
+      "dom": "- heading \"Host kiểm thử local HVGERP\" [level=1]\n- paragraph: Chỉ dùng fixture local. Không kết nối ERPNext hoặc đọc credential.\n- text: Viewer\n- combobox \"Viewer\":\n  - option \"invoice-viewer\"\n  - option \"stock-viewer\"\n  - option \"doclist-viewer\"\n  - option \"chart-viewer\"\n  - option \"kpi-viewer\"\n  - option \"funnel-viewer\"\n  - option \"kanban-viewer\" [selected]\n- text: Kịch bản\n- combobox \"Kịch bản\":\n  - option \"smoke\"\n  - option \"csv\"\n  - option \"detail-race\"\n  - option \"board-race\" [selected]\n  - option \"initial-error\"\n  - option \"refresh-error\"\n  - option \"malformed-payload\"\n  - option \"sales-order-date\"\n  - option \"quotation-date\"\n  - option \"stock-movements\"\n  - option \"stock-permission\"\n  - option \"stock-malformed\"\n  - option \"stock-race\"\n- text: Biểu đồ\n- combobox \"Biểu đồ\":\n  - option \"bar\" [selected]\n  - option \"horizontal-bar\"\n  - option \"pie\"\n  - option \"donut\"\n- button \"Đặt lại\"\n- button \"Gửi board B\"\n- button \"Gửi trang 50\"\n- button \"Gửi trang 0\"\n- button \"Gửi board A\"\n- button \"Gửi lại dữ liệu thành công\"\n- status: Đã kết nối\n- iframe [active] [id=\"viewer-frame\"]:\n  - generic: H\n  - generic: Havi Group\n  - generic: ERP · OPERATIONS\n  - generic: Local board A\n  - generic: 2 cards · Task · move tool erpnext_kanban_move_card\n  - generic: Open\n  - generic: \"2\"\n  - article:\n    - button \"Task A one\"\n    - button \"Move Task A one to Start\": Start\n  - article:\n    - button \"Task A two\"\n    - button \"Move Task A two to Start\": Start\n  - generic: Working\n  - generic: \"0\"\n  - generic: Completed\n  - generic: \"0\"\n  - 'dialog \"Detail: Task A one\"':\n    - textbox \"Subject\"\n    - generic: TASK-A-1\n    - generic: Open\n    - button \"Medium\"\n    - button \"Close detail\": ✕\n    - generic: Assigned to\n    - text: local-user@example.test\n    - button \"Unassign local-user@example.test\" [disabled]: …\n    - combobox \"Assign to user\":\n      - option \"Assign to…\" [selected]\n    - generic: Description\n    - textbox\n    - button \"Saving…\" [disabled]\n    - button \"Discard\"\n    - generic: Move to\n    - button \"Start\": Start\n    - button \"Open in doclist\"\n    - button \"Timesheets\"\n- heading \"Yêu cầu đang giữ\" [level=2]\n- paragraph: Chọn đúng ID để trả kết quả theo thứ tự mong muốn. Viewer giữ timeout thật.\n- list:\n  - text: \"#13 erpnext_kanban_get_board {\\\"doctype\\\":\\\"Task\\\",\\\"project\\\":\\\"PROJECT-A\\\"}\"\n  - 'button \"Trả kết quả #13\"'\n  - 'button \"Trả lỗi #13\"'\n  - text: \"#14 erpnext_doc_update {\\\"doctype\\\":\\\"Task\\\",\\\"name\\\":\\\"TASK-A-1\\\",\\\"data\\\":{\\\"subject\\\":\\\"After serialized removal\\\"}}\"\n  - 'button \"Trả kết quả #14\"'\n  - 'button \"Trả lỗi #14\"'",
+      "trace": [
+        {
+          "outcome": "initialized",
+          "viewer": "kanban-viewer",
+          "scenario": "board-race"
+        },
+        {
+          "outcome": "tool-input"
+        },
+        {
+          "outcome": "tool-result",
+          "viewer": "kanban-viewer",
+          "boardId": "task-board",
+          "refreshArguments": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          }
+        },
+        {
+          "id": 1,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 1,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 2,
+          "outcome": "held"
+        },
+        {
+          "id": 1,
+          "outcome": "released"
+        },
+        {
+          "id": 3,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 3,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "outcome": "released"
+        },
+        {
+          "id": 4,
+          "tool": "erpnext_user_list",
+          "args": {
+            "limit": 100
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 4,
+          "outcome": "resolved"
+        },
+        {
+          "id": 3,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 5,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 5,
+          "outcome": "held"
+        },
+        {
+          "id": 5,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 6,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 6,
+          "outcome": "held"
+        },
+        {
+          "id": 7,
+          "tool": "erpnext_doc_assign",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "assign_to": "local-user@example.test"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 7,
+          "outcome": "held"
+        },
+        {
+          "id": 7,
+          "outcome": "released"
+        },
+        {
+          "id": 8,
+          "tool": "erpnext_doc_update",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "data": {
+              "subject": "Serialized latest subject"
+            }
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 8,
+          "outcome": "held"
+        },
+        {
+          "id": 8,
+          "outcome": "released"
+        },
+        {
+          "id": 9,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 9,
+          "outcome": "held"
+        },
+        {
+          "id": 9,
+          "outcome": "released"
+        },
+        {
+          "id": 6,
+          "outcome": "released"
+        },
+        {
+          "id": 10,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 10,
+          "outcome": "held"
+        },
+        {
+          "id": 10,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 11,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 11,
+          "outcome": "held"
+        },
+        {
+          "id": 11,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 12,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 12,
+          "outcome": "held"
+        },
+        {
+          "id": 12,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 13,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 13,
+          "outcome": "held"
+        },
+        {
+          "id": 14,
+          "tool": "erpnext_doc_update",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "data": {
+              "subject": "After serialized removal"
+            }
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 14,
+          "outcome": "held"
+        }
+      ]
+    },
+    {
+      "case": "save-unassign",
+      "stage": "readback-held-unassign-not-sent",
+      "at": "2026-09-05T13:14:04.515Z",
+      "dom": "- heading \"Host kiểm thử local HVGERP\" [level=1]\n- paragraph: Chỉ dùng fixture local. Không kết nối ERPNext hoặc đọc credential.\n- text: Viewer\n- combobox \"Viewer\":\n  - option \"invoice-viewer\"\n  - option \"stock-viewer\"\n  - option \"doclist-viewer\"\n  - option \"chart-viewer\"\n  - option \"kpi-viewer\"\n  - option \"funnel-viewer\"\n  - option \"kanban-viewer\" [selected]\n- text: Kịch bản\n- combobox \"Kịch bản\":\n  - option \"smoke\"\n  - option \"csv\"\n  - option \"detail-race\"\n  - option \"board-race\" [selected]\n  - option \"initial-error\"\n  - option \"refresh-error\"\n  - option \"malformed-payload\"\n  - option \"sales-order-date\"\n  - option \"quotation-date\"\n  - option \"stock-movements\"\n  - option \"stock-permission\"\n  - option \"stock-malformed\"\n  - option \"stock-race\"\n- text: Biểu đồ\n- combobox \"Biểu đồ\":\n  - option \"bar\" [selected]\n  - option \"horizontal-bar\"\n  - option \"pie\"\n  - option \"donut\"\n- button \"Đặt lại\"\n- button \"Gửi board B\"\n- button \"Gửi trang 50\"\n- button \"Gửi trang 0\"\n- button \"Gửi board A\"\n- button \"Gửi lại dữ liệu thành công\"\n- status: Đã kết nối\n- iframe [id=\"viewer-frame\"]:\n  - generic: H\n  - generic: Havi Group\n  - generic: ERP · OPERATIONS\n  - generic: Local board A\n  - generic: 2 cards · Task · move tool erpnext_kanban_move_card\n  - generic: Open\n  - generic: \"2\"\n  - article:\n    - button \"Task A one\"\n    - button \"Move Task A one to Start\": Start\n  - article:\n    - button \"Task A two\"\n    - button \"Move Task A two to Start\": Start\n  - generic: Working\n  - generic: \"0\"\n  - generic: Completed\n  - generic: \"0\"\n  - 'dialog \"Detail: Task A one\"':\n    - textbox \"Subject\"\n    - generic: TASK-A-1\n    - generic: Open\n    - button \"Medium\"\n    - button \"Close detail\": ✕\n    - generic: Assigned to\n    - text: local-user@example.test\n    - button \"Unassign local-user@example.test\" [disabled]: …\n    - combobox \"Assign to user\":\n      - option \"Assign to…\" [selected]\n    - generic: Description\n    - textbox\n    - button \"Saving…\" [disabled]\n    - button \"Discard\"\n    - generic: Move to\n    - button \"Start\": Start\n    - button \"Open in doclist\"\n    - button \"Timesheets\"\n- heading \"Yêu cầu đang giữ\" [level=2]\n- paragraph: Chọn đúng ID để trả kết quả theo thứ tự mong muốn. Viewer giữ timeout thật.\n- list:\n  - text: \"#13 erpnext_kanban_get_board {\\\"doctype\\\":\\\"Task\\\",\\\"project\\\":\\\"PROJECT-A\\\"}\"\n  - 'button \"Trả kết quả #13\"'\n  - 'button \"Trả lỗi #13\"'\n  - text: \"#15 erpnext_doc_get {\\\"doctype\\\":\\\"Task\\\",\\\"name\\\":\\\"TASK-A-1\\\"}\"\n  - 'button \"Trả kết quả #15\"'\n  - 'button \"Trả lỗi #15\"'",
+      "trace": [
+        {
+          "outcome": "initialized",
+          "viewer": "kanban-viewer",
+          "scenario": "board-race"
+        },
+        {
+          "outcome": "tool-input"
+        },
+        {
+          "outcome": "tool-result",
+          "viewer": "kanban-viewer",
+          "boardId": "task-board",
+          "refreshArguments": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          }
+        },
+        {
+          "id": 1,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 1,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 2,
+          "outcome": "held"
+        },
+        {
+          "id": 1,
+          "outcome": "released"
+        },
+        {
+          "id": 3,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 3,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "outcome": "released"
+        },
+        {
+          "id": 4,
+          "tool": "erpnext_user_list",
+          "args": {
+            "limit": 100
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 4,
+          "outcome": "resolved"
+        },
+        {
+          "id": 3,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 5,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 5,
+          "outcome": "held"
+        },
+        {
+          "id": 5,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 6,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 6,
+          "outcome": "held"
+        },
+        {
+          "id": 7,
+          "tool": "erpnext_doc_assign",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "assign_to": "local-user@example.test"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 7,
+          "outcome": "held"
+        },
+        {
+          "id": 7,
+          "outcome": "released"
+        },
+        {
+          "id": 8,
+          "tool": "erpnext_doc_update",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "data": {
+              "subject": "Serialized latest subject"
+            }
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 8,
+          "outcome": "held"
+        },
+        {
+          "id": 8,
+          "outcome": "released"
+        },
+        {
+          "id": 9,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 9,
+          "outcome": "held"
+        },
+        {
+          "id": 9,
+          "outcome": "released"
+        },
+        {
+          "id": 6,
+          "outcome": "released"
+        },
+        {
+          "id": 10,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 10,
+          "outcome": "held"
+        },
+        {
+          "id": 10,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 11,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 11,
+          "outcome": "held"
+        },
+        {
+          "id": 11,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 12,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 12,
+          "outcome": "held"
+        },
+        {
+          "id": 12,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 13,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 13,
+          "outcome": "held"
+        },
+        {
+          "id": 14,
+          "tool": "erpnext_doc_update",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "data": {
+              "subject": "After serialized removal"
+            }
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 14,
+          "outcome": "held"
+        },
+        {
+          "id": 14,
+          "outcome": "released"
+        },
+        {
+          "id": 15,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 15,
+          "outcome": "held"
+        }
+      ]
+    },
+    {
+      "case": "save-unassign",
+      "stage": "readback-released-unassign-started",
+      "at": "2026-09-05T13:14:04.861Z",
+      "dom": "- heading \"Host kiểm thử local HVGERP\" [level=1]\n- paragraph: Chỉ dùng fixture local. Không kết nối ERPNext hoặc đọc credential.\n- text: Viewer\n- combobox \"Viewer\":\n  - option \"invoice-viewer\"\n  - option \"stock-viewer\"\n  - option \"doclist-viewer\"\n  - option \"chart-viewer\"\n  - option \"kpi-viewer\"\n  - option \"funnel-viewer\"\n  - option \"kanban-viewer\" [selected]\n- text: Kịch bản\n- combobox \"Kịch bản\":\n  - option \"smoke\"\n  - option \"csv\"\n  - option \"detail-race\"\n  - option \"board-race\" [selected]\n  - option \"initial-error\"\n  - option \"refresh-error\"\n  - option \"malformed-payload\"\n  - option \"sales-order-date\"\n  - option \"quotation-date\"\n  - option \"stock-movements\"\n  - option \"stock-permission\"\n  - option \"stock-malformed\"\n  - option \"stock-race\"\n- text: Biểu đồ\n- combobox \"Biểu đồ\":\n  - option \"bar\" [selected]\n  - option \"horizontal-bar\"\n  - option \"pie\"\n  - option \"donut\"\n- button \"Đặt lại\"\n- button \"Gửi board B\"\n- button \"Gửi trang 50\"\n- button \"Gửi trang 0\"\n- button \"Gửi board A\"\n- button \"Gửi lại dữ liệu thành công\"\n- status: Đã kết nối\n- iframe [active] [id=\"viewer-frame\"]:\n  - generic: H\n  - generic: Havi Group\n  - generic: ERP · OPERATIONS\n  - generic: Local board A\n  - generic: 2 cards · Task · move tool erpnext_kanban_move_card\n  - generic: Open\n  - generic: \"2\"\n  - article:\n    - button \"Task A one\"\n    - button \"Move Task A one to Start\": Start\n  - article:\n    - button \"Task A two\"\n    - button \"Move Task A two to Start\": Start\n  - generic: Working\n  - generic: \"0\"\n  - generic: Completed\n  - generic: \"0\"\n  - 'dialog \"Detail: Task A one\"':\n    - textbox \"Subject\"\n    - generic: TASK-A-1\n    - generic: Open\n    - button \"Medium\"\n    - button \"Close detail\" [active]: ✕\n    - generic: Assigned to\n    - text: local-user@example.test\n    - button \"Unassign local-user@example.test\" [disabled]: …\n    - combobox \"Assign to user\":\n      - option \"Assign to…\" [selected]\n    - generic: Description\n    - textbox\n    - button \"Save\" [disabled]\n    - generic: Saved\n    - generic: Move to\n    - button \"Start\": Start\n    - button \"Open in doclist\"\n    - button \"Timesheets\"\n- heading \"Yêu cầu đang giữ\" [level=2]\n- paragraph: Chọn đúng ID để trả kết quả theo thứ tự mong muốn. Viewer giữ timeout thật.\n- list:\n  - text: \"#13 erpnext_kanban_get_board {\\\"doctype\\\":\\\"Task\\\",\\\"project\\\":\\\"PROJECT-A\\\"}\"\n  - 'button \"Trả kết quả #13\"'\n  - 'button \"Trả lỗi #13\"'\n  - text: \"#16 erpnext_doc_unassign {\\\"doctype\\\":\\\"Task\\\",\\\"name\\\":\\\"TASK-A-1\\\",\\\"assign_to\\\":\\\"local-user@example.test\\\"}\"\n  - 'button \"Trả kết quả #16\"'\n  - 'button \"Trả lỗi #16\"'",
+      "trace": [
+        {
+          "outcome": "initialized",
+          "viewer": "kanban-viewer",
+          "scenario": "board-race"
+        },
+        {
+          "outcome": "tool-input"
+        },
+        {
+          "outcome": "tool-result",
+          "viewer": "kanban-viewer",
+          "boardId": "task-board",
+          "refreshArguments": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          }
+        },
+        {
+          "id": 1,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 1,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 2,
+          "outcome": "held"
+        },
+        {
+          "id": 1,
+          "outcome": "released"
+        },
+        {
+          "id": 3,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 3,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "outcome": "released"
+        },
+        {
+          "id": 4,
+          "tool": "erpnext_user_list",
+          "args": {
+            "limit": 100
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 4,
+          "outcome": "resolved"
+        },
+        {
+          "id": 3,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 5,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 5,
+          "outcome": "held"
+        },
+        {
+          "id": 5,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 6,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 6,
+          "outcome": "held"
+        },
+        {
+          "id": 7,
+          "tool": "erpnext_doc_assign",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "assign_to": "local-user@example.test"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 7,
+          "outcome": "held"
+        },
+        {
+          "id": 7,
+          "outcome": "released"
+        },
+        {
+          "id": 8,
+          "tool": "erpnext_doc_update",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "data": {
+              "subject": "Serialized latest subject"
+            }
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 8,
+          "outcome": "held"
+        },
+        {
+          "id": 8,
+          "outcome": "released"
+        },
+        {
+          "id": 9,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 9,
+          "outcome": "held"
+        },
+        {
+          "id": 9,
+          "outcome": "released"
+        },
+        {
+          "id": 6,
+          "outcome": "released"
+        },
+        {
+          "id": 10,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 10,
+          "outcome": "held"
+        },
+        {
+          "id": 10,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 11,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 11,
+          "outcome": "held"
+        },
+        {
+          "id": 11,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 12,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 12,
+          "outcome": "held"
+        },
+        {
+          "id": 12,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 13,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 13,
+          "outcome": "held"
+        },
+        {
+          "id": 14,
+          "tool": "erpnext_doc_update",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "data": {
+              "subject": "After serialized removal"
+            }
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 14,
+          "outcome": "held"
+        },
+        {
+          "id": 14,
+          "outcome": "released"
+        },
+        {
+          "id": 15,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 15,
+          "outcome": "held"
+        },
+        {
+          "id": 15,
+          "outcome": "released"
+        },
+        {
+          "id": 16,
+          "tool": "erpnext_doc_unassign",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "assign_to": "local-user@example.test"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 16,
+          "outcome": "held"
+        }
+      ]
+    },
+    {
+      "case": "save-unassign",
+      "stage": "completed",
+      "at": "2026-09-05T13:14:05.912Z",
+      "dom": "- heading \"Host kiểm thử local HVGERP\" [level=1]\n- paragraph: Chỉ dùng fixture local. Không kết nối ERPNext hoặc đọc credential.\n- text: Viewer\n- combobox \"Viewer\":\n  - option \"invoice-viewer\"\n  - option \"stock-viewer\"\n  - option \"doclist-viewer\"\n  - option \"chart-viewer\"\n  - option \"kpi-viewer\"\n  - option \"funnel-viewer\"\n  - option \"kanban-viewer\" [selected]\n- text: Kịch bản\n- combobox \"Kịch bản\":\n  - option \"smoke\"\n  - option \"csv\"\n  - option \"detail-race\"\n  - option \"board-race\" [selected]\n  - option \"initial-error\"\n  - option \"refresh-error\"\n  - option \"malformed-payload\"\n  - option \"sales-order-date\"\n  - option \"quotation-date\"\n  - option \"stock-movements\"\n  - option \"stock-permission\"\n  - option \"stock-malformed\"\n  - option \"stock-race\"\n- text: Biểu đồ\n- combobox \"Biểu đồ\":\n  - option \"bar\" [selected]\n  - option \"horizontal-bar\"\n  - option \"pie\"\n  - option \"donut\"\n- button \"Đặt lại\"\n- button \"Gửi board B\"\n- button \"Gửi trang 50\"\n- button \"Gửi trang 0\"\n- button \"Gửi board A\"\n- button \"Gửi lại dữ liệu thành công\"\n- status: Đã kết nối\n- iframe [active] [id=\"viewer-frame\"]:\n  - generic: H\n  - generic: Havi Group\n  - generic: ERP · OPERATIONS\n  - generic: Local board A\n  - generic: 2 cards · Task · move tool erpnext_kanban_move_card\n  - generic: Open\n  - generic: \"2\"\n  - article:\n    - button \"After serialized removal\"\n    - button \"Move After serialized removal to Start\": Start\n  - article:\n    - button \"Task A two\"\n    - button \"Move Task A two to Start\": Start\n  - generic: Working\n  - generic: \"0\"\n  - generic: Completed\n  - generic: \"0\"\n  - 'dialog \"Detail: After serialized removal\"':\n    - textbox \"Subject\"\n    - generic: TASK-A-1\n    - generic: Open\n    - button \"Medium\"\n    - button \"Close detail\" [active]: ✕\n    - generic: Assigned to\n    - generic: Unassigned\n    - combobox \"Assign to user\":\n      - option \"Assign to…\" [selected]\n      - option \"Local User (local-user@example.test)\"\n    - generic: Description\n    - textbox\n    - button \"Save\" [disabled]\n    - generic: Saved\n    - generic: Move to\n    - button \"Start\": Start\n    - button \"Open in doclist\"\n    - button \"Timesheets\"\n- heading \"Yêu cầu đang giữ\" [level=2]\n- paragraph: Chọn đúng ID để trả kết quả theo thứ tự mong muốn. Viewer giữ timeout thật.\n- list:\n  - text: \"#18 erpnext_kanban_get_board {\\\"doctype\\\":\\\"Task\\\",\\\"project\\\":\\\"PROJECT-A\\\"}\"\n  - 'button \"Trả kết quả #18\"'\n  - 'button \"Trả lỗi #18\"'",
+      "trace": [
+        {
+          "outcome": "initialized",
+          "viewer": "kanban-viewer",
+          "scenario": "board-race"
+        },
+        {
+          "outcome": "tool-input"
+        },
+        {
+          "outcome": "tool-result",
+          "viewer": "kanban-viewer",
+          "boardId": "task-board",
+          "refreshArguments": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          }
+        },
+        {
+          "id": 1,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 1,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 2,
+          "outcome": "held"
+        },
+        {
+          "id": 1,
+          "outcome": "released"
+        },
+        {
+          "id": 3,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 3,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "outcome": "released"
+        },
+        {
+          "id": 4,
+          "tool": "erpnext_user_list",
+          "args": {
+            "limit": 100
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 4,
+          "outcome": "resolved"
+        },
+        {
+          "id": 3,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 5,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 5,
+          "outcome": "held"
+        },
+        {
+          "id": 5,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 6,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 6,
+          "outcome": "held"
+        },
+        {
+          "id": 7,
+          "tool": "erpnext_doc_assign",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "assign_to": "local-user@example.test"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 7,
+          "outcome": "held"
+        },
+        {
+          "id": 7,
+          "outcome": "released"
+        },
+        {
+          "id": 8,
+          "tool": "erpnext_doc_update",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "data": {
+              "subject": "Serialized latest subject"
+            }
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 8,
+          "outcome": "held"
+        },
+        {
+          "id": 8,
+          "outcome": "released"
+        },
+        {
+          "id": 9,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 9,
+          "outcome": "held"
+        },
+        {
+          "id": 9,
+          "outcome": "released"
+        },
+        {
+          "id": 6,
+          "outcome": "released"
+        },
+        {
+          "id": 10,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 10,
+          "outcome": "held"
+        },
+        {
+          "id": 10,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 11,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 11,
+          "outcome": "held"
+        },
+        {
+          "id": 11,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 12,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 12,
+          "outcome": "held"
+        },
+        {
+          "id": 12,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 13,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 13,
+          "outcome": "held"
+        },
+        {
+          "id": 14,
+          "tool": "erpnext_doc_update",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "data": {
+              "subject": "After serialized removal"
+            }
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 14,
+          "outcome": "held"
+        },
+        {
+          "id": 14,
+          "outcome": "released"
+        },
+        {
+          "id": 15,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 15,
+          "outcome": "held"
+        },
+        {
+          "id": 15,
+          "outcome": "released"
+        },
+        {
+          "id": 16,
+          "tool": "erpnext_doc_unassign",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "assign_to": "local-user@example.test"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 16,
+          "outcome": "held"
+        },
+        {
+          "id": 16,
+          "outcome": "released"
+        },
+        {
+          "id": 13,
+          "outcome": "released"
+        },
+        {
+          "id": 17,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 17,
+          "outcome": "held"
+        },
+        {
+          "id": 17,
+          "outcome": "released"
+        },
+        {
+          "id": 18,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 18,
+          "outcome": "held"
+        }
+      ],
+      "subject": "After serialized removal"
+    },
+    {
+      "case": "assign-error-save",
+      "stage": "queued",
+      "at": "2026-09-05T13:14:34.028Z",
+      "dom": "- heading \"Host kiểm thử local HVGERP\" [level=1]\n- paragraph: Chỉ dùng fixture local. Không kết nối ERPNext hoặc đọc credential.\n- text: Viewer\n- combobox \"Viewer\":\n  - option \"invoice-viewer\"\n  - option \"stock-viewer\"\n  - option \"doclist-viewer\"\n  - option \"chart-viewer\"\n  - option \"kpi-viewer\"\n  - option \"funnel-viewer\"\n  - option \"kanban-viewer\" [selected]\n- text: Kịch bản\n- combobox \"Kịch bản\":\n  - option \"smoke\"\n  - option \"csv\"\n  - option \"detail-race\"\n  - option \"board-race\" [selected]\n  - option \"initial-error\"\n  - option \"refresh-error\"\n  - option \"malformed-payload\"\n  - option \"sales-order-date\"\n  - option \"quotation-date\"\n  - option \"stock-movements\"\n  - option \"stock-permission\"\n  - option \"stock-malformed\"\n  - option \"stock-race\"\n- text: Biểu đồ\n- combobox \"Biểu đồ\":\n  - option \"bar\" [selected]\n  - option \"horizontal-bar\"\n  - option \"pie\"\n  - option \"donut\"\n- button \"Đặt lại\"\n- button \"Gửi board B\"\n- button \"Gửi trang 50\"\n- button \"Gửi trang 0\"\n- button \"Gửi board A\"\n- button \"Gửi lại dữ liệu thành công\"\n- status: Đã kết nối\n- iframe [active] [id=\"viewer-frame\"]:\n  - generic: H\n  - generic: Havi Group\n  - generic: ERP · OPERATIONS\n  - generic: Local board A\n  - generic: 2 cards · Task · move tool erpnext_kanban_move_card\n  - generic: Open\n  - generic: \"2\"\n  - article:\n    - button \"After serialized removal\"\n    - button \"Move After serialized removal to Start\": Start\n  - article:\n    - button \"Task A two\"\n    - button \"Move Task A two to Start\": Start\n  - generic: Working\n  - generic: \"0\"\n  - generic: Completed\n  - generic: \"0\"\n  - 'dialog \"Detail: After serialized removal\"':\n    - textbox \"Subject\"\n    - generic: TASK-A-1\n    - generic: Open\n    - button \"Medium\"\n    - button \"Close detail\": ✕\n    - generic: Assigned to\n    - generic: Unassigned\n    - combobox \"Assign to user\" [disabled]:\n      - option \"Assign to…\"\n      - option \"Local User (local-user@example.test)\" [selected]\n    - button \"Assigning…\" [disabled]\n    - generic: Description\n    - textbox\n    - button \"Saving…\" [disabled]\n    - button \"Discard\"\n    - generic: Move to\n    - button \"Start\": Start\n    - button \"Open in doclist\"\n    - button \"Timesheets\"\n- heading \"Yêu cầu đang giữ\" [level=2]\n- paragraph: Chọn đúng ID để trả kết quả theo thứ tự mong muốn. Viewer giữ timeout thật.\n- list:\n  - text: \"#19 erpnext_kanban_get_board {\\\"doctype\\\":\\\"Task\\\",\\\"project\\\":\\\"PROJECT-A\\\"}\"\n  - 'button \"Trả kết quả #19\"'\n  - 'button \"Trả lỗi #19\"'\n  - text: \"#20 erpnext_doc_assign {\\\"doctype\\\":\\\"Task\\\",\\\"name\\\":\\\"TASK-A-1\\\",\\\"assign_to\\\":\\\"local-user@example.test\\\"}\"\n  - 'button \"Trả kết quả #20\"'\n  - 'button \"Trả lỗi #20\"'",
+      "trace": [
+        {
+          "outcome": "initialized",
+          "viewer": "kanban-viewer",
+          "scenario": "board-race"
+        },
+        {
+          "outcome": "tool-input"
+        },
+        {
+          "outcome": "tool-result",
+          "viewer": "kanban-viewer",
+          "boardId": "task-board",
+          "refreshArguments": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          }
+        },
+        {
+          "id": 1,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 1,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 2,
+          "outcome": "held"
+        },
+        {
+          "id": 1,
+          "outcome": "released"
+        },
+        {
+          "id": 3,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 3,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "outcome": "released"
+        },
+        {
+          "id": 4,
+          "tool": "erpnext_user_list",
+          "args": {
+            "limit": 100
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 4,
+          "outcome": "resolved"
+        },
+        {
+          "id": 3,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 5,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 5,
+          "outcome": "held"
+        },
+        {
+          "id": 5,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 6,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 6,
+          "outcome": "held"
+        },
+        {
+          "id": 7,
+          "tool": "erpnext_doc_assign",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "assign_to": "local-user@example.test"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 7,
+          "outcome": "held"
+        },
+        {
+          "id": 7,
+          "outcome": "released"
+        },
+        {
+          "id": 8,
+          "tool": "erpnext_doc_update",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "data": {
+              "subject": "Serialized latest subject"
+            }
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 8,
+          "outcome": "held"
+        },
+        {
+          "id": 8,
+          "outcome": "released"
+        },
+        {
+          "id": 9,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 9,
+          "outcome": "held"
+        },
+        {
+          "id": 9,
+          "outcome": "released"
+        },
+        {
+          "id": 6,
+          "outcome": "released"
+        },
+        {
+          "id": 10,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 10,
+          "outcome": "held"
+        },
+        {
+          "id": 10,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 11,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 11,
+          "outcome": "held"
+        },
+        {
+          "id": 11,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 12,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 12,
+          "outcome": "held"
+        },
+        {
+          "id": 12,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 13,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 13,
+          "outcome": "held"
+        },
+        {
+          "id": 14,
+          "tool": "erpnext_doc_update",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "data": {
+              "subject": "After serialized removal"
+            }
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 14,
+          "outcome": "held"
+        },
+        {
+          "id": 14,
+          "outcome": "released"
+        },
+        {
+          "id": 15,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 15,
+          "outcome": "held"
+        },
+        {
+          "id": 15,
+          "outcome": "released"
+        },
+        {
+          "id": 16,
+          "tool": "erpnext_doc_unassign",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "assign_to": "local-user@example.test"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 16,
+          "outcome": "held"
+        },
+        {
+          "id": 16,
+          "outcome": "released"
+        },
+        {
+          "id": 13,
+          "outcome": "released"
+        },
+        {
+          "id": 17,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 17,
+          "outcome": "held"
+        },
+        {
+          "id": 17,
+          "outcome": "released"
+        },
+        {
+          "id": 18,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 18,
+          "outcome": "held"
+        },
+        {
+          "id": 18,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 19,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 19,
+          "outcome": "held"
+        },
+        {
+          "id": 20,
+          "tool": "erpnext_doc_assign",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "assign_to": "local-user@example.test"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 20,
+          "outcome": "held"
+        }
+      ]
+    },
+    {
+      "case": "assign-error-save",
+      "stage": "assign-error-update-started",
+      "at": "2026-09-05T13:14:34.380Z",
+      "dom": "- heading \"Host kiểm thử local HVGERP\" [level=1]\n- paragraph: Chỉ dùng fixture local. Không kết nối ERPNext hoặc đọc credential.\n- text: Viewer\n- combobox \"Viewer\":\n  - option \"invoice-viewer\"\n  - option \"stock-viewer\"\n  - option \"doclist-viewer\"\n  - option \"chart-viewer\"\n  - option \"kpi-viewer\"\n  - option \"funnel-viewer\"\n  - option \"kanban-viewer\" [selected]\n- text: Kịch bản\n- combobox \"Kịch bản\":\n  - option \"smoke\"\n  - option \"csv\"\n  - option \"detail-race\"\n  - option \"board-race\" [selected]\n  - option \"initial-error\"\n  - option \"refresh-error\"\n  - option \"malformed-payload\"\n  - option \"sales-order-date\"\n  - option \"quotation-date\"\n  - option \"stock-movements\"\n  - option \"stock-permission\"\n  - option \"stock-malformed\"\n  - option \"stock-race\"\n- text: Biểu đồ\n- combobox \"Biểu đồ\":\n  - option \"bar\" [selected]\n  - option \"horizontal-bar\"\n  - option \"pie\"\n  - option \"donut\"\n- button \"Đặt lại\"\n- button \"Gửi board B\"\n- button \"Gửi trang 50\"\n- button \"Gửi trang 0\"\n- button \"Gửi board A\"\n- button \"Gửi lại dữ liệu thành công\"\n- status: Đã kết nối\n- iframe [id=\"viewer-frame\"]:\n  - generic: H\n  - generic: Havi Group\n  - generic: ERP · OPERATIONS\n  - generic: Local board A\n  - generic: 2 cards · Task · move tool erpnext_kanban_move_card\n  - generic: Open\n  - generic: \"2\"\n  - article:\n    - button \"After serialized removal\"\n    - button \"Move After serialized removal to Start\": Start\n  - article:\n    - button \"Task A two\"\n    - button \"Move Task A two to Start\": Start\n  - generic: Working\n  - generic: \"0\"\n  - generic: Completed\n  - generic: \"0\"\n  - 'dialog \"Detail: After serialized removal\"':\n    - textbox \"Subject\"\n    - generic: TASK-A-1\n    - generic: Open\n    - button \"Medium\"\n    - button \"Close detail\": ✕\n    - generic: Assigned to\n    - generic: Unassigned\n    - combobox \"Assign to user\":\n      - option \"Assign to…\"\n      - option \"Local User (local-user@example.test)\" [selected]\n    - button \"Assign\"\n    - generic: \"Local deferred error #20\"\n    - generic: Description\n    - textbox\n    - button \"Saving…\" [disabled]\n    - button \"Discard\"\n    - generic: Move to\n    - button \"Start\": Start\n    - button \"Open in doclist\"\n    - button \"Timesheets\"\n- heading \"Yêu cầu đang giữ\" [level=2]\n- paragraph: Chọn đúng ID để trả kết quả theo thứ tự mong muốn. Viewer giữ timeout thật.\n- list:\n  - text: \"#19 erpnext_kanban_get_board {\\\"doctype\\\":\\\"Task\\\",\\\"project\\\":\\\"PROJECT-A\\\"}\"\n  - 'button \"Trả kết quả #19\"'\n  - 'button \"Trả lỗi #19\"'\n  - text: \"#21 erpnext_doc_update {\\\"doctype\\\":\\\"Task\\\",\\\"name\\\":\\\"TASK-A-1\\\",\\\"data\\\":{\\\"subject\\\":\\\"Saved after assignment failure\\\"}}\"\n  - 'button \"Trả kết quả #21\"'\n  - 'button \"Trả lỗi #21\"'",
+      "trace": [
+        {
+          "outcome": "initialized",
+          "viewer": "kanban-viewer",
+          "scenario": "board-race"
+        },
+        {
+          "outcome": "tool-input"
+        },
+        {
+          "outcome": "tool-result",
+          "viewer": "kanban-viewer",
+          "boardId": "task-board",
+          "refreshArguments": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          }
+        },
+        {
+          "id": 1,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 1,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 2,
+          "outcome": "held"
+        },
+        {
+          "id": 1,
+          "outcome": "released"
+        },
+        {
+          "id": 3,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 3,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "outcome": "released"
+        },
+        {
+          "id": 4,
+          "tool": "erpnext_user_list",
+          "args": {
+            "limit": 100
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 4,
+          "outcome": "resolved"
+        },
+        {
+          "id": 3,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 5,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 5,
+          "outcome": "held"
+        },
+        {
+          "id": 5,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 6,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 6,
+          "outcome": "held"
+        },
+        {
+          "id": 7,
+          "tool": "erpnext_doc_assign",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "assign_to": "local-user@example.test"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 7,
+          "outcome": "held"
+        },
+        {
+          "id": 7,
+          "outcome": "released"
+        },
+        {
+          "id": 8,
+          "tool": "erpnext_doc_update",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "data": {
+              "subject": "Serialized latest subject"
+            }
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 8,
+          "outcome": "held"
+        },
+        {
+          "id": 8,
+          "outcome": "released"
+        },
+        {
+          "id": 9,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 9,
+          "outcome": "held"
+        },
+        {
+          "id": 9,
+          "outcome": "released"
+        },
+        {
+          "id": 6,
+          "outcome": "released"
+        },
+        {
+          "id": 10,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 10,
+          "outcome": "held"
+        },
+        {
+          "id": 10,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 11,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 11,
+          "outcome": "held"
+        },
+        {
+          "id": 11,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 12,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 12,
+          "outcome": "held"
+        },
+        {
+          "id": 12,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 13,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 13,
+          "outcome": "held"
+        },
+        {
+          "id": 14,
+          "tool": "erpnext_doc_update",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "data": {
+              "subject": "After serialized removal"
+            }
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 14,
+          "outcome": "held"
+        },
+        {
+          "id": 14,
+          "outcome": "released"
+        },
+        {
+          "id": 15,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 15,
+          "outcome": "held"
+        },
+        {
+          "id": 15,
+          "outcome": "released"
+        },
+        {
+          "id": 16,
+          "tool": "erpnext_doc_unassign",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "assign_to": "local-user@example.test"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 16,
+          "outcome": "held"
+        },
+        {
+          "id": 16,
+          "outcome": "released"
+        },
+        {
+          "id": 13,
+          "outcome": "released"
+        },
+        {
+          "id": 17,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 17,
+          "outcome": "held"
+        },
+        {
+          "id": 17,
+          "outcome": "released"
+        },
+        {
+          "id": 18,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 18,
+          "outcome": "held"
+        },
+        {
+          "id": 18,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 19,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 19,
+          "outcome": "held"
+        },
+        {
+          "id": 20,
+          "tool": "erpnext_doc_assign",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "assign_to": "local-user@example.test"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 20,
+          "outcome": "held"
+        },
+        {
+          "id": 20,
+          "outcome": "rejected"
+        },
+        {
+          "id": 21,
+          "tool": "erpnext_doc_update",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "data": {
+              "subject": "Saved after assignment failure"
+            }
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 21,
+          "outcome": "held"
+        }
+      ]
+    },
+    {
+      "case": "assign-error-save",
+      "stage": "completed",
+      "at": "2026-09-05T13:14:35.745Z",
+      "dom": "- heading \"Host kiểm thử local HVGERP\" [level=1]\n- paragraph: Chỉ dùng fixture local. Không kết nối ERPNext hoặc đọc credential.\n- text: Viewer\n- combobox \"Viewer\":\n  - option \"invoice-viewer\"\n  - option \"stock-viewer\"\n  - option \"doclist-viewer\"\n  - option \"chart-viewer\"\n  - option \"kpi-viewer\"\n  - option \"funnel-viewer\"\n  - option \"kanban-viewer\" [selected]\n- text: Kịch bản\n- combobox \"Kịch bản\":\n  - option \"smoke\"\n  - option \"csv\"\n  - option \"detail-race\"\n  - option \"board-race\" [selected]\n  - option \"initial-error\"\n  - option \"refresh-error\"\n  - option \"malformed-payload\"\n  - option \"sales-order-date\"\n  - option \"quotation-date\"\n  - option \"stock-movements\"\n  - option \"stock-permission\"\n  - option \"stock-malformed\"\n  - option \"stock-race\"\n- text: Biểu đồ\n- combobox \"Biểu đồ\":\n  - option \"bar\" [selected]\n  - option \"horizontal-bar\"\n  - option \"pie\"\n  - option \"donut\"\n- button \"Đặt lại\"\n- button \"Gửi board B\"\n- button \"Gửi trang 50\"\n- button \"Gửi trang 0\"\n- button \"Gửi board A\"\n- button \"Gửi lại dữ liệu thành công\"\n- status: Đã kết nối\n- iframe [active] [id=\"viewer-frame\"]:\n  - generic: H\n  - generic: Havi Group\n  - generic: ERP · OPERATIONS\n  - generic: Local board A\n  - generic: 2 cards · Task · move tool erpnext_kanban_move_card\n  - generic: Open\n  - generic: \"2\"\n  - article:\n    - button \"Saved after assignment failure\"\n    - button \"Move Saved after assignment failure to Start\": Start\n  - article:\n    - button \"Task A two\"\n    - button \"Move Task A two to Start\": Start\n  - generic: Working\n  - generic: \"0\"\n  - generic: Completed\n  - generic: \"0\"\n  - 'dialog \"Detail: Saved after assignment failure\"':\n    - textbox \"Subject\"\n    - generic: TASK-A-1\n    - generic: Open\n    - button \"Medium\"\n    - button \"Close detail\" [active]: ✕\n    - generic: Assigned to\n    - generic: Unassigned\n    - combobox \"Assign to user\":\n      - option \"Assign to…\"\n      - option \"Local User (local-user@example.test)\" [selected]\n    - button \"Assign\"\n    - generic: \"Local deferred error #20\"\n    - generic: Description\n    - textbox\n    - button \"Save\" [disabled]\n    - generic: Saved\n    - generic: Move to\n    - button \"Start\": Start\n    - button \"Open in doclist\"\n    - button \"Timesheets\"\n- heading \"Yêu cầu đang giữ\" [level=2]\n- paragraph: Chọn đúng ID để trả kết quả theo thứ tự mong muốn. Viewer giữ timeout thật.\n- list:\n  - text: \"#24 erpnext_kanban_get_board {\\\"doctype\\\":\\\"Task\\\",\\\"project\\\":\\\"PROJECT-A\\\"}\"\n  - 'button \"Trả kết quả #24\"'\n  - 'button \"Trả lỗi #24\"'",
+      "trace": [
+        {
+          "outcome": "initialized",
+          "viewer": "kanban-viewer",
+          "scenario": "board-race"
+        },
+        {
+          "outcome": "tool-input"
+        },
+        {
+          "outcome": "tool-result",
+          "viewer": "kanban-viewer",
+          "boardId": "task-board",
+          "refreshArguments": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          }
+        },
+        {
+          "id": 1,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 1,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 2,
+          "outcome": "held"
+        },
+        {
+          "id": 1,
+          "outcome": "released"
+        },
+        {
+          "id": 3,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 3,
+          "outcome": "held"
+        },
+        {
+          "id": 2,
+          "outcome": "released"
+        },
+        {
+          "id": 4,
+          "tool": "erpnext_user_list",
+          "args": {
+            "limit": 100
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 4,
+          "outcome": "resolved"
+        },
+        {
+          "id": 3,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 5,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 5,
+          "outcome": "held"
+        },
+        {
+          "id": 5,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 6,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 6,
+          "outcome": "held"
+        },
+        {
+          "id": 7,
+          "tool": "erpnext_doc_assign",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "assign_to": "local-user@example.test"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 7,
+          "outcome": "held"
+        },
+        {
+          "id": 7,
+          "outcome": "released"
+        },
+        {
+          "id": 8,
+          "tool": "erpnext_doc_update",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "data": {
+              "subject": "Serialized latest subject"
+            }
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 8,
+          "outcome": "held"
+        },
+        {
+          "id": 8,
+          "outcome": "released"
+        },
+        {
+          "id": 9,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 9,
+          "outcome": "held"
+        },
+        {
+          "id": 9,
+          "outcome": "released"
+        },
+        {
+          "id": 6,
+          "outcome": "released"
+        },
+        {
+          "id": 10,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 10,
+          "outcome": "held"
+        },
+        {
+          "id": 10,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 11,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 11,
+          "outcome": "held"
+        },
+        {
+          "id": 11,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 12,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 12,
+          "outcome": "held"
+        },
+        {
+          "id": 12,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 13,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 13,
+          "outcome": "held"
+        },
+        {
+          "id": 14,
+          "tool": "erpnext_doc_update",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "data": {
+              "subject": "After serialized removal"
+            }
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 14,
+          "outcome": "held"
+        },
+        {
+          "id": 14,
+          "outcome": "released"
+        },
+        {
+          "id": 15,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 15,
+          "outcome": "held"
+        },
+        {
+          "id": 15,
+          "outcome": "released"
+        },
+        {
+          "id": 16,
+          "tool": "erpnext_doc_unassign",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "assign_to": "local-user@example.test"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 16,
+          "outcome": "held"
+        },
+        {
+          "id": 16,
+          "outcome": "released"
+        },
+        {
+          "id": 13,
+          "outcome": "released"
+        },
+        {
+          "id": 17,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 17,
+          "outcome": "held"
+        },
+        {
+          "id": 17,
+          "outcome": "released"
+        },
+        {
+          "id": 18,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 18,
+          "outcome": "held"
+        },
+        {
+          "id": 18,
+          "outcome": "cancelled"
+        },
+        {
+          "id": 19,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 19,
+          "outcome": "held"
+        },
+        {
+          "id": 20,
+          "tool": "erpnext_doc_assign",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "assign_to": "local-user@example.test"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 20,
+          "outcome": "held"
+        },
+        {
+          "id": 20,
+          "outcome": "rejected"
+        },
+        {
+          "id": 21,
+          "tool": "erpnext_doc_update",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1",
+            "data": {
+              "subject": "Saved after assignment failure"
+            }
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 21,
+          "outcome": "held"
+        },
+        {
+          "id": 21,
+          "outcome": "released"
+        },
+        {
+          "id": 22,
+          "tool": "erpnext_doc_get",
+          "args": {
+            "doctype": "Task",
+            "name": "TASK-A-1"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 22,
+          "outcome": "held"
+        },
+        {
+          "id": 22,
+          "outcome": "released"
+        },
+        {
+          "id": 19,
+          "outcome": "released"
+        },
+        {
+          "id": 23,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 23,
+          "outcome": "held"
+        },
+        {
+          "id": 23,
+          "outcome": "released"
+        },
+        {
+          "id": 24,
+          "tool": "erpnext_kanban_get_board",
+          "args": {
+            "doctype": "Task",
+            "project": "PROJECT-A"
+          },
+          "outcome": "received"
+        },
+        {
+          "id": 24,
+          "outcome": "held"
+        }
+      ],
+      "subject": "Saved after assignment failure"
+    }
+  ]
+}
