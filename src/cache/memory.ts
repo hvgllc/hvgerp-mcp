@@ -44,15 +44,21 @@ export class MemoryCache implements Cache {
       if (now >= entry.expiresAt) this.store.delete(storedKey);
     }
 
+    if (ttlMs <= 0) {
+      this.store.delete(key);
+      return;
+    }
+
+    // Clone phải thành công trước khi thay entry sống hoặc thu hồi key khác.
+    const snapshot = structuredClone(value);
     this.store.delete(key);
-    if (ttlMs <= 0) return;
 
     // FIFO theo lần ghi gần nhất; đọc không thay đổi thứ tự thu hồi.
     if (this.store.size >= this.maxEntries) {
       const oldest = this.store.keys().next();
       if (!oldest.done) this.store.delete(oldest.value);
     }
-    this.store.set(key, { value, expiresAt: now + ttlMs });
+    this.store.set(key, { value: snapshot, expiresAt: now + ttlMs });
   }
 
   delete(key: string): void {

@@ -13,9 +13,20 @@
 
 import type { FrappeFilter } from "../api/types.ts";
 import { normalizeLimit } from "../api/frappe-client.ts";
-import type { ErpNextTool, ErpNextToolContext } from "./types.ts";
-import { cellNumber, periodColumns, runQueryReport } from "./query-report.ts";
+import type { ErpNextTool } from "./types.ts";
+import {
+  cellNumber,
+  periodColumns,
+  receivableInvoiceRows,
+  runQueryReport,
+} from "./query-report.ts";
 import { siteToday } from "./site-date.ts";
+import {
+  analyticsNumber,
+  companyAnalyticsTool,
+  listAnalyticsItemUnits,
+  resolveReportCompany,
+} from "./analytics-context.ts";
 import { CHART_META, FUNNEL_META, KPI_META } from "./viewer-meta.ts";
 
 /**
@@ -39,49 +50,6 @@ const MAX_RADAR_ITEMS = 8;
  * rộng đến mức vô nghĩa với một biểu đồ. Năm năm là đủ cho mọi câu hỏi xu hướng.
  */
 const MAX_PL_MONTHS = 60;
-
-/**
- * Công ty để chạy báo cáo tài chính.
- *
- * Bắt buộc phải có một công ty cụ thể: báo cáo lãi lỗ của "tất cả công ty" không tồn tại,
- * vì mỗi công ty có cây tài khoản và đồng tiền riêng. Khi site chỉ có đúng một công ty thì
- * suy ra được, còn nhiều hơn một thì phải hỏi: đoán bừa lấy công ty đầu bảng chữ cái sẽ trả
- * ra một con số đúng của một công ty khác, tức là sai mà trông không giống sai.
- */
-async function resolveReportCompany(
-  ctx: ErpNextToolContext,
-  input: Record<string, unknown>,
-): Promise<string> {
-  if (typeof input.company === "string" && input.company.trim() !== "") {
-    return input.company.trim();
-  }
-
-  // Lấy dư một dòng so với mức "duy nhất" để phân biệt một công ty với nhiều công ty.
-  const companies = await ctx.client.list("Company", {
-    fields: ["name"],
-    limit: 21,
-    order_by: "name asc",
-  });
-  const names = companies
-    .map((row) => row.name)
-    .filter((name): name is string => typeof name === "string");
-
-  if (names.length === 1) return names[0];
-  if (names.length === 0) {
-    throw new Error(
-      "[erpnext_profit_loss] no Company is visible to you, so there is no chart of accounts " +
-        "to report on. Ask an administrator for access to a company.",
-    );
-  }
-  throw new Error(
-    `[erpnext_profit_loss] this site has ${
-      names.length > 20 ? "more than 20" : names.length
-    } companies, so 'company' is required. ` +
-      `Pass one of: ${names.slice(0, 20).join(", ")}${
-        names.length > 20 ? ", ..." : ""
-      }.`,
-  );
-}
 
 /** Ngày dạng YYYY-MM-DD của một mốc dựng bằng `Date.UTC`. */
 function utcDateString(instant: Date): string {
@@ -148,7 +116,7 @@ export const analyticsTools: ErpNextTool[] = [
       }
 
       const bins = await ctx.client.list("Bin", {
-        fields: ["item_code", "warehouse", "actual_qty", "stock_value"],
+        fields: ["item_code", "warehouse", "actual_qty"],
         filters,
         // widen the fetch when filtering by group in memory, then slice below
         limit: allowedItems ? 1000 : limit,
@@ -156,13 +124,12 @@ export const analyticsTools: ErpNextTool[] = [
       });
 
       // Aggregate by item_code (sum across warehouses if no filter)
-      const byItem: Record<string, { qty: number; value: number }> = {};
+      const byItem: Record<string, { qty: number }> = {};
       for (const bin of bins) {
         const item = bin.item_code as string;
         if (allowedItems && !allowedItems.has(item)) continue;
-        if (!byItem[item]) byItem[item] = { qty: 0, value: 0 };
+        if (!byItem[item]) byItem[item] = { qty: 0 };
         byItem[item].qty += Number(bin.actual_qty) || 0;
-        byItem[item].value += Number(bin.stock_value) || 0;
       }
 
       const sorted = Object.entries(byItem)
@@ -194,7 +161,7 @@ export const analyticsTools: ErpNextTool[] = [
 
   // ── Sales Chart ───────────────────────────────────────────────────────────
 
-  {
+  companyAnalyticsTool({
     name: "erpnext_sales_chart",
     annotations: { readOnlyHint: true },
     _meta: CHART_META,
@@ -223,7 +190,8 @@ export const analyticsTools: ErpNextTool[] = [
         },
       },
     },
-    handler: async (input, ctx) => {
+    handler: async (input, _ctx, context) => {
+      const { currency } = context;
       const limit = normalizeLimit((input.limit as number) ?? 10);
       const groupBy = (input.group_by as string) ?? "customer";
       const filters: FrappeFilter[] = [];
@@ -234,8 +202,8 @@ export const analyticsTools: ErpNextTool[] = [
 
       if (groupBy === "status") {
         // Get invoice counts + amounts by status — fetch more to cover all statuses
-        const invoices = await ctx.client.list("Sales Invoice", {
-          fields: ["name", "status", "grand_total"],
+        const invoices = await context.listDocuments("Sales Invoice", {
+          fields: ["name", "status", "base_grand_total"],
           filters: [["docstatus", "!=", 2]], // exclude cancelled
           limit: 500,
           order_by: "modified desc",
@@ -244,7 +212,8 @@ export const analyticsTools: ErpNextTool[] = [
         const byStatus: Record<string, number> = {};
         for (const inv of invoices) {
           const s = (inv.status as string) ?? "Unknown";
-          byStatus[s] = (byStatus[s] ?? 0) + (Number(inv.grand_total) || 0);
+          byStatus[s] = (byStatus[s] ?? 0) +
+            (analyticsNumber(inv, "base_grand_total"));
         }
 
         const sorted = Object.entries(byStatus).sort(([, a], [, b]) => b - a);
@@ -254,7 +223,7 @@ export const analyticsTools: ErpNextTool[] = [
           type: "donut",
           labels: sorted.map(([s]) => s),
           datasets: [{ label: "Revenue", values: sorted.map(([, v]) => v) }],
-          currency: "EUR",
+          currency,
           generatedAt: new Date().toISOString(),
           _meta: CHART_META,
         };
@@ -262,11 +231,11 @@ export const analyticsTools: ErpNextTool[] = [
 
       if (groupBy === "item") {
         // Fetch invoice items (Sales Invoice Item child table)
-        const items = await ctx.client.list("Sales Invoice Item", {
-          fields: ["item_code", "item_name", "amount"],
+        const items = await context.listItems("Sales Invoice", {
+          fields: ["item_code", "item_name", "base_amount"],
           filters: [["docstatus", "=", 1]],
           limit: 500,
-          order_by: "amount desc",
+          order_by: "base_amount desc",
         });
 
         const byItem: Record<string, { name: string; total: number }> = {};
@@ -278,7 +247,7 @@ export const analyticsTools: ErpNextTool[] = [
               total: 0,
             };
           }
-          byItem[code].total += Number(row.amount) || 0;
+          byItem[code].total += analyticsNumber(row, "base_amount");
         }
 
         const sorted = Object.entries(byItem)
@@ -295,15 +264,15 @@ export const analyticsTools: ErpNextTool[] = [
             values: sorted.map(([, { total }]) => total),
             color: "#c084fc",
           }],
-          currency: "EUR",
+          currency,
           generatedAt: new Date().toISOString(),
           _meta: CHART_META,
         };
       }
 
       // Default: group by customer
-      const invoices = await ctx.client.list("Sales Invoice", {
-        fields: ["customer", "customer_name", "grand_total"],
+      const invoices = await context.listDocuments("Sales Invoice", {
+        fields: ["customer", "customer_name", "base_grand_total"],
         filters,
         limit: 500,
         order_by: "modified desc",
@@ -318,7 +287,7 @@ export const analyticsTools: ErpNextTool[] = [
             total: 0,
           };
         }
-        byCustomer[code].total += Number(inv.grand_total) || 0;
+        byCustomer[code].total += analyticsNumber(inv, "base_grand_total");
       }
 
       const sorted = Object.entries(byCustomer)
@@ -335,16 +304,16 @@ export const analyticsTools: ErpNextTool[] = [
           values: sorted.map(([, { total }]) => total),
           color: "#4ade80",
         }],
-        currency: "EUR",
+        currency,
         generatedAt: new Date().toISOString(),
         _meta: CHART_META,
       };
     },
-  },
+  }),
 
   // ── Revenue Trend (line / area) ─────────────────────────────────────────
 
-  {
+  companyAnalyticsTool({
     name: "erpnext_revenue_trend",
     annotations: { readOnlyHint: true },
     _meta: CHART_META,
@@ -373,7 +342,8 @@ export const analyticsTools: ErpNextTool[] = [
         },
       },
     },
-    handler: async (input, ctx) => {
+    handler: async (input, _ctx, context) => {
+      const { currency } = context;
       const monthsBack = (input.months as number) ?? 6;
       const chartType = (input.type as string) ?? "line";
       const groupBy = (input.group_by as string) ?? "total";
@@ -387,8 +357,8 @@ export const analyticsTools: ErpNextTool[] = [
       );
       const startStr = startDate.toISOString().split("T")[0];
 
-      const orders = await ctx.client.list("Sales Order", {
-        fields: ["customer_name", "grand_total", "transaction_date"],
+      const orders = await context.listDocuments("Sales Order", {
+        fields: ["customer_name", "base_grand_total", "transaction_date"],
         filters: [["transaction_date", ">=", startStr], ["docstatus", "!=", 2]],
         limit: 1000,
         order_by: "transaction_date asc",
@@ -421,7 +391,10 @@ export const analyticsTools: ErpNextTool[] = [
           if (!byCustomerMonth[cust]) {
             byCustomerMonth[cust] = new Array(monthsBack).fill(0);
           }
-          byCustomerMonth[cust][mIdx] += Number(order.grand_total) || 0;
+          byCustomerMonth[cust][mIdx] += analyticsNumber(
+            order,
+            "base_grand_total",
+          );
         }
 
         // Top 5 customers by total
@@ -444,7 +417,7 @@ export const analyticsTools: ErpNextTool[] = [
             showDots: chartType === "line",
             ...(chartType === "stacked-area" ? { stack: "revenue" } : {}),
           })),
-          currency: "EUR",
+          currency,
           yAxisLabel: "Revenue",
           _meta: CHART_META,
         };
@@ -457,7 +430,7 @@ export const analyticsTools: ErpNextTool[] = [
         const mIdx = (d.getFullYear() - startDate.getFullYear()) * 12 +
           d.getMonth() - startDate.getMonth();
         if (mIdx >= 0 && mIdx < monthsBack) {
-          monthlyTotals[mIdx] += Number(order.grand_total) || 0;
+          monthlyTotals[mIdx] += analyticsNumber(order, "base_grand_total");
         }
       }
 
@@ -472,16 +445,16 @@ export const analyticsTools: ErpNextTool[] = [
           color: "#60a5fa",
           showDots: true,
         }],
-        currency: "EUR",
+        currency,
         yAxisLabel: "Revenue",
         _meta: CHART_META,
       };
     },
-  },
+  }),
 
   // ── Order Breakdown (stacked bar / pie) ─────────────────────────────────
 
-  {
+  companyAnalyticsTool({
     name: "erpnext_order_breakdown",
     annotations: { readOnlyHint: true },
     _meta: CHART_META,
@@ -506,12 +479,13 @@ export const analyticsTools: ErpNextTool[] = [
         },
       },
     },
-    handler: async (input, ctx) => {
+    handler: async (input, _ctx, context) => {
+      const { currency } = context;
       const chartType = (input.type as string) ?? "stacked-bar";
       const limit = normalizeLimit((input.limit as number) ?? 8);
 
-      const orders = await ctx.client.list("Sales Order", {
-        fields: ["customer_name", "status", "grand_total"],
+      const orders = await context.listDocuments("Sales Order", {
+        fields: ["customer_name", "status", "base_grand_total"],
         filters: [["docstatus", "!=", 2]],
         limit: 500,
         order_by: "modified desc",
@@ -521,7 +495,8 @@ export const analyticsTools: ErpNextTool[] = [
         const byCustomer: Record<string, number> = {};
         for (const o of orders) {
           const c = (o.customer_name as string) ?? "Unknown";
-          byCustomer[c] = (byCustomer[c] ?? 0) + (Number(o.grand_total) || 0);
+          byCustomer[c] = (byCustomer[c] ?? 0) +
+            (analyticsNumber(o, "base_grand_total"));
         }
         const sorted = Object.entries(byCustomer).sort(([, a], [, b]) => b - a)
           .slice(0, limit);
@@ -531,7 +506,7 @@ export const analyticsTools: ErpNextTool[] = [
           type: chartType,
           labels: sorted.map(([c]) => c),
           datasets: [{ label: "Total", values: sorted.map(([, v]) => v) }],
-          currency: "EUR",
+          currency,
           _meta: CHART_META,
         };
       }
@@ -558,7 +533,7 @@ export const analyticsTools: ErpNextTool[] = [
         const s = (o.status as string) ?? "Draft";
         if (!byCustomerStatus[c]) byCustomerStatus[c] = {};
         byCustomerStatus[c][s] = (byCustomerStatus[c][s] ?? 0) +
-          (Number(o.grand_total) || 0);
+          (analyticsNumber(o, "base_grand_total"));
       }
 
       // Top N customers
@@ -585,17 +560,17 @@ export const analyticsTools: ErpNextTool[] = [
           color: STATUS_COLORS[s] ?? "#94a3b8",
           stack: "status",
         })),
-        currency: "EUR",
+        currency,
         xAxisLabel: "Customer",
         yAxisLabel: "Order Value",
         _meta: CHART_META,
       };
     },
-  },
+  }),
 
   // ── Revenue vs Orders Composed ──────────────────────────────────────────
 
-  {
+  companyAnalyticsTool({
     name: "erpnext_revenue_vs_orders",
     annotations: { readOnlyHint: true },
     _meta: CHART_META,
@@ -613,10 +588,11 @@ export const analyticsTools: ErpNextTool[] = [
         },
       },
     },
-    handler: async (input, ctx) => {
+    handler: async (input, _ctx, context) => {
+      const { currency } = context;
       const limit = normalizeLimit((input.limit as number) ?? 8);
-      const orders = await ctx.client.list("Sales Order", {
-        fields: ["customer_name", "grand_total"],
+      const orders = await context.listDocuments("Sales Order", {
+        fields: ["customer_name", "base_grand_total"],
         filters: [["docstatus", "!=", 2]],
         limit: 500,
         order_by: "modified desc",
@@ -626,7 +602,7 @@ export const analyticsTools: ErpNextTool[] = [
       for (const o of orders) {
         const c = (o.customer_name as string) ?? "Unknown";
         if (!byCustomer[c]) byCustomer[c] = { total: 0, count: 0 };
-        byCustomer[c].total += Number(o.grand_total) || 0;
+        byCustomer[c].total += analyticsNumber(o, "base_grand_total");
         byCustomer[c].count += 1;
       }
 
@@ -656,17 +632,17 @@ export const analyticsTools: ErpNextTool[] = [
           },
         ],
         showRightAxis: true,
-        yAxisLabel: "Revenue (€)",
+        yAxisLabel: `Revenue (${currency})`,
         rightAxisLabel: "# Orders",
-        currency: "EUR",
+        currency,
         _meta: CHART_META,
       };
     },
-  },
+  }),
 
   // ── Stock Value Treemap ─────────────────────────────────────────────────
 
-  {
+  companyAnalyticsTool({
     name: "erpnext_stock_treemap",
     annotations: { readOnlyHint: true },
     _meta: CHART_META,
@@ -689,11 +665,12 @@ export const analyticsTools: ErpNextTool[] = [
         },
       },
     },
-    handler: async (input, ctx) => {
+    handler: async (input, _ctx, context) => {
+      const { currency } = context;
       const groupBy = (input.group_by as string) ?? "item";
       const limit = normalizeLimit((input.limit as number) ?? 15);
 
-      const bins = await ctx.client.list("Bin", {
+      const bins = await context.listBins({
         fields: ["item_code", "warehouse", "stock_value"],
         filters: [["stock_value", ">", 0]],
         limit: 500,
@@ -705,7 +682,8 @@ export const analyticsTools: ErpNextTool[] = [
         const key = groupBy === "warehouse"
           ? (bin.warehouse as string)
           : (bin.item_code as string);
-        grouped[key] = (grouped[key] ?? 0) + (Number(bin.stock_value) || 0);
+        grouped[key] = (grouped[key] ?? 0) +
+          (analyticsNumber(bin, "stock_value"));
       }
 
       const sorted = Object.entries(grouped)
@@ -739,15 +717,15 @@ export const analyticsTools: ErpNextTool[] = [
           value: Math.round(value),
           color: COLORS[i % COLORS.length],
         })),
-        currency: "EUR",
+        currency,
         _meta: CHART_META,
       };
     },
-  },
+  }),
 
   // ── Product Comparison Radar ────────────────────────────────────────────
 
-  {
+  companyAnalyticsTool({
     name: "erpnext_product_radar",
     annotations: { readOnlyHint: true },
     _meta: CHART_META,
@@ -770,7 +748,8 @@ export const analyticsTools: ErpNextTool[] = [
         },
       },
     },
-    handler: async (input, ctx) => {
+    handler: async (input, _ctx, context) => {
+      const { currency } = context;
       let itemCodes = (input.items as string[]) ?? [];
 
       // Not redundant with the schema's `maxItems`: this handler is also reached
@@ -786,7 +765,7 @@ export const analyticsTools: ErpNextTool[] = [
 
       // Auto-select top items if not provided
       if (itemCodes.length === 0) {
-        const topBins = await ctx.client.list("Bin", {
+        const topBins = await context.listBins({
           fields: ["item_code"],
           filters: [["actual_qty", ">", 0]],
           limit: 4,
@@ -806,7 +785,12 @@ export const analyticsTools: ErpNextTool[] = [
       }
 
       // Gather data for each item
-      const dimensions = ["Stock Qty", "Stock Value", "Order Lines", "Revenue"];
+      const dimensions = [
+        "Stock Qty",
+        `Stock Value (${currency})`,
+        "Order Lines",
+        `Revenue (${currency})`,
+      ];
       const raw: Record<string, number[]> = {};
 
       // Stock data — one Bin query per item, issued together rather than in
@@ -815,7 +799,7 @@ export const analyticsTools: ErpNextTool[] = [
       // many warehouses cannot be truncated by a sibling item's rows.
       const binResults = await Promise.all(
         itemCodes.map((code) =>
-          ctx.client.list("Bin", {
+          context.listBins({
             fields: ["actual_qty", "stock_value"],
             filters: [["item_code", "=", code]],
             limit: 100,
@@ -830,15 +814,15 @@ export const analyticsTools: ErpNextTool[] = [
           0,
         );
         const totalVal = bins.reduce(
-          (s, b) => s + (Number(b.stock_value) || 0),
+          (s, b) => s + (analyticsNumber(b, "stock_value")),
           0,
         );
         raw[code] = [totalQty, totalVal, 0, 0];
       });
 
       // Order data — fetch all, filter in memory (the item set can exceed a sane "in" filter size)
-      const soItems = await ctx.client.list("Sales Order Item", {
-        fields: ["item_code", "qty", "amount"],
+      const soItems = await context.listItems("Sales Order", {
+        fields: ["item_code", "qty", "base_amount"],
         filters: [["docstatus", "!=", 2]],
         limit: 500,
       });
@@ -848,7 +832,7 @@ export const analyticsTools: ErpNextTool[] = [
         const code = row.item_code as string;
         if (itemSet.has(code) && raw[code]) {
           raw[code][2] += 1; // order lines
-          raw[code][3] += Number(row.amount) || 0; // revenue
+          raw[code][3] += analyticsNumber(row, "base_amount"); // revenue
         }
       }
 
@@ -873,11 +857,11 @@ export const analyticsTools: ErpNextTool[] = [
         _meta: CHART_META,
       };
     },
-  },
+  }),
 
   // ── Price vs Quantity Scatter ────────────────────────────────────────────
 
-  {
+  companyAnalyticsTool({
     name: "erpnext_price_vs_qty",
     annotations: { readOnlyHint: true },
     _meta: CHART_META,
@@ -895,26 +879,27 @@ export const analyticsTools: ErpNextTool[] = [
         },
       },
     },
-    handler: async (input, ctx) => {
+    handler: async (input, ctx, context) => {
+      const { currency } = context;
       const limit = normalizeLimit((input.limit as number) ?? 30);
 
       // Get items with selling price
       const items = await ctx.client.list("Item Price", {
-        fields: ["item_code", "price_list_rate"],
+        fields: ["item_code", "price_list_rate", "currency", "uom"],
         filters: [["selling", "=", 1]],
         limit: 200,
         order_by: "modified desc",
       });
 
-      const priceMap: Record<string, number> = {};
+      const priceMap: Record<string, Record<string, unknown>> = {};
       for (const ip of items) {
         const code = ip.item_code as string;
-        if (!priceMap[code]) priceMap[code] = Number(ip.price_list_rate) || 0;
+        if (!Object.hasOwn(priceMap, code)) priceMap[code] = ip;
       }
 
       // Get order quantities
-      const soItems = await ctx.client.list("Sales Order Item", {
-        fields: ["item_code", "qty"],
+      const soItems = await context.listItems("Sales Order", {
+        fields: ["item_code", "stock_qty"],
         filters: [["docstatus", "!=", 2]],
         limit: 500,
       });
@@ -922,7 +907,8 @@ export const analyticsTools: ErpNextTool[] = [
       const qtyMap: Record<string, number> = {};
       for (const row of soItems) {
         const code = row.item_code as string;
-        qtyMap[code] = (qtyMap[code] ?? 0) + (Number(row.qty) || 0);
+        qtyMap[code] = (qtyMap[code] ?? 0) +
+          (analyticsNumber(row, "stock_qty"));
       }
 
       // Combine: only items that have both price and orders
@@ -931,7 +917,7 @@ export const analyticsTools: ErpNextTool[] = [
 
       if (limited.length === 0) {
         // Fallback: use stock data
-        const bins = await ctx.client.list("Bin", {
+        const bins = await context.listBins({
           fields: ["item_code", "valuation_rate", "actual_qty"],
           filters: [["actual_qty", ">", 0], ["valuation_rate", ">", 0]],
           limit,
@@ -947,15 +933,37 @@ export const analyticsTools: ErpNextTool[] = [
             label: "Items",
             color: "#818cf8",
             points: bins.map((b) => ({
-              x: Math.round(Number(b.valuation_rate) || 0),
+              x: Math.round(analyticsNumber(b, "valuation_rate")),
               y: Math.round(Number(b.actual_qty) || 0),
               label: b.item_code as string,
             })),
           }],
-          xAxisLabel: "Valuation Rate (€/unit)",
+          xAxisLabel: `Valuation Rate (${currency}/stock unit)`,
           yAxisLabel: "Stock Qty",
           _meta: CHART_META,
         };
+      }
+
+      const itemDocs = await listAnalyticsItemUnits(ctx, limited);
+      const stockUnits = new Map(
+        itemDocs.map((item) => [item.name, item.stock_uom]),
+      );
+      for (const code of limited) {
+        const price = priceMap[code];
+        if (price.currency !== currency) {
+          throw new Error(
+            `Item Price for '${code}' has missing or unexpected currency; expected ${currency}. Historical conversion is unavailable.`,
+          );
+        }
+        const stockUom = stockUnits.get(code);
+        if (
+          typeof stockUom !== "string" || stockUom === "" ||
+          price.uom !== stockUom
+        ) {
+          throw new Error(
+            `Item Price for '${code}' must use its verified stock UOM; conversion is unavailable.`,
+          );
+        }
       }
 
       return {
@@ -967,21 +975,21 @@ export const analyticsTools: ErpNextTool[] = [
           label: "Items",
           color: "#818cf8",
           points: limited.map((code) => ({
-            x: Math.round(priceMap[code]),
+            x: Math.round(analyticsNumber(priceMap[code], "price_list_rate")),
             y: Math.round(qtyMap[code]),
             label: code,
           })),
         }],
-        xAxisLabel: "Selling Price (€)",
-        yAxisLabel: "Total Qty Ordered",
+        xAxisLabel: `Selling Price (${currency}/stock unit)`,
+        yAxisLabel: "Total Stock Qty Ordered",
         _meta: CHART_META,
       };
     },
-  },
+  }),
 
   // ── KPI: Revenue MTD ────────────────────────────────────────────────────
 
-  {
+  companyAnalyticsTool({
     name: "erpnext_kpi_revenue",
     annotations: { readOnlyHint: true },
     _meta: KPI_META,
@@ -989,14 +997,15 @@ export const analyticsTools: ErpNextTool[] = [
       "with delta % vs previous month and sparkline of last 6 months.",
     category: "analytics",
     inputSchema: { type: "object", properties: {} },
-    handler: async (_input, ctx) => {
+    handler: async (_input, _ctx, context) => {
+      const { currency } = context;
       const now = new Date();
       // Single API call: fetch all orders from 6 months ago to today
       const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
       const sinceStr = sixMonthsAgo.toISOString().split("T")[0];
 
-      const allOrders = await ctx.client.list("Sales Order", {
-        fields: ["grand_total", "transaction_date"],
+      const allOrders = await context.listDocuments("Sales Order", {
+        fields: ["base_grand_total", "transaction_date"],
         filters: [
           ["transaction_date", ">=", sinceStr],
           ["docstatus", "!=", 2],
@@ -1013,7 +1022,7 @@ export const analyticsTools: ErpNextTool[] = [
           (now.getMonth() - d.getMonth());
         const idx = 5 - monthDiff;
         if (idx >= 0 && idx < 6) {
-          sparkline[idx] += Number(o.grand_total) || 0;
+          sparkline[idx] += analyticsNumber(o, "base_grand_total");
         }
       }
 
@@ -1027,7 +1036,7 @@ export const analyticsTools: ErpNextTool[] = [
       return {
         label: "Revenue MTD",
         value: currentTotal,
-        currency: "EUR",
+        currency,
         delta: Math.round(delta * 10) / 10,
         deltaLabel: "vs last month",
         trend: delta > 0 ? "up" : delta < 0 ? "down" : "flat",
@@ -1037,49 +1046,50 @@ export const analyticsTools: ErpNextTool[] = [
         _meta: KPI_META,
       };
     },
-  },
+  }),
 
   // ── KPI: Outstanding Receivables ────────────────────────────────────────
 
-  {
+  companyAnalyticsTool({
     name: "erpnext_kpi_outstanding",
     annotations: { readOnlyHint: true },
     _meta: KPI_META,
     description:
       "KPI card: total outstanding receivables from submitted Sales Invoices " +
-      "with outstanding_amount > 0. Shows count of open invoices.",
+      "with positive outstanding balance from Accounts Receivable in company currency. Shows count of open invoices.",
     category: "analytics",
     inputSchema: { type: "object", properties: {} },
-    handler: async (_input, ctx) => {
-      const invoices = await ctx.client.list("Sales Invoice", {
-        fields: ["outstanding_amount"],
-        filters: [
-          ["outstanding_amount", ">", 0],
-          ["docstatus", "=", 1],
-        ],
-        limit: 1000,
-      });
+    handler: async (_input, ctx, context) => {
+      const { currency } = context;
+      const reportDate = await siteToday(ctx);
+      const reportRows = await receivableInvoiceRows(
+        ctx,
+        context.company,
+        currency,
+        reportDate,
+      );
+      const invoices = reportRows;
 
       const total = invoices.reduce(
-        (sum, inv) => sum + (Number(inv.outstanding_amount) || 0),
+        (sum, inv) => sum + inv.outstanding_amount,
         0,
       );
-      const count = invoices.length;
+      const count = new Set(invoices.map((row) => row.voucher_no)).size;
 
       return {
         label: "Outstanding Receivables",
         value: total,
         formattedValue: `${count} inv. / ${
-          total.toLocaleString("en-US", { style: "currency", currency: "EUR" })
+          total.toLocaleString("en-US", { style: "currency", currency })
         }`,
-        currency: "EUR",
+        currency,
         trend: total > 0 ? "up" : "flat",
         trendIsGood: false,
         color: "#fbbf24",
         _meta: KPI_META,
       };
     },
-  },
+  }),
 
   // ── KPI: Orders This Month ──────────────────────────────────────────────
 
@@ -1087,8 +1097,7 @@ export const analyticsTools: ErpNextTool[] = [
     name: "erpnext_kpi_orders",
     annotations: { readOnlyHint: true },
     _meta: KPI_META,
-    description:
-      "KPI card: count and total value of Sales Orders created this month, " +
+    description: "KPI card: count of Sales Orders created this month, " +
       "with delta % vs last month.",
     category: "analytics",
     inputSchema: { type: "object", properties: {} },
@@ -1103,7 +1112,7 @@ export const analyticsTools: ErpNextTool[] = [
       const lastMonthEndStr = lastMonthEnd.toISOString().split("T")[0];
 
       const currentOrders = await ctx.client.list("Sales Order", {
-        fields: ["grand_total"],
+        fields: ["name"],
         filters: [
           ["transaction_date", ">=", thisMonthStart],
           ["docstatus", "!=", 2],
@@ -1113,7 +1122,7 @@ export const analyticsTools: ErpNextTool[] = [
       const currentCount = currentOrders.length;
 
       const prevOrders = await ctx.client.list("Sales Order", {
-        fields: ["grand_total"],
+        fields: ["name"],
         filters: [
           ["transaction_date", ">=", lastMonthStartStr],
           ["transaction_date", "<=", lastMonthEndStr],
@@ -1144,7 +1153,7 @@ export const analyticsTools: ErpNextTool[] = [
 
   // ── KPI: Gross Margin ──────────────────────────────────────────────────
 
-  {
+  companyAnalyticsTool({
     name: "erpnext_kpi_gross_margin",
     annotations: { readOnlyHint: true },
     _meta: KPI_META,
@@ -1153,10 +1162,10 @@ export const analyticsTools: ErpNextTool[] = [
       "valuation rate from stock (Bin). Margin = (revenue - cost) / revenue * 100.",
     category: "analytics",
     inputSchema: { type: "object", properties: {} },
-    handler: async (_input, ctx) => {
+    handler: async (_input, _ctx, context) => {
       // Revenue from Sales Order Items (all non-cancelled)
-      const soItems = await ctx.client.list("Sales Order Item", {
-        fields: ["item_code", "qty", "amount"],
+      const soItems = await context.listItems("Sales Order", {
+        fields: ["item_code", "stock_qty", "base_amount"],
         filters: [
           ["docstatus", "!=", 2],
         ],
@@ -1164,19 +1173,20 @@ export const analyticsTools: ErpNextTool[] = [
       });
 
       const revenue = soItems.reduce(
-        (sum, row) => sum + (Number(row.amount) || 0),
+        (sum, row) => sum + (analyticsNumber(row, "base_amount")),
         0,
       );
 
-      // Cost from Bin valuation_rate * qty sold
+      // Giá vốn chỉ là ước tính hiện tại; valuation_rate có đơn vị trên stock UOM.
       const itemQty: Record<string, number> = {};
       for (const row of soItems) {
         const code = row.item_code as string;
-        itemQty[code] = (itemQty[code] ?? 0) + (Number(row.qty) || 0);
+        itemQty[code] = (itemQty[code] ?? 0) +
+          (analyticsNumber(row, "stock_qty"));
       }
 
       // Fetch valuation rates
-      const bins = await ctx.client.list("Bin", {
+      const bins = await context.listBins({
         fields: ["item_code", "valuation_rate"],
         filters: [["valuation_rate", ">", 0]],
         limit: 500,
@@ -1186,15 +1196,16 @@ export const analyticsTools: ErpNextTool[] = [
       for (const bin of bins) {
         const code = bin.item_code as string;
         if (!valMap[code]) {
-          valMap[code] = Number(bin.valuation_rate) || 0;
+          valMap[code] = analyticsNumber(bin, "valuation_rate");
         }
       }
 
       let cost = 0;
       for (const [code, qty] of Object.entries(itemQty)) {
-        if (valMap[code]) {
-          cost += valMap[code] * qty;
+        if (valMap[code] === undefined) {
+          throw new Error(`Missing estimated stock cost for item '${code}'.`);
         }
+        cost += valMap[code] * qty;
       }
 
       const margin = revenue > 0 ? ((revenue - cost) / revenue) * 100 : 0;
@@ -1209,11 +1220,11 @@ export const analyticsTools: ErpNextTool[] = [
         _meta: KPI_META,
       };
     },
-  },
+  }),
 
   // ── KPI: Overdue Invoices ──────────────────────────────────────────────
 
-  {
+  companyAnalyticsTool({
     name: "erpnext_kpi_overdue",
     annotations: { readOnlyHint: true },
     _meta: KPI_META,
@@ -1221,22 +1232,20 @@ export const analyticsTools: ErpNextTool[] = [
       "(due_date < today, outstanding_amount > 0, submitted).",
     category: "analytics",
     inputSchema: { type: "object", properties: {} },
-    handler: async (_input, ctx) => {
-      const today = new Date().toISOString().split("T")[0];
+    handler: async (_input, ctx, context) => {
+      const { currency } = context;
+      const reportDate = await siteToday(ctx);
+      const reportRows = await receivableInvoiceRows(
+        ctx,
+        context.company,
+        currency,
+        reportDate,
+      );
+      const invoices = reportRows.filter((row) => row.due_date < reportDate);
 
-      const invoices = await ctx.client.list("Sales Invoice", {
-        fields: ["outstanding_amount", "due_date"],
-        filters: [
-          ["due_date", "<", today],
-          ["outstanding_amount", ">", 0],
-          ["docstatus", "=", 1],
-        ],
-        limit: 1000,
-      });
-
-      const count = invoices.length;
+      const count = new Set(invoices.map((row) => row.voucher_no)).size;
       const total = invoices.reduce(
-        (sum, inv) => sum + (Number(inv.outstanding_amount) || 0),
+        (sum, inv) => sum + inv.outstanding_amount,
         0,
       );
 
@@ -1244,7 +1253,7 @@ export const analyticsTools: ErpNextTool[] = [
         label: "Overdue Invoices",
         value: count,
         formattedValue: `${count} inv. / ${
-          total.toLocaleString("en-US", { style: "currency", currency: "EUR" })
+          total.toLocaleString("en-US", { style: "currency", currency })
         }`,
         trend: count > 0 ? "up" : "flat",
         trendIsGood: false,
@@ -1252,17 +1261,18 @@ export const analyticsTools: ErpNextTool[] = [
         _meta: KPI_META,
       };
     },
-  },
+  }),
 
   // ── Sales Funnel ──────────────────────────────────────────────────────────
 
-  {
+  companyAnalyticsTool({
     name: "erpnext_sales_funnel",
     annotations: { readOnlyHint: true },
     _meta: FUNNEL_META,
     description:
       "Sales funnel from Lead → Opportunity → Quotation → Sales Order. " +
-      "Shows count and value at each stage with conversion rates between stages.",
+      "Shows count and value at each stage with conversion rates between stages. " +
+      "Opportunity, Quotation and Order are scoped to one company; Leads count all visible records.",
     category: "analytics",
     inputSchema: {
       type: "object",
@@ -1274,7 +1284,8 @@ export const analyticsTools: ErpNextTool[] = [
         },
       },
     },
-    handler: async (_input, ctx) => {
+    handler: async (_input, ctx, context) => {
+      const { currency } = context;
       const period = (_input.period as string) ?? "all";
       const now = new Date();
       let sinceDate: string | null = null;
@@ -1312,18 +1323,18 @@ export const analyticsTools: ErpNextTool[] = [
           filters: leadFilters,
           limit: 500,
         }),
-        ctx.client.list("Opportunity", {
-          fields: ["name", "opportunity_amount"],
+        context.listDocuments("Opportunity", {
+          fields: ["name", "base_opportunity_amount"],
           filters: txnFilters,
           limit: 500,
         }),
-        ctx.client.list("Quotation", {
-          fields: ["name", "grand_total"],
+        context.listDocuments("Quotation", {
+          fields: ["name", "base_grand_total"],
           filters: submittedTxnFilters,
           limit: 500,
         }),
-        ctx.client.list("Sales Order", {
-          fields: ["name", "grand_total"],
+        context.listDocuments("Sales Order", {
+          fields: ["name", "base_grand_total"],
           filters: submittedTxnFilters,
           limit: 500,
         }),
@@ -1339,7 +1350,7 @@ export const analyticsTools: ErpNextTool[] = [
           label: "Opportunities",
           count: opps.length,
           value: opps.reduce(
-            (s, o) => s + (Number(o.opportunity_amount) || 0),
+            (s, o) => s + (analyticsNumber(o, "base_opportunity_amount")),
             0,
           ),
           color: "#60a5fa",
@@ -1350,7 +1361,10 @@ export const analyticsTools: ErpNextTool[] = [
         {
           label: "Quotations",
           count: quots.length,
-          value: quots.reduce((s, q) => s + (Number(q.grand_total) || 0), 0),
+          value: quots.reduce(
+            (s, q) => s + (analyticsNumber(q, "base_grand_total")),
+            0,
+          ),
           color: "#4ade80",
           conversionRate: opps.length > 0
             ? Math.round((quots.length / opps.length) * 100)
@@ -1359,7 +1373,10 @@ export const analyticsTools: ErpNextTool[] = [
         {
           label: "Orders",
           count: orders.length,
-          value: orders.reduce((s, o) => s + (Number(o.grand_total) || 0), 0),
+          value: orders.reduce(
+            (s, o) => s + (analyticsNumber(o, "base_grand_total")),
+            0,
+          ),
           color: "#fbbf24",
           conversionRate: quots.length > 0
             ? Math.round((orders.length / quots.length) * 100)
@@ -1376,17 +1393,19 @@ export const analyticsTools: ErpNextTool[] = [
 
       return {
         title: "Sales Funnel",
-        subtitle: periodLabels[period] ?? "All Time",
+        subtitle: `${
+          periodLabels[period] ?? "All Time"
+        }; ${context.company}; Leads: all visible companies`,
         stages,
-        currency: "EUR",
+        currency,
         _meta: FUNNEL_META,
       };
     },
-  },
+  }),
 
   // ── AR Aging ──────────────────────────────────────────────────────────────
 
-  {
+  companyAnalyticsTool({
     name: "erpnext_ar_aging",
     annotations: { readOnlyHint: true },
     _meta: CHART_META,
@@ -1410,23 +1429,21 @@ export const analyticsTools: ErpNextTool[] = [
         },
       },
     },
-    handler: async (input, ctx) => {
+    handler: async (input, ctx, context) => {
+      const { currency } = context;
       const limit = normalizeLimit((input.limit as number) ?? 10);
       const chartType = (input.type as string) ?? "stacked-bar";
 
-      const invoices = await ctx.client.list("Sales Invoice", {
-        fields: [
-          "customer_name",
-          "outstanding_amount",
-          "due_date",
-          "posting_date",
-        ],
-        filters: [["outstanding_amount", ">", 0], ["docstatus", "=", 1]],
-        limit: 500,
-        order_by: "outstanding_amount desc",
-      });
+      const reportDate = await siteToday(ctx);
+      const reportRows = await receivableInvoiceRows(
+        ctx,
+        context.company,
+        currency,
+        reportDate,
+      );
+      const invoices = reportRows;
 
-      const today = new Date();
+      const today = new Date(reportDate);
       const BUCKETS = [
         { label: "0-30 days", min: 0, max: 30, color: "#4ade80" },
         { label: "31-60 days", min: 31, max: 60, color: "#fbbf24" },
@@ -1454,8 +1471,7 @@ export const analyticsTools: ErpNextTool[] = [
           agingDays >= b.min && agingDays <= b.max
         );
         if (bucketIdx >= 0) {
-          byCustomer[customer][bucketIdx] += Number(inv.outstanding_amount) ||
-            0;
+          byCustomer[customer][bucketIdx] += inv.outstanding_amount;
         }
       }
 
@@ -1492,7 +1508,7 @@ export const analyticsTools: ErpNextTool[] = [
             value: Math.round(total),
             color: COLORS[i % COLORS.length],
           })),
-          currency: "EUR",
+          currency,
           _meta: CHART_META,
         };
       }
@@ -1510,17 +1526,17 @@ export const analyticsTools: ErpNextTool[] = [
           color: bucket.color,
           stack: "aging",
         })),
-        currency: "EUR",
+        currency,
         xAxisLabel: "Customer",
         yAxisLabel: "Outstanding Amount",
         _meta: CHART_META,
       };
     },
-  },
+  }),
 
   // ── Gross Profit ──────────────────────────────────────────────────────────
 
-  {
+  companyAnalyticsTool({
     name: "erpnext_gross_profit",
     annotations: { readOnlyHint: true },
     _meta: CHART_META,
@@ -1543,32 +1559,37 @@ export const analyticsTools: ErpNextTool[] = [
         },
       },
     },
-    handler: async (input, ctx) => {
+    handler: async (input, _ctx, context) => {
+      const { currency } = context;
       const limit = normalizeLimit((input.limit as number) ?? 10);
       const groupBy = (input.group_by as string) ?? "item";
 
-      // Revenue, cost and (when grouping by customer) the invoice→customer map
-      // are three independent queries. They go out together; the third is only
-      // requested when the grouping actually needs it, so the cheap path stays
-      // two queries rather than three.
+      // Ba nhánh dữ liệu chạy song song; nhánh child và Bin tự xác minh company
+      // qua chứng từ cha và Warehouse trước khi đọc các dòng tiền.
       const needsCustomers = groupBy === "customer";
       const [siItems, bins, invoices] = await Promise.all([
         // Submitted Sales Invoice Items for revenue
-        ctx.client.list("Sales Invoice Item", {
-          fields: ["parent", "item_code", "item_name", "amount", "qty"],
+        context.listItems("Sales Invoice", {
+          fields: [
+            "parent",
+            "item_code",
+            "item_name",
+            "base_amount",
+            "stock_qty",
+          ],
           filters: [["docstatus", "=", 1]],
           limit: 500,
-          order_by: "amount desc",
+          order_by: "base_amount desc",
         }),
         // Bin for valuation_rate (cost per unit)
-        ctx.client.list("Bin", {
+        context.listBins({
           fields: ["item_code", "valuation_rate"],
           filters: [["valuation_rate", ">", 0]],
           limit: 500,
         }),
         // Invoices, to map parent invoice name to customer
         needsCustomers
-          ? ctx.client.list("Sales Invoice", {
+          ? context.listDocuments("Sales Invoice", {
             fields: ["name", "customer_name"],
             filters: [["docstatus", "=", 1]],
             limit: 500,
@@ -1582,7 +1603,7 @@ export const analyticsTools: ErpNextTool[] = [
         // Keep highest valuation_rate if multiple warehouses
         costMap[code] = Math.max(
           costMap[code] ?? 0,
-          Number(bin.valuation_rate) || 0,
+          analyticsNumber(bin, "valuation_rate"),
         );
       }
 
@@ -1600,9 +1621,14 @@ export const analyticsTools: ErpNextTool[] = [
           if (!byCustomer[customer]) {
             byCustomer[customer] = { revenue: 0, cost: 0 };
           }
-          const qty = Number(row.qty) || 0;
-          const unitCost = costMap[row.item_code as string] ?? 0;
-          byCustomer[customer].revenue += Number(row.amount) || 0;
+          const qty = analyticsNumber(row, "stock_qty");
+          const unitCost = costMap[row.item_code as string];
+          if (unitCost === undefined) {
+            throw new Error(
+              `Missing estimated stock cost for item '${row.item_code}'.`,
+            );
+          }
+          byCustomer[customer].revenue += analyticsNumber(row, "base_amount");
           byCustomer[customer].cost += qty * unitCost;
         }
 
@@ -1620,7 +1646,8 @@ export const analyticsTools: ErpNextTool[] = [
 
         return {
           title: "Gross Profit by Customer",
-          subtitle: `Top ${labels.length} customers`,
+          subtitle:
+            `Top ${labels.length} customers; estimated cost from current stock valuation`,
           type: "composed",
           labels,
           datasets: [
@@ -1640,7 +1667,7 @@ export const analyticsTools: ErpNextTool[] = [
             },
           ],
           showRightAxis: true,
-          currency: "EUR",
+          currency,
           yAxisLabel: "Revenue",
           rightAxisLabel: "Margin %",
           _meta: CHART_META,
@@ -1661,9 +1688,12 @@ export const analyticsTools: ErpNextTool[] = [
             cost: 0,
           };
         }
-        const qty = Number(row.qty) || 0;
-        const unitCost = costMap[code] ?? 0;
-        byItem[code].revenue += Number(row.amount) || 0;
+        const qty = analyticsNumber(row, "stock_qty");
+        const unitCost = costMap[code];
+        if (unitCost === undefined) {
+          throw new Error(`Missing estimated stock cost for item '${code}'.`);
+        }
+        byItem[code].revenue += analyticsNumber(row, "base_amount");
         byItem[code].cost += qty * unitCost;
       }
 
@@ -1679,7 +1709,8 @@ export const analyticsTools: ErpNextTool[] = [
 
       return {
         title: "Gross Profit by Item",
-        subtitle: `Top ${labels.length} items`,
+        subtitle:
+          `Top ${labels.length} items; estimated cost from current stock valuation`,
         type: "composed",
         labels,
         datasets: [
@@ -1699,13 +1730,13 @@ export const analyticsTools: ErpNextTool[] = [
           },
         ],
         showRightAxis: true,
-        currency: "EUR",
+        currency,
         yAxisLabel: "Revenue",
         rightAxisLabel: "Margin %",
         _meta: CHART_META,
       };
     },
-  },
+  }),
 
   // ── Profit & Loss ─────────────────────────────────────────────────────────
 
@@ -1932,6 +1963,10 @@ export const analyticsTools: ErpNextTool[] = [
           period_end_date: periodEnd,
           periodicity: "Monthly",
           cross_check: crossCheck,
+        },
+        refreshRequest: {
+          toolName: "erpnext_profit_loss",
+          arguments: { ...input, company },
         },
         _meta: CHART_META,
       };

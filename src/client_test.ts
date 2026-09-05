@@ -289,11 +289,20 @@ Deno.test("execute - bounded tools stay bounded on the direct-execution path", a
   // counts queries rather than merely asserting that it throws.
   let queries = 0;
   const mock = {
-    list: () => {
+    list: (doctype: string) => {
       queries++;
-      return Promise.resolve([]);
+      return Promise.resolve(
+        doctype === "Company" ? [{ name: "Fixture Company" }] : [],
+      );
     },
-    get: () => Promise.resolve({ name: "X" }),
+    get: (doctype: string, name: string) => {
+      queries++;
+      return Promise.resolve(
+        doctype === "Company"
+          ? { name, default_currency: "VND" }
+          : { name: "X" },
+      );
+    },
     create: () => Promise.resolve({ name: "X" }),
     update: () => Promise.resolve({ name: "X" }),
     delete: () => Promise.resolve(),

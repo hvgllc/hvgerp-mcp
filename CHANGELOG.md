@@ -21,6 +21,17 @@ requests and tags actually live.
   instead of unfiltered site-wide Stock Entries. It shows voucher, posting
   date/time and quantity change, reports permission errors, and discards late
   results when the selected item or warehouse changes.
+- Monetary analytics now resolve one company and use its currency instead of
+  adding document currencies together and labeling the result EUR. Sites with
+  multiple visible companies must pass `company`. Recorded base amounts supply
+  revenue; Accounts Receivable supplies company-currency invoice balances.
+- Stock valuation and estimated margins now use warehouses belonging to the
+  selected company and stock quantities. Missing costs or incompatible selling
+  price currency/UOM raise an error instead of producing misleading values.
+- Analytics split large ownership filters into encoded-size-bounded requests
+  while keeping a global row limit. Previously unordered scoped reads now use
+  `modified desc`. Receivable snapshots and aging use one site date per call
+  instead of the host's UTC date.
 
 ## [3.4.0] - 2026-08-31
 

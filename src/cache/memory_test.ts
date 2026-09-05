@@ -12,6 +12,115 @@ function storedKeys(cache: MemoryCache): string[] {
   return [...store.keys()];
 }
 
+Deno.test("MemoryCache - set isolates nested objects and arrays from the writer", () => {
+  const cache = new MemoryCache();
+  const original = { details: { status: "Open" }, rows: [{ qty: 1 }] };
+  cache.set("doc", original, 60000);
+  original.details.status = "Changed";
+  original.rows[0].qty = 99;
+  original.rows.push({ qty: 2 });
+  const first = cache.get<typeof original>("doc")!;
+  assertEquals(first, { details: { status: "Open" }, rows: [{ qty: 1 }] });
+  first.rows[0].qty = 200;
+  assertEquals(cache.get("doc"), {
+    details: { status: "Open" },
+    rows: [{ qty: 1 }],
+  });
+
+  const rows = [{ nested: { value: 1 } }, { nested: { value: 2 } }];
+  cache.set("rows", rows, 60000);
+  rows[0].nested.value = 99;
+  rows.reverse();
+  rows.pop();
+  assertEquals(cache.get("rows"), [{ nested: { value: 1 } }, {
+    nested: { value: 2 },
+  }]);
+});
+
+Deno.test("MemoryCache - write snapshots preserve structured clone types and cycles", () => {
+  const cache = new MemoryCache();
+  const original = {
+    date: new Date("2026-09-05T00:00:00Z"),
+    map: new Map([["key", { value: 1 }]]),
+    set: new Set([1, 2]),
+    bytes: new Uint8Array([1, 2]),
+    missing: undefined,
+    self: null as unknown,
+  };
+  original.self = original;
+  cache.set("rich", original, 60000);
+  original.date.setUTCFullYear(2000);
+  original.map.get("key")!.value = 99;
+  original.set.add(3);
+  original.bytes[0] = 99;
+  const snapshot = cache.get<typeof original>("rich")!;
+  assertEquals(snapshot.date.toISOString(), "2026-09-05T00:00:00.000Z");
+  assertEquals(snapshot.map, new Map([["key", { value: 1 }]]));
+  assertEquals(snapshot.set, new Set([1, 2]));
+  assertEquals(snapshot.bytes, new Uint8Array([1, 2]));
+  assert(Object.hasOwn(snapshot, "missing"));
+  assert(snapshot.self === snapshot);
+});
+
+for (const cap of [1, 2]) {
+  for (const existing of [false, true]) {
+    for (const nested of [false, true]) {
+      Deno.test(`MemoryCache - clone failure preserves live entries expiry and FIFO cap=${cap} existing=${existing} nested=${nested}`, () => {
+        const originalNow = Date.now;
+        let now = 1000;
+        Date.now = () => now;
+        try {
+          const cache = new MemoryCache(cap);
+          cache.set("oldest", { value: 1 }, 100);
+          if (cap === 2) cache.set("second", { value: 2 }, 200);
+          now = 1020;
+          const uncloneable = nested
+            ? { nested: { callback: () => 1 } }
+            : () => 1;
+          const error = assertThrows(() =>
+            cache.set(existing ? "oldest" : "new", uncloneable, 999)
+          );
+          assert(error instanceof DOMException);
+          assertEquals(error.name, "DataCloneError");
+          assertEquals(
+            storedKeys(cache),
+            cap === 1 ? ["oldest"] : ["oldest", "second"],
+          );
+          assertEquals(cache.get("oldest"), { value: 1 });
+          const entries = Reflect.get(cache, "store") as Map<
+            string,
+            { expiresAt: number }
+          >;
+          assertEquals(entries.get("oldest")!.expiresAt, 1100);
+          if (cap === 2) {
+            assertEquals(cache.get("second"), { value: 2 });
+            cache.set("third", { value: 3 }, 1000);
+            assertEquals(storedKeys(cache), ["second", "third"]);
+          } else {
+            now = 1100;
+            assertEquals(cache.get("oldest"), undefined);
+          }
+        } finally {
+          Date.now = originalNow;
+        }
+      });
+    }
+  }
+}
+
+Deno.test("MemoryCache - nonpositive TTL deletes without cloning unsupported values", () => {
+  for (const ttl of [0, -1]) {
+    const cache = new MemoryCache(2);
+    cache.set("keep", 1, 60000);
+    cache.set("remove", 2, 60000);
+    cache.set("absent", () => 1, ttl);
+    assertEquals(storedKeys(cache), ["keep", "remove"]);
+    cache.set("remove", { callback: () => 1 }, ttl);
+    assertEquals(storedKeys(cache), ["keep"]);
+    assertEquals(cache.get("keep"), 1);
+  }
+});
+
 Deno.test("MemoryCache - writing reclaims expired keys that were never read", () => {
   const originalNow = Date.now;
   let now = 1000;
