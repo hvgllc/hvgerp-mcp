@@ -19,6 +19,11 @@ const ADAPTERS: Record<string, KanbanAdapter> = {
   issue: issueKanbanAdapter,
 };
 
+const FILTER_STATUSES: Record<string, string[]> = {
+  Issue: ["Open", "Replied", "On Hold", "Resolved", "Closed"],
+  Opportunity: ["Open", "Replied", "Quotation", "Converted", "Closed", "Lost"],
+};
+
 function getAdapter(
   doctype: string,
 ): {
@@ -110,8 +115,9 @@ export const kanbanTools: ErpNextTool[] = [
         },
         status: {
           type: "string",
-          description: "Optional Opportunity status filter",
-          enum: ["Open", "Replied", "Quotation", "Converted", "Closed", "Lost"],
+          description:
+            "Optional Issue or Opportunity status filter; not supported for Task. Status must belong to the selected DocType.",
+          enum: [...new Set(Object.values(FILTER_STATUSES).flat())],
         },
         opportunity_owner: {
           type: "string",
@@ -135,6 +141,17 @@ export const kanbanTools: ErpNextTool[] = [
     handler: async (input, ctx) => {
       const doctype = String(input.doctype ?? "");
       const { definition, adapter } = getAdapter(doctype);
+      const statuses = FILTER_STATUSES[doctype];
+      if (
+        statuses && input.status !== undefined &&
+        (typeof input.status !== "string" || !statuses.includes(input.status))
+      ) {
+        throw new Error(
+          `[erpnext_kanban_get_board] Invalid status for ${doctype}. Expected one of: ${
+            statuses.join(", ")
+          }`,
+        );
+      }
       const limit = normalizeLimit(Number(input.limit ?? 50));
       const offset = Math.max(0, Number(input.offset ?? 0));
 
