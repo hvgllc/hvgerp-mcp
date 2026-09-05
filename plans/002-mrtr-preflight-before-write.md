@@ -130,6 +130,13 @@ toàn repo là bị chặn.
 
 ## Các bước
 
+Người dùng đã cho phép mở phạm vi challenge contract ngày 2026-09-05. Thiết kế
+bổ sung ở
+[evidence/002-contract-extension.md](evidence/002-contract-extension.md) đề xuất
+framework ký metadata và chuyển verified context, không thêm application store.
+Chưa triển khai vì framework là repository ngoài và cần chốt quyền phân phối/cập
+nhật dependency riêng. Không coi tài liệu này là test xanh.
+
 Đã gặp điều kiện dừng framework 0.25.0: token chỉ ký args, không ký câu hỏi và
 identifier ban đầu. Executor cùng reviewer độc lập xác minh bảy regression đỏ.
 Chưa sửa implementation; xem [evidence/002.md](evidence/002.md). Cần người dùng

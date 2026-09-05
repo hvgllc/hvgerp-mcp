@@ -52,7 +52,7 @@ là ước lượng công sức/rủi ro sửa, không phải cam kết thời h
 | 018 | [Giới hạn số entry và thu hồi cache hết hạn](018-bound-memory-cache.md)                             | P2      | M / MED                                                   | không         | DONE        |
 | 019 | [Tách giá trị cache khỏi đối tượng bên ghi](019-cache-write-value-isolation.md)                     | P2      | S / LOW                                                   | 018           | DONE        |
 | 020 | [Đồng bộ schema trạng thái Kanban và giới hạn tháng doanh thu](020-align-tool-schema-boundaries.md) | P2      | M / MED                                                   | 014           | DONE        |
-| 021 | [Khóa đầu vào dependency của bản build](021-reproducible-build-inputs.md)                           | P2      | L / HIGH                                                  | không         | TODO        |
+| 021 | [Khóa đầu vào dependency của bản build](021-reproducible-build-inputs.md)                           | P2      | L / HIGH                                                  | không         | BLOCKED     |
 | 022 | [Sửa hướng dẫn release và chính sách hỗ trợ lỗi thời](022-release-security-documentation.md)        | P2      | S / LOW                                                   | 021           | TODO        |
 | 023 | [Khảo sát thiết kế dòng thời gian biến động tồn kho](023-stock-ledger-timeline-design.md)           | P3      | M / LOW                                                   | 015           | DONE        |
 | 024 | [Khảo sát kiểm tra điều kiện khởi tạo ERPNext](024-setup-readiness-design.md)                       | P3      | M / LOW                                                   | không         | DONE        |

@@ -690,3 +690,30 @@ backlog, GitHub, commit hoặc push.
   CI/Codex và merge016, chưa ghi DONE.
 - Quyền framework002, graph/npm/native lock021 vẫn chờ trả lời;022 phụ thuộc021.
   Không release, publish, nâng dependency, đổi production hoặc file cá nhân.
+
+## Tiếp tục goal sau 12:51 UTC ngày 2026-09-05
+
+- Bản tích hợp 016 được reviewer độc lập APPROVE tại 3400bd42: tự chạy 1466 test
+  đạt, 0 lỗi, 4 bỏ qua; Node 27 và Kanban 90 đạt. Reviewer xem đủ 17 PNG, đọc 34
+  record postfix cùng 4 controls và kiểm 19 hash. Browser bao gồm hidden thật
+  qua timeout và native drag định thời, không dùng visibility/event giả. Các
+  lượt thăm dò, read phụ do focus và giới hạn snapshot được giữ rõ.
+- PR 44 mở tại HEAD 7a343df85d6e184d30fbcc8b7951154e6a5767ed; commit cuối chỉ
+  thêm kết luận review. Test 33967214881 và Codex được yêu cầu trên HEAD này,
+  chưa dùng review local làm quyền đánh dấu DONE hoặc merge sớm. URL:
+  https://github.com/hvgllc/hvgerp-mcp/pull/44
+- PR 25 nhận P1 ancestry và P2 đường dẫn Markdown. Parent clone mới trực tiếp từ
+  GitHub một nhánh tại 8436a48: validator 25 đạt, history 4 đạt; b9d6d02 và
+  bb78ace đều là ancestor thực. Bác bỏ kết luận mất provenance ở HEAD này qua
+  reply 3940678021, vẫn yêu cầu merge commit và kiểm ancestry sau merge.
+- P2 được executor sửa tại 42d1b51, report tại 76dc06d: red 10 lỗi đúng nguyên
+  nhân và 6 control; green 220 selftests cùng 4 history. Chặn đường dẫn tuyệt
+  đối hoặc thoát repo trước filesystem lookup, giữ ../ hợp lệ trong repo. Chờ
+  review độc lập, chưa push bản sửa tại thời điểm ghi mục này.
+- Preflight 021 có bằng chứng tại evidence/021.md: runtime 20/22 đã có, nhưng
+  graph Node và workaround khác tám package chung; chưa có native JSR lock và
+  chưa chốt npm CLI. Ghi BLOCKED tại bước 1, không tự chọn phiên bản hoặc coi
+  graph phát sinh là graph được duyệt. 022 tiếp tục TODO phụ thuộc 021.
+- Tiến độ hiện tại: 21 DONE, 016 IN_PROGRESS, 002/021 BLOCKED, 022 TODO. Root
+  application vẫn giữ d2c5305; hash ba file cá nhân không đổi. Không release,
+  Publish, bump version, nâng dependency hoặc tác động production.

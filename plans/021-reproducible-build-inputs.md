@@ -9,7 +9,7 @@
 - Mục audit: 21; loại: `dx`.
 - Ưu tiên: P2; công sức: L; rủi ro sửa: HIGH.
 - Phụ thuộc: không.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `TODO`.
+- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `BLOCKED`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 deno.lock bị bỏ qua và Node build tạo workspace mới rồi npm install các khoảng
@@ -135,6 +135,10 @@ riêng khi một lỗi có sẵn ngoài phạm vi chặn toàn repo, nhưng ph�
 toàn repo là bị chặn.
 
 ## Các bước
+
+Preflight ngày 2026-09-05 đã ghi tại [evidence/021.md](evidence/021.md). Đã có
+runtime Node 20/22, nhưng graph gián tiếp, npm CLI và quyền thu native JSR lock
+chưa được chốt. Dừng ở bước 1, chưa triển khai hoặc hoàn tất mục này.
 
 ### Bước 1: Chốt graph đang được chấp thuận
 

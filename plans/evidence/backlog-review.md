@@ -1093,3 +1093,28 @@ Gate sau sửa:
 Không sửa plan/manifest/README, approval metadata, source ứng dụng hoặc
 dependency. Không chạy application build, Browser, Publish, push hoặc thao tác
 GitHub. Đây là evidence executor; review độc lập delta mới do parent điều phối.
+
+Reviewer độc lập APPROVE HEAD `76dc06d07d801f50e38e7919f631bb3d151136d6`, tree
+`29a47ee8363f81748208fd04ba98fb6c6ffa4d10`, report blob
+`cf2124ca7650e4c06f61621f368d65941974b25e`. Reviewer tự tái hiện red trên
+validator8436: 6 control đạt, 10 assertion thất bại; bản mới đạt 16/16 và toàn
+bộ 224 self/history. Kiểm 204 selftests cũ nguyên assertions, history helper và
+manifest/README không đổi. Parent đọc toàn diff và tự chạy lại validator25, 220
+selftests, 4 history, fmt74/lint3/diff đều đạt. Giới hạn lexical được giữ, không
+dùng APPROVE này cho những thay đổi metadata sau đó.
+
+## Đối chiếu finding 3940650163 về ancestry
+
+Parent clone mới trực tiếp từ GitHub bằng
+`--single-branch --no-tags --branch
+advisor/goal-backlog`, không dùng object
+cache hoặc worktree local. HEAD clone là
+`8436a48f687a5e119bfff164bc6ffeaf591db922`, không phải 8818303 trong finding.
+Hai lệnh `git merge-base --is-ancestor` với
+b9d6d02a9692c3efff11836b97d8cfbc69da1ec7 và
+bb78ace761b7ae9b26900c8c80faad699a9adfa6 đều exit 0. Validator đạt 25 kế hoạch;
+history suite đạt 4/4, gồm positive clone một nhánh và negative lịch sử squash
+thật. Finding không tái hiện trên HEAD remote hiện tại, parent trả lời bác bỏ
+tại discussion3940678021. Không sửa các approval hợp lệ hoặc bỏ gate history.
+PR25 vẫn phải merge commit, không squash/rebase, rồi kiểm ancestry trên main
+mới.
