@@ -235,3 +235,12 @@ journal giữ nguyên prefix và chỉ append kết quả. Ghi chú trước exe
 giữ và đưa vào snapshot backlog. Plan/evidence 007 giữ nguyên; CSV/PNG 008 được
 copy và cmp byte-identical. Root 6 DONE, 1 BLOCKED, 2 IN_PROGRESS (005, 009), 16
 TODO; backlog giữ TODO cho 005/009 vì chưa tích hợp implementation.
+
+Review độc lập mới APPROVE commit `64e1116797c0b049445a85c995d41f6fec663f33`: đã
+đọc hai rule mới, toàn delta và ba finding; tự kiểm thêm bảy ca trong bộ nhớ.
+Dependency trùng, scope thừa và historical sai bị chặn; file quản trị, đổi thứ
+tự scope và ghi chú không liên quan được chấp nhận. Reviewer chạy lại validator
+25/25, regression 49/49, format/lint/diff; source ngoài plans bằng main e09537b.
+Parent cũng đọc toàn delta và tự chạy các gate tài liệu đạt. Hiệu quả kiểm local
+của rule được xác nhận, chưa suy ra Codex vòng tới sẽ áp dụng đúng; cần CI và
+review mới trên HEAD được push.
