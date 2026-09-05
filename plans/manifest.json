@@ -471,15 +471,15 @@
     "evidence": [
       {
         "path": "src/tools/analytics.ts",
-        "line": 204,
+        "line": 205,
         "code": "      if (!input.include_drafts) {\n        filters.push([\"docstatus\", \"=\", 1]); // Submitted only",
-        "sourceRef": "67896f3208caee923659f1900c399d87e99c403c"
+        "sourceRef": "bce7d2513783058a8b160b0cbe6ab55299f90991"
       },
       {
         "path": "src/tools/analytics.ts",
-        "line": 212,
+        "line": 213,
         "code": "          filters: [[\"docstatus\", \"!=\", 2]], // exclude cancelled",
-        "sourceRef": "67896f3208caee923659f1900c399d87e99c403c"
+        "sourceRef": "bce7d2513783058a8b160b0cbe6ab55299f90991"
       }
     ]
   },
@@ -547,6 +547,7 @@
       "src/ui/shared/kanban/refresh-controller.ts",
       "src/ui/shared/kanban/refresh-controller_test.ts",
       "src/ui/testing/fixtures.ts",
+      "src/ui/testing/host.ts",
       "plans/evidence/016/"
     ],
     "newFiles": [
@@ -671,9 +672,9 @@
       },
       {
         "path": "src/tools/analytics.ts",
-        "line": 331,
+        "line": 332,
         "code": "        months: {\n          type: \"number\",\n          description: \"How many months back to include (default 6)\",\n        },",
-        "sourceRef": "67896f3208caee923659f1900c399d87e99c403c"
+        "sourceRef": "bce7d2513783058a8b160b0cbe6ab55299f90991"
       }
     ]
   },

@@ -9,7 +9,7 @@
 - Mục audit: Hướng phát triển 3; loại: `direction`.
 - Ưu tiên: P3; công sức: M; rủi ro sửa: LOW.
 - Phụ thuộc: `005`, `006`.
-- Mốc soạn: `67896f3`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
+- Mốc soạn: `67896f3`, 2026-09-05. Trạng thái thực thi: `DONE`.
 - Độ tin cậy: cao về vị trí cơ hội trong roadmap; nhu cầu người dùng và khả năng
   ERP cần khảo sát, chưa coi là đã chứng minh.
 
@@ -132,13 +132,13 @@ nếu contact linkage chưa xác minh ghi defer phần đó, không bịa schema
 
 ## Tiêu chí hoàn tất
 
-- [ ] Thiết kế đủ rubric, có quyết định và các câu hỏi cần chấp thuận trước
+- [x] Thiết kế đủ rubric, có quyết định và các câu hỏi cần chấp thuận trước
       triển khai.
-- [ ] Review chỉ đọc không còn giả định liên kết hoặc tổng tiền không có chứng
+- [x] Review chỉ đọc không còn giả định liên kết hoặc tổng tiền không có chứng
       cứ.
-- [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
+- [x] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
-- [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/025.md`, cập
+- [x] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/025.md`, cập
       nhật trạng thái ở `plans/README.md`. Không ghi giá trị bí mật.
 
 ## Điều kiện dừng

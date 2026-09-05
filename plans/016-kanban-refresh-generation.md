@@ -10,7 +10,7 @@
 - Ưu tiên: P1; công sức: M; rủi ro sửa: vừa; phối hợp queue và optimistic
   updates.
 - Phụ thuộc: `007`, `009`.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `TODO`.
+- Mốc soạn: `67896f3`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
 - Độ tin cậy: cao qua luồng code; browser cần kiểm.
 
 Refresh bắt đầu trước move có thể kết thúc sau move và ghi đè board mới. Cờ
@@ -73,6 +73,8 @@ Các file được sửa khi thực thi:
 - `src/ui/shared/kanban/refresh-controller.ts` (tạo mới)
 - `src/ui/shared/kanban/refresh-controller_test.ts` (tạo mới)
 - `src/ui/testing/fixtures.ts`
+- `src/ui/testing/host.ts` (điều khiển board/filter/page và deferred response
+  thật cho các ca Browser của 016)
 - `plans/evidence/016/` (tạo mới)
 - `plans/README.md`
 - `plans/evidence/016.md`
@@ -84,9 +86,9 @@ nâng dependency. Định danh, chuỗi lỗi và commit bằng tiếng Anh; ph�
 tiếng Việt có dấu, không dùng ký tự U+2014.
 
 Trước khi sửa, chạy `git status --short`,
-`git diff --stat d2c5305..HEAD -- src/ui/kanban-viewer/src/KanbanViewer.tsx src/ui/shared/kanban/refresh.ts src/ui/shared/kanban/refresh_test.ts src/ui/shared/kanban/refresh-controller.ts src/ui/shared/kanban/refresh-controller_test.ts src/ui/testing/fixtures.ts`
+`git diff --stat d2c5305..HEAD -- src/ui/kanban-viewer/src/KanbanViewer.tsx src/ui/shared/kanban/refresh.ts src/ui/shared/kanban/refresh_test.ts src/ui/shared/kanban/refresh-controller.ts src/ui/shared/kanban/refresh-controller_test.ts src/ui/testing/fixtures.ts src/ui/testing/host.ts`
 và
-`git diff -- src/ui/kanban-viewer/src/KanbanViewer.tsx src/ui/shared/kanban/refresh.ts src/ui/shared/kanban/refresh_test.ts src/ui/shared/kanban/refresh-controller.ts src/ui/shared/kanban/refresh-controller_test.ts src/ui/testing/fixtures.ts`.
+`git diff -- src/ui/kanban-viewer/src/KanbanViewer.tsx src/ui/shared/kanban/refresh.ts src/ui/shared/kanban/refresh_test.ts src/ui/shared/kanban/refresh-controller.ts src/ui/shared/kanban/refresh-controller_test.ts src/ui/testing/fixtures.ts src/ui/testing/host.ts`.
 Bảo toàn thay đổi có sẵn. Nếu phụ thuộc đã thực thi, đối chiếu diff và làm mới
 kế hoạch này theo code mới trước khi sửa; sai khác chưa giải thích được là điều
 kiện dừng.
@@ -197,3 +199,17 @@ ra.
 
 Generation detail và board khác nhau. Mọi mutation mới phải invalidates read
 generation và yêu cầu revalidation qua controller chung.
+
+Đối chiếu main `67896f3208caee923659f1900c399d87e99c403c` sau 006/017: Kanban
+component và refresh helper vẫn bằng source sau 009; hai quote 1131/1228 giữ
+nguyên. Host board A/B đều Task, đổi project nhưng offset hiện cùng 0. Bổ sung
+host.ts vào scope để có điều khiển trang offset 50 và deferred thật, không chỉ
+thêm fixture mà không thể gửi nó. Giữ các scenario date/malformed/detail đã có;
+PR015 còn đang review, cần tích hợp và kiểm lại host trước Browser cuối cùng.
+
+Các callback save/assign/unassign trong cùng Kanban component cũng yêu cầu board
+revalidation sau write. Khi nối controller, giữ identity detail và semantics
+write-success/readback-error của 009; không để callback cũ đổi board mới hoặc
+làm mất refresh. Không đổi tool arguments, quyền hoặc business rules. Phần
+hidden/visible cần Browser thật, không giả document.visibilityState bằng fixture
+rồi gọi đó là chứng cứ Browser. Không thay timer để che race.

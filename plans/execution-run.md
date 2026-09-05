@@ -579,3 +579,33 @@ backlog, GitHub, commit hoặc push.
   riêng; các kỳ hữu hạn phải dùng siteToday và cận Date/Datetime đúng kiểu.
 - Root app vẫn d2c5305; file cá nhân được giữ nguyên. Quyền framework002 và khóa
   graph/npm021 còn chờ xác nhận, không tự phát hành hoặc nâng dependency.
+
+## Tiến độ 2026-09-05, sau 10:56 UTC
+
+- 013 đã merge PR39 tại `bce7d2513783058a8b160b0cbe6ab55299f90991`.
+  CI33960897860 dùng JSR thật, 1338 test đạt ở cả hai lượt; Codex sạch đúng HEAD
+  `9a96817c027fc5f1c4d5f3c4d5f19d1198004c38`. Review độc lập và parent kiểm đủ
+  cửa sổ ngày, ba timezone, giới hạn truy vấn và hồi quy. Root ghi DONE.
+- 025 đã merge PR40 tại `03c22a31206188f0379a1b195efea10d36482343`.
+  CI33961219253 dùng JSR thật, 1314 test đạt; Codex sạch đúng HEAD
+  `5f7a6e487c6a8775314e1d20ebbb15881e9e84a4`. Tích hợp main sau 013 được
+  reviewer và parent kiểm 1338 test đạt. Tree sau merge khớp tree đã kiểm. Root
+  ghi DONE cho thiết kế, tổng 17/25; không coi đó là tính năng đã xây.
+- 016 chuyển IN_PROGRESS, executor đang sửa generation và pending refresh trong
+  Kanban. Phạm vi host được ghi rõ để thêm offset/page và các ca race; phải tích
+  hợp host 015 trước Browser cuối. Host Browser cũ đã dừng.
+- PR37 có ba finding mới trên HEAD07405f6: ledger lỗi làm mất Item thành công,
+  hai ERP Item GET trên cache lạnh, và ledger TTL cũ sau Stock Entry mutation.
+  Executor sửa tại HEAD `9d9fd34e07fd1b67e4c05e3f88d68fbf1163a319`, full 1363
+  test đạt. Đang review độc lập; Browser R2 cũ không là bằng chứng cho UI mới.
+  Chưa push hoặc merge bản sửa này.
+- PR25 đã sửa và trả lời năm finding trước, CI33960898777 đạt đúng HEAD
+  `a3f67c337ce408354bb5245ef921c1f9de248f33`. Codex lại tìm ba lỗ hổng: core
+  approval chưa buộc vào nội dung report bất biến, artifact thêm mới bị bỏ qua
+  và bullet scope không có backtick bị bỏ qua. Chưa coi helper sạch; cần sửa,
+  review và chạy lại CI trên HEAD mới.
+- Quote 014 và 020 được đối chiếu sau 013: dòng 205/213 và 332, cùng nội dung
+  gốc, sourceRef main bce7d25. Không giảm phạm vi hoặc tiêu chí để né drift.
+- Quyền framework002 và khóa graph/npm021 chưa được trả lời. Đã hỏi riêng
+  npm11.19.0 đang cài với graph hiện tại và native JSR lock; không suy quyền tải
+  Node20/22 thành quyền nâng dependency, release hoặc Publish.

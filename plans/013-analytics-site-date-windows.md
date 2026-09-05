@@ -9,7 +9,7 @@
 - Mục audit: 13; loại: `bug`.
 - Ưu tiên: P1; công sức: M; rủi ro sửa: thấp; sửa cận thời gian.
 - Phụ thuộc: `005`, `006`.
-- Mốc soạn: `67896f3`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
+- Mốc soạn: `67896f3`, 2026-09-05. Trạng thái thực thi: `DONE`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 KPI orders dựng local Date rồi toISOString khiến UTC+7 báo khoảng tháng 8 là
@@ -157,12 +157,12 @@ khác host.
 
 ## Tiêu chí hoàn tất
 
-- [ ] Mỗi tool thời gian trong bảng dùng ngày site và bounds đã định nghĩa.
-- [ ] Test ba TZ và toàn bộ gates server đạt.
-- [ ] Không còn new Date(y,m,d).toISOString cho các cửa sổ đã sửa.
-- [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
+- [x] Mỗi tool thời gian trong bảng dùng ngày site và bounds đã định nghĩa.
+- [x] Test ba TZ và toàn bộ gates server đạt.
+- [x] Không còn new Date(y,m,d).toISOString cho các cửa sổ đã sửa.
+- [x] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
-- [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/013.md`, cập
+- [x] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/013.md`, cập
       nhật trạng thái ở `plans/README.md`. Không ghi giá trị bí mật.
 
 ## Điều kiện dừng

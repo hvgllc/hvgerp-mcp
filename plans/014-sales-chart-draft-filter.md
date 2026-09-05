@@ -9,7 +9,7 @@
 - Mục audit: 14; loại: `bug`.
 - Ưu tiên: P1; công sức: S; rủi ro sửa: thấp; lọc cùng business population.
 - Phụ thuộc: `005`, `006`, `013`.
-- Mốc soạn: `67896f3`, 2026-09-05. Trạng thái thực thi: `TODO`.
+- Mốc soạn: `bce7d25`, 2026-09-05. Trạng thái thực thi: `TODO`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 Sales chart có ba nhánh customer/item/status dùng ba quy tắc docstatus khác
@@ -18,7 +18,7 @@ cancelled luôn bị loại; dimension chỉ đổi nhóm tổng hợp, không �
 
 ## Hiện trạng và chứng cứ
 
-`src/tools/analytics.ts:204`:
+`src/tools/analytics.ts:205`:
 
 <!-- evidence: src/tools/analytics.ts -->
 
@@ -28,7 +28,7 @@ cancelled luôn bị loại; dimension chỉ đổi nhóm tổng hợp, không �
         filters.push(["docstatus", "=", 1]); // Submitted only
 ```
 
-`src/tools/analytics.ts:212`:
+`src/tools/analytics.ts:213`:
 
 <!-- evidence: src/tools/analytics.ts -->
 
@@ -180,3 +180,7 @@ docstatus 1 ở child và discovery parent, nên include_drafts phải được 
 nay dùng listAllDocuments/listAllItems với complete-read budget; population
 drafts vẫn khác giữa các nhánh. Giữ các guard mới và chờ 013 DONE trước thực
 thi, không dùng reconciliation để đánh dấu đã sửa.
+
+Đối chiếu sau 013 tại main `bce7d2513783058a8b160b0cbe6ab55299f90991`: quotes
+vẫn nguyên byte, chuyển sang dòng 205/213 do import helper ngày. Các phụ thuộc
+005/006/013 đã DONE; chưa triển khai draft policy trong 014.

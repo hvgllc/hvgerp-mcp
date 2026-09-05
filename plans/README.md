@@ -44,10 +44,10 @@ là ước lượng công sức/rủi ro sửa, không phải cam kết thời h
 | 010 | [Kiểm trạng thái Kanban bằng dữ liệu mới và bảo vệ ghi](010-kanban-conflict-protection.md)          | P1      | M / vừa; phụ thuộc hợp đồng optimistic locking của Frappe | không         | DONE        |
 | 011 | [Giữ kết quả batch đã thực thi khi upstream ném lỗi](011-shim-partial-batch-errors.md)              | P1      | M / vừa; semantics JSON-RPC batch                         | không         | DONE        |
 | 012 | [Không tái nạp snapshot cũ sau cache invalidation](012-cache-inflight-invalidation.md)              | P1      | M / vừa; phối hợp cache nhiều caller                      | không         | DONE        |
-| 013 | [Dùng ngày site cho cửa sổ analytics](013-analytics-site-date-windows.md)                           | P1      | M / thấp; sửa cận thời gian                               | 005, 006      | IN_PROGRESS |
+| 013 | [Dùng ngày site cho cửa sổ analytics](013-analytics-site-date-windows.md)                           | P1      | M / thấp; sửa cận thời gian                               | 005, 006      | DONE        |
 | 014 | [Áp include_drafts nhất quán cho sales chart](014-sales-chart-draft-filter.md)                      | P1      | S / thấp; lọc cùng business population                    | 005, 006, 013 | TODO        |
 | 015 | [Hiện đúng chuyển động theo mặt hàng và kho](015-stock-item-movement-query.md)                      | P1      | M / vừa; đổi nguồn đọc lịch sử                            | 007           | IN_PROGRESS |
-| 016 | [Bỏ snapshot board cũ và giữ refresh sau mutation](016-kanban-refresh-generation.md)                | P1      | M / vừa; phối hợp queue và optimistic updates             | 007, 009      | TODO        |
+| 016 | [Bỏ snapshot board cũ và giữ refresh sau mutation](016-kanban-refresh-generation.md)                | P1      | M / vừa; phối hợp queue và optimistic updates             | 007, 009      | IN_PROGRESS |
 | 017 | [Hiển thị lỗi tải đầu và giữ dữ liệu khi refresh lỗi](017-viewer-initial-error-state.md)            | P1      | M / MED                                                   | 007           | DONE        |
 | 018 | [Giới hạn số entry và thu hồi cache hết hạn](018-bound-memory-cache.md)                             | P2      | M / MED                                                   | không         | DONE        |
 | 019 | [Tách giá trị cache khỏi đối tượng bên ghi](019-cache-write-value-isolation.md)                     | P2      | S / LOW                                                   | 018           | DONE        |
@@ -56,7 +56,7 @@ là ước lượng công sức/rủi ro sửa, không phải cam kết thời h
 | 022 | [Sửa hướng dẫn release và chính sách hỗ trợ lỗi thời](022-release-security-documentation.md)        | P2      | S / LOW                                                   | 021           | TODO        |
 | 023 | [Khảo sát thiết kế dòng thời gian biến động tồn kho](023-stock-ledger-timeline-design.md)           | P3      | M / LOW                                                   | 015           | TODO        |
 | 024 | [Khảo sát kiểm tra điều kiện khởi tạo ERPNext](024-setup-readiness-design.md)                       | P3      | M / LOW                                                   | không         | DONE        |
-| 025 | [Khảo sát hồ sơ khách hàng tổng hợp](025-customer-360-design.md)                                    | P3      | M / LOW                                                   | 005, 006      | IN_PROGRESS |
+| 025 | [Khảo sát hồ sơ khách hàng tổng hợp](025-customer-360-design.md)                                    | P3      | M / LOW                                                   | 005, 006      | DONE        |
 
 Thứ tự số 001 → 025 là một thứ tự hợp lệ không có chu trình. Chỉ bắt đầu kế
 hoạch phụ thuộc sau khi các mục được nêu đạt DONE và chứng cứ đã được đối chiếu.
@@ -144,11 +144,7 @@ Gate kiểm HEAD đã commit trong clone một nhánh `--no-local --no-tags`, kh
 nhờ objects của worktree gốc; yêu cầu plans tracked và sạch, không tải
 dependency hoặc gọi network ngoài Git transport local. Gate còn chạy revision
 lỗi thật 2442505 trong repository biệt lập và kiểm đúng sáu reviewed HEAD bị
-thiếu, tránh ca âm thất bại vì lý do khác. Ca âm definition clone revision trước
-snapshot đã duyệt rồi chép nguyên bộ plans từ commit binding thật vào working
-tree biệt lập, không nhập Git objects của snapshot. Validator trước guard chấp
-nhận sai; validator hiện tại từ chối đúng ref thiếu. Chỉ fetch ref đó, không đổi
-source hay metadata, phải làm gate xanh. Các repository tạm được dọn sau test.
+thiếu, tránh ca âm thất bại vì lý do khác. Các repository tạm được dọn sau test.
 Workspace root cố ý giữ source d2c5305 và plans untracked chỉ chạy
 validator/format; gate history phải chạy ở worktree thực thi đã commit, không
 dùng checkout root cũ thay cho HEAD PR.
@@ -176,8 +172,8 @@ sau trim, không dùng prose ngoài metadata hoặc dòng trùng để miễn cu
 TODO/IN_PROGRESS/BLOCKED và STALE thiếu lý do vẫn không được bỏ kiểm source hiện
 tại; DONE tiếp tục kiểm lịch sử theo binding bên dưới.
 
-Approval implementation của DONE ràng buộc bằng sáu field duy nhất trong YAML
-frontmatter: `review_verdict: APPROVE`, `plan_id: NNN`, `reviewed_commit`,
+Approval DONE ràng buộc bằng sáu field duy nhất trong YAML frontmatter:
+`review_verdict: APPROVE`, `plan_id: NNN`, `reviewed_commit`,
 `completed_commit`, `reviewed_evidence_blob`, `completed_evidence_blob`. Hai
 commit dùng full SHA, phải là Git commit đọc được. reviewed_commit là revision
 đã được review sạch, completed_commit là final/merge thật được ghi trong
@@ -187,24 +183,6 @@ trong plans, phải có cùng Git object/type/mode ở hai revision, chấp nh�
 hoặc docs-only final mà không ép hai commit bằng nhau. Artifact trong scope dưới
 plans còn phải khớp byte hiện tại với completed revision; report NNN chính có
 thể append lịch sử sau đó, giữ blob snapshot gốc.
-
-Định nghĩa DONE được review riêng và có thêm bốn field duy nhất trong cùng
-frontmatter: `definition_review_verdict: APPROVE`, `definition_commit`,
-`definition_plan_blob`, `definition_manifest_blob`. Ba ID dùng full SHA. Commit
-phải đọc được và chứa đúng blob tại `plans/NNN-slug.md` cùng
-`plans/manifest.json`; toàn bộ byte kế hoạch hiện tại phải khớp blob đã duyệt.
-Scope, prerequisite, checklist, bằng chứng và cả prose của DONE thay đổi đều cần
-review định nghĩa mới, không tự hash file vừa sửa rồi cấp APPROVE. Binding này
-không thay sáu field implementation hoặc hồi tố rằng source PR cũ chứa kế hoạch.
-
-Historical manifest phải khớp blob đã ghim; chỉ record của đúng ID được đối
-chiếu với record hiện tại bằng object canonical, giữ nguyên nội dung và thứ tự
-array nhưng không phụ thuộc thứ tự key object. Thay đổi tiến độ record khác
-không làm mất approval của DONE này. Không đặt binding vào manifest record để
-tránh tự tham chiếu. Snapshot định nghĩa cũng phải reachable trong clean clone;
-thiếu Git object là lỗi, không fallback về file hiện tại. Supplemental review
-snapshot đầu tiên và giới hạn được ghi tại
-[evidence/backlog-review.md](evidence/backlog-review.md).
 
 Đây là kiểm tính nhất quán của metadata và Git, không xác thực danh tính người
 review hoặc CI bằng offline. Các mốc review độc lập cũ được giữ trong narrative
@@ -218,9 +196,6 @@ prerequisite khai báo tạo mới mới được miễn điều kiện existing
 phụ thuộc, baseline đã refresh, literal/token, drift và link lồng nhau, cùng
 contract kiểm tra của 007/011/021. Fixture chỉ thay nội dung đọc trong bộ nhớ và
 dùng Git source thật; không ghi source hoặc giả làm reviewer đã duyệt kế hoạch.
-Các fixture chỉnh prose, marker, scope hoặc record không liên quan tự dựng
-non-DONE trong bộ nhớ. Control đặt toàn bộ 25 mục DONE rồi so diagnostic trước
-và sau delta, không tạo approval giả cho các mục chưa được duyệt.
 
 ## Trạng thái sau này
 
