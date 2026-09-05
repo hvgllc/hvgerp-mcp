@@ -19,7 +19,11 @@ tự cam kết hỗ trợ phiên bản mới ngoài chính sách hiện có.
 
 ## Hiện trạng và chứng cứ
 
-`CONTRIBUTING.md:78`:
+Chứng cứ CONTRIBUTING được đối chiếu lại sau merge 007 tại `0cf6a69`: chỉ lệch
+vị trí dòng do thêm hướng dẫn typecheck, nội dung lỗi release vẫn còn. Record
+này dùng sourceRef mới; các chứng cứ khác giữ baseline riêng đã ghi.
+
+`CONTRIBUTING.md:81`:
 
 <!-- evidence: CONTRIBUTING.md -->
 

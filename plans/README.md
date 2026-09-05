@@ -38,7 +38,7 @@ là ước lượng công sức/rủi ro sửa, không phải cam kết thời h
 | 004 | [Áp timeout cho toàn bộ phản hồi ERPNext](004-response-body-timeout.md)                             | P1      | S / thấp; giữ chính sách không retry write                | không         | DONE     |
 | 005 | [Tính analytics trong company và đồng tiền xác định](005-analytics-currency-context.md)             | P1      | L / vừa; thay ý nghĩa số tiền đang hiển thị sai           | không         | TODO     |
 | 006 | [Tổng hợp đủ dữ liệu trước khi tạo KPI và top N](006-complete-analytics-aggregates.md)              | P1      | L / vừa; lượng truy vấn và ngữ nghĩa tổng                 | 005           | TODO     |
-| 007 | [Thiết lập typecheck thực cho mã browser](007-browser-typecheck-gate.md)                            | P1      | M / thấp; không nới strict                                | không         | TODO     |
+| 007 | [Thiết lập typecheck thực cho mã browser](007-browser-typecheck-gate.md)                            | P1      | M / thấp; không nới strict                                | không         | DONE     |
 | 008 | [Xuất CSV đúng cấu trúc và giữ văn bản là văn bản](008-safe-csv-export.md)                          | P1      | S / thấp; cần giữ kiểu số                                 | 007           | TODO     |
 | 009 | [Chỉ áp kết quả bất đồng bộ vào đúng phiên mở thẻ](009-kanban-detail-request-identity.md)           | P1      | M / vừa; không hủy mutation đã gửi                        | 007           | TODO     |
 | 010 | [Kiểm trạng thái Kanban bằng dữ liệu mới và bảo vệ ghi](010-kanban-conflict-protection.md)          | P1      | M / vừa; phụ thuộc hợp đồng optimistic locking của Frappe | không         | TODO     |

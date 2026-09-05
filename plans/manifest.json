@@ -722,10 +722,10 @@
     "evidence": [
       {
         "path": "CONTRIBUTING.md",
-        "line": 78,
+        "line": 81,
         "lang": "text",
         "code": "1. Update the version in `deno.json` **and** `server.ts` (it lives in both),\n   plus `CHANGELOG.md`.",
-        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
+        "sourceRef": "0cf6a69463fef96f95512d36dda92ec2ad286f22"
       },
       {
         "path": "src/version.ts",

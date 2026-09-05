@@ -1,5 +1,22 @@
 # Nhật ký thực thi improve
 
+## Cập nhật tích hợp 007
+
+- 007 DONE: PR #27 MERGED lúc 2026-09-05T05:14:30Z tại 0cf6a69. CI 33946387814
+  terminal success, 847/0/4 và release preflight JSR thật; Codex clean_comment
+  5549564964 đúng HEAD 1aae3db, không còn finding hoặc thread. Chi tiết và URL
+  nằm ở [evidence/007.md](evidence/007.md).
+- Nhánh backlog merge main 0cf6a69 qua dfedde0, source chỉ nhận từ commit đã
+  merge. Không cập nhật source workspace chính.
+- Validator sau merge báo drift 007 và dòng CONTRIBUTING của 022. 007 giữ
+  sourceRef lịch sử khi DONE; 022 chỉ làm mới vị trí 78 thành 81, code giữ
+  nguyên và sourceRef đặt 0cf6a69. Không làm mới baseline DONE khác.
+- Snapshot nhánh backlog: 5 DONE, 1 BLOCKED, 19 TODO. 005 vẫn TODO trong nhánh
+  này, không tuyên bố hoàn tất; root có 005 IN_PROGRESS do executor riêng đang
+  làm. Không ghi đè ghi chú 002/005 ở root trong lượt tích hợp này.
+
+Các mục bên dưới lưu các lượt cập nhật trước, không thay trạng thái mới nhất.
+
 ## Phạm vi được chấp thuận
 
 - Thực thi 25 kế hoạch bằng executor; 023-025 chỉ tạo tài liệu thiết kế.

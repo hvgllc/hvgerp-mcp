@@ -9,7 +9,7 @@
 - Mục audit: 7; loại: `tests`.
 - Ưu tiên: P1; công sức: M; rủi ro sửa: thấp; không nới strict.
 - Phụ thuộc: không.
-- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `TODO`.
+- Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `DONE`.
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 deno check chỉ đi qua server entrypoint; Vite transpile không chứng minh type
@@ -203,14 +203,14 @@ browser handshake và dữ liệu fixture hiện trong viewer thật.
 
 ## Tiêu chí hoàn tất
 
-- [ ] npm --prefix src/ui run typecheck exit 0 và phủ đủ bảy viewer.
-- [ ] Không giảm kiểm tra bằng xóa tests, nới strict hoặc bỏ production module.
-- [ ] UI/Node build và tests đạt; evidence ghi danh sách entrypoint thực tế.
-- [ ] Host local nạp được 7 viewer build, có trace và các scenario
+- [x] npm --prefix src/ui run typecheck exit 0 và phủ đủ bảy viewer.
+- [x] Không giảm kiểm tra bằng xóa tests, nới strict hoặc bỏ production module.
+- [x] UI/Node build và tests đạt; evidence ghi danh sách entrypoint thực tế.
+- [x] Host local nạp được 7 viewer build, có trace và các scenario
       CSV/race/error; không ship vào bản phát hành.
-- [ ] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
+- [x] Đã tự đọc diff; `git diff --check` đạt; mọi thay đổi thuộc phạm vi hoặc là
       hiện vật build bị Git bỏ qua từ lệnh xác minh được phép.
-- [ ] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/007.md`, cập
+- [x] Lưu lệnh, kết quả và giới hạn thực tế trong `plans/evidence/007.md`, cập
       nhật trạng thái ở `plans/README.md`. Không ghi giá trị bí mật.
 
 ## Điều kiện dừng

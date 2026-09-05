@@ -110,3 +110,25 @@ trong đúng worktree backlog, không tải hoặc nâng dependency:
 - Không chạy build/test ứng dụng trong lúc parent build UI. Parent tiếp tục gate
   Deno bằng config local và --sloppy-imports --frozen; CI JSR thật vẫn bắt buộc
   trên HEAD cuối.
+
+## Tích hợp 007 đã merge
+
+Nhận source main `0cf6a69463fef96f95512d36dda92ec2ad286f22` bằng merge
+`dfedde02cc4f12f52cb53e5b15482298566d02e5`. Không sửa source ứng dụng ngoài
+merge hoặc đồng bộ source sang workspace root. Review/CI/merge proof của 007
+được bổ sung tại [007.md](007.md), giữ nguyên toàn bộ bằng chứng browser.
+
+Validator ngay sau merge exit 1 với đúng hai diagnostic: 007 tsconfig không còn
+ở baseline TODO, và 022 CONTRIBUTING không còn đúng dòng 78. Sau khi 007 DONE từ
+bằng chứng thật, record lịch sử của 007 vẫn giữ ref d2c5305. Đọc lại
+CONTRIBUTING xác nhận nội dung lỗi release không đổi, chỉ chuyển sang dòng 81;
+record 022 cập nhật riêng sourceRef thành 0cf6a69, line 81 và citation tương
+ứng. Không thay hoặc thu hẹp tiêu chí 022.
+
+Sau reconcile: validator 25/25, test validator 30/30, format 43 file, lint hai
+script với --no-config và diff check đều exit 0. Diff ngoài plans so với main
+0cf6a69 rỗng. Gate ứng dụng tích hợp cuối do parent điều phối tiếp; không dùng
+test validator thay browser, Deno hoặc CI.
+
+005 không được đánh DONE. Không ghi đè trạng thái IN_PROGRESS hoặc ghi chú
+002/005 của parent ở root. Nhánh backlog chưa được push trong lượt này.
