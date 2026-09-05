@@ -37,6 +37,7 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
   let lastStarted = 0;
   let retryAt = 0;
   const mutations = new Set<symbol>();
+  const detailQueues = new Map<string, Promise<void>>();
 
   function update(next: KanbanBoardData) {
     board = next;
@@ -112,6 +113,21 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
     if (options.ignoreInterval) retryAt = 0;
     return drain();
   }
+  function beginMutation(): BoardMutationToken {
+    generation++;
+    const token = { session, id: Symbol() };
+    mutations.add(token.id);
+    pending = true;
+    force = true;
+    return token;
+  }
+  function endMutation(token: BoardMutationToken) {
+    if (!mutations.delete(token.id)) return;
+    pending = true;
+    force = true;
+    retryAt = 0;
+    void drain();
+  }
   return {
     update,
     request,
@@ -131,24 +147,36 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
       force = false;
       retryAt = 0;
     },
-    beginMutation(): BoardMutationToken {
-      generation++;
-      const token = { session, id: Symbol() };
-      mutations.add(token.id);
-      pending = true;
-      force = true;
-      return token;
+    beginMutation,
+    runDetailMutation<T>(
+      doctype: string,
+      cardId: string,
+      operation: (token: BoardMutationToken) => Promise<T>,
+    ): Promise<T> {
+      // Giữ token ngay lúc enqueue; chỉ tuần tự hóa detail cùng document, không khóa move.
+      const token = beginMutation();
+      const key = JSON.stringify([doctype, cardId]);
+      const previous = detailQueues.get(key);
+      const execute = async () => {
+        try {
+          return await operation(token);
+        } finally {
+          endMutation(token);
+        }
+      };
+      const result = previous ? previous.then(execute) : execute();
+      // Chain nội bộ luôn settle để lỗi một write không chặn write đã yêu cầu sau nó.
+      const settled = result.then(() => {}, () => {});
+      detailQueues.set(key, settled);
+      void settled.then(() => {
+        if (detailQueues.get(key) === settled) detailQueues.delete(key);
+      });
+      return result;
     },
     isCurrent(token: BoardMutationToken) {
       return token.session === session;
     },
-    endMutation(token: BoardMutationToken) {
-      if (!mutations.delete(token.id)) return;
-      pending = true;
-      force = true;
-      retryAt = 0;
-      void drain();
-    },
+    endMutation,
     drain,
     get board() {
       return board;

@@ -436,3 +436,89 @@ Deno.test("board controller rejects wrong response scope and keeps last good boa
   assertEquals(f.calls.length, 1);
   assertEquals(f.controller.pending, true);
 });
+
+for (const failed of [false, true]) {
+  Deno.test(`detail mutation queue releases its chain after failure=${failed}`, async () => {
+    const f = fixture();
+    const first = deferred<string>();
+    const second = deferred<string>();
+    const started: string[] = [];
+    const run = (label: string, done: Promise<string>) =>
+      f.controller.runDetailMutation("Task", "A", () => {
+        started.push(label);
+        return done;
+      });
+    const one = run("first", first.promise).catch(() => "failed");
+    const two = run("second", second.promise);
+    assertEquals(started, ["first"]);
+    if (failed) first.reject(new Error("Forbidden"));
+    else first.resolve("first");
+    assertEquals(await one, failed ? "failed" : "first");
+    await Promise.resolve();
+    await Promise.resolve();
+    assertEquals(started, ["first", "second"]);
+    assertEquals(f.calls.length, 0);
+    second.resolve("second");
+    assertEquals(await two, "second");
+    await Promise.resolve();
+    await Promise.resolve();
+    assertEquals(f.calls.length, 1);
+    f.calls[0].resolve(f.rendered);
+    await Promise.resolve();
+    const three = run("third", Promise.resolve("third"));
+    // Không còn chain trong map: callback mới bắt đầu ngay, không đợi microtask cũ.
+    assertEquals(started, ["first", "second", "third"]);
+    assertEquals(await three, "third");
+    f.calls.at(-1)!.resolve(f.rendered);
+    await Promise.resolve();
+  });
+}
+
+Deno.test("detail queue keys include doctype and card while move tokens remain current", async () => {
+  const f = fixture();
+  const done = deferred<void>();
+  const started: string[] = [];
+  const one = f.controller.runDetailMutation("Task", "A", (token) => {
+    started.push("Task A");
+    assertEquals(f.controller.isCurrent(token), true);
+    return done.promise;
+  });
+  const move = f.move();
+  const two = f.controller.runDetailMutation("Task", "B", () => {
+    started.push("Task B");
+    return done.promise;
+  });
+  const three = f.controller.runDetailMutation("Issue", "A", () => {
+    started.push("Issue A");
+    return done.promise;
+  });
+  assertEquals(started, ["Task A", "Task B", "Issue A"]);
+  assertEquals(f.controller.isCurrent(move.token), true);
+  f.succeed(move);
+  assertEquals(f.rendered.cards[0].columnId, "Working");
+  done.resolve();
+  await Promise.all([one, two, three]);
+  assertEquals(f.calls.length, 1);
+  f.calls[0].resolve(f.rendered);
+  await Promise.resolve();
+});
+
+Deno.test("detail queue sends an old-session queued write without marking it current", async () => {
+  const f = fixture();
+  const done = deferred<void>();
+  let queuedCurrent: boolean | undefined;
+  const one = f.controller.runDetailMutation("Task", "A", () => done.promise);
+  const two = f.controller.runDetailMutation("Task", "A", (token) => {
+    queuedCurrent = f.controller.isCurrent(token);
+    return Promise.resolve();
+  });
+  f.controller.receiveBoard({ ...boardFixture(), title: "Board B" });
+  assertEquals(queuedCurrent, undefined);
+  done.resolve();
+  await Promise.all([one, two]);
+  assertEquals(queuedCurrent, false);
+  assertEquals(f.rendered.title, "Board B");
+  assertEquals(f.calls.length, 1);
+  f.calls[0].resolve(f.rendered);
+  await Promise.resolve();
+});

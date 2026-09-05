@@ -1461,50 +1461,51 @@ export function KanbanViewer() {
       }
     }
 
-    const mutation = refreshController.beginMutation();
-    try {
-      const result = await app.callServerTool({
-        name: "erpnext_doc_update",
-        arguments: { doctype, name, data: coerced },
-      }, { timeout: TOOL_CALL_TIMEOUT_MS });
-
-      if (result.isError) {
-        throw new Error(extractToolError(result));
-      }
-
-      let detailRefreshed = false;
-      try {
-        const refreshResult = await app.callServerTool({
-          name: "erpnext_doc_get",
-          arguments: { doctype, name },
+    return refreshController.runDetailMutation(
+      doctype,
+      name,
+      async (mutation) => {
+        const result = await app.callServerTool({
+          name: "erpnext_doc_update",
+          arguments: { doctype, name, data: coerced },
         }, { timeout: TOOL_CALL_TIMEOUT_MS });
-        if (refreshResult.isError) {
-          throw new Error(extractToolError(refreshResult));
+
+        if (result.isError) {
+          throw new Error(extractToolError(result));
         }
-        const text = extractTextContent(refreshResult);
-        if (!text) throw new Error("No detail payload returned");
-        if (refreshController.isCurrent(mutation)) {
-          hydrateDetail(
-            session,
-            unwrapDoc(JSON.parse(text) as Record<string, unknown>),
-          );
+
+        let detailRefreshed = false;
+        try {
+          const refreshResult = await app.callServerTool({
+            name: "erpnext_doc_get",
+            arguments: { doctype, name },
+          }, { timeout: TOOL_CALL_TIMEOUT_MS });
+          if (refreshResult.isError) {
+            throw new Error(extractToolError(refreshResult));
+          }
+          const text = extractTextContent(refreshResult);
+          if (!text) throw new Error("No detail payload returned");
+          if (refreshController.isCurrent(mutation)) {
+            hydrateDetail(
+              session,
+              unwrapDoc(JSON.parse(text) as Record<string, unknown>),
+            );
+          }
+          detailRefreshed = true;
+        } catch (error) {
+          // Write đã thành công; lỗi đọc lại không phải lỗi lưu hay yêu cầu rollback.
+          if (refreshController.isCurrent(mutation)) {
+            setDetailError(
+              session,
+              error instanceof Error
+                ? error.message
+                : "Failed to refresh saved detail",
+            );
+          }
         }
-        detailRefreshed = true;
-      } catch (error) {
-        // Write đã thành công; lỗi đọc lại không phải lỗi lưu hay yêu cầu rollback.
-        if (refreshController.isCurrent(mutation)) {
-          setDetailError(
-            session,
-            error instanceof Error
-              ? error.message
-              : "Failed to refresh saved detail",
-          );
-        }
-      }
-      return { saved: true, detailRefreshed };
-    } finally {
-      refreshController.endMutation(mutation);
-    }
+        return { saved: true, detailRefreshed };
+      },
+    );
   }
 
   async function handleLoadAssignableUsers(): Promise<
@@ -1539,46 +1540,47 @@ export function KanbanViewer() {
     if (!app.getHostCapabilities()?.serverTools) {
       throw new Error("Host does not support proxied server tool calls");
     }
-    const mutation = refreshController.beginMutation();
-    try {
-      const result = await app.callServerTool({
-        name: "erpnext_doc_assign",
-        arguments: { doctype, name, assign_to: assignTo },
-      }, { timeout: TOOL_CALL_TIMEOUT_MS });
-      if (result.isError) {
-        throw new Error(extractToolError(result));
-      }
-
-      // Kết quả assign đã chứa document mới, không cần đọc thêm.
-      // Lỗi hydrate không được ngăn refresh board hoặc báo write đã thành công là lỗi.
-      const text = extractTextContent(result);
-      if (text) {
-        try {
-          const payload = JSON.parse(text) as Record<string, unknown>;
-          const doc = unwrapDoc(payload);
-          // Frappe v16 omits _assign from single-doc GET responses; the
-          // assignment result is authoritative, so synthesize it.
-          if (!doc._assign) {
-            const assignment = payload.assignment as
-              | { assignees?: string[] }
-              | undefined;
-            if (assignment?.assignees?.length) {
-              doc._assign = JSON.stringify(assignment.assignees);
-            }
-          }
-          if (refreshController.isCurrent(mutation)) {
-            hydrateDetail(session, doc);
-          }
-        } catch (error) {
-          console.warn(
-            "[handleAssignDetail] Could not hydrate the assigned doc:",
-            error,
-          );
+    return refreshController.runDetailMutation(
+      doctype,
+      name,
+      async (mutation) => {
+        const result = await app.callServerTool({
+          name: "erpnext_doc_assign",
+          arguments: { doctype, name, assign_to: assignTo },
+        }, { timeout: TOOL_CALL_TIMEOUT_MS });
+        if (result.isError) {
+          throw new Error(extractToolError(result));
         }
-      }
-    } finally {
-      refreshController.endMutation(mutation);
-    }
+
+        // Kết quả assign đã chứa document mới, không cần đọc thêm.
+        // Lỗi hydrate không được ngăn refresh board hoặc báo write đã thành công là lỗi.
+        const text = extractTextContent(result);
+        if (text) {
+          try {
+            const payload = JSON.parse(text) as Record<string, unknown>;
+            const doc = unwrapDoc(payload);
+            // Frappe v16 omits _assign from single-doc GET responses; the
+            // assignment result is authoritative, so synthesize it.
+            if (!doc._assign) {
+              const assignment = payload.assignment as
+                | { assignees?: string[] }
+                | undefined;
+              if (assignment?.assignees?.length) {
+                doc._assign = JSON.stringify(assignment.assignees);
+              }
+            }
+            if (refreshController.isCurrent(mutation)) {
+              hydrateDetail(session, doc);
+            }
+          } catch (error) {
+            console.warn(
+              "[handleAssignDetail] Could not hydrate the assigned doc:",
+              error,
+            );
+          }
+        }
+      },
+    );
   }
 
   async function handleUnassignDetail(
@@ -1589,46 +1591,47 @@ export function KanbanViewer() {
     if (!app.getHostCapabilities()?.serverTools) {
       throw new Error("Host does not support proxied server tool calls");
     }
-    const mutation = refreshController.beginMutation();
-    try {
-      const result = await app.callServerTool({
-        name: "erpnext_doc_unassign",
-        arguments: { doctype, name, assign_to: assignee },
-      }, { timeout: TOOL_CALL_TIMEOUT_MS });
-      if (result.isError) {
-        throw new Error(extractToolError(result));
-      }
+    return refreshController.runDetailMutation(
+      doctype,
+      name,
+      async (mutation) => {
+        const result = await app.callServerTool({
+          name: "erpnext_doc_unassign",
+          arguments: { doctype, name, assign_to: assignee },
+        }, { timeout: TOOL_CALL_TIMEOUT_MS });
+        if (result.isError) {
+          throw new Error(extractToolError(result));
+        }
 
-      const text = extractTextContent(result);
-      if (text) {
-        try {
-          const payload = JSON.parse(text) as Record<string, unknown>;
-          const doc = unwrapDoc(payload);
-          // Frappe v16 omits _assign from single-doc GET responses; rebuild it
-          // from the authoritative remaining-assignment list (may be empty).
-          if (!doc._assign) {
-            const assignment = payload.assignment as
-              | { remaining?: Array<{ owner?: string }> }
-              | undefined;
-            doc._assign = JSON.stringify(
-              (assignment?.remaining ?? [])
-                .map((todo) => todo.owner)
-                .filter(Boolean),
+        const text = extractTextContent(result);
+        if (text) {
+          try {
+            const payload = JSON.parse(text) as Record<string, unknown>;
+            const doc = unwrapDoc(payload);
+            // Frappe v16 omits _assign from single-doc GET responses; rebuild it
+            // from the authoritative remaining-assignment list (may be empty).
+            if (!doc._assign) {
+              const assignment = payload.assignment as
+                | { remaining?: Array<{ owner?: string }> }
+                | undefined;
+              doc._assign = JSON.stringify(
+                (assignment?.remaining ?? [])
+                  .map((todo) => todo.owner)
+                  .filter(Boolean),
+              );
+            }
+            if (refreshController.isCurrent(mutation)) {
+              hydrateDetail(session, doc);
+            }
+          } catch (error) {
+            console.warn(
+              "[handleUnassignDetail] Could not hydrate the doc:",
+              error,
             );
           }
-          if (refreshController.isCurrent(mutation)) {
-            hydrateDetail(session, doc);
-          }
-        } catch (error) {
-          console.warn(
-            "[handleUnassignDetail] Could not hydrate the doc:",
-            error,
-          );
         }
-      }
-    } finally {
-      refreshController.endMutation(mutation);
-    }
+      },
+    );
   }
 
   if (state.loading) {

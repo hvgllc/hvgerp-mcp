@@ -342,6 +342,233 @@ for (const change of ["project", "offset"]) {
   });
 }
 
+const detailTools = {
+  Save: "erpnext_doc_update",
+  Assign: "erpnext_doc_assign",
+  Unassign: "erpnext_doc_unassign",
+};
+
+async function openDetail(h, index = 0) {
+  const card = h.render().state.board.cards[index];
+  h.render().handleCardTitleClick(card);
+  h.calls.at(-1).resolve(payload({ name: card.id, subject: "Initial" }));
+  await tick();
+  return h.render().state.detail.session;
+}
+
+function startDetailWrite(h, session, operation, subject) {
+  return h.render()[`handle${operation}Detail`](
+    session,
+    operation === "Save" ? { subject } : "local@example.test",
+  ).then((value) => ({ value }), (error) => ({ error }));
+}
+
+async function finishDetailWrite(h, operation, call, subject, failure) {
+  assert.equal(call.request.name, detailTools[operation]);
+  if (failure === "write") {
+    call.reject(new Error("Forbidden " + subject));
+  } else {
+    const doc = {
+      name: call.request.arguments.name,
+      subject,
+      _assign: operation === "Unassign" ? "[]" : '["local@example.test"]',
+    };
+    const before = h.calls.length;
+    call.resolve(payload(doc));
+    await tick();
+    if (operation === "Save") {
+      const read = h.calls.slice(before).find((candidate) =>
+        candidate.request.name === "erpnext_doc_get"
+      );
+      assert.ok(read);
+      if (failure === "readback") read.reject(new Error("Readback failed"));
+      else read.resolve(payload(doc));
+    }
+  }
+  await tick();
+}
+
+for (const first of Object.keys(detailTools)) {
+  for (
+    const second of Object.keys(detailTools).filter((name) => name !== first)
+  ) {
+    test(`component overlapping detail ${first} then ${second} cannot hydrate an older response last`, async () => {
+      const h = harness();
+      const session = await openDetail(h);
+      const firstWrite = startDetailWrite(h, session, first, "Older");
+      const firstCall = h.calls.at(-1);
+      const secondWrite = startDetailWrite(h, session, second, "Latest");
+      if (h.calls.length === 3) {
+        // Source cũ gửi song song: trả snapshot mới trước, snapshot cũ sau.
+        await finishDetailWrite(h, second, h.calls[2], "Latest");
+        await secondWrite;
+        assert.equal(h.render().state.detail.cardDetail.subject, "Latest");
+        await finishDetailWrite(h, first, firstCall, "Older");
+      } else {
+        assert.equal(h.calls.length, 2);
+        await finishDetailWrite(h, first, firstCall, "Older");
+        await finishDetailWrite(h, second, h.calls.at(-1), "Latest");
+      }
+      await Promise.all([firstWrite, secondWrite]);
+      assert.equal(h.render().state.detail.cardDetail.subject, "Latest");
+      assert.equal(h.calls.at(-1).request.name, "erpnext_kanban_get_board");
+      h.calls.at(-1).resolve(payload(h.render().state.board));
+      await tick();
+    });
+    for (const failure of ["first-write", "second-write"]) {
+      test(`component overlapping detail ${first}/${second} serializes and survives ${failure}`, async () => {
+        const h = harness();
+        const session = await openDetail(h);
+        const firstWrite = startDetailWrite(h, session, first, "Older");
+        const firstCall = h.calls.at(-1);
+        const secondWrite = startDetailWrite(h, session, second, "Latest");
+        assert.equal(h.calls.length, 2);
+        await finishDetailWrite(
+          h,
+          first,
+          firstCall,
+          "Older",
+          failure === "first-write" ? "write" : undefined,
+        );
+        const firstResult = await firstWrite;
+        assert.equal(Boolean(firstResult.error), failure === "first-write");
+        assert.equal(h.calls.at(-1).request.name, detailTools[second]);
+        assert.equal(
+          h.calls.some((call) =>
+            call.request.name === "erpnext_kanban_get_board"
+          ),
+          false,
+        );
+        await finishDetailWrite(
+          h,
+          second,
+          h.calls.at(-1),
+          "Latest",
+          failure === "second-write" ? "write" : undefined,
+        );
+        const secondResult = await secondWrite;
+        assert.equal(Boolean(secondResult.error), failure === "second-write");
+        assert.equal(
+          h.render().state.detail.cardDetail.subject,
+          failure === "first-write" ? "Latest" : "Older",
+        );
+        assert.equal(h.calls.at(-1).request.name, "erpnext_kanban_get_board");
+        h.calls.at(-1).resolve(payload(h.render().state.board));
+        await tick();
+      });
+    }
+  }
+}
+
+for (const operation of ["Assign", "Unassign"]) {
+  test(`component detail queue survives Save readback failure before ${operation}`, async () => {
+    const h = harness();
+    const session = await openDetail(h);
+    const save = startDetailWrite(h, session, "Save", "Saved");
+    const writing = startDetailWrite(h, session, operation, "Latest");
+    assert.equal(h.calls.length, 2);
+    h.calls[1].resolve(payload({ name: "TASK-A-1", subject: "Saved" }));
+    await tick();
+    assert.equal(h.calls.length, 3);
+    assert.equal(h.calls[2].request.name, "erpnext_doc_get");
+    h.calls[2].reject(new Error("Readback failed"));
+    const result = await save;
+    assert.equal(result.value.saved, true);
+    assert.equal(result.value.detailRefreshed, false);
+    await tick();
+    await finishDetailWrite(h, operation, h.calls.at(-1), "Latest");
+    await writing;
+    assert.equal(h.render().state.detail.cardDetail.subject, "Latest");
+    assert.equal(h.render().state.detail.detailError, null);
+    h.calls.at(-1).resolve(payload(h.render().state.board));
+    await tick();
+  });
+}
+
+test("component detail queue continues after an isError tool response", async () => {
+  const h = harness();
+  const session = await openDetail(h);
+  const assign = startDetailWrite(h, session, "Assign", "Older");
+  const save = startDetailWrite(h, session, "Save", "Latest");
+  assert.equal(h.calls.length, 2);
+  h.calls[1].resolve({
+    isError: true,
+    content: [{ type: "text", text: "Forbidden" }],
+  });
+  assert.match((await assign).error.message, /Forbidden/);
+  await tick();
+  await finishDetailWrite(h, "Save", h.calls.at(-1), "Latest");
+  assert.equal((await save).value.saved, true);
+  assert.equal(h.render().state.detail.cardDetail.subject, "Latest");
+  h.calls.at(-1).resolve(payload(h.render().state.board));
+  await tick();
+});
+
+test("component first move rollback survives a queued move and a detail mutation", async () => {
+  const h = harness();
+  const session = await openDetail(h);
+  const cards = h.render().state.board.cards;
+  h.render().requestMove(cards[0], "Working", "Start");
+  h.render().requestMove(cards[1], "Working", "Start");
+  const writing = startDetailWrite(h, session, "Assign", "Assigned");
+  assert.equal(h.calls.length, 3);
+  h.calls[1].reject(new Error("Move failed"));
+  await tick();
+  assert.equal(h.render().state.board.cards[0].columnId, "Open");
+  assert.equal(h.render().state.board.cards[1].columnId, "Working");
+  assert.equal(h.calls[3].request.arguments.card_id, "TASK-A-2");
+  h.calls[3].resolve(payload({ ok: true }));
+  await tick();
+  assert.equal(h.calls.length, 4);
+  await finishDetailWrite(h, "Assign", h.calls[2], "Assigned");
+  await writing;
+  assert.equal(h.render().state.board.cards[0].columnId, "Open");
+  assert.equal(h.render().state.board.cards[1].columnId, "Working");
+  assert.equal(h.calls.length, 5);
+  h.calls[4].resolve(payload(h.render().state.board));
+  await tick();
+});
+
+for (const change of ["board", "card", "reopen"]) {
+  for (const failed of [false, true]) {
+    test(`component detail queue keeps requested writes across ${change} switch failure=${failed}`, async () => {
+      const h = harness();
+      const session = await openDetail(h);
+      const assign = startDetailWrite(h, session, "Assign", "Old assigned");
+      const save = startDetailWrite(h, session, "Save", "Old saved");
+      assert.equal(h.calls.length, 2);
+      const first = h.calls[1];
+      if (change === "board") h.send(h.fixtures.boardFixture("B"));
+      await openDetail(h, change === "card" ? 1 : 0);
+      const active = h.render().state.detail.session;
+      assert.notEqual(active.generation, session.generation);
+      await finishDetailWrite(
+        h,
+        "Assign",
+        first,
+        "Old assigned",
+        failed ? "write" : undefined,
+      );
+      await assign;
+      const next = h.calls.at(-1);
+      assert.equal(next.request.name, "erpnext_doc_update");
+      assert.equal(next.request.arguments.name, "TASK-A-1");
+      await finishDetailWrite(h, "Save", next, "Old saved");
+      const result = await save;
+      assert.equal(result.value.saved, true);
+      assert.equal(h.render().state.detail.cardDetail.subject, "Initial");
+      assert.equal(h.render().state.detail.session, active);
+      assert.equal(h.calls.at(-1).request.name, "erpnext_kanban_get_board");
+      assert.equal(
+        h.calls.at(-1).request.arguments.project,
+        change === "board" ? "PROJECT-B" : "PROJECT-A",
+      );
+      h.calls.at(-1).resolve(payload(h.render().state.board));
+      await tick();
+    });
+  }
+}
+
 for (const operation of ["Save", "Assign", "Unassign"]) {
   test(`component ${operation} failure preserves pending revalidation through finally`, async () => {
     const h = harness();
