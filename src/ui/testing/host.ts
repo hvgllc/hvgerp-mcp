@@ -276,7 +276,8 @@ bridge.oncalltool = async (params, extra) => {
     (scenario === "board-race" &&
       (params.name === "erpnext_kanban_get_board" ||
         params.name === "erpnext_kanban_move_card" ||
-        params.name === "erpnext_doc_get" || detailMutations.has(params.name))) ||
+        params.name === "erpnext_doc_get" ||
+        detailMutations.has(params.name))) ||
     (scenario === "stock-race" && params.name === "erpnext_stock_ledger_list");
   const reply = responseFor(params.name, args);
   function applySuccessfulMove() {
