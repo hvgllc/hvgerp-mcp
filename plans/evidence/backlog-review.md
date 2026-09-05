@@ -801,3 +801,10 @@ Sau sửa, **161 validator tests passed, 0 failed, 0 skipped**: giữ 153 test v
 thêm tám control mọi kế hoạch DONE. Validator production, history helper,
 manifest, 25 plan và 13 approval không đổi. Full helper/history và clean clone
 được chạy trên commit local tiếp theo; không push hoặc sửa ứng dụng.
+
+Commit fixture `231fc3472c7492b0ece2480e2b3dbf230322065e` đã được kiểm khi
+worktree sạch: `node --test plans/test-validator.mjs plans/test-history.mjs` đạt
+**164 passed, 0 failed, 0 skipped**, gồm 161 validator và ba Git clone test.
+Validator 25/25, format 60 file, lint ba helper và diff check đạt. Git diff xác
+nhận validator production, history helper, toàn bộ plan/manifest và 13 approval
+giữ nguyên so với d37b6d4. Không dùng trạng thái giả lập để sửa tiến độ thật.
