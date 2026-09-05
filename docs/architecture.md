@@ -1,6 +1,6 @@
 # Repository layout
 
-Where things live. Tool counts are per file and sum to 129.
+Where things live. Tool counts are per file and sum to 135.
 
 ```
 server.ts           # MCP server (stdio + HTTP + inspector)
