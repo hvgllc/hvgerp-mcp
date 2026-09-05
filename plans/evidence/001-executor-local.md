@@ -1,9 +1,3 @@
-# Báo cáo executor 001 trước CI
-
-Bản lưu nguyên nội dung evidence tại merge commit `013a1cf`. Các ghi chú chờ CI
-và giới hạn quyền trong báo cáo này là lịch sử, không phải trạng thái hiện nay.
-Kết luận reviewer, CI và merge nằm tại [001.md](001.md).
-
 # Bằng chứng kế hoạch 001
 
 ## Trạng thái

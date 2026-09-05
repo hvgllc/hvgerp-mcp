@@ -59,7 +59,24 @@ là bằng chứng đạt.
   key hoặc giá trị gán vào các tên secret/password/API key. Đây là kiểm tránh
   sao chép credential, không phải bảo đảm tuyệt đối về mọi dạng secret.
 
-## Giới hạn
+## Sửa sau review độc lập vòng 1
+
+Reviewer phát hiện bản lưu executor có thêm sáu dòng lời dẫn. Phép kiểm ban đầu
+chỉ dùng `endsWith` với nội dung gốc nên chứng minh phần đuôi được giữ, không
+chứng minh toàn bộ file giống nhau. Đã bỏ lời dẫn khỏi bản lưu và giữ giải thích
+lịch sử trong evidence 001 cùng báo cáo này.
+
+Sau sửa, dùng `Buffer.equals` đối chiếu toàn bộ file với output nhị phân của
+`git show 013a1cf:plans/evidence/001.md`; phải bằng nhau chính xác, không chuẩn
+hóa whitespace hoặc cắt phần đầu/cuối. Các ghi chú chờ CI và giới hạn quyền của
+bản lưu là lịch sử, không phải trạng thái hiện tại.
+
+Kết quả: `Buffer.equals: true`, 4107 byte, SHA-256
+`2e8a957a03544fc1cc4cec6e7683007ca32427be54f23cd5d8674bc515bd2b70`. Validator
+25/25, test validator 6/6, format 36 file, lint hai script và diff check đều
+exit 0 sau sửa.
+
+## Giới hạn phạm vi thực thi
 
 Đợt này chỉ lưu tài liệu và kiểm validator, không sửa source ứng dụng hoặc nâng
 dependency. Không chạy lại test ứng dụng, browser hoặc build vì không thay hành
