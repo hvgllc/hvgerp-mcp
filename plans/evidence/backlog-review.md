@@ -1460,6 +1460,42 @@ definition, chưa gọi source này đã được duyệt. Cần parent xử lý
 workflow review definition hợp lệ, sau đó chạy lại full validator/self/history.
 Không network, Browser, build, push, publish hoặc sửa approval trong lượt này.
 
+### Gate sau khi parent đồng bộ definition và fence
+
+Parent cung cấp snapshot `ce0899d7cbeeeebd72cedf5cb56926c432fae52d`, gồm commit
+đồng bộ fence `3533d18e4cd58273b940e22d7aab2c69edc246ca` và binding definition
+007 mới. Executor chỉ đọc những thay đổi này, không tự tạo hoặc thay approval.
+Trên snapshot đó, validator 25 đã qua; full self/history đạt 364/365. Ca đỏ duy
+nhất là expected diagnostics của clone lịch sử, không còn là lỗi dữ liệu của
+snapshot hiện tại. Cả 361 selftests đều qua, không cần sửa fixture selftest.
+
+Fixture history cố ý archive nguyên `db2f31fa0b332a7919e02b48f227ae1a6adf9b9e`:
+năm nhãn fence cũ trong snapshot ấy vẫn không khớp manifest. Fetch definition
+ref không sửa nội dung Markdown. Vì vậy test nay yêu cầu chính xác 32 diagnostic
+trước fetch: 27 lỗi provenance cũ và năm lỗi language đã liệt kê; sau fetch chỉ
+được còn đúng năm lỗi language. Không bỏ assertion missing ref, không thay
+archived bytes, không đổi Git object hoặc tạo approval giả. Current clean clone
+vẫn phải qua validator với exit 0 trong test history riêng.
+
+Source fixture mới `ab4b966eb5730a90fe9e4a1613194b0c063ce8c7`, tree
+`37c46b38d2f74b50f1bbea23ee531a59d6b72558`, chỉ sửa `plans/test-history.mjs`.
+Production validator, toàn bộ selftests, manifest và AGENTS giữ nguyên byte so
+với ce0899d. Lượt history trước commit đạt 3/4, ca còn lại bị dirty-check chặn
+đúng vì test đang sửa; không lấy lượt đó làm green. Sau commit và worktree sạch:
+
+| Lệnh                                                                                             | Kết quả                                                                    |
+| ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| `node --test plans/test-validator.mjs plans/test-history.mjs`                                    | 365 pass, 0 fail, 0 cancelled, 0 skipped: 361 selftests và 4 history tests |
+| `node plans/validate-plans.mjs`                                                                  | exit 0, đủ 25 kế hoạch                                                     |
+| `deno fmt --no-config --check plans/`                                                            | exit 0, 75 file                                                            |
+| `deno lint --no-config plans/validate-plans.mjs plans/test-validator.mjs plans/test-history.mjs` | exit 0, 3 file                                                             |
+| `git diff --check ce94ec9b0fb768ad68708f22d13f3b2b4a59cab9..HEAD`                                | exit 0                                                                     |
+
+Kết quả green này thay trạng thái gate bị chặn ở mục trước cho snapshot mới,
+không hồi tố snapshot f83acba hoặc cb120bd thành green. Phạm vi vẫn là kiểm
+consistency offline, không chứng thực danh tính reviewer. Source và report chờ
+review độc lập; executor không push, network, build hoặc ghi APPROVE.
+
 ### Review độc lập sau correction
 
 Reviewer độc lập đã đọc snapshot cuối
