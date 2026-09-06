@@ -577,6 +577,18 @@ function markdownEscaped(text, position) {
   while (position - run > 0 && text[position - 1 - run] === "\\") run++;
   return run % 2 === 1;
 }
+// Thẻ mở thật sự render ra HTML. Một dấu "\" ngay trước "<" vô hiệu thẻ:
+// "\<a href="x.md">" là văn bản, không phải link, nên href trong đó không phải
+// đích của ai cả và đem nó đi phân giải là báo hỏng một tài liệu đúng. Bên
+// trong một HTML block thì ngược lại: nội dung là HTML thô, backslash không
+// escape gì, nên thẻ ở đó vẫn sống và vẫn hỏng được. Hỏi escape ở đúng phần
+// văn bản ngoài block, bằng chính bản đồ block giữ nguyên offset.
+function renderedTags(text) {
+  const outsideBlocks = outsideHtmlBlocks(text, true);
+  return [...text.matchAll(htmlTagAttributes)].filter((tag) =>
+    outsideBlocks[tag.index] !== "<" || !markdownEscaped(text, tag.index)
+  );
+}
 // Một ô bảng được phép chứa dấu | literal, viết là "\|". split("|") thô coi nó
 // là vách ngăn và đẩy lệch mọi cột phía sau, nên một README đúng bị báo sai hàng
 // lẫn sai phụ thuộc. Tách ở vách chưa escape rồi mới trả về ký tự literal.
@@ -795,21 +807,28 @@ const c1Replacements = new Map([
   [0x9e, 0x017e],
   [0x9f, 0x0178],
 ]);
-const decodeReferences = (text) =>
+// marker được chèn ngay trước mỗi ký tự do reference sinh ra, để chỗ gọi phân
+// biệt được nó với ký tự viết thẳng: một "_" đến từ "&#95;" là ký tự thật, nó
+// không mở được cặp nhấn.
+const decodeReferences = (text, marker = "") =>
   text.replace(
     /&(#\d{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]*);/g,
     (whole, name, offset) => {
       // Một "&" bị escape là ký tự literal, không mở được entity.
       if (markdownEscaped(text, offset)) return whole;
-      if (name[0] !== "#") return namedReferences.get(name) ?? whole;
+      if (name[0] !== "#") {
+        const named = namedReferences.get(name);
+        return named === undefined ? whole : marker + named;
+      }
       const code = name[1] === "x" || name[1] === "X"
         ? parseInt(name.slice(2), 16)
         : parseInt(name.slice(1), 10);
       // Chuẩn thay code point không hợp lệ bằng U+FFFD. Ký tự đó không nằm trong
       // đường dẫn nào của repo nên link vẫn bị báo hỏng, đúng hướng.
-      return code === 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)
-        ? "�"
-        : String.fromCodePoint(c1Replacements.get(code) ?? code);
+      return marker +
+        (code === 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)
+          ? "�"
+          : String.fromCodePoint(c1Replacements.get(code) ?? code));
     },
   );
 // Dòng mở một khối chen được vào giữa đoạn đang chạy: dòng trống, ATX heading,
@@ -830,12 +849,16 @@ function interruptsParagraph(text, newline) {
     .replace(/\r$/, "");
   return paragraphInterrupts.some((pattern) => pattern.test(line));
 }
-function inlineLinkTargets(text) {
+const inlineLinkTargets = (text) => scanInline(text).targets;
+// Trả về cả cờ "đã nhận một link" để chỗ gọi biết label vừa quét có vô hiệu hóa
+// opener bao ngoài hay không.
+function scanInline(text) {
   // Regex phẳng \[[^\]]+\]\(...\) không parse được label lồng ngoặc vuông
   // như "[outer [inner]](x)": nó dừng ở ] đầu tiên rồi không khớp tiếp, nên
   // bỏ sót cả link, khiến destination hỏng lọt qua gate. Quét đếm độ sâu để
   // tìm đúng ] đóng label, có tính escape \[ \], rồi mới đọc (destination).
   const targets = [];
+  let link = false;
   for (let index = 0; index < text.length; index++) {
     // Thẻ HTML inline là một token nguyên khối với cả vòng quét ngoài, không
     // riêng vòng cân bằng nhãn đang mở. Một dấu "[" nằm trong thuộc tính, như
@@ -928,15 +951,29 @@ function inlineLinkTargets(text) {
     // không parse được vẫn đẩy vào để bị báo lỗi thay vì im lặng bỏ qua.
     const inside = text.slice(cursor + 1, scan - 1).trim();
     const destination = inside.match(linkDestination);
-    targets.push(destination ? destination[1] ?? destination[2] : inside);
     // Label của một link vẫn chứa được inline khác, thường gặp nhất là image:
     // "[![alt](a.png)](b.md)" render cả hai đích. Nhảy thẳng tới cuối link
     // ngoài thì đích của image bên trong không ai hỏi tới và một ảnh hỏng lọt
     // qua gate. Quét lại riêng phần label; nó ngắn hơn text nên đệ quy dừng.
-    targets.push(...inlineLinkTargets(text.slice(index + 1, cursor - 1)));
+    const label = scanInline(text.slice(index + 1, cursor - 1));
+    targets.push(...label.targets);
+    // Link không lồng trong link: khi label đã chứa một link thật, CommonMark
+    // vô hiệu hóa opener bên ngoài và "[outer [inner](a.md)](b.md)" render ra
+    // link tới a.md rồi "](b.md)" nguyên văn. Đẩy b.md vào gate là đem một
+    // destination không ai viết đi phân giải và báo hỏng một tài liệu đúng.
+    // Image không bị luật này: label của nó vẫn nằm trong một image sống, nên
+    // "[![alt](a.png)](b.md)" giữ nguyên cả hai đích.
+    const image = text[index - 1] === "!" && !markdownEscaped(text, index - 1);
+    if (image || !label.link) {
+      targets.push(destination ? destination[1] ?? destination[2] : inside);
+      if (!image) link = true;
+    }
+    // Một link nằm sâu trong label của image vẫn là link thật với opener bao
+    // ngoài, nên cờ đi ngược lên qua cả image.
+    link = link || label.link;
     index = scan - 1;
   }
-  return targets;
+  return { targets, link };
 }
 // Section metadata phải cắt từ Markdown cấu trúc. Split thô trên body lấy lần
 // xuất hiện đầu tiên của chuỗi heading, kể cả khi nó nằm trong một fence ví dụ
@@ -1864,21 +1901,48 @@ const autolinkText = new RegExp(
 // tới anchor thật. Label rỗng của dạng collapsed thì thu gọn kiểu nào cũng ra
 // một slug, nên không cần hỏi định nghĩa.
 const referenceLabel = (raw) => raw.trim().replace(/\s+/g, " ").toLowerCase();
+// Dấu nhấn không để lại ký tự nào trong văn bản render: "## _Emphasized_ probe"
+// ra "Emphasized probe" và id GitHub là "emphasized-probe". Dấu sao đã tự biến
+// mất vì headingSlug xóa mọi ký tự ngoài chữ, số, "_", " " và "-", nhưng gạch
+// dưới thì được giữ lại, nên nếu không gỡ cặp mở đóng thì slug thành
+// "_emphasized_-probe" và mọi link tới heading có nhấn bị báo hỏng. Gạch dưới
+// giữa từ là ký tự thật và GitHub giữ nguyên, nên chỉ cặp mở ở ranh giới từ mới
+// bị gỡ: "snake_case" đi qua nguyên vẹn. Lặp cho tới khi ổn định để cặp lồng
+// kiểu "__strong _inner_ tail__" rụng hết.
+// Gạch dưới sinh ra từ backslash escape, từ character reference hay từ nội dung
+// code span là ký tự thật chứ không phải delimiter, nên chúng đi kèm một dấu
+// NUL che phía trước và cả hai đầu của cặp nhấn đều từ chối dấu đó.
+const underscoreEmphasis =
+  /(?<![\p{L}\p{N}_\0])(__?)(?=\S)([\s\S]*?\S)(?<!\0)\1(?![\p{L}\p{N}_])/gu;
+function stripUnderscoreEmphasis(text) {
+  for (;;) {
+    const stripped = text.replace(underscoreEmphasis, "$2");
+    if (stripped === text) return text;
+    text = stripped;
+  }
+}
 const headingText = (raw, definitions) =>
-  raw.split(/(`+[^`]*`+)/).map((part, index) =>
-    index % 2 ? part.replace(/^`+|`+$/g, "") : decodeReferences(
-      part.replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
-        .replace(
-          /!?\[([^\]]*)\]\[([^\]]*)\]/g,
-          (whole, text, label) =>
-            !label.trim() || definitions.has(referenceLabel(label))
-              ? text
-              : whole,
-        )
-        .replace(autolinkText, "$1")
-        .replace(/<[^>]*>/g, ""),
-    ).replace(/\\([!-/:-@[-`{-~])/g, "$1")
-  ).join("");
+  stripUnderscoreEmphasis(
+    raw.split(/(`+[^`]*`+)/).map((part, index) =>
+      // Nội dung code span render nguyên văn: gạch dưới trong đó là ký tự thật,
+      // không phải delimiter của cặp nhấn bao quanh span.
+      index % 2
+        ? part.replace(/^`+|`+$/g, "").replaceAll("_", "\0_")
+        : decodeReferences(
+          part.replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+            .replace(
+              /!?\[([^\]]*)\]\[([^\]]*)\]/g,
+              (whole, text, label) =>
+                !label.trim() || definitions.has(referenceLabel(label))
+                  ? text
+                  : whole,
+            )
+            .replace(autolinkText, "$1")
+            .replace(/<[^>]*>/g, ""),
+          "\0",
+        ).replace(/\\([!-/:-@[-`{-~])/g, "\0$1")
+    ).join(""),
+  ).replaceAll("\0", "");
 // Blockquote và list item chỉ đặt tiền tố lên đầu dòng chứ không đổi bản chất
 // khối bên trong: "> ## Ghi chú" vẫn render ra một heading và vẫn sinh id trên
 // GitHub. Đọc nguyên dòng thì heading đó vắng mặt trong tập anchor và một link
@@ -1900,6 +1964,31 @@ const containerPrefix =
 // Mỗi dòng trả về văn bản đã gỡ, độ sâu container của nó, và việc dòng đó có tự
 // mở container mới hay không; nhánh setext cần cả ba để biết hai dòng có nằm
 // trong cùng một khối hay không.
+// Tab đưa con trỏ tới mốc bốn cột kế tiếp, nên thụt phải đo bằng cột chứ không
+// bằng số ký tự: "1.\ttab item" đặt nội dung ở cột bốn và một dòng nối thụt
+// đúng một tab vẫn nằm trong item. Đếm ký tự thì dòng nối đó chỉ được một cột,
+// bị đẩy ra khỏi item, và một heading thật trong item vắng mặt khỏi tập anchor.
+function columnsOf(text) {
+  let column = 0;
+  for (const character of text) {
+    column += character === "\t" ? 4 - column % 4 : 1;
+  }
+  return column;
+}
+const indentColumns = (text) => columnsOf(text.match(/^[ \t]*/)[0]);
+// Ăn đúng want cột thụt ở đầu dòng. Một tab bắc qua mốc thì phần dư ở lại dưới
+// dạng khoảng trắng, đúng như chuẩn mô tả khi tab bị cắt giữa chừng.
+function consumeColumns(text, want) {
+  let column = 0;
+  let index = 0;
+  while (index < text.length && column < want) {
+    if (text[index] === " ") column++;
+    else if (text[index] === "\t") column += 4 - column % 4;
+    else break;
+    index++;
+  }
+  return " ".repeat(Math.max(0, column - want)) + text.slice(index);
+}
 function scanContainers(rawLines) {
   const open = [];
   return rawLines.map((line) => {
@@ -1914,9 +2003,8 @@ function scanContainers(rawLines) {
         rest = rest.slice(quote[0].length);
       } else {
         if (!rest.trim()) break;
-        const spaces = rest.length - rest.replace(/^ +/, "").length;
-        if (spaces < container.indent) break;
-        rest = rest.slice(container.indent);
+        if (indentColumns(rest) < container.indent) break;
+        rest = consumeColumns(rest, container.indent);
       }
       matched++;
     }
@@ -1929,7 +2017,7 @@ function scanContainers(rawLines) {
       const prefix = rest.match(containerPrefix);
       if (!prefix) break;
       open.push({
-        indent: /^ {0,3}>/.test(prefix[0]) ? null : prefix[0].length,
+        indent: /^ {0,3}>/.test(prefix[0]) ? null : columnsOf(prefix[0]),
       });
       rest = rest.slice(prefix[0].length);
       opened = true;
@@ -2032,7 +2120,7 @@ function documentAnchors(path) {
   // id thật của <a id="probe&amp;anchor"> là "probe&anchor" và link đúng tới nó
   // viết "#probe%26anchor". Ghi lại nguyên văn cách viết thì id thật vắng mặt
   // trong tập anchor còn một chuỗi không tồn tại lại có mặt.
-  for (const tag of renderedHtml.matchAll(htmlTagAttributes)) {
+  for (const tag of renderedTags(renderedHtml)) {
     const anchorTag = tag[1].toLowerCase() === "a";
     for (const [name, value] of tagAttributes(tag[2])) {
       if (name !== "id" && !(anchorTag && name === "name")) continue;
@@ -2062,7 +2150,7 @@ for (const filePath of planFiles(planRoot)) {
     const rawHtml = markdownLinkSections(body).map((section) =>
       outsideRawTextAndComments(outsideInlineCode(outsideBlockCode(section)))
     ).join("\n\n");
-    for (const tag of rawHtml.matchAll(htmlTagAttributes)) {
+    for (const tag of renderedTags(rawHtml)) {
       for (const [name, value] of tagAttributes(tag[2])) {
         if ((name === "href" || name === "src") && value) targets.push(value);
       }
@@ -2098,16 +2186,6 @@ for (const filePath of planFiles(planRoot)) {
       targets.push(destination[1] ?? destination[2]);
     }
     for (const target of targets) {
-      // Bất kỳ URI scheme nào cũng là địa chỉ ngoài cây làm việc, không riêng
-      // http(s): ghim hai scheme đó thì "mailto:" hay "ftp:" bị đem đi phân giải
-      // như đường dẫn tương đối và một link đúng chuẩn bị báo hỏng. Đòi scheme
-      // dài từ hai ký tự theo RFC 3986 để "c:\..." vẫn rơi xuống nhánh unsafe
-      // bên dưới thay vì được bỏ qua.
-      // "//host/path" là network-path reference của RFC 3986: nó mượn scheme của
-      // trang đang render và trỏ ra ngoài cây làm việc y như một URL đủ scheme.
-      // Không nhận dạng thì isAbsolute() coi nó là đường dẫn tuyệt đối POSIX và
-      // một link đúng chuẩn bị báo unsafe. Đòi authority không rỗng, nên
-      // "///etc/passwd" vẫn rơi xuống nhánh unsafe bên dưới.
       // Character reference được giải mã trước mọi câu hỏi khác về destination,
       // vì chuẩn giải mã nó khi dựng URL: ranh giới fragment, ranh giới query và
       // cả scheme đều đọc trên chuỗi đã giải mã. Tìm ranh giới trên chuỗi thô
@@ -2117,9 +2195,14 @@ for (const filePath of planFiles(planRoot)) {
       const decoded = decodeReferences(target);
       // Bất kỳ URI scheme nào cũng là địa chỉ ngoài cây làm việc, không riêng
       // http(s): ghim hai scheme đó thì "mailto:" hay "ftp:" bị đem đi phân giải
-      // như đường dẫn tương đối và một link đúng chuẩn bị báo hỏng. Đòi scheme
-      // dài từ hai ký tự theo RFC 3986 để "c:\..." vẫn rơi xuống nhánh unsafe
-      // bên dưới thay vì được bỏ qua.
+      // như đường dẫn tương đối và một link đúng chuẩn bị báo hỏng. RFC 3986
+      // cho phép scheme dài đúng một ký tự, nhưng ở đây vẫn đòi từ hai ký tự
+      // trở lên, có chủ ý: không scheme một ký tự nào được đăng ký, còn
+      // "c:outside.md", "c:\Users" và "c:/Users" đều là đường dẫn ổ đĩa Windows
+      // và trỏ thẳng vào filesystem của người đọc. Hai dạng đó không phân biệt
+      // được bằng cú pháp, nên cổng chọn phía an toàn: nhận nhầm một scheme một
+      // ký tự giả định thành unsafe chỉ buộc tác giả viết khác đi, còn nhận
+      // nhầm một drive path thành địa chỉ ngoài là thả nó qua cổng.
       // "//host/path" là network-path reference của RFC 3986: nó mượn scheme của
       // trang đang render và trỏ ra ngoài cây làm việc y như một URL đủ scheme.
       // Không nhận dạng thì isAbsolute() coi nó là đường dẫn tuyệt đối POSIX và

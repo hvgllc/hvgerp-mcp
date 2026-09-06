@@ -4391,6 +4391,129 @@ test("a Setext underline inside a list item still creates its anchor", () => {
   assert.equal(result.exitCode, 0, result.messages.join("\n"));
 });
 
+test("an escaped opening tag is not an HTML link", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\nText probe \\<a href="missing-escaped.md">x\\</a> end.\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an escaped opening tag hides no src either", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\nText probe \\<img src="missing-escaped.png"> end.\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a real opening tag still contributes its href", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<a href="missing-real.md">x</a>\n',
+  }, /link hỏng missing-real\.md/);
+});
+
+test("a backslash inside an HTML block escapes nothing", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<div>\n\\<a href="missing-inblock.md">x</a>\n</div>\n',
+  }, /link hỏng missing-inblock\.md/);
+});
+
+test("a Windows drive path stays unsafe", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[broken](c:\\temp\\file.md)\n",
+  }, /unsafe Markdown link/);
+});
+
+test("a Windows drive path with slashes stays unsafe", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[broken](c:/temp/file.md)\n",
+  }, /unsafe Markdown link/);
+});
+
+test("underscore emphasis leaves no character in a heading slug", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## _Emphasized_ probe\n\n[ok](#emphasized-probe)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("strong underscore emphasis leaves no character either", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## __Strong__ probe\n\n[ok](#strong-probe)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an intra-word underscore stays in the heading slug", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## snake_case probe\n\n[ok](#snake_case-probe)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an escaped underscore opens no emphasis in a heading", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## \\_Escaped\\_ probe\n\n[ok](#_escaped_-probe)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a nested link makes the outer opener inert", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[outer [inner](../../README.md)](missing-inert.md)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an inert outer link still contributes the inner target", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[outer [inner](missing-inner.md)](missing-inert2.md)\n",
+  }, /link hỏng missing-inner\.md/);
+});
+
+test("a nested image leaves the outer link alive", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[![alt](../../README.md)](missing-image-outer.md)\n",
+  }, /link hỏng missing-image-outer\.md/);
+});
+
+test("a tab indented continuation line stays inside its item", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n1.\ttab item\n\n\t## Tab continued heading\n" +
+      "\n[ok](#tab-continued-heading)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a tab indented line past the item content stays code", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n- deep item\n\n\t\t## Tab code in item\n" +
+      "\n[broken](#tab-code-in-item)\n",
+  }, /anchor hỏng #tab-code-in-item/);
+});
+
 test("a spaced thematic break does not turn text into a heading", () => {
   invalid({
     "plans/evidence/backlog-review.md": (text) =>

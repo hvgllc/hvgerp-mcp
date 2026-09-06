@@ -1979,3 +1979,69 @@ review không lộ thêm lỗi nào, và chạy lại sau khi sửa vẫn giữ 
 | `node --test plans/test-history.mjs`   | 5 pass, sau commit |
 
 Suite thêm 13 test, lên 542.
+
+## Codex vòng tiếp: review 5126092642
+
+Review đọc đúng head `9064486852`, nêu một P1 provenance và bốn P2, tất cả trên
+`plans/validate-plans.mjs`. P1 lặp lại điểm của vòng trước và vẫn được trả lời
+như cũ: phép kiểm ancestry là chủ ý, nhánh vào `main` bằng merge commit chứ
+không squash, điều đã ghi ở `plans/AGENTS.md` và `plans/README.md`. Bốn P2 tái
+hiện bằng chính validator trước khi động vào code; ba trong số đó đã đảo chiều
+sau khi sửa, còn P2 về scheme một ký tự được giữ nguyên có chủ ý vì bản sửa làm
+hỏng một phép chặn drive path đã có test. Một lỗi tự phát hiện cùng họ, dòng nối
+thụt bằng tab, được sửa trong cùng đợt.
+
+- **Thẻ mở bị escape vẫn bị thu href.** `\<a href="missing.md">` là văn bản chứ
+  không phải thẻ, CommonMark không render link nào, nhưng gate vẫn đem
+  destination đó đi phân giải và báo hỏng một tài liệu đúng. Vòng quét HTML thô
+  giờ đi qua `renderedTags`, hỏi `markdownEscaped` ở đúng phần văn bản ngoài
+  HTML block: bên trong block thì backslash không escape gì nên thẻ vẫn sống.
+  Vòng quét anchor trên `renderedHtml` fail-open theo cùng cách với `id`/`name`,
+  nên dùng chung helper.
+- **Scheme một ký tự bị coi là đường dẫn cục bộ: giữ nguyên có chủ ý.** RFC 3986
+  cho phép scheme dài đúng một ký tự, nên `x:opaque` đúng là địa chỉ ngoài. Bản
+  sửa thử, nhận scheme một ký tự trừ khi sau `:` là `\` hoặc `/`, làm đỏ một
+  test đã có: `C:outside-plan.md` là đường dẫn ổ đĩa Windows tương đối, không có
+  dấu phân cách sau dấu hai chấm, và trùng hình dạng với `x:opaque`. Hai dạng
+  không phân biệt được bằng cú pháp, nên cổng chọn phía an toàn: từ chối một
+  scheme một ký tự giả định chỉ buộc tác giả viết khác đi, còn nhận nhầm một
+  drive path thành địa chỉ ngoài là thả nó vào filesystem của người đọc. Lý do
+  đó được ghi vào comment ngay trên phép kiểm, và phía drive path có thêm hai
+  test cho dạng `c:\temp\file.md` và `c:/temp/file.md`. Một khối comment bị dán
+  lặp hai lần ngay trên phép kiểm này cũng được gỡ.
+- **Dấu nhấn gạch dưới lọt vào slug heading.** `## _Emphasized_ probe` render ra
+  `Emphasized probe` và id GitHub là `emphasized-probe`; dấu sao tự biến mất vì
+  `headingSlug` xóa nó, còn gạch dưới thì được giữ nên slug thành
+  `_emphasized_-probe` và mọi link tới heading có nhấn bị báo hỏng.
+  `headingText` gỡ cặp nhấn trước khi slug, lặp cho tới khi ổn định để cặp lồng
+  rụng hết, và chỉ gỡ cặp mở đóng ở ranh giới từ nên `snake_case` nguyên vẹn.
+  Gạch dưới không phải delimiter được che bằng một dấu NUL mà cả hai đầu của
+  pattern từ chối: ký tự sinh từ backslash escape, ký tự sinh từ character
+  reference, và nội dung code span.
+- **Link lồng link không vô hiệu opener ngoài.** CommonMark cấm link trong link,
+  nên `[outer [inner](a.md)](b.md)` render ra link tới `a.md` rồi `](b.md)`
+  nguyên văn; đẩy `b.md` vào gate là báo hỏng một tài liệu đúng.
+  `inlineLinkTargets` giờ là lớp mỏng bọc `scanInline`, hàm trả về cả cờ đã nhận
+  một link. Label được quét trước khi ghi destination ngoài; label đã chứa link
+  thì destination ngoài bị bỏ còn đích bên trong vẫn giữ. Image được miễn vì
+  label của image không vô hiệu link bao ngoài, nhưng cờ vẫn đi ngược lên qua
+  image vì link nằm sâu trong đó vẫn là link thật với opener bao ngoài.
+- **Thụt bằng tab không được quy đổi thành cột.** Lỗi tự phát hiện bằng mẻ dò
+  đối kháng chạy sau vòng trước, cùng họ với lỗi dòng nối của list item. `1.`
+  rồi một tab đặt nội dung ở cột bốn, nên dòng nối thụt đúng một tab vẫn nằm
+  trong item; đếm ký tự thì nó chỉ được một cột, bị đẩy ra khỏi item và một
+  heading thật trong item vắng mặt khỏi tập anchor. `scanContainers` đo thụt
+  bằng cột với mốc bốn, và phần dư của một tab bắc qua mốc ở lại dưới dạng
+  khoảng trắng.
+
+| Cổng                                   | Kết quả            |
+| -------------------------------------- | ------------------ |
+| `node plans/validate-plans.mjs`        | Đạt: 25 kế hoạch   |
+| `deno fmt --check`                     | 315 file           |
+| `deno lint`                            | 160 file           |
+| `node --test plans/test-validator.mjs` | 557 pass           |
+| `git diff --check`                     | exit 0             |
+| `node --test plans/test-history.mjs`   | 5 pass, sau commit |
+
+Suite thêm 15 test, lên 557. Mười lăm mẻ dò guard của các vòng trước chạy lại
+trên cây mới cho kết quả trùng ảnh chụp ở vòng trước.
