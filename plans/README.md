@@ -170,7 +170,14 @@ toàn kế hoạch chỉ có một khai báo trạng thái. STALE còn yêu cầ
 `- stale_reason: "Lý do cụ thể"` tại cùng mục: giá trị là JSON string không rỗng
 sau trim, không dùng prose ngoài metadata hoặc dòng trùng để miễn current drift.
 TODO/IN_PROGRESS/BLOCKED và STALE thiếu lý do vẫn không được bỏ kiểm source hiện
-tại; DONE tiếp tục kiểm lịch sử theo binding bên dưới.
+tại; DONE tiếp tục kiểm lịch sử theo binding bên dưới. BLOCKED yêu cầu đúng một
+dòng `- blocked_reason: "Lý do cụ thể"` cùng khuôn giá trị, kèm
+`plans/evidence/NNN.md` đã tồn tại để giữ lệnh thất bại và quyết định còn thiếu:
+đổi trạng thái sang BLOCKED mà không có hai thứ đó không được chấp nhận. Mọi kế
+hoạch phải có ít nhất một evidence record; manifest khai `evidence: []` không
+phải cách hợp lệ để khớp số lượng trích đoạn. Mục Phạm vi và Git phải có đúng
+một dòng mở đầu bằng `Ngoài phạm vi:`; danh sách file thuộc phạm vi được đọc từ
+phần đứng trước dòng đó.
 
 Approval DONE ràng buộc bằng sáu field duy nhất trong YAML frontmatter:
 `review_verdict: APPROVE`, `plan_id: NNN`, `reviewed_commit`,

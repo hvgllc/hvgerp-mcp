@@ -10,6 +10,7 @@
 - Ưu tiên: P2; công sức: L; rủi ro sửa: HIGH.
 - Phụ thuộc: không.
 - Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `BLOCKED`.
+- blocked_reason: "Chờ duyệt lock được theo dõi và pin npm CLI; xem 021.md."
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 deno.lock bị bỏ qua và Node build tạo workspace mới rồi npm install các khoảng

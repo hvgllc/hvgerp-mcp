@@ -1666,3 +1666,64 @@ giữ nguyên đường đọc đĩa, để mục ảo không trở thành một
 
 Chạy lại các mẻ probe guard của vòng 14, 15, 16, 17, 18 và 19: không mẻ nào đổi
 kết quả, nên năm sửa lần này không nới guard cũ.
+
+## Codex vòng tiếp: review 5125641639
+
+Reviewed commit `90c3bc31ca`, năm finding P2, tất cả trên
+`plans/validate-plans.mjs`. Ba trong số đó là hệ quả trực tiếp của chính hai sửa
+vòng trước, nên lần này tái hiện từng ca bằng chính validator trước khi chạm vào
+code.
+
+- Finding
+  [3944262980](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944262980):
+  `htmlInlineAtomic` mới chỉ nguyên khối trong vòng cân bằng nhãn đang mở, còn
+  vòng quét ngoài vẫn dừng ở mọi dấu `[`, kể cả dấu nằm trong thuộc tính thẻ. Ca
+  `<span title="[sample](missing-attribute.md)">` báo `link hỏng` trước sửa,
+  xanh sau sửa; ca `<span>nhãn</span> [gone](missing-after-tag.md)` vẫn đỏ, nên
+  sửa không nới guard link thật.
+- Finding
+  [3944262982](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944262982):
+  `documentAnchors` quét `id` và `name` trên body thô, nên một ví dụ trong fence
+  cũng đứng ra làm anchor. Dựng lại đúng khung nhìn HTML render như đường quét
+  `href`/`src`, rồi chỉ đọc thuộc tính nằm trong thẻ mở thật. Ca `#ghost-anchor`
+  trong fence đỏ sau sửa; ca comment và ca `id=` viết trong văn xuôi cũng đỏ; ca
+  `<a name="...">` thật vẫn xanh.
+- Finding
+  [3944262984](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944262984):
+  split theo chuỗi literal `Ngoài phạm vi:` cắt cả ở câu văn xuôi mở đầu, làm
+  danh sách scope biến mất và manifest khai `scope: []` vẫn khớp. Cắt tại đúng
+  một khai báo đứng đầu dòng, đòi số khai báo bằng một, cùng cách
+  `declarations()` đòi đúng một lần khai trường metadata. Đo trên cây: cả 25 kế
+  hoạch đều có đúng một khai báo đầu dòng.
+- Finding
+  [3944262987](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944262987):
+  phép so số lượng trích đoạn thoả mãn được bằng `0 === 0`, đồng thời mất luôn
+  kiểm drift với source hiện tại. Đòi ít nhất một evidence record. Đo trước khi
+  thêm: cả 25 kế hoạch đã có tối thiểu 1 và tối đa 4 record.
+- Finding
+  [3944262988](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944262988):
+  đổi hai chữ trong plan và hàng README là đủ để vào BLOCKED. `staleReason` được
+  tổng quát thành `metadataReason(body, field)`; BLOCKED đòi đúng một
+  `blocked_reason` không rỗng cộng `plans/evidence/NNN.md` đã tồn tại. Hai kế
+  hoạch BLOCKED là 002 và 021, cả hai đã có sẵn báo cáo, nên chỉ thêm dòng lý do
+  lấy từ chính báo cáo đó chứ không dựng vật liệu mới.
+
+Hai test có sẵn phải đổi theo hợp đồng mới, không phải đổi để né. Test
+`current source drift regression works without TODO plans in the backlog` chuyển
+mọi TODO sang BLOCKED nên giờ phải dựng đủ lý do và báo cáo; báo cáo chỉ tồn tại
+trong fixture, không ghi ra đĩa. Test provenance dùng snapshot `5b7d00e` chụp
+trước hợp đồng này, nên chỉ chèn đúng dòng metadata mới vào hai kế hoạch BLOCKED
+của snapshot, thay vì chép nguyên bản plan hiện tại và kéo theo độ trôi tài
+liệu.
+
+| Lệnh                                   | Kết quả                |
+| -------------------------------------- | ---------------------- |
+| `node plans/validate-plans.mjs`        | exit 0, đủ 25 kế hoạch |
+| `deno fmt --check`                     | exit 0, 315 file       |
+| `deno lint`                            | exit 0, 160 file       |
+| `node --test plans/test-validator.mjs` | 486 pass, 0 fail       |
+| `git diff --check`                     | exit 0                 |
+| `node --test plans/test-history.mjs`   | 5 pass, 0 fail         |
+
+Chạy lại các mẻ probe guard của vòng 14, 15, 16, 17, 18, 19 và 21: không mẻ nào
+đổi kết quả.

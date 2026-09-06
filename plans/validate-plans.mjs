@@ -694,6 +694,19 @@ function inlineLinkTargets(text) {
   // tìm đúng ] đóng label, có tính escape \[ \], rồi mới đọc (destination).
   const targets = [];
   for (let index = 0; index < text.length; index++) {
+    // Thẻ HTML inline là một token nguyên khối với cả vòng quét ngoài, không
+    // riêng vòng cân bằng nhãn đang mở. Một dấu "[" nằm trong thuộc tính, như
+    // <span title="[sample](missing.md)">, không mở link nào cả; nếu vòng ngoài
+    // vẫn dừng ở đó thì destination trong thuộc tính bị đem đi phân giải và một
+    // tài liệu đúng bị báo link hỏng.
+    if (text[index] === "<" && !markdownEscaped(text, index)) {
+      htmlInlineAtomic.lastIndex = index;
+      const tag = htmlInlineAtomic.exec(text);
+      if (tag) {
+        index += tag[0].length - 1;
+        continue;
+      }
+    }
     if (text[index] !== "[" || markdownEscaped(text, index)) continue;
     let depth = 1;
     let cursor = index + 1;
@@ -844,15 +857,17 @@ function draftingOf(body) {
     /^- Mốc soạn: `([0-9a-f]{7,40})`, \d{4}-\d{2}-\d{2}\. Trạng thái thực thi: `(?:TODO|IN_PROGRESS|BLOCKED|DONE|STALE)`\.$/m,
   )?.[1];
 }
-function staleReason(body) {
+// Một trường lý do trong metadata: đúng một lần khai trong tài liệu cấu trúc,
+// nằm đúng mục metadata, giá trị là JSON string không rỗng sau trim.
+function metadataReason(body, field) {
   const fields = structuralMarkdown(body).split("\n").filter((line) =>
-    /^\s*-\s*stale_reason\s*:/.test(line)
+    new RegExp("^\\s*-\\s*" + field + "\\s*:").test(line)
   );
   if (
     fields.length !== 1 ||
     !metadataSection(body).split("\n").includes(fields[0])
   ) return false;
-  const value = fields[0].match(/^- stale_reason: (.+)$/)?.[1];
+  const value = fields[0].match(new RegExp("^- " + field + ": (.+)$"))?.[1];
   try {
     const reason = JSON.parse(value ?? "null");
     return typeof reason === "string" && reason.trim().length > 0;
@@ -860,6 +875,8 @@ function staleReason(body) {
     return false;
   }
 }
+const staleReason = (body) => metadataReason(body, "stale_reason");
+const blockedReason = (body) => metadataReason(body, "blocked_reason");
 const statusById = new Map(manifest.map((entry) => {
   const path = resolve(planRoot, entry.file);
   return [
@@ -1260,10 +1277,19 @@ for (const entry of manifest) {
   // Cắt bằng structuralSection chứ không split chuỗi literal: gate heading bắt
   // buộc đã chấp nhận closing marker ATX, nên "## Phạm vi và Git ##" qua được
   // gate đó trong khi split literal trả về rỗng và phạm vi biến mất.
-  const scopeSection =
-    structuralSection(structuralBody, "Phạm vi và Git").split(
-      "Ngoài phạm vi:",
-    )[0];
+  const scopeBody = structuralSection(structuralBody, "Phạm vi và Git");
+  // Cắt tại đúng một khai báo out-of-scope đứng đầu dòng. Split theo chuỗi
+  // literal ở bất cứ đâu thì một câu văn xuôi mở đầu có nhắc "Ngoài phạm vi:"
+  // cũng cắt, phần scope thật phía sau biến mất và một manifest khai scope rỗng
+  // vẫn khớp. Đòi đúng một khai báo, cùng cách declarations() đòi đúng một lần
+  // khai trường metadata, để hai khai báo cũng không âm thầm chọn cái đầu.
+  const outOfScopeMarkers = [...scopeBody.matchAll(/^ {0,3}Ngoài phạm vi:/gm)];
+  if (outOfScopeMarkers.length !== 1) {
+    fail(entry.file + ": scope needs exactly one out-of-scope declaration");
+  }
+  const scopeSection = outOfScopeMarkers.length === 1
+    ? scopeBody.slice(0, outOfScopeMarkers[0].index)
+    : scopeBody;
   const administrativeFiles = [
     "plans/README.md",
     "plans/evidence/" + String(entry.id).padStart(3, "0") + ".md",
@@ -1357,6 +1383,24 @@ for (const entry of manifest) {
   const validStale = executionStatus === "STALE" && staleReason(body);
   if (executionStatus === "STALE" && !validStale) {
     fail(entry.file + ": STALE requires one nonempty stale_reason in metadata");
+  }
+  // BLOCKED là trạng thái phải trả giá bằng bằng chứng: README đòi ghi lý do,
+  // lệnh thất bại và quyết định/quyền còn thiếu. Nếu chỉ đổi hai chữ trong plan
+  // và hàng README là qua thì BLOCKED thành chỗ trú cho kế hoạch chưa ai chạm
+  // tới. Đòi cùng lúc lý do trong metadata và báo cáo evidence tương ứng: lý do
+  // nêu quyết định còn thiếu, báo cáo giữ lệnh và kết quả thật.
+  if (executionStatus === "BLOCKED") {
+    const blockedPath = resolve(
+      planRoot,
+      "evidence",
+      String(entry.id).padStart(3, "0") + ".md",
+    );
+    if (!blockedReason(body) || !existsSync(blockedPath)) {
+      fail(
+        entry.file +
+          ": BLOCKED requires one nonempty blocked_reason and an evidence report",
+      );
+    }
   }
   if (executionStatus === "IN_PROGRESS" || executionStatus === "DONE") {
     for (const dependency of entry.depends) {
@@ -1508,6 +1552,13 @@ for (const entry of manifest) {
       blocks.push(block);
     }
   }
+  // Phép so số lượng thoả mãn được một cách rỗng nghĩa: xóa hết annotation rồi
+  // khai evidence rỗng trong manifest thì 0 === 0, và kế hoạch mất luôn kiểm
+  // drift với source hiện tại. Một kế hoạch không dẫn được dòng source nào thì
+  // không có hiện trạng để đối chiếu, nên đòi ít nhất một record.
+  if (entry.evidence.length === 0) {
+    fail(entry.file + ": requires at least one evidence record");
+  }
   if (blocks.length !== entry.evidence.length) {
     fail(entry.file + ": evidence excerpt count mismatch");
   }
@@ -1652,15 +1703,27 @@ function documentAnchors(path) {
     anchors.add(count ? slug + "-" + count : slug);
   }
   // id và name viết tay cũng là anchor thật, và chúng nằm trong chính những
-  // block HTML mà structuralMarkdown đã bỏ, nên quét trên body gốc.
-  const attribute = new RegExp(
-    "\\b(?:id|name)[ \\t]*=[ \\t]*" +
-      "(?:\"([^\"]*)\"|'([^']*)'|([^ \\t\\r\\n\"'=<>`]+))",
-    "g",
+  // block HTML mà structuralMarkdown đã bỏ, nên phải quét trước khi bỏ block.
+  // Nhưng quét trên body thô thì một ví dụ <a id="x"> trong fence, trong inline
+  // code hoặc trong comment cũng đứng ra làm anchor, và một link tới #x hỏng
+  // vẫn qua cổng. Dựng đúng khung nhìn HTML render như đường quét href/src: bỏ
+  // code và comment trước, xóa thân raw text, rồi chỉ đọc thuộc tính nằm trong
+  // thẻ mở thật sự, để "id=" viết trong văn xuôi cũng không thành anchor.
+  const renderedHtml = outsideRawText(
+    markdownLinkSections(body).map((section) =>
+      outsideHtmlComments(outsideInlineCode(outsideBlockCode(section)))
+    ).join("\n\n"),
   );
-  for (const match of body.matchAll(attribute)) {
-    const value = match[1] ?? match[2] ?? match[3];
-    if (value) anchors.add(value);
+  const attribute = new RegExp(
+    "\\b(?:id|name)" + htmlOptionalSpace + "=" + htmlOptionalSpace +
+      "(?:\"([^\"]*)\"|'([^']*)'|([^ \\t\\r\\n\"'=<>`]+))",
+    "gi",
+  );
+  for (const tag of renderedHtml.matchAll(htmlTagAttributes)) {
+    for (const match of tag[1].matchAll(attribute)) {
+      const value = match[1] ?? match[2] ?? match[3];
+      if (value) anchors.add(value);
+    }
   }
   anchorCache.set(path, anchors);
   return anchors;

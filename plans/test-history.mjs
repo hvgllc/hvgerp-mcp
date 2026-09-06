@@ -21,6 +21,12 @@ const historicalBrokenHead = "24425057594124b5b8485c900e555c66834c342a";
 // provenance khác mà snapshot tham chiếu đều là tổ tiên của cha nó.
 const missingApprovalCommit = "ce0899d7cbeeeebd72cedf5cb56926c432fae52d";
 const boundDefinitionFixture = "5b7d00e909476562495e175378bb570aba254818";
+// Hai kế hoạch BLOCKED nằm trong snapshot trên, chụp trước khi BLOCKED phải kèm
+// blocked_reason.
+const blockedSnapshotPlans = [
+  "002-mrtr-preflight-before-write.md",
+  "021-reproducible-build-inputs.md",
+];
 const missingReviewedHeads = [
   "bb78ace761b7ae9b26900c8c80faad699a9adfa6",
   "ecc1b69d7d0f3c7a3310a5696097e2497b482a29",
@@ -284,6 +290,24 @@ test("a real clone missing an approved definition record restores provenance aft
       join(repoRoot, "plans/validate-plans.mjs"),
       join(checkout, "plans/validate-plans.mjs"),
     );
+    // Snapshot được chụp trước hợp đồng blocked_reason, nên hai kế hoạch BLOCKED
+    // trong đó chưa có trường này. Chép nguyên bản plan hiện tại vào thì kéo
+    // theo cả những khác biệt không liên quan tới provenance; ở đây chỉ thêm
+    // đúng dòng metadata mà hợp đồng mới đòi, để test vẫn đo đúng một object
+    // provenance còn thiếu chứ không đo độ trôi của tài liệu.
+    for (const name of blockedSnapshotPlans) {
+      const path = join(checkout, "plans", name);
+      const text = readFileSync(path, "utf8");
+      assert(text.includes("Trạng thái thực thi: `BLOCKED`."), name);
+      writeFileSync(
+        path,
+        text.replace(
+          "## Trạng thái và mục tiêu\n",
+          '## Trạng thái và mục tiêu\n\n- blocked_reason: "Snapshot predates ' +
+            'this contract; see the evidence report."\n',
+        ),
+      );
+    }
     assert.equal(
       run(checkout, "git", ["cat-file", "-t", missingApprovalCommit]).status,
       128,

@@ -830,6 +830,18 @@ function stale(
   return replacements;
 }
 
+function blocked(id, reason = "Waiting on a framework contract decision") {
+  const replacements = status(id, "BLOCKED");
+  const change = replacements[fileFor(id)];
+  replacements[fileFor(id)] = (text) =>
+    change(text).replace(
+      "## Trạng thái và mục tiêu\n",
+      "## Trạng thái và mục tiêu\n\n- blocked_reason: " +
+        JSON.stringify(reason) + "\n",
+    );
+  return replacements;
+}
+
 const definitionRef = "b9d6d02a9692c3efff11836b97d8cfbc69da1ec7";
 const definitionFields = [
   "definition_review_verdict",
@@ -1561,7 +1573,7 @@ test("historical evidence fails when Git object is missing", () => {
   assert.match(result.messages.join("\n") + String(result.thrown), /deadbee/);
 });
 // Tự dựng TODO từ Git HEAD, không lấy trạng thái backlog thật làm tiền đề.
-function assertCurrentSourceDrift(base = {}) {
+function assertCurrentSourceDrift(base = {}, filesystem = {}) {
   const entry = manifest.find((item) => item.id === 1);
   assert(entry);
   const sourceRef = execFileSync("git", ["rev-parse", "HEAD"], {
@@ -1610,18 +1622,23 @@ function assertCurrentSourceDrift(base = {}) {
   for (const [path, change] of Object.entries(fixture)) {
     replacements[path] = (text) => change(base[path] ? base[path](text) : text);
   }
-  const baseline = run(replacements);
+  const baseline = run(replacements, [], filesystem);
   assert.equal(baseline.exitCode, 0, baseline.messages.join("\n"));
   assert.equal(baseline.thrown, undefined);
   assert(baseline.historicalReads.includes(sourceRef + ":" + evidence.path));
-  const result = invalid({
-    ...replacements,
-    [evidence.path]: (text) => {
-      const lines = text.split("\n");
-      lines[evidence.line - 1] += " INVALID_CURRENT_SOURCE";
-      return lines.join("\n");
+  const result = invalid(
+    {
+      ...replacements,
+      [evidence.path]: (text) => {
+        const lines = text.split("\n");
+        lines[evidence.line - 1] += " INVALID_CURRENT_SOURCE";
+        return lines.join("\n");
+      },
     },
-  }, new RegExp(String(entry.id).padStart(3, "0") + ".*current source drift"));
+    new RegExp(String(entry.id).padStart(3, "0") + ".*current source drift"),
+    [],
+    filesystem,
+  );
   assert.deepEqual(result.messages, [
     entry.file + ": current source drift " + evidence.path + ":" +
     evidence.line,
@@ -1636,22 +1653,43 @@ test("current source drift regression works without TODO plans in the backlog", 
     "plans/README.md": (text) =>
       text.replace(/\|\s*TODO\s*\|$/gm, "| BLOCKED |"),
   };
+  // BLOCKED phải trả giá bằng lý do và báo cáo, nên chuyển trạng thái thì cũng
+  // phải dựng đủ hai thứ đó; nếu không, test đo trạng thái khác chứ không còn đo
+  // drift. Báo cáo chỉ tồn tại trong fixture, không ghi ra đĩa.
+  const reports = {};
   for (const entry of manifest) {
-    base[fileFor(entry.id)] = (text) =>
-      text.replace(
+    const original = readFileSync(resolve(planRoot, entry.file), "utf8");
+    const wasTodo = original.includes(
+      "Trạng thái thực thi: " + tick + "TODO" + tick,
+    );
+    if (wasTodo) {
+      reports["plans/evidence/" + String(entry.id).padStart(3, "0") + ".md"] =
+        "file";
+    }
+    base[fileFor(entry.id)] = (text) => {
+      const changed = text.replace(
         "Trạng thái thực thi: " + tick + "TODO" + tick,
         "Trạng thái thực thi: " + tick + "BLOCKED" + tick,
       );
+      return wasTodo
+        ? changed.replace(
+          "## Trạng thái và mục tiêu\n",
+          "## Trạng thái và mục tiêu\n\n- blocked_reason: " +
+            JSON.stringify("Waiting on a decision recorded in the report") +
+            "\n",
+        )
+        : changed;
+    };
     assert(
-      !base[fileFor(entry.id)](
-        readFileSync(resolve(planRoot, entry.file), "utf8"),
-      ).includes("Trạng thái thực thi: " + tick + "TODO" + tick),
+      !base[fileFor(entry.id)](original).includes(
+        "Trạng thái thực thi: " + tick + "TODO" + tick,
+      ),
     );
   }
-  const baseline = run(base);
+  const baseline = run(base, [], reports);
   assert.equal(baseline.exitCode, 0, baseline.messages.join("\n"));
   assert.equal(baseline.thrown, undefined);
-  assertCurrentSourceDrift(base);
+  assertCurrentSourceDrift(base, reports);
 });
 test("DONE still verifies exact historical source", () => {
   invalid({
@@ -3794,6 +3832,128 @@ test("a fragment on a source file is not checked as an anchor", () => {
   });
   assert.equal(result.thrown, undefined);
   assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a bracket inside an inline HTML attribute opens no link", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      '\nThẻ <span title="[sample](missing-attribute.md)">nhãn</span> trong văn xuôi.\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a broken link right after an inline HTML tag is still caught", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n<span>nhãn</span> [gone](missing-after-tag.md)\n",
+  }, /link hỏng missing-after-tag\.md/);
+});
+
+test("an id inside a fenced example is not an anchor", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      '\n```html\n<a id="ghost-anchor"></a>\n```\n\n[ghost](#ghost-anchor)\n',
+  }, /anchor hỏng #ghost-anchor/);
+});
+
+test("an id inside an HTML comment is not an anchor", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      '\n<!-- <a id="commented-anchor"></a> -->\n\n[gone](#commented-anchor)\n',
+  }, /anchor hỏng #commented-anchor/);
+});
+
+test("an id written as prose is not an anchor", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      '\nViết id="prose-anchor" trong câu văn.\n\n[gone](#prose-anchor)\n',
+  }, /anchor hỏng #prose-anchor/);
+});
+
+test("a name attribute in a real tag still counts as an anchor", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      '\n<a name="probe-named-anchor"></a>\n\n[there](#probe-named-anchor)\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an out-of-scope line in prose does not truncate the scope list", () => {
+  invalid({
+    [fileFor(22)]: (text) =>
+      text.replace(
+        "Các file được sửa khi thực thi:",
+        "Ngoài phạm vi: phần dưới liệt kê file thật.\n\n" +
+          "Các file được sửa khi thực thi:",
+      ),
+    "plans/manifest.json": editManifest((entries) => {
+      entries.find((entry) => entry.id === 22).scope = [];
+    }),
+  }, /scope needs exactly one out-of-scope declaration/);
+});
+
+test("an inline mention of the out-of-scope label keeps the scope list", () => {
+  const result = run({
+    [fileFor(22)]: (text) =>
+      text.replace(
+        "Các file được sửa khi thực thi:",
+        "Ghi chú thêm về Ngoài phạm vi: đọc đoạn cuối mục này.\n\n" +
+          "Các file được sửa khi thực thi:",
+      ),
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a plan without any evidence record is rejected", () => {
+  invalid({
+    [fileFor(22)]: (text) =>
+      text.replace(
+        /<!-- evidence: [^\n]+ -->\n\n<!-- deno-fmt-ignore -->\n```[\s\S]*?\n```\n/g,
+        "",
+      ),
+    "plans/manifest.json": editManifest((entries) => {
+      entries.find((entry) => entry.id === 22).evidence = [];
+    }),
+  }, /requires at least one evidence record/);
+});
+
+test("BLOCKED without a blocked_reason is rejected", () => {
+  invalid(
+    status(22, "BLOCKED"),
+    /BLOCKED requires one nonempty blocked_reason and an evidence report/,
+  );
+});
+
+test("BLOCKED with a reason but no evidence report is rejected", () => {
+  invalid(
+    blocked(22),
+    /BLOCKED requires one nonempty blocked_reason and an evidence report/,
+  );
+});
+
+test("BLOCKED with a reason and an evidence report is accepted", () => {
+  const result = run(blocked(22), [], {
+    "plans/evidence/022.md": "file",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an empty blocked_reason does not satisfy BLOCKED", () => {
+  invalid(
+    blocked(22, "   "),
+    /BLOCKED requires one nonempty blocked_reason and an evidence report/,
+    [],
+    { "plans/evidence/022.md": "file" },
+  );
 });
 
 test("a drafting reference must resolve without any new files", () => {

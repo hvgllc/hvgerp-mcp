@@ -11,6 +11,7 @@
   thi.
 - Phụ thuộc: không.
 - Mốc soạn: `d2c5305`, 2026-09-05. Trạng thái thực thi: `BLOCKED`.
+- blocked_reason: "Chờ quyết định mở hợp đồng framework; xem 002.md."
 - Độ tin cậy: cao về luồng mã; chưa xác minh với ERPNext production.
 
 runWithLinkDisambiguation chạy handler với args gốc trước khi kiểm
