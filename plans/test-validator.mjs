@@ -2765,3 +2765,29 @@ test("evidence sourceRef must be a commit, not a tree with the same content", ()
     [fileFor(2).slice(6) + ": evidence sourceRef must be a commit: " + tree],
   );
 });
+
+test("a prose drafting mention cannot displace the metadata one", () => {
+  const root = execFileSync("git", ["rev-list", "--max-parents=0", "HEAD"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  }).trim().split("\n").at(-1);
+  assert.match(root, /^[0-9a-f]{40}$/);
+  const setup = stale(15, "Drafting fixture explicitly uses non-DONE state");
+  const before = run(setup);
+  assert.equal(before.thrown, undefined);
+  // Mốc giả cắm vào văn xuôi trước metadata trỏ về commit gốc, nơi chưa có file
+  // nào của repository hiện tại, nên nếu nó được dùng làm mốc đối chiếu thì mọi
+  // nhãn "(tạo mới)" đều lọt. Kế hoạch có hai mốc phải bị chặn ngay từ khâu đọc.
+  const after = run(compose(setup, scopePath("AGENTS.md", true), {
+    [fileFor(15)]: (text) =>
+      text.replace(
+        "\n## Trạng thái và mục tiêu\n",
+        "\nMốc soạn: " + tick + root + tick + "\n\n## Trạng thái và mục tiêu\n",
+      ),
+  }));
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [fileFor(15).slice(6) + ": missing valid drafting reference"],
+  );
+});

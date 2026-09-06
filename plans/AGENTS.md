@@ -32,9 +32,9 @@ Sau commit local, trước push/merge, chạy thêm
 Gate tạo clone một nhánh `--no-local --no-tags`, kiểm validator cùng ancestry
 thật; ca âm dùng revision lịch sử trước sửa, không tạo bằng chứng review giả.
 Checkout shallow phải fetch đầy đủ history trước. PR25 giữ provenance bằng merge
-commit, không squash/rebase làm mất các reviewed revision đã ghim. Workspace
-root cố ý giữ source d2c5305 cùng plans untracked không thay worktree đã commit
-cho gate history này.
+commit, không squash/rebase làm mất các reviewed revision đã ghim. Một cây làm
+việc còn giữ plans untracked không chạy được gate này và không thay thế worktree
+đã commit; commit trước rồi mới chạy.
 
 Khi review ancestry, đối chiếu đúng SHA head của PR từ remote và parent Git của
 SHA đó. Không dùng commit squash hoặc checkout tổng hợp có SHA khác làm chứng cứ

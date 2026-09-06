@@ -275,6 +275,17 @@ function statusOf(body) {
     /^- Mốc soạn: `[0-9a-f]{7,40}`, \d{4}-\d{2}-\d{2}\. Trạng thái thực thi: `(TODO|IN_PROGRESS|BLOCKED|DONE|STALE)`\.$/m,
   )?.[1];
 }
+// Mốc soạn phải đọc từ đúng dòng metadata canonical. Một lần nhắc "Mốc soạn"
+// trong văn xuôi đứng trước cũng khớp mẫu tự do và sẽ đứng ra làm mốc đối chiếu
+// cho nhãn "(tạo mới)", trong khi trạng thái thực thi vẫn đọc từ metadata thật:
+// hai trường cùng một dòng mà lại lấy từ hai chỗ khác nhau. Đòi hỏi duy nhất một
+// lần xuất hiện, cùng khuôn với statusOf, để cách khai hai mốc bị chặn hẳn.
+function draftingOf(body) {
+  if (body.split("Mốc soạn:").length !== 2) return undefined;
+  return metadataSection(body).match(
+    /^- Mốc soạn: `([0-9a-f]{7,40})`, \d{4}-\d{2}-\d{2}\. Trạng thái thực thi: `(?:TODO|IN_PROGRESS|BLOCKED|DONE|STALE)`\.$/m,
+  )?.[1];
+}
 function staleReason(body) {
   const fields = body.split("\n").filter((line) =>
     /^\s*-\s*stale_reason\s*:/.test(line)
@@ -749,7 +760,7 @@ for (const entry of manifest) {
       fail(`${entry.file}: thiếu ${heading}`);
     }
   }
-  const draftingReference = body.match(/Mốc soạn:\s*`([0-9a-f]{7,40})`/)?.[1];
+  const draftingReference = draftingOf(body);
   if (!draftingReference) {
     fail(entry.file + ": missing valid drafting reference");
   }
