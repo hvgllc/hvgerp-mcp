@@ -145,6 +145,67 @@ function fixture(initialBoard = true) {
   };
 }
 
+for (const hostFirst of [false, true]) {
+  for (const hidden of [false, true]) {
+    Deno.test(`unusable host input keeps mutation reconciliation hostFirst=${hostFirst} hidden=${hidden}`, async () => {
+      const f = fixture();
+      const mutation = f.move();
+      assertEquals(f.controller.receiveInput(null), false);
+      assertEquals(f.controller.isCurrent(mutation.token), true);
+      f.gate.visibilityState = hidden ? "hidden" : "visible";
+      if (hostFirst) f.controller.failHost();
+      f.succeed(mutation);
+      if (!hostFirst) f.controller.failHost();
+      assertEquals(f.calls.length, hidden ? 0 : 1);
+      if (hidden) {
+        f.gate.visibilityState = "visible";
+        void f.controller.drain();
+      }
+      assertEquals(
+        f.calls[0].request.arguments,
+        boardFixture().refreshArguments,
+      );
+      f.calls[0].resolve(f.rendered);
+      await Promise.resolve();
+      assertEquals(f.controller.ready, true);
+      assertEquals(f.controller.pending, false);
+      f.controller.receiveInput(null);
+      f.controller.failHost();
+      await f.controller.request({ ignoreInterval: true });
+      assertEquals(
+        f.calls.length,
+        1,
+        "settled mutation must not authorize later invalid-input retries",
+      );
+    });
+  }
+}
+Deno.test("unusable input after valid B retains B rather than reverting mutation correction to A", async () => {
+  const f = fixture();
+  const mutation = f.move();
+  const b = {
+    ...boardFixture(),
+    title: "B",
+    refreshArguments: { doctype: "Task", project: "B", offset: 50 },
+  };
+  assertEquals(
+    f.controller.receiveInput({
+      toolName: "erpnext_kanban_get_board",
+      arguments: b.refreshArguments,
+    }),
+    true,
+  );
+  f.controller.receiveInput(null);
+  f.controller.failHost();
+  assertEquals(f.controller.isCurrent(mutation.token), false);
+  f.succeed(mutation);
+  assertEquals(f.calls.length, 1);
+  assertEquals(f.calls[0].request.arguments, b.refreshArguments);
+  f.calls[0].resolve(b);
+  await Promise.resolve();
+  assertEquals(f.rendered, b);
+});
+
 for (const oldFails of [false, true]) {
   Deno.test(`failed host retries B without overlapping or applying A oldFails=${oldFails}`, async () => {
     const f = fixture();

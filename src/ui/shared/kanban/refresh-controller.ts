@@ -34,6 +34,7 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
   let recoveringHost = false;
   let inFlight = false;
   let pending = false;
+  let mutationPending = false;
   let force = false;
   let lastStarted = 0;
   let retryAt = 0;
@@ -103,6 +104,7 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
         throw new Error("Board refresh response identity mismatch");
       }
       recoveringHost = false;
+      mutationPending = false;
       update(next);
       return true;
     } catch {
@@ -127,6 +129,7 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
   }
   function beginMutation(): BoardMutationToken {
     generation++;
+    mutationPending = true;
     const token = { session, id: Symbol() };
     mutations.add(token.id);
     pending = true;
@@ -149,7 +152,13 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
         kanbanRequestIdentity(null, fallback) !==
           kanbanRequestIdentity(null, resolveKanbanRefreshRequest(next, null)!)
       ) throw new Error("Host board response identity mismatch");
+      const changed = !board || kanbanRequestIdentity(
+            board,
+            resolveKanbanRefreshRequest(board, null)!,
+          ) !==
+          kanbanRequestIdentity(next, resolveKanbanRefreshRequest(next, null)!);
       session++;
+      generation++;
       waitingForHost = false;
       recoveringHost = false;
       pending ||= inFlight || mutations.size > 0;
@@ -157,23 +166,36 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
       retryAt = 0;
       update(next);
       void drain();
+      return changed;
     },
     receiveInput(next: KanbanRefreshRequestData | null) {
-      session++;
+      const previous = waitingForHost || recoveringHost
+        ? fallback
+        : currentRequest();
+      // Input không dùng được không được xóa request đọc bù cho write đã yêu cầu.
+      const retained = next ?? (mutationPending ? previous : null);
+      const changed = !board || !retained || kanbanRequestIdentity(
+            null,
+            resolveKanbanRefreshRequest(board, null)!,
+          ) !== kanbanRequestIdentity(null, retained);
+      if (changed) session++;
+      generation++;
       waitingForHost = true;
       recoveringHost = false;
-      fallback = next ? structuredClone(next) : null;
+      fallback = retained ? structuredClone(retained) : null;
       pending ||= inFlight || mutations.size > 0;
       force = pending;
       retryAt = 0;
+      return changed;
     },
     failHost() {
       if (!waitingForHost && !recoveringHost) return;
       waitingForHost = false;
       recoveringHost = true;
       pending = fallback !== null;
-      force = false;
-      retryAt = ports.now() + ports.minIntervalMs;
+      force = mutationPending && pending;
+      retryAt = force ? 0 : ports.now() + ports.minIntervalMs;
+      if (force) void drain();
     },
     beginMutation,
     runDetailMutation<T>(

@@ -1272,7 +1272,7 @@ export function KanbanViewer() {
       const toolName = app.getHostContext()?.toolInfo?.tool.name ??
         "erpnext_kanban_get_board";
       const args = params.arguments;
-      refreshController.receiveInput(
+      const changed = refreshController.receiveInput(
         toolName === "erpnext_kanban_get_board" && args &&
           typeof args === "object" && !Array.isArray(args) &&
           typeof args.doctype === "string" &&
@@ -1283,7 +1283,7 @@ export function KanbanViewer() {
           }
           : null,
       );
-      closeDetail();
+      if (changed) closeDetail();
 
       if (!boardRef.current) {
         startLoading();
@@ -1298,8 +1298,7 @@ export function KanbanViewer() {
           throw new Error("No kanban payload received from tool result");
         }
         moveErrorRef.current = null;
-        refreshController.receiveBoard(parseBoard(text));
-        closeDetail();
+        if (refreshController.receiveBoard(parseBoard(text))) closeDetail();
       } catch (error) {
         refreshController.failHost();
         setError(

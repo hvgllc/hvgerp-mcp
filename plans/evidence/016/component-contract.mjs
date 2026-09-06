@@ -14,7 +14,9 @@ const payload = (value) => ({
 });
 
 function harness({ initialBoard = true, hostContext = "normal" } = {}) {
-  const slots = [];
+  const componentSlots = [];
+  let slots = componentSlots;
+  let modalSlots = [], modalKey, modalCapture;
   const effects = [];
   const calls = [];
   const cache = new Map();
@@ -29,8 +31,9 @@ function harness({ initialBoard = true, hostContext = "normal" } = {}) {
     useReducer(reducer, initial, init = (value) => value) {
       const index = cursor++;
       slots[index] ??= { value: init(initial) };
-      return [slots[index].value, (action) => {
-        slots[index].value = reducer(slots[index].value, action);
+      const slot = slots[index];
+      return [slot.value, (action) => {
+        slot.value = reducer(slot.value, action);
       }];
     },
     useState(initial) {
@@ -97,6 +100,9 @@ function harness({ initialBoard = true, hostContext = "normal" } = {}) {
     capture(value) {
       captured = value;
     },
+    captureModal(value) {
+      modalCapture = value;
+    },
   });
   function load(filename) {
     if (!path.extname(filename)) {
@@ -120,8 +126,17 @@ function harness({ initialBoard = true, hostContext = "normal" } = {}) {
         `
         capture({ state, requestMove, requestBoardRefresh, handleDragStart,
           handleDragEnd, handleDropCard, handleCardTitleClick, handleSaveDetail,
-          handleAssignDetail, handleUnassignDetail });
+          handleAssignDetail, handleUnassignDetail, isDetailSessionCurrent });
         ${marker}`,
+      );
+    }
+    if (filename.endsWith("/DetailModal.tsx")) {
+      const marker =
+        "  if (!detail.selectedCardId || !detail.session) return null;";
+      assert.equal(source.split(marker).length, 2);
+      source = source.replace(
+        marker,
+        "  captureModal({ editedFields, handleFieldChange });\n" + marker,
       );
     }
     const compiled = ts.transpileModule(source, {
@@ -161,6 +176,7 @@ function harness({ initialBoard = true, hostContext = "normal" } = {}) {
   );
   const fixtures = load(path.join(root, "src/ui/testing/fixtures.ts"));
   function render() {
+    slots = componentSlots;
     cursor = 0;
     KanbanViewer();
     return captured;
@@ -180,7 +196,113 @@ function harness({ initialBoard = true, hostContext = "normal" } = {}) {
     fixtures,
     input: (args) => app.ontoolinput({ arguments: args }),
     result: (value) => app.ontoolresult(value),
+    renderModal() {
+      const current = render();
+      const key = current.state.detail.selectedCardId
+        ? JSON.stringify(current.state.detail.session)
+        : undefined;
+      if (key !== modalKey) modalSlots = [];
+      modalKey = key;
+      if (!key) return null;
+      slots = modalSlots;
+      cursor = 0;
+      const { CardDetailModal } = load(
+        path.join(root, "src/ui/kanban-viewer/src/DetailModal.tsx"),
+      );
+      const before = effects.length;
+      CardDetailModal({
+        detail: current.state.detail,
+        board: current.state.board,
+        onClose() {},
+        onMove: current.requestMove,
+        onSave: current.handleSaveDetail,
+        isSessionCurrent: current.isDetailSessionCurrent,
+      });
+      for (const effect of effects.slice(before)) effect();
+      slots = componentSlots;
+      return modalCapture;
+    },
   };
+}
+
+test("component same-board rerun preserves actual DetailModal unsaved draft", async () => {
+  const h = harness();
+  await openDetail(h);
+  h.renderModal();
+  h.renderModal().handleFieldChange("subject", "Unsaved local draft");
+  assert.equal(h.renderModal().editedFields.subject, "Unsaved local draft");
+  const board = h.fixtures.boardFixture();
+  h.input(board.refreshArguments);
+  assert.equal(h.renderModal()?.editedFields.subject, "Unsaved local draft");
+  h.result(payload(board));
+  assert.equal(h.renderModal()?.editedFields.subject, "Unsaved local draft");
+  h.input(h.fixtures.boardFixture("B").refreshArguments);
+  assert.equal(h.renderModal(), null);
+});
+
+for (const hostFirst of [false, true]) {
+  for (const failed of [false, true]) {
+    test(`component unusable host input reconciles an active move hostFirst=${hostFirst} failed=${failed}`, async () => {
+      const h = harness();
+      const a = h.fixtures.boardFixture();
+      h.render().requestMove(a.cards[0], "Working", "Start");
+      h.input(undefined);
+      const hostError = () =>
+        h.result({
+          isError: true,
+          ...payload({ message: "Invalid host input" }),
+        });
+      if (hostFirst) hostError();
+      if (failed) h.calls[0].reject(new Error("Move forbidden"));
+      else h.calls[0].resolve(payload({ ok: true }));
+      await tick();
+      if (!hostFirst) hostError();
+      await tick();
+      assert.equal(
+        h.calls.length,
+        2,
+        "mutation debt requires a corrective read despite missing input",
+      );
+      assert.equal(h.calls[1].request.name, "erpnext_kanban_get_board");
+      assert.equal(h.calls[1].request.arguments.project, "PROJECT-A");
+      assert.equal(
+        h.render().state.board.cards[0].columnId,
+        failed ? "Open" : "Working",
+      );
+      const fresh = h.fixtures.boardFixture();
+      if (!failed) fresh.cards[0].columnId = "Working";
+      h.calls[1].resolve(payload(fresh));
+      await tick();
+      assert.equal(
+        h.render().state.board.cards[0].columnId,
+        fresh.cards[0].columnId,
+      );
+    });
+  }
+}
+for (const response of ["success", "error"]) {
+  test(`component same-board host rerun preserves active detail session ${response}`, async () => {
+    const h = harness();
+    const session = await openDetail(h);
+    const detail = h.render().state.detail;
+    const board = h.fixtures.boardFixture();
+    h.input({ ...board.refreshArguments });
+    assert.equal(
+      h.render().state.detail.session,
+      session,
+      "rerun must retain the modal key and unsaved draft owner",
+    );
+    assert.equal(h.render().state.detail, detail);
+    if (response === "success") h.result(payload(board));
+    else {
+      h.result({ isError: true, ...payload({ message: "Host unavailable" }) });
+      const retry = h.render().requestBoardRefresh({ ignoreInterval: true });
+      h.calls.at(-1).resolve(payload(board));
+      await retry;
+    }
+    assert.equal(h.render().state.detail.session, session);
+    assert.equal(h.render().state.detail, detail);
+  });
 }
 
 for (const hostContext of ["missing", "empty"]) {
