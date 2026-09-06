@@ -64,6 +64,16 @@ const kindOf = (entry) => typeof entry === "string" ? entry : entry?.kind;
 function run(replacements = {}, hidden = [], filesystem = {}, gitOutput) {
   const messages = [], historicalReads = [], existenceChecks = [];
   let gitSubprocesses = 0;
+  // Một mục của filesystem ảo đại diện cho artifact có thật trong repo, nên nó
+  // phải xuất hiện trong chỉ mục Git y như trên đĩa. Mục khai "tracked": false
+  // mô tả file chỉ có trong cây làm việc, đúng thứ mà gate đích link phải bác.
+  const virtualIndex = Object.entries(filesystem)
+    .filter(([, entry]) =>
+      kindOf(entry) === "file" &&
+      (typeof entry === "string" || entry.tracked !== false)
+    )
+    .map(([key]) => "100644 " + "0".repeat(40) + " 0\t" + key + "\0")
+    .join("");
   // argv của một lần chạy thường: không cờ nào, nên chế độ liệt kê provenance
   // không bật và các test đọc messages vẫn chỉ thấy output của gate.
   const state = { exitCode: 0, argv: [] };
@@ -144,9 +154,12 @@ function run(replacements = {}, hidden = [], filesystem = {}, gitOutput) {
           return execFileSync(...params);
         };
         // Callback lỗi/biến đổi output phải thấy Git thật, không đọc hoặc ghi cache.
-        return gitOutput
+        const output = gitOutput
           ? gitOutput(args, execute(command, args, settings))
           : readGitFixture(command, args, settings, execute);
+        return args[0] === "ls-files" && args.includes("--stage")
+          ? output + virtualIndex
+          : output;
       },
       dirname,
       isAbsolute,
@@ -4076,6 +4089,131 @@ test("repeated headings still number in order when nothing collides", () => {
   });
   assert.equal(result.thrown, undefined);
   assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a comment literal in inline code does not hide later headings", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nVăn xuôi có `<!--` trong backtick.\n\n## Masked probe\n\n" +
+      "[ok](#masked-probe)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a stray backtick inside a comment does not hide its terminator", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n<!-- ghi chú ` bỏ quên --> còn ` đây\n\n" +
+      "## After comment probe\n\n[ok](#after-comment-probe)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a character reference inside a heading code span stays literal", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## Probe `&amp;` code\n\n[ok](#probe-amp-code)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a heading inside a blockquote still creates its anchor", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n> ## Quoted anchor probe\n\n[ok](#quoted-anchor-probe)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a heading inside a list item still creates its anchor", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n- ## Listed anchor probe\n\n[ok](#listed-anchor-probe)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a spaced thematic break does not turn text into a heading", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nBreak probe text\n- - -\n\n[broken](#break-probe-text)\n",
+  }, /anchor hỏng #break-probe-text/);
+});
+
+test("a name attribute on a plain element is not an anchor", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<div name="ghost-name"></div>\n\n[broken](#ghost-name)\n',
+  }, /anchor hỏng #ghost-name/);
+});
+
+test("a name attribute on an anchor element still creates an anchor", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<a name="real-name"></a>\n\n[ok](#real-name)\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an id attribute on a plain element still creates an anchor", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<div id="real-id"></div>\n\n[ok](#real-id)\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a link target outside the Git index is rejected", () => {
+  invalid(
+    {
+      "plans/evidence/backlog-review.md": (text) =>
+        text + "\n[local](local-only.md)\n",
+    },
+    /chưa được Git theo dõi local-only\.md/,
+    [],
+    { "plans/evidence/local-only.md": { kind: "file", tracked: false } },
+  );
+});
+
+test("a tracked link target still resolves", () => {
+  const result = run(
+    {
+      "plans/evidence/backlog-review.md": (text) =>
+        text + "\n[tracked](tracked-only.md)\n",
+    },
+    [],
+    { "plans/evidence/tracked-only.md": "file" },
+  );
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a directory link resolves through the files tracked under it", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[evidence](../evidence)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a directory link with nothing tracked under it is rejected", () => {
+  invalid(
+    {
+      "plans/evidence/backlog-review.md": (text) =>
+        text + "\n[ghost](ghost-dir)\n",
+    },
+    /chưa được Git theo dõi ghost-dir/,
+    [],
+    { "plans/evidence/ghost-dir": "directory" },
+  );
 });
 
 test("a drafting reference must resolve without any new files", () => {

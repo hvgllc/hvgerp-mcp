@@ -1782,3 +1782,68 @@ chạm vào code, cộng một ca đối chứng cho finding về heading slug.
 
 Chạy lại các mẻ probe guard của vòng 14, 15, 16, 17, 18, 19, 21 và 22, cộng mẻ
 đối kháng 13 ca dựng sau vòng 22: không mẻ nào đổi kết quả.
+
+## Codex vòng tiếp: review 5125832394
+
+Review đọc đúng head `fa7fe14f1a`, nêu ba finding P2, tất cả trên
+`plans/validate-plans.mjs`. Mẻ dò đối kháng chạy sau khi vá xong ba finding đó
+lộ thêm hai lỗi cùng họ, nên vòng này khép năm sửa.
+
+Cả năm đều tái hiện bằng chính validator trước khi động vào code, và sau khi sửa
+đều đảo chiều. Hai ca đối chứng phải giữ xanh (`<a name>` và `<div id>`) vẫn
+xanh ở cả probe lẫn suite.
+
+- **Heading trong container không vào tập anchor.** `> ## Quoted anchor probe`
+  và `- ## Listed anchor probe` đều render ra heading thật và đều sinh id trên
+  GitHub, nhưng `documentAnchors` đọc nguyên dòng nên link đúng bị báo
+  `anchor hỏng`. Thêm `outsideContainers` gỡ lặp tiền tố blockquote và list
+  marker trước khi khớp heading. Gỡ lặp an toàn với nhánh setext vì một thematic
+  break kiểu `- - -` gỡ hết thành dòng rỗng chứ không thành `-`.
+- **`name` trên phần tử thường bị nhận là anchor.** `name` chỉ dựng fragment
+  trên chính thẻ `<a>`; trên `<div>` hay `<input>` nó là tên trường. Cho
+  `htmlTagAttributes` bắt luôn tên thẻ, rồi dựng mẫu thuộc tính theo thẻ:
+  `id|name` cho `<a>`, chỉ `id` cho phần còn lại.
+- **Đích link chỉ có trong cây làm việc vẫn qua cổng.** `existsSync` trả lời cho
+  đúng máy người viết, còn một bản clone sạch thì không có file đó. Thêm
+  `trackedTargets()` dựng sẵn tập file và tập thư mục hàm ý từ
+  `git ls-files --stage -z`; đích cục bộ phải là file được theo dõi hoặc thư mục
+  có ít nhất một file được theo dõi bên dưới. Chỉ mục không đọc được thì
+  `trackedArtifacts()` đã báo một lần, nên chỗ này im lặng.
+- **`<!--` viết trong backtick nuốt mọi heading phía sau** (tự phát hiện).
+  `structuralMarkdown` cố ý không xóa inline code, nên một chuỗi `<!--` trong
+  backtick ở giữa tài liệu mở comment giả chạy tới hết file: chính section vòng
+  23 của báo cáo này làm mọi heading sau nó biến mất khỏi tập anchor. Đây là
+  cùng một sai lầm thứ tự đã vá ở vòng 23 cho raw text element, chỉ khác đường:
+  code span và comment là hai token cùng cấp nên phải so ai mở trước.
+  `outsideInlineCode` được tách thành `inlineCodeSpans` trả vị trí tuyệt đối, và
+  `outsideHtmlComments` bỏ qua dấu mở nằm trong một span mở trước nó. Đảo thứ tự
+  hai hàm không giải được, vì hướng ngược lại (một backtick lẻ trong comment
+  thật che mất `-->`) hỏng y hệt; test giữ cả hai chiều.
+- **Entity trong code span của heading bị giải mã** (tự phát hiện). Nội dung
+  code span render nguyên văn, nên ``## Probe `&amp;` code`` có id
+  `probe-amp-code`; giải mã nó ra `&` cho slug `probe--code` và link đúng bị báo
+  hỏng. `headingText` giờ tách theo code span, chỉ đưa phần ngoài span qua
+  decode, gỡ nhãn link, gỡ thẻ và gỡ backslash escape.
+
+| Cổng                                   | Kết quả            |
+| -------------------------------------- | ------------------ |
+| `node plans/validate-plans.mjs`        | Đạt: 25 kế hoạch   |
+| `deno fmt --check`                     | 315 file           |
+| `deno lint`                            | 160 file           |
+| `node --test plans/test-validator.mjs` | 513 pass           |
+| `git diff --check`                     | exit 0             |
+| `node --test plans/test-history.mjs`   | 5 pass, sau commit |
+
+Suite thêm 13 test, lên 513. Harness đổi một chỗ đi kèm sửa thứ ba: filesystem
+ảo của fixture đại diện cho artifact có thật trong repo nên `run()` nối nó vào
+output `ls-files --stage`; mục khai `{ kind: "file", tracked: false }` là ca chỉ
+có trong cây làm việc.
+
+Chạy lại toàn bộ mẻ dò guard của các vòng 14, 14b, 14c, 15, 15b, 16, 17, 18,
+18f, 18g, 19, 21, 22 và 23, lần này so từng dòng với chính chúng chạy trên một
+worktree tách ở `fa7fe14`. Mọi ca giữ nguyên kết quả trừ đúng một chỗ: ca `v2`
+của vòng 19 đổi từ `Đạt` sang `link chưa được Git theo dõi`. Đó là gate mới hoạt
+động đúng chứ không phải hồi quy, vì ca ấy dựng fixture `link©target.md` ngay
+trên đĩa mà không thêm vào chỉ mục. Thông báo mới vẫn chứng minh đúng điều ca đó
+đo: đường dẫn phải giải mã ra `©` mới đi qua được kiểm tồn tại và kiểm hoa
+thường, rồi mới vướng kiểm chỉ mục; giải mã sai thì lỗi đã là `link hỏng`.

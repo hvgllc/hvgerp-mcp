@@ -160,7 +160,13 @@ function outsideBlockCode(body) {
 // một kế hoạch không còn hiển thị phạm vi, bước hay tiêu chí nào vẫn qua gate.
 const htmlComment = /<!--[\s\S]*?(?:-->|$)/g;
 function outsideHtmlComments(body) {
-  let output = "", cursor = 0, match;
+  // Code span và comment là hai token inline cùng cấp, nên chỉ thứ tự mở trong
+  // tài liệu mới quyết định ai thắng. Gọi trên bản đã xóa inline code thì tập
+  // span rỗng và hàm chạy y như trước; gọi trên bản còn backtick thì một "<!--"
+  // viết trong backtick không mở được comment giả nuốt phần còn lại của tài
+  // liệu, còn một backtick lẻ nằm trong comment thật vẫn không che được "-->".
+  const spans = inlineCodeSpans(body);
+  let output = "", cursor = 0, span = 0, match;
   htmlComment.lastIndex = 0;
   while ((match = htmlComment.exec(body))) {
     // "\<!--" render ra dấu literal chứ không mở comment, nên nội dung sau nó
@@ -169,6 +175,11 @@ function outsideHtmlComments(body) {
     // đứng sau trong cùng đoạn vẫn được nhận.
     if (markdownEscaped(body, match.index)) {
       htmlComment.lastIndex = match.index + 1;
+      continue;
+    }
+    while (span < spans.length && spans[span][1] <= match.index) span++;
+    if (span < spans.length && spans[span][0] <= match.index) {
+      htmlComment.lastIndex = spans[span][1];
       continue;
     }
     output += body.slice(cursor, match.index) + match[0].replace(/[^\n]/g, " ");
@@ -252,7 +263,8 @@ const htmlFence = /^ {0,3}(`{3,}|~{3,})(.*)\r?$/;
 // Thẻ mở của HTML thô, giữ nguyên phần thuộc tính để đọc lại. Dùng chính
 // htmlAttributes nên giá trị đặt trong nháy vẫn chứa được ">" mà không cắt sớm.
 const htmlTagAttributes = new RegExp(
-  "<[A-Za-z][A-Za-z0-9-]*(" + htmlAttributes + ")" + htmlOptionalSpace + "/?>",
+  "<([A-Za-z][A-Za-z0-9-]*)(" + htmlAttributes + ")" + htmlOptionalSpace +
+    "/?>",
   "g",
 );
 const htmlLinkAttribute = new RegExp(
@@ -385,8 +397,10 @@ function outsideHtmlBlocks(body, preserveOffsets = false) {
 // rồi bỏ HTML comment. Comment không render, nên một trường khai bên trong nó
 // không phải nội dung sống: đọc nó khiến một kế hoạch có section hiển thị trống
 // vẫn qua gate. Không xóa inline code ở đây vì chính các gate metadata đọc giá
-// trị nằm trong backtick; hệ quả là một backtick chứa "<!--" vẫn mở được comment
-// giả, nhưng hướng lệch đó là fail-closed (trường biến mất, gate báo thiếu).
+// trị nằm trong backtick, và cả tập anchor cũng dựng từ khung nhìn này: một
+// heading chứa code span phải giữ nguyên chữ trong backtick mới ra đúng slug.
+// outsideHtmlComments tự bỏ qua dấu mở nằm trong code span, nên giữ backtick ở
+// đây không còn mở được comment giả nuốt mọi heading và trường phía sau.
 // Bỏ cả block HTML: một section metadata bọc trong <script type="text/plain">
 // không render heading hay trường nào, nhưng nếu vẫn đọc nó thì audit, phụ
 // thuộc, mốc soạn và trạng thái ẩn hẳn với người đọc vẫn thỏa được các gate ánh
@@ -445,7 +459,9 @@ function markdownLinkSections(body) {
   if (current.length) sections.push(current.join("\n"));
   return sections;
 }
-function outsideInlineCode(body) {
+// Vị trí tuyệt đối của từng inline code span. Tách khỏi outsideInlineCode vì
+// đường quét comment cần biết span mở ở đâu chứ không cần bản đã xóa.
+function inlineCodeSpans(body) {
   // Inline span không được nối qua heading, list, quote hoặc đoạn trống.
   const paragraphs = [];
   let current = "";
@@ -468,9 +484,10 @@ function outsideInlineCode(body) {
     if (standalone || /^[ \t]*$/.test(content)) flush();
   }
   flush();
-  return paragraphs.map((paragraph) => {
+  const spans = [];
+  let base = 0;
+  for (const paragraph of paragraphs) {
     const runs = [...paragraph.matchAll(/`+/g)];
-    let output = "", start = 0;
     for (let index = 0; index < runs.length; index++) {
       const open = runs[index];
       const escapes =
@@ -481,14 +498,21 @@ function outsideInlineCode(body) {
       );
       if (closeIndex < 0) continue;
       const close = runs[closeIndex];
-      const end = close.index + close[0].length;
-      output += paragraph.slice(start, open.index) +
-        paragraph.slice(open.index, end).replace(/[^\n]/g, " ");
-      start = end;
+      spans.push([base + open.index, base + close.index + close[0].length]);
       index = closeIndex;
     }
-    return output + paragraph.slice(start);
-  }).join("");
+    base += paragraph.length;
+  }
+  return spans;
+}
+function outsideInlineCode(body) {
+  let output = "", cursor = 0;
+  for (const [start, end] of inlineCodeSpans(body)) {
+    output += body.slice(cursor, start) +
+      body.slice(start, end).replace(/[^\n]/g, " ");
+    cursor = end;
+  }
+  return output + body.slice(cursor);
 }
 // Cắt đúng thân của một section cấp hai, dừng ở heading cấp hai kế tiếp. Đếm
 // theo section thay vì theo cả tài liệu để nội dung của section khác không đứng
@@ -1159,6 +1183,29 @@ function trackedArtifacts() {
   }
   return indexCache;
 }
+// Tập đường dẫn Git thật sự theo dõi, tách sẵn file và thư mục. Một đích chỉ có
+// trong cây làm việc không phải artifact của repo: nó không tồn tại ở bản clone
+// sạch và link tới nó hỏng với mọi người đọc khác, nhưng existsSync trên máy
+// người viết vẫn nói có.
+let targetIndex;
+function trackedTargets() {
+  if (targetIndex !== undefined) return targetIndex;
+  const tracked = trackedArtifacts();
+  if (!tracked) {
+    targetIndex = null;
+    return targetIndex;
+  }
+  const files = new Set(), directories = new Set();
+  for (const [name] of tracked) {
+    files.add(name);
+    const segments = name.split("/");
+    for (let index = 1; index < segments.length; index++) {
+      directories.add(segments.slice(0, index).join("/"));
+    }
+  }
+  targetIndex = { files, directories };
+  return targetIndex;
+}
 function unchangedArtifacts(path, artifacts) {
   const tracked = trackedArtifacts()?.filter(([name]) =>
     path.endsWith("/") ? name.startsWith(path) : name === path
@@ -1748,14 +1795,33 @@ const headingSlug = (text) =>
 // "probe-amp-heading", một id không tồn tại, và link tới anchor thật bị báo
 // hỏng trong khi link tới id tưởng tượng lại qua cổng. Giải mã trước khi gỡ
 // backslash escape, vì chính decodeReferences dựa vào dấu escape còn nguyên để
-// biết một "&" đã bị vô hiệu.
+// biết một "&" đã bị vô hiệu. Nhưng nội dung code span render nguyên văn: trong
+// "## Probe `&amp;` code" thì "&amp;" là năm ký tự thật và id GitHub sinh ra là
+// "probe-amp-code". Giải mã cả phần đó thì slug thành "probe--code" và mọi link
+// tới heading có entity trong backtick bị báo hỏng, nên chỉ phần ngoài span mới
+// đi qua decode, gỡ nhãn link, gỡ thẻ và gỡ escape.
 const headingText = (raw) =>
-  decodeReferences(
-    raw.replace(/`+([^`]*)`+/g, "$1")
-      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
-      .replace(/!?\[([^\]]*)\]\[[^\]]*\]/g, "$1")
-      .replace(/<[^>]*>/g, ""),
-  ).replace(/\\([!-/:-@[-`{-~])/g, "$1");
+  raw.split(/(`+[^`]*`+)/).map((part, index) =>
+    index % 2 ? part.replace(/^`+|`+$/g, "") : decodeReferences(
+      part.replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+        .replace(/!?\[([^\]]*)\]\[[^\]]*\]/g, "$1")
+        .replace(/<[^>]*>/g, ""),
+    ).replace(/\\([!-/:-@[-`{-~])/g, "$1")
+  ).join("");
+// Blockquote và list item chỉ đặt tiền tố lên đầu dòng chứ không đổi bản chất
+// khối bên trong: "> ## Ghi chú" vẫn render ra một heading và vẫn sinh id trên
+// GitHub. Đọc nguyên dòng thì heading đó vắng mặt trong tập anchor và một link
+// đúng bị báo hỏng. Gỡ lặp vì container lồng được; một thematic break kiểu
+// "- - -" gỡ hết thành dòng rỗng nên không hóa thành setext underline giả.
+const containerPrefix = /^ {0,3}(?:>[ \t]?|(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$))/;
+function outsideContainers(line) {
+  let text = line, previous;
+  do {
+    previous = text;
+    text = text.replace(containerPrefix, "");
+  } while (text !== previous);
+  return text;
+}
 const anchorCache = new Map();
 function documentAnchors(path) {
   const cached = anchorCache.get(path);
@@ -1769,7 +1835,7 @@ function documentAnchors(path) {
     return anchors;
   }
   const seen = new Map();
-  const lines = structuralMarkdown(body).split("\n");
+  const lines = structuralMarkdown(body).split("\n").map(outsideContainers);
   for (let index = 0; index < lines.length; index++) {
     const atx = lines[index].match(/^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*\r?$/);
     let text;
@@ -1805,13 +1871,20 @@ function documentAnchors(path) {
   const renderedHtml = markdownLinkSections(body).map((section) =>
     outsideRawTextAndComments(outsideInlineCode(outsideBlockCode(section)))
   ).join("\n\n");
-  const attribute = new RegExp(
-    "\\b(?:id|name)" + htmlOptionalSpace + "=" + htmlOptionalSpace +
-      "(?:\"([^\"]*)\"|'([^']*)'|([^ \\t\\r\\n\"'=<>`]+))",
-    "gi",
-  );
+  // "id" là thuộc tính toàn cục nên phần tử nào cũng đặt được anchor bằng nó,
+  // còn "name" chỉ dựng fragment trên chính thẻ <a>: trên <div> hay <input> nó
+  // là tên trường, không phải đích cuộn. Nhận cả hai ở mọi thẻ thì một link tới
+  // "#ghost-name" của <div name="ghost-name"> đi qua cổng trong khi bấm vào nó
+  // không tới đâu cả.
+  const attribute = (name) =>
+    new RegExp(
+      "\\b(?:" + name + ")" + htmlOptionalSpace + "=" + htmlOptionalSpace +
+        "(?:\"([^\"]*)\"|'([^']*)'|([^ \\t\\r\\n\"'=<>`]+))",
+      "gi",
+    );
   for (const tag of renderedHtml.matchAll(htmlTagAttributes)) {
-    for (const match of tag[1].matchAll(attribute)) {
+    const names = tag[1].toLowerCase() === "a" ? "id|name" : "id";
+    for (const match of tag[2].matchAll(attribute(names))) {
       const value = match[1] ?? match[2] ?? match[3];
       if (value) anchors.add(value);
     }
@@ -1840,7 +1913,7 @@ for (const filePath of planFiles(planRoot)) {
       outsideRawTextAndComments(outsideInlineCode(outsideBlockCode(section)))
     ).join("\n\n");
     for (const tag of rawHtml.matchAll(htmlTagAttributes)) {
-      for (const attribute of tag[1].matchAll(htmlLinkAttribute)) {
+      for (const attribute of tag[2].matchAll(htmlLinkAttribute)) {
         const value = attribute[1] ?? attribute[2] ?? attribute[3];
         if (value) targets.push(value);
       }
@@ -1991,6 +2064,19 @@ for (const filePath of planFiles(planRoot)) {
       }
       if (!existsSync(resolved) || !existsCaseExact(repoRoot, parts)) {
         fail(file + ": link hỏng " + target);
+        continue;
+      }
+      // Chỉ mục là nguồn duy nhất nói đích có đi cùng repo hay không. Thư mục
+      // không có mục riêng trong index, nên nó được nhận khi có ít nhất một file
+      // được theo dõi nằm dưới; thư mục rỗng hoặc chỉ chứa file bị ignore không
+      // phải artifact. trackedArtifacts đã báo lỗi khi không đọc được index, nên
+      // ở đây im lặng để một sự cố không hóa thành hàng loạt lỗi link.
+      const indexed = trackedTargets();
+      const posix = parts.join("/");
+      if (
+        indexed && !indexed.files.has(posix) && !indexed.directories.has(posix)
+      ) {
+        fail(file + ": link chưa được Git theo dõi " + target);
         continue;
       }
       // Chỉ tài liệu Markdown mới có anchor dựng từ heading. File nguồn thì
