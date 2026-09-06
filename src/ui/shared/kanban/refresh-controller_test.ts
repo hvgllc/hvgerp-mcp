@@ -993,3 +993,42 @@ Deno.test("host hydration into another scope does not carry pending cards", () =
   assertEquals(card.pending, undefined);
   f.succeed(mutation);
 });
+
+Deno.test("a recovery read retires the seq of the host turn it replaced", async () => {
+  const f = fixture(false);
+  // Hai lượt input khác phạm vi dồn dập, B rồi C, và nơi gọi chỉ giữ được seq
+  // mới nhất nên cả hai kết quả host đều mang seq của C. Kết quả B tới trước,
+  // sai phạm vi nên chuyển sang hồi phục; lượt đọc bù đọc đúng phạm vi C và về
+  // TRƯỚC kết quả host gốc của C. Kết quả host đó là bản đọc cũ hơn bản vừa
+  // hồi phục, nên áp vào sẽ kéo board tụt về dữ liệu cũ.
+  const boardB = structuredClone(boardFixture());
+  boardB.title = "Board B";
+  boardB.refreshArguments = { doctype: "Task", project: "B" };
+  const stale = structuredClone(boardFixture());
+  stale.title = "Board C";
+  stale.refreshArguments = { doctype: "Task", project: "C" };
+  const fresh = structuredClone(stale);
+  fresh.title = "Board C sau hồi phục";
+  fresh.cards = [{ id: "TASK-C-9", title: "Task 9", columnId: "Working" }];
+  fresh.columns = stale.columns.map((column) => ({
+    ...column,
+    count: column.id === "Working" ? 1 : 0,
+  }));
+  f.controller.receiveInput({
+    toolName: "erpnext_kanban_get_board",
+    arguments: boardB.refreshArguments,
+  });
+  f.controller.receiveInput({
+    toolName: "erpnext_kanban_get_board",
+    arguments: stale.refreshArguments,
+  });
+  const sharedSeq = f.controller.inputSeq;
+  assertEquals(f.controller.receiveBoard(boardB, sharedSeq), false);
+  const retry = f.controller.request({ ignoreInterval: true });
+  assertEquals(f.calls[0].request.arguments, stale.refreshArguments);
+  f.calls[0].resolve(fresh);
+  assertEquals(await retry, true);
+  assertEquals(f.controller.board, fresh);
+  assertEquals(f.controller.receiveBoard(stale, sharedSeq), false);
+  assertEquals(f.controller.board, fresh);
+});

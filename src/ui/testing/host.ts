@@ -430,7 +430,9 @@ successButton.onclick = () => {
 };
 if (viewer === "kanban-viewer" && scenario === "board-race") {
   let nextHostId = 1;
-  let holdingHost = false;
+  // Không có cờ giữ toàn cục: đúng cái đua cần tái hiện là HAI lượt host chồng
+  // lấn cùng treo, rồi người chạy tự chọn thứ tự trả kết quả. Một cờ dùng chung
+  // sẽ chặn lượt thứ hai và fixture không dựng nổi tình huống đó trên browser.
   for (
     const [label, index] of [
       ["A", 0],
@@ -442,8 +444,6 @@ if (viewer === "kanban-viewer" && scenario === "board-race") {
     const button = document.createElement("button");
     button.textContent = `Giữ host ${label}`;
     button.onclick = () => {
-      if (holdingHost) return;
-      holdingHost = true;
       if (index >= 0) board = boards[index];
       const captured = captureHostBoard(board);
       const input = index < 0 ? {} : { arguments: captured.arguments };
@@ -466,10 +466,8 @@ if (viewer === "kanban-viewer" && scenario === "board-race") {
               };
             row.remove();
             void bridge.sendToolResult(reply).then(() => {
-              holdingHost = false;
               record({ outcome: `host-${kind}-released`, hostId, reply });
             }).catch((error: unknown) => {
-              holdingHost = false;
               record({ outcome: "send-error", hostId, message: String(error) });
             });
           };
@@ -477,7 +475,6 @@ if (viewer === "kanban-viewer" && scenario === "board-race") {
         }
         pendingList.append(row);
       }).catch((error: unknown) => {
-        holdingHost = false;
         record({ outcome: "send-error", hostId, message: String(error) });
       });
     };

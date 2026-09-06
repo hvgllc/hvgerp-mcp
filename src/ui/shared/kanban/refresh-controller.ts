@@ -117,6 +117,12 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
       }
       recoveringHost = false;
       mutationPending = false;
+      // Lượt đọc trực tiếp này mới hơn mọi kết quả host còn treo của input hiện
+      // tại: drain chỉ chạy khi không còn chờ host, nên một kết quả host mang
+      // đúng inputSeq tới sau đây là bản đọc trước khi lượt này ghi. Ghi nhận
+      // seq để receiveBoard từ chối nó, nếu không kết quả cũ của lượt host đang
+      // treo sẽ đè lên bản vừa hồi phục và board quay về dữ liệu cũ hơn.
+      lastAcceptedSeq = inputSeq;
       update(next);
       return true;
     } catch {
