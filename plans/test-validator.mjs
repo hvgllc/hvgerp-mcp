@@ -1244,7 +1244,8 @@ test("DONE completion checklist cannot come from a fenced example", () => {
     [fileFor(24)]: (text) =>
       text.replace(/- \[[ xX]\]/g, "-").replace(
         "## Tiêu chí hoàn tất\n",
-        "## Tiêu chí hoàn tất\n\n" + tick.repeat(3) + "md\n- [x] Example only\n" +
+        "## Tiêu chí hoàn tất\n\n" + tick.repeat(3) +
+          "md\n- [x] Example only\n" +
           tick.repeat(3) + "\n",
       ),
   }, /024.*completion checklist/);
