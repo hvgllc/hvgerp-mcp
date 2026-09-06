@@ -241,14 +241,21 @@ function outsideHtmlBlocks(body, preserveOffsets = false) {
       previousBlank = blank;
       return line;
     }
+    // Một block HTML mở được ngay trên dòng có dấu list: trong "- <div>", nội
+    // dung của item bắt đầu sau "- " và chính là dấu mở. Chỉ thử trên phần đã
+    // bỏ thụt lề thì dấu list còn nguyên, không dấu mở nào khớp, và nội dung
+    // của block bị quét như Markdown sống. Cả dòng bị ẩn kèm dấu list, tức một
+    // bullet biến mất khỏi Markdown cấu trúc; đó là hướng fail-closed và đúng
+    // với chuẩn, vì nội dung của item đó là HTML thô chứ không phải văn xuôi.
+    const content = list ? line.slice(list[0].length) : relative;
     for (const [opener, end] of htmlBlockOpeners) {
-      if (!opener.test(relative)) continue;
+      if (!opener.test(content)) continue;
       // Điều kiện đóng có thể được thỏa ngay trên dòng mở, ví dụ "<pre>x</pre>".
       closer = end && end.test(line) ? undefined : end ?? htmlBlank;
       previousBlank = false;
       return hidden(line);
     }
-    if (previousBlank && htmlLoneTag.test(relative)) {
+    if (previousBlank && htmlLoneTag.test(content)) {
       closer = htmlBlank;
       previousBlank = false;
       return hidden(line);
@@ -482,7 +489,13 @@ function inlineLinkTargets(text) {
         if (character === quote) quote = undefined;
       } else if (
         (character === '"' || character === "'") &&
-        /^[ \t]$/.test(text[scan - 1] ?? "")
+        // Chuẩn cho phép đúng một lần xuống dòng giữa destination và title, nên
+        // ký tự đứng trước dấu nháy cũng có thể là "\n". Chỉ nhận space và tab
+        // thì title mở ngay sau xuống dòng không vào chế độ trích dẫn, một "("
+        // trong title bị đếm như ngoặc lồng của destination, cặp ngoặc không
+        // bao giờ cân, và cả link hỏng biến mất khỏi gate. Nới ở đây cho khớp
+        // với linkDestination, chỗ đã nhận separator xuống dòng.
+        /^[ \t\r\n]$/.test(text[scan - 1] ?? "")
       ) {
         quote = character;
       } else if (character === "(") parens++;
@@ -496,6 +509,11 @@ function inlineLinkTargets(text) {
     const inside = text.slice(cursor + 1, scan - 1).trim();
     const destination = inside.match(linkDestination);
     targets.push(destination ? destination[1] ?? destination[2] : inside);
+    // Label của một link vẫn chứa được inline khác, thường gặp nhất là image:
+    // "[![alt](a.png)](b.md)" render cả hai đích. Nhảy thẳng tới cuối link
+    // ngoài thì đích của image bên trong không ai hỏi tới và một ảnh hỏng lọt
+    // qua gate. Quét lại riêng phần label; nó ngắn hơn text nên đệ quy dừng.
+    targets.push(...inlineLinkTargets(text.slice(index + 1, cursor - 1)));
     index = scan - 1;
   }
   return targets;
@@ -1378,7 +1396,16 @@ for (const filePath of planFiles(planRoot)) {
       const resolved = resolve(dirname(filePath), clean);
       const scoped = relative(repoRoot, resolved);
       // Cho phép ../ trong repo, nhưng không hỏi filesystem về đường dẫn thoát repo.
-      if (isAbsolute(scoped) || scoped.split(/[\\/]/)[0] === "..") {
+      const parts = scoped.split(/[\\/]/);
+      if (isAbsolute(scoped) || parts[0] === "..") {
+        fail(file + ": unsafe Markdown link " + target);
+        continue;
+      }
+      // Nội dung ".git" là metadata của bản checkout, không phải artifact được
+      // theo dõi: cùng một link đó không mở được khi đọc tài liệu trên trình
+      // duyệt repo và khác nhau giữa các máy. canonicalScopePath đã chặn cùng
+      // thành phần này cho đường dẫn phạm vi, nên hai nơi hiểu như nhau.
+      if (parts.some((part) => part.toLowerCase() === ".git")) {
         fail(file + ": unsafe Markdown link " + target);
         continue;
       }

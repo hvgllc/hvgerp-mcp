@@ -3482,3 +3482,40 @@ test("an escaped pipe does not shift README columns", () => {
     [],
   );
 });
+
+// Vòng 17.
+test("an inline link title may open right after the line break", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n[x](missing-title-paren.md\n"title (")\n',
+  }, /link hỏng missing-title-paren\.md/);
+});
+
+test("a raw HTML block may open on the list marker line", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  // "- <div>" mở block ngay trong item, nên link bên trong không phải link sống.
+  const after = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n- <div>\n  [not live](missing-list-marker.md)\n  </div>\n",
+  });
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [],
+  );
+});
+
+test("an image nested in a link label is checked", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[![alt](missing-nested-image.png)](../../README.md)\n",
+  }, /link hỏng missing-nested-image\.png/);
+});
+
+test("a link into the Git directory is rejected", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[git config](../../.git/config)\n",
+  }, /unsafe Markdown link \.\.\/\.\.\/\.git\/config/);
+});
