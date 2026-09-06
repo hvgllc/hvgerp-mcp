@@ -121,11 +121,24 @@ function outsideBlockCode(body) {
 // thiếu "-->" chạy tới hết tài liệu chứ không phải là văn bản sống: đòi delimiter
 // đóng thì mọi section sau một "<!--" bỏ quên vẫn được đọc như nội dung thật và
 // một kế hoạch không còn hiển thị phạm vi, bước hay tiêu chí nào vẫn qua gate.
-const outsideHtmlComments = (body) =>
-  body.replace(
-    /<!--[\s\S]*?(?:-->|$)/g,
-    (comment) => comment.replace(/[^\n]/g, " "),
-  );
+const htmlComment = /<!--[\s\S]*?(?:-->|$)/g;
+function outsideHtmlComments(body) {
+  let output = "", cursor = 0, match;
+  htmlComment.lastIndex = 0;
+  while ((match = htmlComment.exec(body))) {
+    // "\<!--" render ra dấu literal chứ không mở comment, nên nội dung sau nó
+    // vẫn là link sống. Xóa cả đoạn thì một link hỏng nấp sau dấu mở bị escape
+    // không còn ai hỏi tới. Quét tiếp ngay sau dấu mở giả, để một comment thật
+    // đứng sau trong cùng đoạn vẫn được nhận.
+    if (markdownEscaped(body, match.index)) {
+      htmlComment.lastIndex = match.index + 1;
+      continue;
+    }
+    output += body.slice(cursor, match.index) + match[0].replace(/[^\n]/g, " ");
+    cursor = match.index + match[0].length;
+  }
+  return output + body.slice(cursor);
+}
 // Markdown cấu trúc cho các gate metadata: bỏ code (fenced lẫn thụt đầu dòng)
 // rồi bỏ HTML comment. Comment không render, nên một trường khai bên trong nó
 // không phải nội dung sống: đọc nó khiến một kế hoạch có section hiển thị trống
@@ -272,10 +285,21 @@ function inlineLinkTargets(text) {
     let scan = cursor + 1;
     let parens = 1;
     let quote;
+    // Destination dạng <...> là một chuỗi nguyên khối: ngoặc bên trong nó không
+    // tham gia cân bằng cặp ngoặc ngoài. Đếm cả ngoặc đó thì "[x](<a(b.md>)"
+    // không bao giờ tìm thấy delimiter đóng và cả link biến mất khỏi gate.
+    let angle = /^[ \t]*<[^\n]*>/.test(text.slice(cursor + 1));
     while (scan < text.length && parens > 0) {
       const character = text[scan];
       if (character === "\\") {
         scan += 2;
+        continue;
+      }
+      if (angle) {
+        // Dấu > chưa escape đóng destination; xuống dòng thì nó không còn là
+        // dạng <...> nữa và phần còn lại cân bằng ngoặc như thường.
+        if (character === ">" || character === "\n") angle = false;
+        scan++;
         continue;
       }
       if (quote) {
@@ -950,11 +974,17 @@ for (const entry of manifest) {
   }
   const blocks = [];
   // Chỉ annotation sống được mở block; snippet và vị trí citation vẫn đọc body gốc.
-  for (
-    const annotation of outsideFencedCode(body, true).matchAll(
-      /<!-- evidence: [^\n]+ -->/g,
-    )
-  ) {
+  // Quét theo span comment thay vì tìm thẳng chuỗi annotation: khi một "<!--" mở
+  // trước đó, chính "-->" của annotation đóng comment ngoài, nên cả citation lẫn
+  // annotation đều không render. Tìm thẳng chuỗi thì block vẫn được mở từ một
+  // annotation đã bị ẩn và trích đoạn coi như có mặt. Span của một annotation
+  // sống bắt đầu đúng ở nó, còn annotation bị bọc nằm giữa một span mở sớm hơn.
+  const scanned = outsideFencedCode(body, true);
+  for (const annotation of scanned.matchAll(htmlComment)) {
+    if (
+      !/^<!-- evidence: [^\n]+ -->$/.test(annotation[0]) ||
+      markdownEscaped(scanned, annotation.index)
+    ) continue;
     // Đọc trọn delimiter mở rồi đòi delimiter đóng cùng ký tự và dài ít nhất
     // bằng nó. Ghim cứng ba backtick thì backtick thứ tư của một fence dài hơn
     // rơi vào group ngôn ngữ, biến "````CONTRIBUTING" thành lang
@@ -1082,7 +1112,28 @@ for (const filePath of planFiles(planRoot)) {
       // đúng chuẩn tới "link target.md" viết là "link%20target.md" bị báo hỏng.
       // Kiểm an toàn cũng chạy trên chuỗi đã giải mã, để "%2e%2e%2f" hay "%5c"
       // không luồn qua được nhánh unsafe.
-      const withoutFragment = target.split("#")[0].split("?")[0];
+      // Dấu # hoặc ? bị escape là ký tự thật trong tên file, không phải ranh
+      // giới fragment/query: cắt ở dấu chưa escape đầu tiên, rồi mới gỡ escape.
+      // Cắt trước khi gỡ thì "a\#b.md" bị xẻ đôi và trỏ sang một file khác.
+      let boundary = target.length;
+      for (let position = 0; position < target.length; position++) {
+        if (
+          (target[position] === "#" || target[position] === "?") &&
+          !markdownEscaped(target, position)
+        ) {
+          boundary = position;
+          break;
+        }
+      }
+      // CommonMark gỡ backslash escape trước khi mở đường dẫn, nên
+      // "link\(target\).md" trỏ tới "link(target).md"; giữ nguyên backslash thì
+      // một link đúng chuẩn bị báo unsafe. Chỉ gỡ trước dấu câu ASCII, đúng
+      // phạm vi escape của CommonMark; "\\" thành một backslash thật và vẫn rơi
+      // xuống nhánh unsafe bên dưới, là hướng lệch fail-closed.
+      const withoutFragment = target.slice(0, boundary).replace(
+        /\\([!-/:-@[-`{-~])/g,
+        "$1",
+      );
       if (!withoutFragment) continue;
       let clean;
       try {

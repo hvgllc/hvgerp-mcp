@@ -3158,3 +3158,68 @@ test("a fenced catalog example does not advertise another plan", () => {
     [],
   );
 });
+
+test("an escaped comment opener does not hide a link", () => {
+  // "\<!--" render ra dấu literal, nên link sau nó vẫn sống và vẫn phải kiểm.
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n\\<!-- [live](khong-ton-tai.md) -->\n",
+  }, /link hỏng khong-ton-tai.md/);
+});
+
+test("an escaped destination is unescaped before resolution", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  const after = run(
+    {
+      "plans/evidence/backlog-review.md": (text) =>
+        text + "\n[target](link\\(target\\).md)\n",
+    },
+    [],
+    { "plans/evidence/link(target).md": "file" },
+  );
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [],
+  );
+});
+
+test("an escaped hash stays part of the file name", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  // Cắt fragment trước khi gỡ escape thì "a\#b.md" bị xẻ đôi thành "a\" và rơi
+  // xuống nhánh unsafe, dù nó trỏ tới một file có thật.
+  const after = run(
+    {
+      "plans/evidence/backlog-review.md": (text) =>
+        text + "\n[target](a\\#b.md)\n",
+    },
+    [],
+    { "plans/evidence/a#b.md": "file" },
+  );
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [],
+  );
+});
+
+test("an evidence annotation inside an outer comment is not live", () => {
+  // "-->" của annotation đóng luôn comment mở trước đó, nên cả citation lẫn
+  // annotation đều không render và không được mở block trích đoạn.
+  invalid({
+    [fileFor(22)]: (text) =>
+      text.replace(
+        "`CONTRIBUTING.md:81`:\n\n<!-- evidence: CONTRIBUTING.md -->",
+        "<!--\n\n`CONTRIBUTING.md:81`:\n\n<!-- evidence: CONTRIBUTING.md -->",
+      ),
+  }, /evidence excerpt count mismatch/);
+});
+
+test("parentheses inside an angle-bracket destination stay balanced", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[target](<khong-ton-tai(angle.md>)\n",
+  }, /link hỏng khong-ton-tai\(angle\.md/);
+});
