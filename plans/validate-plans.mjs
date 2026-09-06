@@ -47,8 +47,27 @@ function evidenceSource(sourcePath, sourceRef) {
   }
   return sourceCache.get(key);
 }
+// Ngăn xếp thụt lề của các list container đang mở. Một dấu list chỉ mở container
+// mới khi nó nằm trong ba cột kể từ content indent của container đang chứa nó;
+// đo ba cột đó từ gốc tài liệu thì mọi cấp lồng từ cấp ba trở đi không được ghi
+// nhận, và fence hay block HTML của chúng bị đọc như văn xuôi sống. Ba hàm quét
+// dùng chung một bộ đếm để không hiểu cùng một tài liệu theo hai kiểu.
+function listIndentTracker() {
+  const stack = [];
+  const innermost = () => stack.length ? stack[stack.length - 1] : 0;
+  return (relative, width, blank) => {
+    if (blank) return { indent: innermost(), marker: undefined };
+    while (stack.length && width < innermost()) stack.pop();
+    const marker = width <= innermost() + 3
+      ? relative.match(/^(?:[-+*]|[0-9]+[.)])[ \t]+/)
+      : undefined;
+    if (marker) stack.push(width + marker[0].length);
+    return { indent: innermost(), marker: marker?.[0] };
+  };
+}
 function outsideFencedCode(body, preserveOffsets = false) {
   let fence, fenceIndent = 0, listIndent = 0;
+  const track = listIndentTracker();
   const hidden = (line) => preserveOffsets ? " ".repeat(line.length) : "";
   return body.split("\n").map((line) => {
     const indentation = line.match(/^[ \t]*/)[0];
@@ -71,9 +90,8 @@ function outsideFencedCode(body, preserveOffsets = false) {
     // 3 tuyệt đối. Đo thụt so với container thì một ví dụ có fence thụt đúng
     // chuẩn dưới list item mới được nhận là code; ghim cột 3 gốc thì nội dung
     // của nó bị đọc như văn xuôi sống và các gate tài liệu bắt nhầm.
-    if (line.trim() && width < listIndent) listIndent = 0;
-    const list = line.match(/^ {0,3}(?:[-+*]|[0-9]+[.)])[ \t]+/);
-    if (list) listIndent = list[0].length;
+    listIndent =
+      track(line.slice(indentation.length), width, !line.trim()).indent;
     if (
       marker && width <= listIndent + 3 &&
       (marker[1][0] === "~" || !marker[2].includes("`"))
@@ -86,7 +104,8 @@ function outsideFencedCode(body, preserveOffsets = false) {
   }).join("\n");
 }
 function outsideBlockCode(body) {
-  let paragraph = false, code = false, listIndent;
+  let paragraph = false, code = false;
+  const track = listIndentTracker();
   return outsideFencedCode(body).split("\n").map((line) => {
     const indentation = line.match(/^[ \t]*/)[0];
     let width = 0;
@@ -98,14 +117,16 @@ function outsideBlockCode(body) {
       return "";
     }
     // Dòng tiếp của list vẫn là nội dung sống, không mặc nhiên thành code.
-    if (listIndent !== undefined && width < listIndent) listIndent = undefined;
-    const list = line.match(/^ {0,3}(?:[-+*]|[0-9]+[.)])[ \t]+/);
-    if (list) listIndent = list[0].length;
+    const { indent: listIndent } = track(
+      line.slice(indentation.length),
+      width,
+      false,
+    );
     // Trong list item, code block bắt đầu ở content indent của item cộng bốn,
     // không phải bốn tuyệt đối. Tắt hẳn nhận diện code khi đang trong list thì
     // một ví dụ thụt đúng chuẩn trở thành văn xuôi và mọi link giả trong ví dụ
     // bị gate tài liệu báo hỏng.
-    if (width >= (listIndent ?? 0) + 4 && (code || !paragraph)) {
+    if (width >= listIndent + 4 && (code || !paragraph)) {
       code = true;
       return "";
     }
@@ -184,10 +205,19 @@ const htmlLoneTag = new RegExp(
 );
 const htmlBlank = /^[ \t]*\r?$/;
 const htmlFence = /^ {0,3}(`{3,}|~{3,})(.*)\r?$/;
+// Thẻ mở của HTML thô, giữ nguyên phần thuộc tính để đọc lại. Dùng chính
+// htmlAttributes nên giá trị đặt trong nháy vẫn chứa được ">" mà không cắt sớm.
+const htmlTagAttributes = new RegExp(
+  "<[A-Za-z][A-Za-z0-9-]*(" + htmlAttributes + ")[ \\t]*/?>",
+  "g",
+);
+const htmlLinkAttribute =
+  /\b(?:href|src)[ \t]*=[ \t]*(?:"([^"]*)"|'([^']*)'|([^ \t"'=<>`]+))/gi;
 // preserveOffsets giữ nguyên độ dài từng dòng, cho những đường quét cần chỉ số
 // trong body gốc; mặc định trả dòng rỗng, đủ cho các đường đọc theo dòng.
 function outsideHtmlBlocks(body, preserveOffsets = false) {
   let closer, fence, fenceIndent = 0, listIndent = 0, previousBlank = true;
+  const track = listIndentTracker();
   const hidden = (line) => preserveOffsets ? " ".repeat(line.length) : "";
   return body.split("\n").map((line) => {
     const blank = htmlBlank.test(line);
@@ -225,9 +255,8 @@ function outsideHtmlBlocks(body, preserveOffsets = false) {
       previousBlank = false;
       return line;
     }
-    if (!blank && width < listIndent) listIndent = 0;
-    const list = line.match(/^ {0,3}(?:[-+*]|[0-9]+[.)])[ \t]+/);
-    if (list) listIndent = list[0].length;
+    const container = track(relative, width, blank);
+    listIndent = container.indent;
     if (
       marker && width <= listIndent + 3 &&
       (marker[1][0] === "~" || !marker[2].includes("`"))
@@ -247,7 +276,9 @@ function outsideHtmlBlocks(body, preserveOffsets = false) {
     // của block bị quét như Markdown sống. Cả dòng bị ẩn kèm dấu list, tức một
     // bullet biến mất khỏi Markdown cấu trúc; đó là hướng fail-closed và đúng
     // với chuẩn, vì nội dung của item đó là HTML thô chứ không phải văn xuôi.
-    const content = list ? line.slice(list[0].length) : relative;
+    const content = container.marker
+      ? relative.slice(container.marker.length)
+      : relative;
     for (const [opener, end] of htmlBlockOpeners) {
       if (!opener.test(content)) continue;
       // Điều kiện đóng có thể được thỏa ngay trên dòng mở, ví dụ "<pre>x</pre>".
@@ -1321,6 +1352,19 @@ for (const filePath of planFiles(planRoot)) {
       )
     ).join("\n\n");
     const targets = inlineLinkTargets(markdown);
+    // Block HTML thô bị outsideHtmlBlocks xóa khỏi Markdown cấu trúc, đúng ở chỗ
+    // Markdown bên trong nó không render; nhưng thuộc tính link của chính HTML
+    // đó vẫn render và vẫn hỏng được. Quét lại trước khi block bị xóa, sau khi
+    // code và comment đã bị xóa, nên một ví dụ <a href> trong fence không sống.
+    const rawHtml = markdownLinkSections(body).map((section) =>
+      outsideHtmlComments(outsideInlineCode(outsideBlockCode(section)))
+    ).join("\n\n");
+    for (const tag of rawHtml.matchAll(htmlTagAttributes)) {
+      for (const attribute of tag[1].matchAll(htmlLinkAttribute)) {
+        const value = attribute[1] ?? attribute[2] ?? attribute[3];
+        if (value) targets.push(value);
+      }
+    }
     // Kiểm mọi definition, kể cả chưa dùng; không phụ thuộc kiểu full/collapsed/shortcut.
     // Label dừng ở ] không escape, không được ăn sang chuỗi ]: trong title.
     // Marker list ở đầu dòng phải được bỏ qua như đã bỏ qua dấu blockquote: một
@@ -1331,9 +1375,14 @@ for (const filePath of planFiles(planRoot)) {
     // Destination được phép nằm ở dòng ngay sau "]:" theo CommonMark. Regex chỉ
     // đọc một dòng thì một definition hợp lệ viết tách dòng cho ra chuỗi rỗng và
     // bị báo là không hỗ trợ, dù nó trỏ tới file có thật.
+    // "[^label]:" là footnote definition của GFM, không phải reference
+    // definition: phần sau dấu hai chấm là văn xuôi chứ không phải destination,
+    // nên đem đi khớp linkDestination sẽ bác bỏ một chú thích đúng chuẩn. Link
+    // thật nằm trong thân chú thích vẫn được inlineLinkTargets kiểm như mọi
+    // inline khác, nên bỏ qua ở đây không mở lỗ nào.
     for (
       const definition of markdown.matchAll(
-        /^[ \t]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)*\[(?:\\[^\r\n]|[^\[\]\\\r\n])+\]:[ \t]*(?:\r?\n[ \t]*)?([^\r\n]*)$/gm,
+        /^[ \t]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)*\[(?!\^)(?:\\[^\r\n]|[^\[\]\\\r\n])+\]:[ \t]*(?:\r?\n[ \t]*)?([^\r\n]*)$/gm,
       )
     ) {
       const destination = definition[1].trim().match(linkDestination);
@@ -1352,7 +1401,12 @@ for (const filePath of planFiles(planRoot)) {
       // như đường dẫn tương đối và một link đúng chuẩn bị báo hỏng. Đòi scheme
       // dài từ hai ký tự theo RFC 3986 để "c:\..." vẫn rơi xuống nhánh unsafe
       // bên dưới thay vì được bỏ qua.
-      if (/^(?:[a-z][a-z0-9+.-]+:|#)/i.test(target)) continue;
+      // "//host/path" là network-path reference của RFC 3986: nó mượn scheme của
+      // trang đang render và trỏ ra ngoài cây làm việc y như một URL đủ scheme.
+      // Không nhận dạng thì isAbsolute() coi nó là đường dẫn tuyệt đối POSIX và
+      // một link đúng chuẩn bị báo unsafe. Đòi authority không rỗng, nên
+      // "///etc/passwd" vẫn rơi xuống nhánh unsafe bên dưới.
+      if (/^(?:[a-z][a-z0-9+.-]+:|#|\/\/[^\/])/i.test(target)) continue;
       // Destination là URL: bỏ query và fragment rồi giải mã percent-encoding
       // trước khi đụng tới filesystem. Đem chuỗi thô đi phân giải thì một link
       // đúng chuẩn tới "link target.md" viết là "link%20target.md" bị báo hỏng.

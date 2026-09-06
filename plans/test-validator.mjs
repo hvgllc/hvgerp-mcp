@@ -1676,7 +1676,10 @@ for (
     "C:\\Windows\\win.ini",
     "\\\\server\\share\\outside-plan.md",
     "..\\..\\..\\outside-plan.md",
-    "//server/share/outside-plan.md",
+    // "//server/share/..." không còn ở đây: nó là network-path reference, tức
+    // một URL mượn scheme của trang, chứ không phải đường dẫn trong repo. Dạng
+    // UNC thật viết bằng backslash và vẫn nằm trong danh sách này.
+    "///etc/passwd",
   ]
 ) {
   test(
@@ -3518,4 +3521,65 @@ test("a link into the Git directory is rejected", () => {
     "plans/evidence/backlog-review.md": (text) =>
       text + "\n[git config](../../.git/config)\n",
   }, /unsafe Markdown link \.\.\/\.\.\/\.git\/config/);
+});
+
+test("a fence inside a deeply nested list is still code", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n- một\n  - hai\n    - ba\n      - bốn\n" +
+      "        văn xuôi mở đoạn\n        ~~~text\n" +
+      "        [not live](missing-nested-fence.md)\n        ~~~\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a destination in raw HTML is checked", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<a href="missing-html-link.md">missing</a>\n',
+  }, /link hỏng missing-html-link\.md/);
+});
+
+test("an image source in raw HTML is checked", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<img src="missing-html-image.png" alt="x">\n',
+  }, /link hỏng missing-html-image\.png/);
+});
+
+test("a raw HTML destination inside a fence is not live", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n" + tick.repeat(3) + "html\n" +
+      '<a href="missing-fenced-html.md">x</a>\n' + tick.repeat(3) + "\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a GFM footnote is not a reference definition", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nVăn bản có chú thích[^note].\n\n[^note]: Nội dung chú thích.\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a broken link inside a footnote is still checked", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      "\nCó chú thích[^b].\n\n[^b]: xem [đây](missing-in-footnote.md).\n",
+  }, /link hỏng missing-in-footnote\.md/);
+});
+
+test("a scheme-relative destination is left to the browser", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[cdn](//example.com/asset)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
 });

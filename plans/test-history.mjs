@@ -67,6 +67,35 @@ function clone(source, destination) {
 function validate(directory) {
   return run(directory, process.execPath, ["plans/validate-plans.mjs"]);
 }
+// Trạng thái thực thi phải đọc trên Markdown cấu trúc, giống statusOf trong
+// validator. Tìm chuỗi thô trên cả body thì một dòng metadata mẫu viết trong
+// fence hoặc trong HTML comment cũng được tính là khai báo, và gate này đòi
+// artifact provenance của một kế hoạch chưa hề DONE. Bỏ hai lớp không render
+// rồi khớp đúng dòng metadata canonical là đủ cho khác biệt đó.
+function executionStatus(body) {
+  const structural = body
+    .replace(/<!--[\s\S]*?(?:-->|$)/g, "")
+    .split("\n")
+    .reduce(({ lines, fence }, line) => {
+      const marker = line.match(/^ {0,3}(`{3,}|~{3,})/);
+      if (fence) {
+        if (
+          marker && marker[1][0] === fence[0] &&
+          marker[1].length >= fence.length
+        ) {
+          return { lines, fence: undefined };
+        }
+        return { lines, fence };
+      }
+      if (marker) return { lines, fence: marker[1] };
+      return { lines: lines.concat(line), fence };
+    }, { lines: [], fence: undefined })
+    .lines
+    .join("\n");
+  return structural.match(
+    /^- Mốc soạn: `[0-9a-f]{7,40}`, \d{4}-\d{2}-\d{2}\. Trạng thái thực thi: `(TODO|IN_PROGRESS|BLOCKED|DONE|STALE)`\.$/m,
+  )?.[1];
+}
 
 test("completion artifacts reject real index and working-tree additions without fake approvals", () => {
   isolated((directory) => {
@@ -121,6 +150,25 @@ test("completion artifacts reject real index and working-tree additions without 
   });
 });
 
+test("execution status ignores metadata quoted in code or comments", () => {
+  const line =
+    "- Mốc soạn: `abc1234`, 2026-01-01. Trạng thái thực thi: `DONE`.";
+  const fence = "`".repeat(3);
+  assert.equal(executionStatus("# x\n\n" + line + "\n"), "DONE");
+  assert.equal(
+    executionStatus("# x\n\n" + fence + "text\n" + line + "\n" + fence + "\n"),
+    undefined,
+  );
+  assert.equal(executionStatus("# x\n\n<!--\n" + line + "\n-->\n"), undefined);
+  assert.equal(
+    executionStatus(
+      line.replace("DONE", "TODO") + "\n\n" + fence + "text\n" + line + "\n" +
+        fence + "\n",
+    ),
+    "TODO",
+  );
+});
+
 test("committed plan provenance survives a clean single-branch clone", () => {
   assert.equal(
     git(repoRoot, ["rev-parse", "--is-shallow-repository"]),
@@ -154,7 +202,7 @@ test("committed plan provenance survives a clean single-branch clone", () => {
     for (const entry of manifest) {
       for (const evidence of entry.evidence) references.add(evidence.sourceRef);
       const body = readFileSync(join(checkout, "plans", entry.file), "utf8");
-      if (!body.includes("Trạng thái thực thi: `DONE`")) continue;
+      if (executionStatus(body) !== "DONE") continue;
       const id = String(entry.id).padStart(3, "0");
       const report = readFileSync(
         join(checkout, "plans/evidence/" + id + ".md"),
