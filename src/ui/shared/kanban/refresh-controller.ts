@@ -157,7 +157,7 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
             resolveKanbanRefreshRequest(board, null)!,
           ) !==
           kanbanRequestIdentity(next, resolveKanbanRefreshRequest(next, null)!);
-      session++;
+      if (changed) session++;
       generation++;
       waitingForHost = false;
       recoveringHost = false;

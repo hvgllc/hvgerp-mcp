@@ -749,6 +749,47 @@ Deno.test("detail queue keys include doctype and card while move tokens remain c
   await Promise.resolve();
 });
 
+for (
+  const change of ["same", "project", "page", "boardId", "doctype"] as const
+) {
+  Deno.test(`host result preserves detail mutation only for identical scope ${change}`, async () => {
+    const f = fixture();
+    const done = deferred<void>();
+    const current: boolean[] = [];
+    const one = f.controller.runDetailMutation("Task", "A", async (token) => {
+      await done.promise;
+      current.push(f.controller.isCurrent(token));
+    });
+    const two = f.controller.runDetailMutation("Task", "A", (token) => {
+      current.push(f.controller.isCurrent(token));
+      return Promise.resolve();
+    });
+    const next = boardFixture();
+    next.title = "New presentation title";
+    next.generatedAt = "2026-09-06T00:00:00.000Z";
+    if (change === "project") next.refreshArguments!.project = "B";
+    if (change === "page") next.refreshArguments!.offset = 50;
+    if (change === "boardId") next.boardId = "other-task-board";
+    if (change === "doctype") {
+      next.doctype = "Issue";
+      next.refreshArguments!.doctype = "Issue";
+    }
+    f.controller.receiveInput({
+      toolName: "erpnext_kanban_get_board",
+      arguments: next.refreshArguments!,
+    });
+    f.controller.receiveBoard(next);
+    assertEquals(f.calls.length, 0);
+    done.resolve();
+    await Promise.all([one, two]);
+    assertEquals(current, [change === "same", change === "same"]);
+    assertEquals(f.calls.length, 1);
+    assertEquals(f.calls[0].request.arguments, next.refreshArguments);
+    f.calls[0].resolve(next);
+    await Promise.resolve();
+  });
+}
+
 Deno.test("detail queue sends an old-session queued write without marking it current", async () => {
   const f = fixture();
   const done = deferred<void>();
@@ -758,7 +799,11 @@ Deno.test("detail queue sends an old-session queued write without marking it cur
     queuedCurrent = f.controller.isCurrent(token);
     return Promise.resolve();
   });
-  f.controller.receiveBoard({ ...boardFixture(), title: "Board B" });
+  f.controller.receiveBoard({
+    ...boardFixture(),
+    title: "Board B",
+    refreshArguments: { ...boardFixture().refreshArguments, project: "B" },
+  });
   assertEquals(queuedCurrent, undefined);
   done.resolve();
   await Promise.all([one, two]);

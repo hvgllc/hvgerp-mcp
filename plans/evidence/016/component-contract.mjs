@@ -822,6 +822,109 @@ async function finishDetailWrite(h, operation, call, subject, failure) {
   await tick();
 }
 
+for (const operation of Object.keys(detailTools)) {
+  for (const scope of ["same", "project", "page"]) {
+    for (const failed of [false, true]) {
+      test(`component active ${operation} survives host result scope=${scope} failed=${failed}`, async () => {
+        const h = harness();
+        if (scope === "page") h.send(h.fixtures.pagedBoardFixture(0));
+        const card = h.render().state.board.cards[0];
+        h.render().handleCardTitleClick(card);
+        h.calls[0].resolve(payload({
+          name: card.id,
+          subject: "Initial",
+          _assign: '["old@example.test"]',
+        }));
+        await tick();
+        const session = h.render().state.detail.session;
+        const writing = startDetailWrite(h, session, operation, "Updated");
+        const write = h.calls.at(-1);
+        const next = scope === "page"
+          ? h.fixtures.pagedBoardFixture(50)
+          : h.fixtures.boardFixture(scope === "project" ? "B" : "A");
+        h.send(next);
+        assert.equal(
+          h.calls.length,
+          2,
+          "host result cannot start a read during the write",
+        );
+        if (scope === "same") {
+          assert.equal(h.render().state.detail.session, session);
+        } else assert.equal(h.render().state.detail.session, null);
+        await finishDetailWrite(
+          h,
+          operation,
+          write,
+          "Updated",
+          failed ? "write" : undefined,
+        );
+        const result = await writing;
+        if (failed) assert.match(result.error.message, /Forbidden Updated/);
+        else assert.equal(result.error, undefined);
+        const refresh = h.calls.at(-1);
+        assert.equal(refresh.request.name, "erpnext_kanban_get_board");
+        assert.deepEqual(
+          structuredClone(refresh.request.arguments),
+          structuredClone(next.refreshArguments),
+        );
+        refresh.resolve(payload(next));
+        await tick();
+        const detail = h.render().state.detail;
+        if (scope === "same") {
+          assert.equal(detail.session, session);
+          assert.equal(
+            detail.cardDetail.subject,
+            failed ? "Initial" : "Updated",
+          );
+          assert.equal(
+            detail.cardDetail._assign,
+            failed
+              ? '["old@example.test"]'
+              : operation === "Unassign"
+              ? "[]"
+              : '["local@example.test"]',
+          );
+          if (operation === "Save" && !failed) {
+            assert.equal(result.value.saved, true);
+            assert.equal(result.value.detailRefreshed, true);
+          }
+        } else {
+          assert.equal(detail.session, null);
+          assert.equal(detail.cardDetail, null);
+          assert.deepEqual(
+            structuredClone(h.render().state.board.refreshArguments),
+            structuredClone(next.refreshArguments),
+          );
+        }
+      });
+    }
+  }
+}
+
+test("component same-board host result preserves Save readback failure", async () => {
+  const h = harness();
+  const session = await openDetail(h);
+  const writing = startDetailWrite(h, session, "Save", "Saved");
+  const write = h.calls.at(-1);
+  h.send(h.fixtures.boardFixture());
+  await finishDetailWrite(h, "Save", write, "Saved", "readback");
+  const result = await writing;
+  assert.equal(result.value.saved, true);
+  assert.equal(result.value.detailRefreshed, false);
+  assert.equal(
+    h.render().state.detail.detailError,
+    "Failed to refresh saved detail",
+  );
+  h.calls.at(-1).resolve(payload(h.render().state.board));
+  await tick();
+  assert.equal(h.render().state.detail.session, session);
+  assert.equal(h.render().state.detail.cardDetail.subject, "Initial");
+  assert.equal(
+    h.render().state.detail.detailError,
+    "Failed to refresh saved detail",
+  );
+});
+
 for (const first of Object.keys(detailTools)) {
   for (
     const second of Object.keys(detailTools).filter((name) => name !== first)
