@@ -3273,3 +3273,75 @@ test("a duplicate required section is rejected", () => {
     [fileFor(22)]: (text) => text + "\n## Phạm vi và Git\n\n- `server.ts`\n",
   }, /duplicate section Phạm vi và Git/);
 });
+
+test("metadata hidden in a raw HTML block is not live", () => {
+  // Section bọc trong <script type="text/plain"> không render heading hay
+  // trường nào, nên gate ánh xạ bắt buộc không được coi nó là nội dung sống.
+  invalid({
+    [fileFor(22)]: (text) =>
+      text.replace(
+        "## Trạng thái và mục tiêu",
+        '<script type="text/plain">\n## Trạng thái và mục tiêu\n</script>',
+      ),
+  }, /thiếu Trạng thái và mục tiêu/);
+});
+
+test("an evidence record inside a raw HTML block is not live", () => {
+  invalid({
+    [fileFor(22)]: (text) => {
+      const start = text.indexOf(tick + "CONTRIBUTING.md:81" + tick + ":");
+      const end = text.indexOf("\n" + tick.repeat(3) + "\n", start) + 5;
+      return text.slice(0, start) + '<script type="text/plain">\n' +
+        text.slice(start, end) + "</script>\n" + text.slice(end);
+    },
+  }, /evidence excerpt count mismatch/);
+});
+
+test("a fence opened first keeps an HTML tag inert", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  // Một "<div>" viết trong ví dụ không được mở block và nuốt hồ sơ chứng cứ
+  // sống đứng sau nó.
+  const after = run({
+    [fileFor(22)]: (text) =>
+      text.replace(
+        tick + "CONTRIBUTING.md:81" + tick + ":",
+        tick.repeat(3) + "text\n<div>\n" + tick.repeat(3) + "\n\n" + tick +
+          "CONTRIBUTING.md:81" + tick + ":",
+      ),
+  });
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [],
+  );
+});
+
+test("an indented scope bullet is accepted", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  // Thụt một khoảng trắng vẫn là Markdown hợp lệ và render y hệt, nên nó không
+  // được làm gate phạm vi báo malformed.
+  const after = run({
+    [fileFor(22)]: (text) => {
+      const start = text.indexOf("## Phạm vi và Git");
+      const bullet = text.indexOf("\n- " + tick, start);
+      return text.slice(0, bullet) + "\n - " + tick + text.slice(bullet + 4);
+    },
+  });
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [],
+  );
+});
+
+test("an audit category outside the mapping is rejected", () => {
+  invalid({
+    [fileFor(22)]: (text) =>
+      text.replace(
+        "loại: " + tick + "docs" + tick,
+        "loại: " + tick + "banana" + tick,
+      ),
+  }, /plan audit category differs from the audit mapping/);
+});

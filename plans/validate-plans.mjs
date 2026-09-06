@@ -174,31 +174,53 @@ const htmlLoneTag = new RegExp(
     "[ \\t]*/?>|</[A-Za-z][A-Za-z0-9-]*[ \\t]*>)[ \\t]*\\r?$",
 );
 const htmlBlank = /^[ \t]*\r?$/;
-function outsideHtmlBlocks(body) {
-  let closer, previousBlank = true;
+const htmlFence = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+// preserveOffsets giữ nguyên độ dài từng dòng, cho những đường quét cần chỉ số
+// trong body gốc; mặc định trả dòng rỗng, đủ cho các đường đọc theo dòng.
+function outsideHtmlBlocks(body, preserveOffsets = false) {
+  let closer, fence, previousBlank = true;
+  const hidden = (line) => preserveOffsets ? " ".repeat(line.length) : "";
   return body.split("\n").map((line) => {
     const blank = htmlBlank.test(line);
     if (closer) {
       if (closer === htmlBlank) {
         if (blank) closer = undefined;
         previousBlank = blank;
-        return blank ? line : "";
+        return blank ? line : hidden(line);
       }
       if (closer.test(line)) closer = undefined;
       previousBlank = false;
-      return "";
+      return hidden(line);
+    }
+    // Fence mở trước thì nội dung của nó là code chứ không phải HTML, nên một
+    // "<div>" viết trong ví dụ không được mở block và nuốt mất nội dung sống
+    // đứng sau. Chiều ngược lại đã đúng sẵn: block mở trước thì dòng fence bên
+    // trong nó bị xóa cùng block. Hai dấu mở không bao giờ khớp cùng một dòng.
+    const marker = line.match(htmlFence);
+    if (fence) {
+      if (
+        marker && marker[1][0] === fence[0] &&
+        marker[1].length >= fence.length && /^[ \t\r]*$/.test(marker[2])
+      ) fence = undefined;
+      previousBlank = false;
+      return line;
+    }
+    if (marker && (marker[1][0] === "~" || !marker[2].includes("`"))) {
+      fence = marker[1];
+      previousBlank = false;
+      return line;
     }
     for (const [opener, end] of htmlBlockOpeners) {
       if (!opener.test(line)) continue;
       // Điều kiện đóng có thể được thỏa ngay trên dòng mở, ví dụ "<pre>x</pre>".
       closer = end && end.test(line) ? undefined : end ?? htmlBlank;
       previousBlank = false;
-      return "";
+      return hidden(line);
     }
     if (previousBlank && htmlLoneTag.test(line)) {
       closer = htmlBlank;
       previousBlank = false;
-      return "";
+      return hidden(line);
     }
     previousBlank = blank;
     return line;
@@ -210,8 +232,16 @@ function outsideHtmlBlocks(body) {
 // vẫn qua gate. Không xóa inline code ở đây vì chính các gate metadata đọc giá
 // trị nằm trong backtick; hệ quả là một backtick chứa "<!--" vẫn mở được comment
 // giả, nhưng hướng lệch đó là fail-closed (trường biến mất, gate báo thiếu).
+// Bỏ cả block HTML: một section metadata bọc trong <script type="text/plain">
+// không render heading hay trường nào, nhưng nếu vẫn đọc nó thì audit, phụ
+// thuộc, mốc soạn và trạng thái ẩn hẳn với người đọc vẫn thỏa được các gate ánh
+// xạ bắt buộc. Bỏ block HTML trước code, cùng thứ tự với đường quét annotation:
+// block mở trước nuốt luôn fence bên trong nó, còn fence mở trước thì
+// outsideHtmlBlocks đã tự tránh không mở block. Chạy code trước thì một fence
+// chưa đóng nằm trong <script> vẫn được coi là fence và nuốt phần còn lại của
+// tài liệu.
 const structuralMarkdown = (body) =>
-  outsideHtmlComments(outsideBlockCode(body));
+  outsideHtmlComments(outsideBlockCode(outsideHtmlBlocks(body)));
 function markdownLinkSections(body) {
   const sections = [];
   let depth, fence, current = [];
@@ -408,10 +438,28 @@ function auditOf(body) {
     fields.length !== 1 ||
     !metadataSection(body).split("\n").includes(fields[0])
   ) return undefined;
-  return fields[0].match(
-    /^- Mục audit: ([1-9]|1\d|2[0-2]|Hướng phát triển [1-3]); loại: `[^`]+`\.$/,
-  )?.[1];
+  const declaration = fields[0].match(
+    /^- Mục audit: ([1-9]|1\d|2[0-2]|Hướng phát triển [1-3]); loại: `([^`]+)`\.$/,
+  );
+  return declaration ? [declaration[1], declaration[2]] : undefined;
 }
+// Loại của một mục audit là dữ kiện của bản audit, không phải chuỗi tự do của
+// kế hoạch: nhận mọi text trong backtick thì "loại: `banana`" vẫn qua trong khi
+// gate tự nhận là đã kiểm đủ ánh xạ audit. Ánh xạ canonical nằm ngay đây chứ
+// không nằm trong manifest, vì bytes của manifest đã bị ghim trong snapshot
+// provenance của các kế hoạch DONE và thêm một trường vào đó sẽ phá gate ấy.
+const auditCategories = new Map([
+  ["1", "security"],
+  ["7", "tests"],
+  ["8", "security"],
+  ["18", "perf"],
+  ["21", "dx"],
+  ["22", "docs"],
+  ["Hướng phát triển 1", "direction"],
+  ["Hướng phát triển 2", "direction"],
+  ["Hướng phát triển 3", "direction"],
+]);
+const auditCategory = (audit) => auditCategories.get(audit) ?? "bug";
 // Đếm số lần khai một trường phải bỏ qua Markdown không render. Một fence ví dụ
 // mang đúng khuôn metadata là tài liệu hợp lệ, không phải lần khai thứ hai, nên
 // đếm trên body thô sẽ từ chối kế hoạch đúng. Vẫn đếm trên cả tài liệu cấu trúc
@@ -864,7 +912,13 @@ for (const entry of manifest) {
   const bulletStarts = [...scopeSection.matchAll(
     /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+[^\n]*$/gm,
   )];
-  if (bulletStarts.some(([line]) => !/^- `[^`\n]+`(?:[ \t]|$)/.test(line))) {
+  // Matcher ngoài chấp nhận thụt lề, nên mẫu kiểm và mẫu trích cũng phải chấp
+  // nhận: một bullet thụt một khoảng trắng vẫn là Markdown hợp lệ và render y
+  // hệt, nhưng với mẫu đòi "- " ở cột 0 thì nó bị báo malformed rồi kéo theo
+  // lệch phạm vi, tức một thay đổi định dạng vô hại chặn cả gate.
+  if (
+    bulletStarts.some(([line]) => !/^[ \t]*- `[^`\n]+`(?:[ \t]|$)/.test(line))
+  ) {
     fail(entry.file + ": malformed scope file bullet");
   }
   for (
@@ -872,7 +926,9 @@ for (const entry of manifest) {
       /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+[^\n]*(?:\n[ \t]+(?![-*+][ \t]|\d+[.)][ \t])[^\n]*)*/gm,
     )
   ) {
-    const item = bullet[0].match(/^- `([^`\n]+)`(\s*\([\s\S]*\))?[ \t]*$/);
+    const item = bullet[0].match(
+      /^[ \t]*- `([^`\n]+)`(\s*\([\s\S]*\))?[ \t]*$/,
+    );
     if (!item) {
       fail(entry.file + ": malformed scope file bullet");
     } else if (!administrativeFiles.includes(item[1])) {
@@ -1006,8 +1062,11 @@ for (const entry of manifest) {
   if (entry.id > 22 && entry.audit !== `Hướng phát triển ${entry.id - 22}`) {
     fail(`${entry.file}: sai hướng phát triển`);
   }
-  if (auditOf(body) !== entry.audit) {
+  const [planAudit, planCategory] = auditOf(body) ?? [];
+  if (planAudit !== entry.audit) {
     fail(entry.file + ": plan and manifest audit mappings differ");
+  } else if (planCategory !== auditCategory(entry.audit)) {
+    fail(entry.file + ": plan audit category differs from the audit mapping");
   }
   for (const scoped of entry.scope) {
     if (!canonicalScopePath(scoped)) continue;
@@ -1052,7 +1111,12 @@ for (const entry of manifest) {
   // annotation đều không render. Tìm thẳng chuỗi thì block vẫn được mở từ một
   // annotation đã bị ẩn và trích đoạn coi như có mặt. Span của một annotation
   // sống bắt đầu đúng ở nó, còn annotation bị bọc nằm giữa một span mở sớm hơn.
-  const scanned = outsideFencedCode(body, true);
+  // Bỏ cả block HTML, giữ nguyên offset: một hồ sơ chứng cứ bọc trong
+  // <script type="text/plain"> không render trích đoạn nào, nhưng nếu annotation
+  // trong đó vẫn được coi là sống thì kế hoạch không hiển thị trích đoạn nào vẫn
+  // qua gate đối chiếu nguyên văn. Chạy trước outsideFencedCode để block mở
+  // trước nuốt luôn fence bên trong nó, đúng thứ tự của CommonMark.
+  const scanned = outsideFencedCode(outsideHtmlBlocks(body, true), true);
   for (const annotation of scanned.matchAll(htmlComment)) {
     if (
       !/^<!-- evidence: [^\n]+ -->$/.test(annotation[0]) ||
