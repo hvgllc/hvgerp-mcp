@@ -4673,6 +4673,188 @@ test("a broken definition after a blank line is still caught", () => {
   }, /link hỏng missing-real-def\.md/);
 });
 
+test("a link inside an image description renders no destination", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n![alt [nested](missing-nested-in-image.md)](../../README.md)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an image inside a link label still loads its source", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[outer ![alt](missing-image-in-link.png)](../../README.md)\n",
+  }, /link hỏng missing-image-in-link\.png/);
+});
+
+test("a padded code span drops one space at each end", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## A " + tick + " foo " + tick + " B\n\n[ok](#a-foo-b)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a code span slug keeps no padding of its own", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## A " + tick + " foo " + tick + " B\n\n[broken](#a--foo--b)\n",
+  }, /anchor hỏng #a--foo--b/);
+});
+
+test("a named reference outside Latin-1 still decodes", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## Rights &alpha; marker\n\n[ok](#rights-α-marker)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an entity name never reaches a heading slug verbatim", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## Rights &alpha; marker\n\n[broken](#rights-alpha-marker)\n",
+  }, /anchor hỏng #rights-alpha-marker/);
+});
+
+test("a backslash inside an attribute value is ordinary data", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<a id="\\&amp;"></a>\n\n[ok](#%5C%26)\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a fence opens on a blockquote marker line", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n> ~~~\n> ## Ghost quoted fence\n> ~~~\n" +
+      "\n[broken](#ghost-quoted-fence)\n",
+  }, /anchor hỏng #ghost-quoted-fence/);
+});
+
+test("a fence opens on a list marker line", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n- ~~~\n  [not live](missing-list-fence.md)\n  ~~~\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a closer indented past three columns closes no fence", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n   ~~~\n   fence body\n      ~~~\n" +
+      "   [not live](missing-after-fence.md)\n\n   ~~~\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a closer within three columns still closes its fence", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n   ~~~\n   fence body\n   ~~~\n" +
+      "\n[live](missing-past-fence.md)\n",
+  }, /link hỏng missing-past-fence\.md/);
+});
+
+test("an angle destination does not span a line break", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nText probe [literal](<missing-angle\nline.md>)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an angle destination on one line is still checked", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nText probe [literal](<missing-angle-line.md>)\n",
+  }, /link hỏng missing-angle-line\.md/);
+});
+
+test("an xlink:href on an SVG element is a real target", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<svg><use xlink:href="missing-xlink.svg"></use></svg>\n',
+  }, /link hỏng missing-xlink\.svg/);
+});
+
+test("a repeated attribute name keeps only its first value", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<a id="real-anchor" id="ghost-anchor"></a>\n' +
+      "\n[broken](#ghost-anchor)\n",
+  }, /anchor hỏng #ghost-anchor/);
+});
+
+test("the first value of a repeated attribute is still an anchor", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<a id="real-anchor" id="ghost-anchor"></a>\n' +
+      "\n[ok](#real-anchor)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a comment opener inside an attribute opens no comment", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<a title="<!--" href="missing-comment-attr.md">live</a>\n',
+  }, /link hỏng missing-comment-attr\.md/);
+});
+
+test("a real comment still hides the link inside it", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<!-- <a href="missing-in-comment.md">dead</a> -->\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an HTML block inside a blockquote hides its heading", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n> <div>\n> ## Ghost quoted HTML\n> </div>\n" +
+      "\n[broken](#ghost-quoted-html)\n",
+  }, /anchor hỏng #ghost-quoted-html/);
+});
+
+test("a definition continuation line must stay in the same block", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[not-a-definition]:\n- missing-list-dest.md\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a definition continuation inside the block still defines", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[wrapped-def]:\nmissing-wrapped-dest.md\n",
+  }, /link hỏng missing-wrapped-dest\.md/);
+});
+
+test("a quoted title alone is read as the destination", () => {
+  // CommonMark đọc chính chuỗi có dấu nháy làm destination khi không có
+  // destination nào đứng trước nó, nên "[home]( "x")" trỏ tới "%22x%22".
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n[home]( "missing-tooltip.md")\n',
+  }, /link hỏng "missing-tooltip\.md"/);
+});
+
 test("a spaced thematic break does not turn text into a heading", () => {
   invalid({
     "plans/evidence/backlog-review.md": (text) =>

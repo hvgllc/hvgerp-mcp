@@ -2094,3 +2094,83 @@ bốn mẻ trùng ảnh chụp vòng trước, mẻ còn lại lệch đúng m�
 viết một title sau dòng trống; chuẩn không cho destination hay title chứa dòng
 trống nên cả cụm là văn bản literal, cổng cũ báo hai lỗi cho một link không tồn
 tại còn cổng mới im lặng đúng. Ca đó đã thành một test riêng.
+
+## Codex vòng tiếp: review 5126308309
+
+Review đọc đúng head `20d51a206a4a6bea94809c98db66a17af3637fc0` và nêu mười ba
+P2, tất cả trên `plans/validate-plans.mjs`. Cả mười ba tái hiện hai chiều bằng
+một mẻ dò mười tám ca trước khi động vào code, và mười hai ca đúng. Ca còn lại
+được bác bỏ bằng chính cmark 0.31.2, xem mục cuối.
+
+- **Destination trong nhãn image bị đem đi phân giải.** Nội dung giữa `![` và
+  `]` là văn bản thay thế, không renderer nào tải link lồng trong đó, nên cổng
+  báo hỏng một đường dẫn không tồn tại trong tài liệu dựng ra. `scanInline` chốt
+  cờ `image` trước khi đẩy đích của nhãn; chiều ngược lại, ảnh lồng trong nhãn
+  của một link, vẫn tải nguồn như cũ.
+- **Code span không gỡ một khoảng trắng đệm.** Chuẩn bỏ đúng một dấu cách ở mỗi
+  đầu khi cả hai đầu đều có và phần còn lại không rỗng, để một span chứa được
+  dấu backtick. Thiếu phép gỡ đó, slug của heading lệch khỏi slug GitHub đúc và
+  một link đúng bị báo `anchor hỏng`. `codeSpanContent` làm phép gỡ đó, sau khi
+  quy mọi ký tự xuống dòng về dấu cách.
+- **Bảng named reference chỉ có Latin-1.** `&alpha;` không giải mã nên slug
+  thiếu ký tự thật của heading. Fail-closed sai chiều ở đây: một tên chưa giải
+  mã không làm cổng chặt hơn, nó làm cổng mô tả một heading không tồn tại. Bảng
+  thay bằng toàn bộ 2125 tên HTML5 có dấu chấm phẩy, mã hoá dạng `name=hex` nên
+  không ký tự vô hình nào lọt vào mã nguồn.
+- **Dấu chéo ngược trong giá trị thuộc tính bị coi là escape.** Trong HTML thô
+  đó là dữ liệu thường, nên `<a id="\&amp;">` đúc ra id `\&`. Cổng áp
+  `markdownEscaped` ở đó và từ chối một fragment đúng. `decodeReferences` thêm
+  cờ `escapes`, mặc định bật cho văn bản Markdown và tắt ở đường thuộc tính.
+- **Fence không mở trên dòng có marker container.** `> ~~~` và `- ~~~` đều mở
+  một khối mã, nhưng cổng đọc nguyên dòng nên không thấy. Hậu quả hai chiều: một
+  heading trong ví dụ lọt vào tập anchor, và một link chết viết trong ví dụ bị
+  báo hỏng. `outsideFencedCode` gỡ marker blockquote bằng `stripQuoteMarkers`
+  dùng chung, thử mở fence trên phần sau marker danh sách, và đóng fence khi
+  blockquote chứa nó kết thúc.
+- **Fence đóng đo thụt lề sai gốc.** Dòng đóng được thụt tối đa ba cột tính từ
+  lề container, không phải từ dòng mở. Cả hai đường quét giờ so với
+  `listIndent + 3`, nên một dòng thụt sâu không còn đóng sớm khối mã và kéo theo
+  cả phần nội dung phía dưới.
+- **Destination trong ngoặc nhọn bắc qua dòng.** Chuẩn cấm ký tự xuống dòng
+  trong dạng `<...>`, nên cụm bắc hai dòng là văn bản literal. `linkDestination`
+  và `inlineDestination` dựng từ một nguồn chung có nhánh nhọn `[^<>\r\n]*`, và
+  `scanInline` bỏ qua cụm nhiều dòng không parse được. Cụm một dòng vẫn
+  fail-closed, vì ở đó cú pháp sai gần như luôn là link gõ hụt.
+- **`xlink:href` không được đọc.** Cách viết cũ của SVG trỏ đích thật, nên một
+  đích hỏng ở đó đi qua cổng. `linkAttribute` nhận thêm tên này trên đúng nhóm
+  phần tử đang nhận `href`.
+- **Thuộc tính trùng tên đăng ký cả hai giá trị.** HTML giữ lần xuất hiện đầu và
+  bỏ mọi lần sau, kể cả khi lần đầu không có giá trị. `tagAttributes` theo dõi
+  tên đã gặp, nên một id ma không còn làm fragment chết đi qua cổng.
+- **Chuỗi `<!--` trong giá trị thuộc tính mở một comment.** Comment giả đó chạy
+  tới cuối tài liệu và nuốt mọi link phía sau, một lỗ hổng im lặng chứ không
+  phải cách đọc chặt. `rawTextOrComment` thêm nhánh đầu khớp thẻ mở thường và
+  scanner bước qua nguyên vẹn; `script`, `style`, `textarea` giữ cách xử lý raw
+  text như cũ.
+- **HTML block trong blockquote không được nhận.** `> <div>` không mở khối nào
+  nên heading bên trong lọt vào tập anchor. `outsideHtmlBlocks` gỡ marker
+  blockquote trước khi thử dòng mở, dòng đóng và dòng trống, và đóng khối khi
+  blockquote chứa nó kết thúc, dùng chung `stripQuoteMarkers` với đường fence.
+- **Dòng nối của definition vượt ranh giới khối.** Một dòng mở container ngay
+  dưới nhãn không phải phần tiếp của definition. `referenceDefinitions` chỉ nhận
+  dòng nối khi nó không mở container, giữ nguyên độ sâu và là văn xuôi; một nhãn
+  không có destination nào trả về nguyên đoạn văn.
+- **Bác bỏ: `[home]( "tooltip")` không phải destination rỗng kèm title.** cmark
+  0.31.2 dựng cụm đó thành `<a href="%22tooltip%22">`: bộ phân giải đọc
+  destination trước, và một chuỗi trong dấu nháy là destination hợp lệ. Dạng cho
+  `href` rỗng kèm title là `[home](<> "tooltip")`, và dạng đó vốn đã đúng.
+  `inlineDestination` chỉ nới thêm dạng rỗng hoàn toàn `[home]()`.
+
+| Cổng                                   | Kết quả            |
+| -------------------------------------- | ------------------ |
+| `node plans/validate-plans.mjs`        | Đạt: 25 kế hoạch   |
+| `deno fmt --check`                     | 315 file           |
+| `deno lint`                            | 160 file           |
+| `node --test plans/test-validator.mjs` | 597 pass           |
+| `git diff --check`                     | exit 0             |
+| `node --test plans/test-history.mjs`   | 5 pass, sau commit |
+
+Suite thêm 22 test, lên 597. Mười lăm mẻ dò guard của các vòng trước chạy lại
+trên cây mới cho kết quả trùng ảnh chụp vòng trước, và mẻ mười tám ca của vòng
+này cho mười bảy ca đổi chiều đúng như mong đợi, ca thứ mười tám giữ nguyên vì
+đó là ca bị bác bỏ.
