@@ -344,8 +344,11 @@ test("Markdown inline code keeps live links and definitions outside spans", () =
   const result = invalid({
     "plans/evidence/backlog-review.md": (text) =>
       text +
+      // Definition đứng sau một dòng trống: CommonMark không cho nó ngắt đoạn,
+      // nên viết nối ngay dưới dòng văn xuôi thì nó là văn bản literal và phép
+      // kiểm này không còn nói về inline code nữa.
       "\n" + tick + "[Example](missing-example.md)" + tick +
-      " [Live](missing-live.md)\n[live]: missing-definition.md\n",
+      " [Live](missing-live.md)\n\n[live]: missing-definition.md\n",
   }, /link hỏng missing-live.md/);
   assert.deepEqual(result.messages, [
     "evidence/backlog-review.md: link hỏng missing-live.md",
@@ -4512,6 +4515,162 @@ test("a tab indented line past the item content stays code", () => {
       text + "\n- deep item\n\n\t\t## Tab code in item\n" +
       "\n[broken](#tab-code-in-item)\n",
   }, /anchor hỏng #tab-code-in-item/);
+});
+
+test("href on an element that carries no URL is not a link", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<div href="missing-div.md">x</div>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("src on an element that carries no URL is not a link", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<div src="missing-divsrc.png">x</div>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("href on an anchor element is still resolved", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<a href="missing-anchor.md">x</a>\n',
+  }, /link hỏng missing-anchor\.md/);
+});
+
+test("src on an image element is still resolved", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<img src="missing-image.png">\n',
+  }, /link hỏng missing-image\.png/);
+});
+
+test("href on an SVG use element is still resolved", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<svg><use href="missing-use.svg"></use></svg>\n',
+  }, /link hỏng missing-use\.svg/);
+});
+
+test("backtick runs of different lengths open no code span", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## A `x &amp;`` B\n\n[ok](#a-x--b)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an unmatched backtick run leaves no verbatim slug behind", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## A `x &amp;`` B\n\n[broken](#a-x-amp-b)\n",
+  }, /anchor hỏng #a-x-amp-b/);
+});
+
+test("a balanced code span still renders verbatim", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## Probe `&amp;` code\n\n[ok](#probe-amp-code)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a heading link label with nested brackets collapses to its text", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## [Outer [inner]](../../README.md)\n\n[ok](#outer-inner)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a nested label heading keeps no destination in its slug", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## [Outer [inner]](../../README.md)\n" +
+      "\n[broken](#outer-innerreadmemd)\n",
+  }, /anchor hỏng #outer-innerreadmemd/);
+});
+
+test("a reference definition inside a blockquote still defines", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      "\n> [probe-ref]: ../../README.md\n\n## [Reference text][probe-ref]\n" +
+      "\n[ok](#reference-text)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an inline tag with a greater-than sign in an attribute vanishes", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n## A <span title=">Ghost">B</span> C\n\n[ok](#a-b-c)\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an attribute value never leaks into a heading slug", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      '\n## A <span title=">Ghost">B</span> C\n\n[broken](#a-ghostb-c)\n',
+  }, /anchor hỏng #a-ghostb-c/);
+});
+
+test("a link destination does not span a paragraph boundary", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nText probe [literal](\n\nmissing-destination.md)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a title past a blank line does not revive an inline link", () => {
+  // Destination và title của một inline link không chứa được dòng trống, nên cả
+  // cụm là văn bản literal và không có link nào để hỏng.
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n[y](missing-double-break.md\n\n"title (")\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a definition line cannot interrupt a running paragraph", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      "\nOrdinary paragraph probe\n[not-a-definition]: missing-inert-def.md\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a definition after a blank line still defines its label", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[live-def]: ../../README.md\n\n## [Def text][live-def]\n" +
+      "\n[ok](#def-text)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a broken definition after a blank line is still caught", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nParagraph probe.\n\n[broken-def]: missing-real-def.md\n",
+  }, /link hỏng missing-real-def\.md/);
 });
 
 test("a spaced thematic break does not turn text into a heading", () => {

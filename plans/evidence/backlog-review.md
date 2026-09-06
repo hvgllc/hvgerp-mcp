@@ -2045,3 +2045,52 @@ thụt bằng tab, được sửa trong cùng đợt.
 
 Suite thêm 15 test, lên 557. Mười lăm mẻ dò guard của các vòng trước chạy lại
 trên cây mới cho kết quả trùng ảnh chụp ở vòng trước.
+
+## Codex vòng tiếp: review 5126196497
+
+Review đọc đúng head `f9e33adc7f9bba4b54def95c1f5900fb80c2d09d` và nêu bảy P2,
+tất cả trên `plans/validate-plans.mjs`. Cả bảy tái hiện hai chiều bằng mẻ dò
+mười bảy ca (gồm đối chứng) trước khi động vào code.
+
+- **`href` và `src` bị đọc trên mọi thẻ.** `<div href="x.md">` không tải gì cả
+  nên không có link để hỏng, mà cổng vẫn đem thuộc tính chết đó đi phân giải và
+  báo hỏng một tài liệu đúng. Hai thuộc tính giờ chỉ đọc trên phần tử thật sự
+  định nghĩa chúng; danh sách vẫn giữ nhóm SVG (`use`, `image`, `mpath`,
+  `textPath`, `feImage`) để một đích hỏng ở đó không đi qua.
+- **Code span ghép từ hai run backtick lệch độ dài.** Một run chỉ đóng bằng run
+  dài đúng bằng nó, nên phép cắt cũ dựng ra một span không tồn tại, giữ nguyên
+  văn phần lẽ ra được giải mã, và sinh slug khác slug thật của GitHub.
+  `splitCodeSpans` quét run, bỏ qua backtick bị escape, và để run lẻ đôi ở lại
+  làm văn bản.
+- **Nhãn link lồng ngoặc vuông trong heading.** Mẫu phẳng dừng ở dấu `]` đầu
+  tiên nên cả cụm kể cả destination rơi vào slug. `stripHeadingLinks` quét cân
+  bằng độ sâu, nhảy qua thẻ HTML nguyên khối, đọc đuôi `(...)` hoặc `[label]`,
+  rồi đệ quy vào chính nhãn vì image lồng trong link được.
+- **Definition trong container không được thu.** Cả hai đường quét definition
+  giờ đi qua một hàm chung đọc dòng đã gỡ container, cùng khung nhìn với vòng
+  quét heading, nên một nhãn định nghĩa trong blockquote vẫn sống.
+- **Thẻ inline bị cắt ở dấu `>` trong giá trị thuộc tính.** Gỡ bằng chính mẫu
+  nguyên khối đã dùng ở đường quét inline, nên phần đuôi của thẻ không còn rớt
+  vào slug.
+- **Destination bắc qua ranh giới đoạn.** Vòng cân bằng ngoặc dừng ở dòng ngắt
+  đoạn, cùng phép kiểm mà vòng quét nhãn đang dùng, nên một dấu `(` cuối đoạn
+  không còn cặp với một dấu `)` tận đâu và nuốt cả đoạn văn ở giữa làm đường
+  dẫn.
+- **Definition ngắt được đoạn đang chạy.** Hàm chung giữ cờ đoạn: dòng trống,
+  dòng tự mở container và dòng đổi độ sâu container đều đóng đoạn, còn một dòng
+  trông như definition viết nối ngay dưới văn xuôi là văn bản literal.
+
+| Cổng                                   | Kết quả            |
+| -------------------------------------- | ------------------ |
+| `node plans/validate-plans.mjs`        | Đạt: 25 kế hoạch   |
+| `deno fmt --check`                     | 315 file           |
+| `deno lint`                            | 160 file           |
+| `node --test plans/test-validator.mjs` | 575 pass           |
+| `git diff --check`                     | exit 0             |
+| `node --test plans/test-history.mjs`   | 5 pass, sau commit |
+
+Suite thêm 18 test, lên 575. Mười lăm mẻ dò guard chạy lại trên cây mới: mười
+bốn mẻ trùng ảnh chụp vòng trước, mẻ còn lại lệch đúng một ca có chủ ý. Ca đó
+viết một title sau dòng trống; chuẩn không cho destination hay title chứa dòng
+trống nên cả cụm là văn bản literal, cổng cũ báo hai lỗi cho một link không tồn
+tại còn cổng mới im lặng đúng. Ca đó đã thành một test riêng.

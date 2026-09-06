@@ -589,6 +589,41 @@ function renderedTags(text) {
     outsideBlocks[tag.index] !== "<" || !markdownEscaped(text, tag.index)
   );
 }
+// "href" và "src" chỉ là địa chỉ trên đúng những phần tử định nghĩa chúng.
+// Trên <div href="missing.md"> thì href là thuộc tính lạ, trình duyệt không tải
+// gì và không có link nào để hỏng; đem nó đi phân giải là báo hỏng một tài liệu
+// đúng chỉ vì tác giả đặt tên thuộc tính trùng. Ngược lại danh sách phải đủ
+// rộng: SVG dựng link bằng <use href> và <image href>, animation bằng <mpath
+// href>, chữ chạy theo đường bằng <textPath href>, filter nạp ảnh bằng
+// <feImage href>; bỏ sót nhóm này thì một đích hỏng đi qua cổng.
+const hrefElements = new Set([
+  "a",
+  "area",
+  "base",
+  "link",
+  "use",
+  "image",
+  "textpath",
+  "mpath",
+  "feimage",
+  "script",
+]);
+const srcElements = new Set([
+  "img",
+  "script",
+  "iframe",
+  "embed",
+  "source",
+  "track",
+  "audio",
+  "video",
+  "input",
+  "frame",
+]);
+const linkAttribute = (element, name) =>
+  name === "href"
+    ? hrefElements.has(element)
+    : name === "src" && srcElements.has(element);
 // Một ô bảng được phép chứa dấu | literal, viết là "\|". split("|") thô coi nó
 // là vách ngăn và đẩy lệch mọi cột phía sau, nên một README đúng bị báo sai hàng
 // lẫn sai phụ thuộc. Tách ở vách chưa escape rồi mới trả về ký tự literal.
@@ -921,6 +956,12 @@ function scanInline(text) {
         scan += 2;
         continue;
       }
+      // Destination cũng không bắc qua ranh giới khối: "[literal](" đứng cuối
+      // đoạn này và "missing.md)" bên kia dòng trống là hai chuỗi literal, không
+      // phải một link. Quét xuyên qua thì cặp ngoặc cân ở một dấu ")" tận đâu và
+      // gate đem cả đoạn văn ở giữa đi phân giải như đường dẫn. Thoát với parens
+      // còn dương để nhánh bên dưới bỏ qua cả cụm.
+      if (character === "\n" && interruptsParagraph(text, scan)) break;
       if (angle) {
         // Dấu > chưa escape đóng destination; xuống dòng thì nó không còn là
         // dạng <...> nữa và phần còn lại cân bằng ngoặc như thường.
@@ -1921,26 +1962,162 @@ function stripUnderscoreEmphasis(text) {
     text = stripped;
   }
 }
+// Một code span mở bằng run backtick nào thì chỉ đóng bằng run dài đúng bằng
+// nó. Cắt bằng /(`+[^`]*`+)/ thì hai run lệch độ dài vẫn bị ghép thành span:
+// trong "A `x &amp;`` B" chuẩn không thấy code span nào, "&amp;" giải mã thành
+// "&" và slug thật là "a-x--b", nhưng cách cắt cũ giữ nguyên văn và ghi
+// "a-x-amp-b", tức link tới heading thật bị báo hỏng còn link tới slug không
+// tồn tại lại qua cổng. Trả về mảng xen kẽ: chỉ số chẵn là văn bản thường, chỉ
+// số lẻ là nội dung span đã bỏ backtick bao ngoài.
+function splitCodeSpans(text) {
+  const parts = [];
+  let plain = "";
+  for (let index = 0; index < text.length; index++) {
+    if (text[index] !== "`" || markdownEscaped(text, index)) {
+      plain += text[index];
+      continue;
+    }
+    const opener = index;
+    while (text[index + 1] === "`") index++;
+    const run = index - opener + 1;
+    let closer = -1;
+    for (let scan = index + 1; scan < text.length; scan++) {
+      if (text[scan] !== "`") continue;
+      const start = scan;
+      while (text[scan + 1] === "`") scan++;
+      if (scan - start + 1 === run) {
+        closer = start;
+        break;
+      }
+    }
+    // Run không có bạn cùng độ dài thì nó là backtick literal.
+    if (closer === -1) {
+      plain += text.slice(opener, index + 1);
+      continue;
+    }
+    parts.push(plain, text.slice(index + 1, closer));
+    plain = "";
+    index = closer + run - 1;
+  }
+  parts.push(plain);
+  return parts;
+}
+// Vị trí dấu "]" đóng đúng cặp với dấu "[" ở open, hoặc -1 khi không có. Đếm
+// độ sâu vì nhãn lồng được, bỏ qua ký tự escape, và nhảy qua nguyên thẻ HTML
+// inline vì dấu "]" trong giá trị thuộc tính không đóng nhãn nào.
+function matchingBracket(text, open) {
+  let depth = 1;
+  for (let index = open + 1; index < text.length; index++) {
+    if (text[index] === "\\") {
+      index++;
+      continue;
+    }
+    if (text[index] === "<") {
+      htmlInlineAtomic.lastIndex = index;
+      const tag = htmlInlineAtomic.exec(text);
+      if (tag) {
+        index += tag[0].length - 1;
+        continue;
+      }
+    }
+    if (text[index] === "[") depth++;
+    else if (text[index] === "]" && --depth === 0) return index;
+  }
+  return -1;
+}
+// Phần đuôi ngay sau nhãn quyết định cụm có render thành link hay không: trả về
+// vị trí ngay sau đuôi nếu có, -1 nếu cụm chỉ là văn bản trong ngoặc vuông.
+function linkTail(text, position, definitions) {
+  if (text[position] === "(") {
+    let depth = 1;
+    for (let index = position + 1; index < text.length; index++) {
+      if (text[index] === "\\") {
+        index++;
+        continue;
+      }
+      if (text[index] === "(") depth++;
+      else if (text[index] === ")" && --depth === 0) return index + 1;
+    }
+    return -1;
+  }
+  if (text[position] !== "[") return -1;
+  const close = matchingBracket(text, position);
+  if (close === -1) return -1;
+  const label = text.slice(position + 1, close);
+  return !label.trim() || definitions.has(referenceLabel(label))
+    ? close + 1
+    : -1;
+}
+// Link render ra đúng phần nhãn của nó, nên slug lấy nhãn và bỏ destination.
+// Regex phẳng /!?\[([^\]]*)\]\([^)]*\)/ dừng ở dấu "]" đầu tiên nên nhãn lồng
+// ngoặc như "[Outer [inner]](x.md)" không khớp gì cả: cả cụm đi nguyên văn vào
+// slug, ghi "outer-innerxmd" thay vì "outer-inner", và mọi link tới heading đó
+// bị báo hỏng. Quét cân bằng độ sâu, rồi đệ quy vào chính nhãn vì image lồng
+// trong link được và nhãn của nó cũng render ra văn bản.
+function stripHeadingLinks(text, definitions) {
+  let output = "";
+  for (let index = 0; index < text.length; index++) {
+    const character = text[index];
+    if (character === "<" && !markdownEscaped(text, index)) {
+      htmlInlineAtomic.lastIndex = index;
+      const tag = htmlInlineAtomic.exec(text);
+      if (tag) {
+        output += tag[0];
+        index += tag[0].length - 1;
+        continue;
+      }
+    }
+    const image = character === "!" && !markdownEscaped(text, index) &&
+      text[index + 1] === "[";
+    const open = image ? index + 1 : index;
+    if (text[open] !== "[" || markdownEscaped(text, open)) {
+      output += character;
+      continue;
+    }
+    const close = matchingBracket(text, open);
+    const tail = close === -1 ? -1 : linkTail(text, close + 1, definitions);
+    // Không có đuôi thì cụm là văn bản thường; ghi đúng một ký tự rồi đi tiếp để
+    // link nằm bên trong ngoặc vẫn được thu gọn ở vòng sau.
+    if (tail === -1) {
+      output += character;
+      continue;
+    }
+    output += stripHeadingLinks(text.slice(open + 1, close), definitions);
+    index = tail - 1;
+  }
+  return output;
+}
+// Thẻ HTML inline không để lại ký tự nào trong văn bản render. Xóa bằng
+// /<[^>]*>/ thì thẻ có dấu ">" trong giá trị thuộc tính bị cắt ngay tại đó và
+// phần đuôi của chính thẻ rơi vào slug: "<span title=">Ghost">B</span>" để lại
+// "Ghost"B" và heading nhận một id không ai có. Dùng chính mẫu nguyên khối đã
+// dùng ở đường quét inline.
+function stripInlineHtml(text) {
+  let output = "";
+  for (let index = 0; index < text.length; index++) {
+    if (text[index] === "<" && !markdownEscaped(text, index)) {
+      htmlInlineAtomic.lastIndex = index;
+      const tag = htmlInlineAtomic.exec(text);
+      if (tag) {
+        index += tag[0].length - 1;
+        continue;
+      }
+    }
+    output += text[index];
+  }
+  return output;
+}
 const headingText = (raw, definitions) =>
   stripUnderscoreEmphasis(
-    raw.split(/(`+[^`]*`+)/).map((part, index) =>
+    splitCodeSpans(raw).map((part, index) =>
       // Nội dung code span render nguyên văn: gạch dưới trong đó là ký tự thật,
       // không phải delimiter của cặp nhấn bao quanh span.
-      index % 2
-        ? part.replace(/^`+|`+$/g, "").replaceAll("_", "\0_")
-        : decodeReferences(
-          part.replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
-            .replace(
-              /!?\[([^\]]*)\]\[([^\]]*)\]/g,
-              (whole, text, label) =>
-                !label.trim() || definitions.has(referenceLabel(label))
-                  ? text
-                  : whole,
-            )
-            .replace(autolinkText, "$1")
-            .replace(/<[^>]*>/g, ""),
-          "\0",
-        ).replace(/\\([!-/:-@[-`{-~])/g, "\0$1")
+      index % 2 ? part.replaceAll("_", "\0_") : decodeReferences(
+        stripInlineHtml(
+          stripHeadingLinks(part, definitions).replace(autolinkText, "$1"),
+        ),
+        "\0",
+      ).replace(/\\([!-/:-@[-`{-~])/g, "\0$1")
     ).join(""),
   ).replaceAll("\0", "");
 // Blockquote và list item chỉ đặt tiền tố lên đầu dòng chứ không đổi bản chất
@@ -2031,6 +2208,54 @@ const paragraphText = (entry) =>
   entry.text.trim() && !/^ {0,3}#/.test(entry.text) &&
   !/^ {0,3}(?:=+|-+)[ \t]*$/.test(entry.text) &&
   !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(entry.text);
+// Nhãn của một reference definition, dừng ở dấu "]" chưa escape nên không ăn
+// sang chuỗi "]:" nằm trong title. "[^label]:" là footnote definition của GFM,
+// phần sau dấu hai chấm là văn xuôi chứ không phải destination, nên đem đi khớp
+// linkDestination sẽ bác bỏ một chú thích đúng chuẩn.
+const definitionHead =
+  /^ {0,3}\[(?!\^)((?:\\[^\r\n]|[^\[\]\\\r\n])+)\]:[ \t]*(.*)$/;
+// Definition không ngắt được đoạn đang chạy: "Ordinary paragraph" rồi
+// "[label]: dest" là hai dòng của cùng một đoạn văn, dấu ngoặc ở đó là văn bản
+// literal và "dest" không phải đích của ai cả; đọc nó như definition là đem một
+// chuỗi không ai viết đi phân giải rồi báo hỏng một tài liệu đúng. Ngược lại,
+// container chỉ đặt tiền tố chứ không đổi bản chất khối bên trong: "> [ref]:
+// dest" vẫn định nghĩa một nhãn thật, nên phải đọc trên dòng đã gỡ tiền tố,
+// đúng như đường quét heading. Destination được phép nằm ở dòng ngay sau "]:".
+function referenceDefinitions(lines, rawLines) {
+  const found = [];
+  let paragraphOpen = false;
+  let depth = 0;
+  for (let index = 0; index < lines.length; index++) {
+    if (!lines[index].text.trim()) {
+      paragraphOpen = false;
+      continue;
+    }
+    // Một dòng tự mở container mới, hay một dòng đổi độ sâu container, bắt đầu
+    // một khối khác: hai list item liên tiếp là hai đoạn riêng, nên definition
+    // mở đầu item thứ hai không nối vào đoạn của item thứ nhất. Chỉ đếm dòng
+    // trống thì "- [executor][report]" làm câm định nghĩa ngay dưới nó và một
+    // đích hỏng đi qua cổng.
+    if (lines[index].opened || lines[index].depth !== depth) {
+      paragraphOpen = false;
+    }
+    depth = lines[index].depth;
+    const head = paragraphOpen ? null : lines[index].text.match(definitionHead);
+    if (!head) {
+      paragraphOpen = paragraphText(lines[index]);
+      continue;
+    }
+    let destination = head[2].trim();
+    let raw = rawLines[index];
+    if (!destination && lines[index + 1]?.text.trim()) {
+      destination = lines[index + 1].text.trim();
+      raw += "\n" + rawLines[index + 1];
+      index++;
+    }
+    found.push({ label: head[1], destination, raw: raw.trim() });
+    paragraphOpen = false;
+  }
+  return found;
+}
 const anchorCache = new Map();
 function documentAnchors(path) {
   const cached = anchorCache.get(path);
@@ -2046,15 +2271,16 @@ function documentAnchors(path) {
   const seen = new Map();
   const structural = structuralMarkdown(body);
   // Nhãn reference được định nghĩa ở bất kỳ đâu trong tài liệu, kể cả sau
-  // heading dùng nó, nên tập định nghĩa phải dựng trước vòng quét heading. Một
-  // dòng "[label]: dest" nằm giữa đoạn văn không mở định nghĩa nào; đọc rộng
-  // như đây chỉ khiến nhãn đó được coi là sống, tức thu gọn đúng như cách viết
-  // phổ biến thay vì ghi nguyên văn dấu ngoặc vào slug.
-  const definitions = new Set();
-  for (
-    const match of structural.matchAll(/^ {0,3}\[((?:[^\[\]\\\n]|\\.)+)\]:/gm)
-  ) definitions.add(referenceLabel(match[1]));
-  const lines = scanContainers(structural.split("\n"));
+  // heading dùng nó, nên tập định nghĩa phải dựng trước vòng quét heading. Cùng
+  // một cách đọc với đường quét target, nên một nhãn định nghĩa trong blockquote
+  // được thu gọn trong slug đúng như GitHub render nó.
+  const rawLines = structural.split("\n");
+  const lines = scanContainers(rawLines);
+  const definitions = new Set(
+    referenceDefinitions(lines, rawLines).map((entry) =>
+      referenceLabel(entry.label)
+    ),
+  );
   for (let index = 0; index < lines.length; index++) {
     const atx = lines[index].text.match(
       /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$/,
@@ -2151,35 +2377,29 @@ for (const filePath of planFiles(planRoot)) {
       outsideRawTextAndComments(outsideInlineCode(outsideBlockCode(section)))
     ).join("\n\n");
     for (const tag of renderedTags(rawHtml)) {
+      const element = tag[1].toLowerCase();
       for (const [name, value] of tagAttributes(tag[2])) {
-        if ((name === "href" || name === "src") && value) targets.push(value);
+        if (value && linkAttribute(element, name)) targets.push(value);
       }
     }
-    // Kiểm mọi definition, kể cả chưa dùng; không phụ thuộc kiểu full/collapsed/shortcut.
-    // Label dừng ở ] không escape, không được ăn sang chuỗi ]: trong title.
-    // Marker list ở đầu dòng phải được bỏ qua như đã bỏ qua dấu blockquote: một
-    // definition mở đầu list item vẫn định nghĩa reference thật, nên nếu chỉ cho
-    // phép khoảng trắng trước "[" thì "- [report]: missing.md" biến mất khỏi gate
-    // và link hỏng đi qua. Checklist "- [ ] việc" không lọt vào đây vì sau "]"
-    // phải là ":".
-    // Destination được phép nằm ở dòng ngay sau "]:" theo CommonMark. Regex chỉ
-    // đọc một dòng thì một definition hợp lệ viết tách dòng cho ra chuỗi rỗng và
-    // bị báo là không hỗ trợ, dù nó trỏ tới file có thật.
-    // "[^label]:" là footnote definition của GFM, không phải reference
-    // definition: phần sau dấu hai chấm là văn xuôi chứ không phải destination,
-    // nên đem đi khớp linkDestination sẽ bác bỏ một chú thích đúng chuẩn. Link
-    // thật nằm trong thân chú thích vẫn được inlineLinkTargets kiểm như mọi
-    // inline khác, nên bỏ qua ở đây không mở lỗ nào.
+    // Kiểm mọi definition, kể cả chưa dùng; không phụ thuộc kiểu
+    // full/collapsed/shortcut. Container được gỡ trước nên một definition mở đầu
+    // list item hay nằm trong blockquote vẫn vào gate; checklist "- [ ] việc"
+    // không lọt vào đây vì sau "]" phải là ":". Link thật nằm trong thân một
+    // footnote vẫn được inlineLinkTargets kiểm như mọi inline khác, nên việc bỏ
+    // qua footnote definition không mở lỗ nào.
+    const definitionLines = markdown.split("\n");
     for (
-      const definition of markdown.matchAll(
-        /^[ \t]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)*\[(?!\^)(?:\\[^\r\n]|[^\[\]\\\r\n])+\]:[ \t]*(?:\r?\n[ \t]*)?([^\r\n]*)$/gm,
+      const definition of referenceDefinitions(
+        scanContainers(definitionLines),
+        definitionLines,
       )
     ) {
-      const destination = definition[1].trim().match(linkDestination);
+      const destination = definition.destination.match(linkDestination);
       if (!destination) {
         fail(
           file + ": unsupported Markdown reference definition " +
-            definition[0].trim(),
+            definition.raw,
         );
         continue;
       }
