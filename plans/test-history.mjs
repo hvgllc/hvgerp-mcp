@@ -213,7 +213,7 @@ test("historical squashed approval references fail in a real isolated checkout",
   });
 });
 
-test("a real clone missing the approved definition ref fails until that ref is fetched", () => {
+test("a real clone missing the approved definition ref restores provenance after fetching it", () => {
   isolated((directory) => {
     const seed = join(directory, "definition.git");
     git(repoRoot, ["init", "--bare", "--initial-branch=regression", seed]);
@@ -277,18 +277,34 @@ test("a real clone missing the approved definition ref fails until that ref is f
     assert.equal(result.status, 1);
     const failures = result.stderr.trim().split("\n");
     const expected = ["Cannot read Git commit tree: " + definitionSnapshot];
+    // Snapshot lịch sử giữ nguyên nhãn text, không sửa bytes đã được bind.
+    const historicalLanguages = new Map([
+      [7, ["src/ui/tsconfig.json", "deno.json"]],
+      [21, ["scripts/build-node.sh", "scripts/build-node.sh"]],
+      [22, [".github/workflows/publish.yml"]],
+    ]);
+    const languageFailures = [];
     const manifest = JSON.parse(
       readFileSync(join(checkout, "plans/manifest.json"), "utf8"),
     );
     for (const entry of manifest) {
       const body = readFileSync(join(checkout, "plans", entry.file), "utf8");
-      if (!body.includes("Trạng thái thực thi: `DONE`")) continue;
-      expected.push(
-        entry.file + ": DONE requires approved definition snapshot",
-      );
-      expected.push(entry.file + ": DONE requires reviewer approval evidence");
+      if (body.includes("Trạng thái thực thi: `DONE`")) {
+        expected.push(
+          entry.file + ": DONE requires approved definition snapshot",
+        );
+        expected.push(
+          entry.file + ": DONE requires reviewer approval evidence",
+        );
+      }
+      for (const path of historicalLanguages.get(entry.id) ?? []) {
+        const message = entry.file + ": evidence language mismatch " + path;
+        expected.push(message);
+        languageFailures.push(message);
+      }
     }
-    assert.equal(expected.length, 27);
+    assert.equal(languageFailures.length, 5);
+    assert.equal(expected.length, 32);
     assert.deepEqual(failures, expected);
     git(checkout, [
       "fetch",
@@ -297,7 +313,9 @@ test("a real clone missing the approved definition ref fails until that ref is f
       definitionSnapshot + ":refs/heads/approved-definition",
     ]);
     const restored = validate(checkout);
-    assert.equal(restored.status, 0, restored.stderr || restored.stdout);
+    // Fetch chỉ khôi phục provenance; năm lỗi language độc lập vẫn phải còn.
+    assert.equal(restored.status, 1);
+    assert.deepEqual(restored.stderr.trim().split("\n"), languageFailures);
     assert.equal(git(checkout, ["rev-parse", "HEAD"]), before);
   });
 });
