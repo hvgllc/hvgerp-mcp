@@ -431,17 +431,25 @@ successButton.onclick = () => {
 if (viewer === "kanban-viewer" && scenario === "board-race") {
   let nextHostId = 1;
   let holdingHost = false;
-  for (const [label, index] of [["A", 0], ["B", 1], ["trang 50", 3]] as const) {
+  for (
+    const [label, index] of [
+      ["A", 0],
+      ["B", 1],
+      ["trang 50", 3],
+      ["thiếu arguments", -1],
+    ] as const
+  ) {
     const button = document.createElement("button");
     button.textContent = `Giữ host ${label}`;
     button.onclick = () => {
       if (holdingHost) return;
       holdingHost = true;
-      board = boards[index];
+      if (index >= 0) board = boards[index];
       const captured = captureHostBoard(board);
+      const input = index < 0 ? {} : { arguments: captured.arguments };
       const hostId = nextHostId++;
-      void bridge.sendToolInput({ arguments: captured.arguments }).then(() => {
-        record({ outcome: "host-input-held", hostId, ...captured });
+      void bridge.sendToolInput(input).then(() => {
+        record({ outcome: "host-input-held", hostId, ...captured, input });
         const row = document.createElement("li");
         row.textContent = `Host #${hostId} ${label} `;
         for (const kind of ["success", "error", "malformed"] as const) {
