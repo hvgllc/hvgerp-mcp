@@ -10,13 +10,20 @@
 - Ưu tiên: P1; công sức: M; rủi ro sửa: vừa; phối hợp queue và optimistic
   updates.
 - Phụ thuộc: `007`, `009`.
-- Mốc soạn: `67896f3`, 2026-09-05. Trạng thái thực thi: `IN_PROGRESS`.
+- Mốc soạn: `67896f3`, 2026-09-05. Trạng thái thực thi: `STALE`.
+- stale_reason: "Bản sửa đã vào main, source hiện tại không còn hai lỗi."
 - Độ tin cậy: cao qua luồng code; browser cần kiểm.
 
 Refresh bắt đầu trước move có thể kết thúc sau move và ghi đè board mới. Cờ
 refreshAfterMutation bị xóa trước khi refresh mới được chấp nhận nên lần xác
 nhận có thể mất. Mục tiêu là đọc cũ không rollback UI, và pending refresh chỉ
 hết khi đã thực sự xử lý.
+
+Bản sửa của kế hoạch này đã vào `main` tại `164be32`, nên hai trích đoạn lỗi ở
+mục dưới chỉ còn đọc được trong lịch sử Git chứ không còn trong source hiện tại.
+Phần chưa xong là Browser trên HTML mới và review độc lập, ghi tại
+`plans/evidence/016.md`. Ai tiếp tục kế hoạch phải dựng lại hiện trạng từ source
+đã merge trước khi đổi trạng thái, không suy DONE từ việc code đã đổi.
 
 ## Hiện trạng và chứng cứ
 

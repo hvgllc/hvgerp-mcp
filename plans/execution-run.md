@@ -811,3 +811,16 @@ backlog, GitHub, commit hoặc push.
 - Tổng vẫn 21 DONE; 016 chưa merge, 002/021 chờ quyền và 022 phụ thuộc 021.
   Không release, Publish, bump version hoặc nâng dependency. Ba file cá nhân ở
   root vẫn giữ hash trước đó; source ứng dụng root không được sửa.
+
+## Cập nhật sau 13:40 UTC ngày 2026-09-06
+
+- PR 44 đã merge vào main tại 164be320a1bd18cdb047e1ac3af3d1972c3fc1b6. Nhánh PR
+  25 merge main bằng merge commit, không squash, để ancestry provenance của gate
+  lịch sử giữ nguyên; không có xung đột nội dung.
+- Bản sửa 016 vào main làm hai trích đoạn lỗi trong kế hoạch không còn khớp
+  source hiện tại, nên validator báo current source drift ở
+  KanbanViewer.tsx:1131 và 1228. 016 chuyển IN_PROGRESS sang STALE kèm
+  stale_reason, hàng README đổi theo; không đánh DONE vì Browser trên HTML mới,
+  review độc lập và CI JSR thật vẫn chưa xong theo chính evidence 016.
+- Sau merge và đổi trạng thái, đủ gate PR 25 đạt: validator 25 kế hoạch, fmt 315
+  file, lint 160 file, self 458/458 và git diff --check sạch.
