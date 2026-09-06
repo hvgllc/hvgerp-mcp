@@ -2791,3 +2791,36 @@ test("a prose drafting mention cannot displace the metadata one", () => {
     [fileFor(15).slice(6) + ": missing valid drafting reference"],
   );
 });
+
+test("a reference definition inside a list item is still checked", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  // Theo Markdown, "- [report]: missing.md" vẫn định nghĩa reference thật. Nếu
+  // marker list làm definition biến mất khỏi gate thì đích hỏng đi qua yên lặng.
+  const after = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n- [executor][report]\n- [report]: missing.md\n",
+  });
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    ["evidence/backlog-review.md: link hỏng missing.md"],
+  );
+});
+
+test("README cannot advertise plan IDs outside the manifest", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  // Ánh xạ một-một chỉ được kiểm theo chiều manifest sang README, nên một dòng
+  // danh mục mang ID lạ không bị ai hỏi tới dù nó quảng cáo thêm một kế hoạch.
+  const after = run({
+    "plans/README.md": (text) =>
+      text +
+      "| 026 | [Kế hoạch ngoài manifest](README.md) | P3 | S / LOW | không | TODO |\n",
+  });
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    ["README lists plan IDs outside the manifest: 026"],
+  );
+});

@@ -958,9 +958,14 @@ for (const filePath of planFiles(planRoot)) {
     const targets = inlineLinkTargets(markdown);
     // Kiểm mọi definition, kể cả chưa dùng; không phụ thuộc kiểu full/collapsed/shortcut.
     // Label dừng ở ] không escape, không được ăn sang chuỗi ]: trong title.
+    // Marker list ở đầu dòng phải được bỏ qua như đã bỏ qua dấu blockquote: một
+    // definition mở đầu list item vẫn định nghĩa reference thật, nên nếu chỉ cho
+    // phép khoảng trắng trước "[" thì "- [report]: missing.md" biến mất khỏi gate
+    // và link hỏng đi qua. Checklist "- [ ] việc" không lọt vào đây vì sau "]"
+    // phải là ":".
     for (
       const definition of markdown.matchAll(
-        /^[ \t]*\[(?:\\[^\r\n]|[^\[\]\\\r\n])+\]:([^\r\n]*)$/gm,
+        /^[ \t]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)*\[(?:\\[^\r\n]|[^\[\]\\\r\n])+\]:([^\r\n]*)$/gm,
       )
     ) {
       const destination = definition[1].trim().match(linkDestination);
@@ -999,6 +1004,25 @@ const indexPath = resolve(planRoot, "README.md");
 if (!existsSync(indexPath)) fail("Thiếu README.md");
 else {
   const index = readFileSync(indexPath, "utf8");
+  // Ánh xạ một-một phải kiểm cả chiều ngược: vòng lặp dưới chỉ hỏi từng ID của
+  // manifest có đúng một dòng, nên một dòng danh mục mang ID lạ không bị ai hỏi
+  // tới và README quảng cáo thêm kế hoạch ngoài bộ đã duyệt. Đọc ô ID theo đúng
+  // cách vòng lặp dưới đọc, để hai nơi không hiểu tài liệu theo hai kiểu.
+  const planIds = new Set(
+    manifest.map((entry) => String(entry.id).padStart(3, "0")),
+  );
+  const unexpectedIds = [
+    ...new Set(
+      index.split("\n").map((line) => line.split("|")[1]?.trim()).filter(
+        (cell) => cell !== undefined && /^\d{3}$/.test(cell),
+      ),
+    ),
+  ].filter((id) => !planIds.has(id));
+  if (unexpectedIds.length) {
+    fail(
+      "README lists plan IDs outside the manifest: " + unexpectedIds.join(", "),
+    );
+  }
   for (const entry of manifest) {
     if (!index.includes(`](${entry.file})`)) {
       fail(`README thiếu ${entry.file}`);
