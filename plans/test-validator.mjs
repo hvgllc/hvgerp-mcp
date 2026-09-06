@@ -374,6 +374,214 @@ test("Markdown heading inline opener cannot mask the following paragraph", () =>
   }, /link hỏng missing-live.md/);
 });
 
+for (const indent of ["    ", "      ", "\t"]) {
+  test(`PR25 indented code ignores examples ${JSON.stringify(indent)}`, () => {
+    const result = run({
+      "plans/evidence/backlog-review.md": (text) =>
+        text +
+        `\n\n${indent}[Example](missing-code.md)\n${indent}[ref]: /etc/passwd\n`,
+    });
+    assert.equal(result.thrown, undefined);
+    assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  });
+}
+test("PR25 live target after indented code remains checked", () => {
+  const result = invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n\n    [Example](missing-code.md)\n\n[Live](missing-live.md)\n",
+  }, /link hỏng missing-live.md/);
+  assert.deepEqual(result.messages, [
+    "evidence/backlog-review.md: link hỏng missing-live.md",
+  ]);
+});
+test("PR25 indentation cannot interrupt a paragraph or hide list continuation", () => {
+  for (const prefix of ["Paragraph\n", "- Item\n", "- Item\n\n"]) {
+    invalid({
+      "plans/evidence/backlog-review.md": (text) =>
+        text + "\n\n" + prefix + "    [Live](/etc/passwd)\n",
+    }, /unsafe Markdown link/);
+  }
+});
+for (const prefix of ["> ", ">> ", "> > ", "   > "]) {
+  for (
+    const target of [
+      "/etc/passwd",
+      "../../../../outside.md",
+      "missing-quote.md",
+    ]
+  ) {
+    test(`PR25 quoted reference validates ${prefix} ${target}`, () => {
+      const result = invalid({
+        "plans/evidence/backlog-review.md": (text) =>
+          text + `\n${prefix}[ref]: ${target}\n`,
+      }, /unsafe Markdown link|link hỏng missing-quote.md/);
+      assert(!result.existenceChecks.includes("/etc/passwd"));
+    });
+  }
+}
+test("PR25 quoted reference keeps valid targets and rejects unsupported continuation", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      '\n> [local]: ../README.md "Title"\n> [web]: https://example.com\n>> [anchor]: #local\n',
+  });
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n> [ref]:\n> /etc/passwd\n",
+  }, /unsupported Markdown reference definition/);
+});
+test("PR25 quoted code is inert but container exit restores live targets", () => {
+  const result = invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      `\n> ${
+        tick.repeat(3)
+      }md\n> [example]: /etc/passwd\n[Live](missing-live.md)\n`,
+  }, /link hỏng missing-live.md/);
+  assert.deepEqual(result.messages, [
+    "evidence/backlog-review.md: link hỏng missing-live.md",
+  ]);
+});
+for (const prefix of ["", "> ", ">> "]) {
+  test(`PR25 quote-looking text inside a fence stays inert ${JSON.stringify(prefix)}`, () => {
+    const result = run({
+      "plans/evidence/backlog-review.md": (text) =>
+        text +
+        `\n${prefix}${
+          tick.repeat(3)
+        }md\n${prefix}> [example]: /etc/passwd\n${prefix}${tick.repeat(3)}\n`,
+    });
+    assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  });
+}
+test("PR25 quoted multiline inline code and indented examples stay inert", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      `\n> Example ${tick}first\n> [example]: /etc/passwd\n> last${tick}\n>\n>     [example]: /etc/passwd\n`,
+  });
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+for (const marker of [tick.repeat(3), "~~~"]) {
+  test(`PR25 execution steps in fenced examples cannot satisfy gates ${marker}`, () => {
+    invalid(
+      compose(stale(21), {
+        [fileFor(21)]: (text) =>
+          text.replace(/^### Bước (\d+):/gm, "### Example $1:") +
+          `\n${marker}md\n` +
+          [...text.matchAll(/^### Bước \d+:.*$/gm)].map((match) => match[0])
+            .join("\n") +
+          `\n${marker}\n`,
+      }),
+      /021.*bước\/gate không khớp/,
+    );
+  });
+  test(`PR25 example checks do not inflate structural gates ${marker}`, () => {
+    const result = run(compose(stale(21), {
+      [fileFor(21)]: (text) =>
+        text + `\n${marker}md\n**Kiểm tra:**\n${marker}\n`,
+    }));
+    assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  });
+}
+test("PR25 inline check examples do not count as execution gates", () => {
+  const result = run(compose(stale(21), {
+    [fileFor(21)]: (text) =>
+      text + "\nExample " + tick + "**Kiểm tra:**" + tick + ".\n",
+  }));
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+test("PR25 dependency declaration outside metadata cannot replace missing field", () => {
+  invalid(
+    compose(stale(21), {
+      [fileFor(21)]: (text) =>
+        text.replace(/^- Phụ thuộc:.*\n/m, "") + "\n- Phụ thuộc: không.\n",
+    }),
+    /021.*plan and manifest dependencies differ/,
+  );
+});
+test("PR25 dependency prose outside metadata does not duplicate the real field", () => {
+  const result = run(compose(stale(21), {
+    [fileFor(21)]: (text) => text + "\n- Phụ thuộc: 001.\n",
+  }));
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+test("PR25 dependency metadata requires exactly one live declaration", () => {
+  for (
+    const replacement of [
+      "- Phụ thuộc: không.\n- Phụ thuộc: không.",
+      "```md\n- Phụ thuộc: không.\n```",
+      "- Phụ thuộc:\nkhông.",
+    ]
+  ) {
+    invalid(
+      compose(stale(21), {
+        [fileFor(21)]: (text) => text.replace(/^- Phụ thuộc:.*$/m, replacement),
+      }),
+      /021.*plan and manifest dependencies differ/,
+    );
+  }
+});
+for (const language of ["typescript", "", "text extra"]) {
+  test(`PR25 evidence language matches an explicit manifest language ${JSON.stringify(language)}`, () => {
+    invalid(
+      compose(stale(21), {
+        "plans/manifest.json": editManifest((entries) => {
+          entries.find((entry) => entry.id === 21).evidence[0].lang = "text";
+        }),
+        [fileFor(21)]: (text) =>
+          text.replace("```text\n", "```" + language + "\n"),
+      }),
+      /021.*evidence language mismatch/,
+    );
+  });
+}
+for (const language of ["text", "typescript", ""]) {
+  test(`PR25 absent evidence language preserves existing fence semantics ${JSON.stringify(language)}`, () => {
+    const result = run(compose(stale(21), {
+      "plans/manifest.json": editManifest((entries) => {
+        delete entries.find((entry) => entry.id === 21).evidence[0].lang;
+      }),
+      [fileFor(21)]: (text) =>
+        text.replace("```text\n", "```" + language + "\n"),
+    }));
+    assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  });
+}
+test("PR25 explicit matching evidence language passes", () => {
+  const result = run(compose(stale(21), {
+    "plans/manifest.json": editManifest((entries) => {
+      entries.find((entry) => entry.id === 21).evidence[0].lang = "text";
+    }),
+  }));
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+test("PR25 explicit empty language requires an unlabelled fence", () => {
+  const setup = compose(stale(21), {
+    "plans/manifest.json": editManifest((entries) => {
+      entries.find((entry) => entry.id === 21).evidence[0].lang = "";
+    }),
+  });
+  invalid(setup, /021.*evidence language mismatch/);
+  const result = run(compose(setup, {
+    [fileFor(21)]: (text) => text.replace("```text\n", "```\n"),
+  }));
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+test("PR25 evidence language rejects malformed manifest types", () => {
+  for (const value of [null, 42, [], {}]) {
+    invalid(
+      compose(stale(21), {
+        "plans/manifest.json": editManifest((entries) => {
+          entries.find((entry) => entry.id === 21).evidence[0].lang = value;
+        }),
+      }),
+      /021.*evidence language mismatch/,
+    );
+  }
+});
+
 function editManifest(edit) {
   return (text) => {
     const entries = JSON.parse(text);

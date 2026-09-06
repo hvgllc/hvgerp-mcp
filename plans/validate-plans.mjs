@@ -59,6 +59,67 @@ function outsideFencedCode(body) {
     return line;
   }).join("\n");
 }
+function outsideBlockCode(body) {
+  let paragraph = false, code = false, listIndent;
+  return outsideFencedCode(body).split("\n").map((line) => {
+    const indentation = line.match(/^[ \t]*/)[0];
+    let width = 0;
+    for (const character of indentation) {
+      width += character === "\t" ? 4 - width % 4 : 1;
+    }
+    if (!line.trim()) {
+      paragraph = false;
+      return "";
+    }
+    // Dòng tiếp của list vẫn là nội dung sống, không mặc nhiên thành code.
+    if (listIndent !== undefined && width < listIndent) listIndent = undefined;
+    const list = line.match(/^ {0,3}(?:[-+*]|[0-9]+[.)])[ \t]+/);
+    if (list) listIndent = list[0].length;
+    if (width >= 4 && listIndent === undefined && (code || !paragraph)) {
+      code = true;
+      return "";
+    }
+    code = false;
+    paragraph =
+      !/^ {0,3}(?:#{1,6}(?:[ \t]|$)|>|(?:=+|-+)[ \t]*$|(?:\*[ \t]*){3,}$|(?:_[ \t]*){3,}$)/
+        .test(line) &&
+      !/^ {0,3}\[[^\]]+\]:/.test(line);
+    return line;
+  }).join("\n");
+}
+function markdownLinkSections(body) {
+  const sections = [];
+  let depth, fence, current = [];
+  for (const original of outsideFencedCode(body).split("\n")) {
+    let line = original, nextDepth = 0, prefix;
+    while ((prefix = line.match(/^ {0,3}>[ \t]?/))) {
+      if (fence && nextDepth === depth) break;
+      nextDepth++;
+      line = line.slice(prefix[0].length);
+    }
+    // Rời container cũng kết thúc fence chưa đóng và inline span của container.
+    if (nextDepth !== depth) {
+      if (current.length) sections.push(current.join("\n"));
+      current = [];
+      depth = nextDepth;
+      fence = undefined;
+    }
+    current.push(line);
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (fence) {
+      if (
+        marker && marker[1][0] === fence[0] &&
+        marker[1].length >= fence.length && /^[ \t\r]*$/.test(marker[2])
+      ) {
+        fence = undefined;
+      }
+    } else if (marker && (marker[1][0] === "~" || !marker[2].includes("`"))) {
+      fence = marker[1];
+    }
+  }
+  if (current.length) sections.push(current.join("\n"));
+  return sections;
+}
 function outsideInlineCode(body) {
   // Inline span không được nối qua heading, list, quote hoặc đoạn trống.
   const paragraphs = [];
@@ -473,7 +534,11 @@ for (const entry of manifest) {
     continue;
   }
   const body = readFileSync(path, "utf8");
-  const dependencyFields = [...body.matchAll(/^- Phụ thuộc:\s*(.*)$/gm)];
+  const dependencyFields = [
+    ...outsideBlockCode(metadataSection(body)).matchAll(
+      /^- Phụ thuộc:[ \t]*(.*)$/gm,
+    ),
+  ];
   const planDependencies = dependencies(dependencyFields[0]?.[1]);
   if (
     dependencyFields.length !== 1 || !planDependencies ||
@@ -534,8 +599,9 @@ for (const entry of manifest) {
   if (!sameSet(planNewFiles, entry.newFiles)) {
     fail(entry.file + ": plan and manifest new-file classifications differ");
   }
+  const structuralBody = outsideBlockCode(body);
   const structuralHeadings = new Set(
-    [...outsideFencedCode(body).matchAll(/^ {0,3}##[ \t]+([^\r\n]+)\r?$/gm)]
+    [...structuralBody.matchAll(/^ {0,3}##[ \t]+([^\r\n]+)\r?$/gm)]
       .map((match) => match[1].replace(/[ \t]+#+[ \t]*$/, "").trim()),
   );
   for (const heading of headings) {
@@ -588,8 +654,10 @@ for (const entry of manifest) {
       fail(entry.file + ": DONE requires reviewer approval evidence");
     }
   }
-  const steps = [...body.matchAll(/^### Bước \d+:/gm)].length;
-  const checks = [...body.matchAll(/\*\*Kiểm tra:\*\*/g)].length;
+  const structuralText = outsideInlineCode(structuralBody);
+  const steps = [...structuralText.matchAll(/^ {0,3}### Bước \d+:/gm)].length;
+  const checks =
+    [...structuralText.matchAll(/^ {0,3}\*\*Kiểm tra:\*\*(?=\s|$)/gm)].length;
   if (steps < 2 || steps !== checks) {
     fail(`${entry.file}: bước/gate không khớp`);
   }
@@ -632,7 +700,7 @@ for (const entry of manifest) {
   }
   const blocks = [
     ...body.matchAll(
-      /<!-- evidence: ([^\n]+) -->\s*(?:<!-- deno-fmt-ignore -->\s*)?```[^\n]*\n([\s\S]*?)\n```/g,
+      /<!-- evidence: ([^\n]+) -->\s*(?:<!-- deno-fmt-ignore -->\s*)?```([^\n]*)\n([\s\S]*?)\n```/g,
     ),
   ];
   if (blocks.length !== entry.evidence.length) {
@@ -679,8 +747,14 @@ for (const entry of manifest) {
           evidence.path + ":" + evidence.line,
       );
     }
-    if (!block || block[1] !== evidence.path || block[2] !== evidence.code) {
+    if (!block || block[1] !== evidence.path || block[3] !== evidence.code) {
       fail(entry.file + ": excerpt mismatch " + evidence.path);
+    }
+    if (
+      Object.hasOwn(evidence, "lang") &&
+      (typeof evidence.lang !== "string" || block?.[2] !== evidence.lang)
+    ) {
+      fail(entry.file + ": evidence language mismatch " + evidence.path);
     }
   }
 }
@@ -691,7 +765,9 @@ for (const filePath of planFiles(planRoot)) {
     fail(file + ": contains U+2014");
   }
   if (file.endsWith(".md")) {
-    const markdown = outsideInlineCode(outsideFencedCode(body));
+    const markdown = markdownLinkSections(body).map((section) =>
+      outsideInlineCode(outsideBlockCode(section))
+    ).join("\n\n");
     const targets = [...markdown.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)]
       .map((match) => match[1]);
     // Kiểm mọi definition, kể cả chưa dùng; không phụ thuộc kiểu full/collapsed/shortcut.
