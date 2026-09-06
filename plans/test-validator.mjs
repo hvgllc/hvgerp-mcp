@@ -5301,3 +5301,99 @@ test("labels that really differ still do not match", () => {
       "[g5b](#visible-g5b)\n",
   }, /anchor hỏng #visible-g5b/);
 });
+
+test("a comma without whitespace separates srcset candidates", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<img srcset="../../README.md 1x,missing-h1.png 2x">\n',
+  }, /link hỏng missing-h1\.png/);
+});
+
+test("a comma inside a srcset URL does not separate candidates", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<img srcset="missing-h1b.png,missing-h1c.png">\n',
+  }, /link hỏng missing-h1b\.png,missing-h1c\.png/);
+});
+
+test("a comma inside srcset descriptor parentheses is hidden", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<img srcset="missing-h1d.png (1,5)x">\n',
+  }, /link hỏng missing-h1d\.png$/m);
+});
+
+test("an object data resource is a real target", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<object data="missing-h2.pdf"></object>\n',
+  }, /link hỏng missing-h2\.pdf/);
+});
+
+test("data on another element is not a target", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<div data="missing-h2b.pdf"></div>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("whitespace around an HTML URL attribute is trimmed", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<a href=" ../../README.md ">root</a>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a trimmed HTML URL attribute is still resolved", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<a href=" missing-h3.md ">x</a>\n',
+  }, /link hỏng missing-h3\.md/);
+});
+
+test("an HTML URL attribute that is only whitespace is not a target", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<a href="   ">x</a>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a destination nested past the parenthesis limit is literal text", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[x](" + "(".repeat(33) + "missing-h4.md" + ")".repeat(33) +
+      ")\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a destination at the parenthesis limit is still a link", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[x](" + "(".repeat(32) + "missing-h4b.md" + ")".repeat(32) +
+      ")\n",
+  }, /link hỏng/);
+});
+
+test("an iframe body is still scanned for links", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<iframe><a href="missing-h5.md">fallback</a></iframe>\n',
+  }, /link hỏng missing-h5\.md/);
+});
+
+test("a tab inside a heading is dropped from the slug", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## Tab\theading probe\n\n[h6](#tabheading-probe)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});

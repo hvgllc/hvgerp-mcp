@@ -2319,3 +2319,61 @@ chứng còn lộ thêm một lỗi thứ sáu không ai nêu.
 
 Suite thêm 12 test, lên 636. Mẻ dò mười một ca của vòng này cho cả mười một đúng
 chiều, và ba mẻ dò guard của hai vòng trước (26 ca) giữ nguyên chiều cũ.
+
+## Codex vòng tiếp: review 5126723710
+
+Review đọc đúng head `dab3081a`, nêu sáu P2 và không P1 nào. Cả sáu tái hiện
+bằng một mẻ dò mười ba ca trước khi động vào code. Bốn ca đúng và đã sửa; hai ca
+sai và bị bác bằng chính renderer mà các tài liệu này được đọc trong đó, mỗi ca
+khóa lại bằng một test.
+
+Vòng này trọng tài đổi vai. Với ngoặc lồng và với anchor,
+`npm:commonmark@0.31.2` không đủ: nó không có trần ngoặc, còn anchor thì không
+phải chuyện của CommonMark. Nên hai câu hỏi đó hỏi thẳng GitHub Markdown API, và
+câu hỏi anchor hỏi thêm hai bản cài đặt slugger.
+
+- **Dấu phẩy trong srcset không cần khoảng trắng đi kèm.** Máy tách của HTML đọc
+  URL tới khoảng trắng đầu tiên rồi đọc phần descriptor tới dấu phẩy kết thúc
+  ứng viên, nên `a.png 1x,b.png 2x` là hai ứng viên. Đọc dấu phẩy chỉ khi nó
+  đứng cuối một token thì URL thứ hai dính vào descriptor thứ nhất và một ảnh 2x
+  thiếu file đi qua cổng. `srcsetTargets` giờ chạy theo từng ký tự đúng máy tách
+  đó, ngoặc trong descriptor che dấu phẩy bên trong nó. Hai ca đối chứng ghim
+  chiều ngược lại: `a.png,b.png` vẫn là một URL vì URL chỉ dừng ở khoảng trắng.
+- **`data` của `object` là tài nguyên thật.** Đó chính là URL của object nhúng,
+  đúng vai trò `src` của một embed, nên một PDF thiếu file sau tên đó là
+  artifact hỏng. Khoanh phạm vi đúng cách `poster` được khoanh cho `video`.
+- **Thuộc tính URL trong HTML phải chuẩn hóa trước khi phân giải.** Trình duyệt
+  bỏ mọi tab và xuống dòng rồi cắt khoảng trắng hai đầu, nên
+  `href=" ../../README.md "` là một link đúng. Đẩy nguyên văn xuống bước tìm
+  file thì đường dẫn mang dấu cách ở hai đầu và một tài liệu đúng bị báo hỏng.
+  Giá trị rỗng sau chuẩn hóa không còn là đích, nên `href=""` im lặng thay vì
+  phân giải một đường dẫn rỗng.
+- **Ngoặc lồng trong destination có trần 32 lớp.** Đẩy 31, 32, 33 và 34 lớp qua
+  GitHub Markdown API cho hai ca đầu ra link và hai ca sau ra đoạn văn thường,
+  đúng như trần của cmark-gfm. Đếm không trần thì gate đem một chuỗi không ai
+  render đi phân giải và báo hỏng một tài liệu đúng.
+- **Bác: thân `iframe` không phải văn bản thô ở đây.** Việc che thân là luật
+  CommonMark chứ không phải luật của bộ phân tích HTML: HTML block type 1 chỉ
+  định nghĩa cho `pre`, `script`, `style` và `textarea`, đúng bốn tên đang được
+  che. GitHub trả
+  `&lt;iframe&gt;<a href="missing.md">fallback</a>&lt;/iframe&gt;`, tức anchor
+  bên trong sống thật. Che thêm là tự tạo một điểm mù cho đích hỏng thật.
+- **Bác: tab trong heading bị xóa khỏi slug, không thành gạch nối.** GitHub giữ
+  nguyên tab trong văn bản heading, rồi bước dựng slug xóa mọi ký tự không phải
+  chữ, số, dấu phụ, gạch dưới, khoảng trắng hay gạch nối trước khi đổi khoảng
+  trắng thành gạch nối. Cả `html-pipeline` lẫn `github-slugger` 2.0.0 đều cho
+  `tabheading-probe`, đúng thứ cổng đang dựng.
+
+| Cổng                                   | Kết quả            |
+| -------------------------------------- | ------------------ |
+| `node plans/validate-plans.mjs`        | Đạt: 25 kế hoạch   |
+| `deno fmt --check`                     | 315 file           |
+| `deno lint`                            | 160 file           |
+| `node --test plans/test-validator.mjs` | 648 pass           |
+| `git diff --check`                     | exit 0             |
+| `node --test plans/test-history.mjs`   | 5 pass, sau commit |
+
+Suite thêm 12 test, lên 648, trong đó hai test khóa lại chiều của hai finding bị
+bác. Mẻ dò mười ba ca của vòng này cộng năm ca đối chứng thêm cho vùng vừa sửa
+đều đúng chiều, và bốn mẻ dò guard của ba vòng trước (32 ca) giữ nguyên chiều
+cũ.

@@ -679,6 +679,9 @@ const inlineDestination = new RegExp(
   "^(?:(?:<([^<>\\r\\n]*)>|([^\\s<>]+))(?:" + linkSeparator + linkTitle +
     ")?)?$",
 );
+// Destination trần chỉ chứa ngoặc lồng tới 32 lớp; qua đó thì renderer bỏ cả cụm
+// về văn bản literal thay vì dựng link.
+const destinationParenLimit = 32;
 // Ký tự ở vị trí position chỉ bị escape khi số backslash liền ngay trước nó là
 // số lẻ. Chuỗi chẵn như \\[ là một backslash literal rồi mới tới [ còn hiệu
 // lực, nên kiểm một ký tự đơn text[position - 1] === "\\" sẽ bỏ sót link thật.
@@ -741,25 +744,41 @@ const linkAttribute = (element, name) =>
 // tài nguyên thật và đều hỏng được. Chỉ đọc "src" thì một ảnh 2x thiếu file đi
 // qua cổng và vỡ trên đúng những máy chọn nhánh đó.
 const srcsetElements = new Set(["img", "source"]);
-// Tách theo thuật toán của HTML chứ không split thô ở dấu phẩy: dấu phẩy kết
-// thúc ứng viên chỉ khi nó đứng cuối URL hoặc cuối descriptor, nên "a.png 1x,
-// b.png 2x" cho hai URL còn "a.png 1x" cho một. Cắt bừa ở mọi dấu phẩy thì một
-// descriptor bị đem đi phân giải như tên file và báo hỏng một tài liệu đúng.
+const srcsetWhitespace = /[ \t\r\n\f]/;
+// Đi theo đúng máy tách của HTML chứ không split theo token: URL chạy tới khoảng
+// trắng đầu tiên, rồi phần descriptor chạy tới dấu phẩy kết thúc ứng viên. Dấu
+// phẩy đó không cần khoảng trắng đi kèm, nên "a.png 1x,b.png 2x" là hai ứng
+// viên; đọc dấu phẩy chỉ khi nó đứng cuối một token thì URL thứ hai dính vào
+// descriptor thứ nhất và một ảnh 2x thiếu file đi qua cổng. Ngoặc trong
+// descriptor che dấu phẩy bên trong nó, y như trong máy tách của chuẩn.
 function srcsetTargets(value) {
   const found = [];
-  let expectUrl = true;
-  for (const token of value.split(/[ \t\r\n\f]+/).filter(Boolean)) {
-    if (!expectUrl) {
-      if (token.endsWith(",")) expectUrl = true;
+  let position = 0;
+  while (position < value.length) {
+    while (
+      position < value.length &&
+      (srcsetWhitespace.test(value[position]) || value[position] === ",")
+    ) position++;
+    let url = "";
+    while (
+      position < value.length && !srcsetWhitespace.test(value[position])
+    ) url += value[position++];
+    if (!url) continue;
+    if (url.endsWith(",")) {
+      const trimmed = url.replace(/,+$/, "");
+      if (trimmed) found.push(trimmed);
       continue;
     }
-    if (token.endsWith(",")) {
-      const url = token.replace(/,+$/, "");
-      if (url) found.push(url);
-      continue;
+    found.push(url);
+    for (let parens = 0; position < value.length; position++) {
+      const character = value[position];
+      if (parens === 0 && character === ",") {
+        position++;
+        break;
+      }
+      if (character === "(") parens++;
+      else if (character === ")" && parens > 0) parens--;
     }
-    found.push(token);
-    expectUrl = false;
   }
   return found;
 }
@@ -767,15 +786,25 @@ function srcsetTargets(value) {
 // play, nên nó là một tài nguyên thật và hỏng được y như "src". Bỏ qua tên đó
 // là để một video mất ảnh nền đi qua cổng và vỡ trên đúng lần xem đầu tiên.
 const posterElements = new Set(["video"]);
-// Mọi đích mà một thuộc tính dựng ra, đã tách sẵn: "href", "src" và "poster"
-// cho đúng một đích, "srcset" cho cả danh sách, tên khác cho danh sách rỗng.
+// "data" của object là chính tài nguyên object nhúng, đúng vai trò "src" của
+// một embed, nên một PDF thiếu file sau tên đó cũng là một artifact hỏng.
+const dataElements = new Set(["object"]);
+// Trình duyệt chuẩn hóa giá trị trước khi phân giải URL: bỏ mọi tab và xuống
+// dòng, rồi cắt khoảng trắng hai đầu. Đẩy nguyên văn xuống bước tìm file thì
+// href=" ../../README.md " thành một đường dẫn có dấu cách ở hai đầu, không tồn
+// tại, và một link đúng bị báo hỏng.
+const attributeTarget = (value) => value.replace(/[\t\r\n]/g, "").trim();
+// Mọi đích mà một thuộc tính dựng ra, đã tách sẵn: "href", "src", "poster" và
+// "data" cho đúng một đích, "srcset" cho cả danh sách, tên khác cho danh sách
+// rỗng.
 const attributeTargets = (element, name, value) =>
-  linkAttribute(element, name) ||
-    (name === "poster" && posterElements.has(element))
+  (linkAttribute(element, name) ||
+      (name === "poster" && posterElements.has(element)) ||
+      (name === "data" && dataElements.has(element))
     ? [value]
     : name === "srcset" && srcsetElements.has(element)
     ? srcsetTargets(value)
-    : [];
+    : []).map(attributeTarget).filter(Boolean);
 // Một ô bảng được phép chứa dấu | literal, viết là "\|". split("|") thô coi nó
 // là vách ngăn và đẩy lệch mọi cột phía sau, nên một README đúng bị báo sai hàng
 // lẫn sai phụ thuộc. Tách ở vách chưa escape rồi mới trả về ký tự literal.
@@ -1361,6 +1390,7 @@ function scanInline(text) {
     // destination, và dấu ) nằm trong title được trích dẫn. Title chỉ mở khi
     // dấu nháy đứng sau khoảng trắng, để dấu nháy trong tên file không tính.
     let scan = cursor + 1;
+    // Đếm cả dấu "(" mở link, nên độ sâu lồng bên trong destination là parens-1.
     let parens = 1;
     let quote;
     // Destination dạng <...> là một chuỗi nguyên khối: ngoặc bên trong nó không
@@ -1399,8 +1429,13 @@ function scanInline(text) {
         /^[ \t\r\n]$/.test(text[scan - 1] ?? "")
       ) {
         quote = character;
-      } else if (character === "(") parens++;
-      else if (character === ")") parens--;
+      } else if (character === "(") {
+        parens++;
+        // Ngoặc lồng trong destination có trần: quá 32 lớp thì cả cụm là văn bản
+        // literal với renderer, không phải link. Đếm không trần thì gate đem một
+        // chuỗi không ai render đi phân giải và báo hỏng một tài liệu đúng.
+        if (parens - 1 > destinationParenLimit) break;
+      } else if (character === ")") parens--;
       scan++;
     }
     if (parens !== 0) continue;
