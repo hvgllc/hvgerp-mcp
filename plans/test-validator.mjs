@@ -453,17 +453,20 @@ for (const prefix of ["> ", ">> ", "> > ", "   > "]) {
     });
   }
 }
-test("PR25 quoted reference keeps valid targets and rejects unsupported continuation", () => {
+test("PR25 quoted reference keeps valid targets and resolves a continuation", () => {
   const result = run({
     "plans/evidence/backlog-review.md": (text) =>
       text +
       '\n> [local]: ../README.md "Title"\n> [web]: https://example.com\n>> [anchor]: #local\n',
   });
   assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  // Destination trên dòng kế là definition hợp lệ theo CommonMark, nên nó phải
+  // được phân giải chứ không bị gạt sang "không hỗ trợ"; đích nguy hiểm vẫn bị
+  // chặn, chỉ bằng đúng lý do của nó.
   invalid({
     "plans/evidence/backlog-review.md": (text) =>
       text + "\n> [ref]:\n> /etc/passwd\n",
-  }, /unsupported Markdown reference definition/);
+  }, /unsafe Markdown link \/etc\/passwd/);
 });
 test("PR25 quoted code is inert but container exit restores live targets", () => {
   const result = invalid({
@@ -1823,9 +1826,21 @@ for (const label of ["report", "report\\]suffix"]) {
     }
   }
 }
+test("Markdown reference resolves a destination on the next line", () => {
+  // CommonMark cho phép destination nằm ở dòng ngay sau "]:"; nó vẫn phải đi qua
+  // gate link chứ không bị từ chối như cú pháp không hỗ trợ.
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[executor][report]\n\n[report]:\n  missing-reference.md\n",
+  }, /backlog-review.*link hỏng missing-reference.md/);
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[executor][report]\n\n[report]:\n  ../../README.md\n",
+  });
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
 for (
   const definition of [
-    "[report]:\n  missing-reference.md",
     "[report]: <../../README.md",
     "[report]: ../../README.md unsupported title",
   ]
@@ -3027,6 +3042,115 @@ test("a longer evidence fence delimiter is parsed completely", () => {
         "plus " + tick + "CHANGELOG.md" + tick + ".\n" + tick.repeat(3) + "\n",
         "plus " + tick + "CHANGELOG.md" + tick + ".\n" + tick.repeat(4) + "\n",
       ),
+  });
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [],
+  );
+});
+
+test("an unclosed HTML comment hides the rest of the document", () => {
+  // CommonMark đóng comment ở "-->" hoặc ở hết tài liệu. Đòi delimiter đóng thì
+  // mọi section sau một "<!--" bỏ quên vẫn được đọc như nội dung sống và một kế
+  // hoạch không còn hiển thị phạm vi, bước hay tiêu chí nào vẫn qua gate.
+  invalid({
+    [fileFor(22)]: (text) =>
+      text.replace("## Quy ước cần giữ", "<!--\n\n## Quy ước cần giữ"),
+  }, /thiếu Phạm vi và Git/);
+});
+
+test("an evidence fence may close with a longer delimiter", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  const after = run({
+    [fileFor(22)]: (text) =>
+      text.replace(
+        "plus " + tick + "CHANGELOG.md" + tick + ".\n" + tick.repeat(3) + "\n",
+        "plus " + tick + "CHANGELOG.md" + tick + ".\n" + tick.repeat(4) + "\n",
+      ),
+  });
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [],
+  );
+});
+
+test("a percent-encoded local link is decoded before resolution", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  const after = run(
+    {
+      "plans/evidence/backlog-review.md": (text) =>
+        text + "\n[Encoded target](link%20target.md)\n",
+    },
+    [],
+    { "plans/evidence/link target.md": "file" },
+  );
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [],
+  );
+});
+
+test("an encoded traversal cannot slip past the boundary check", () => {
+  // Giải mã trước khi kiểm an toàn, nếu không "%2e%2e%2f" luồn qua nhánh unsafe.
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[Escape](%2e%2e%2f%2e%2e%2f%2e%2e%2foutside.md)\n",
+  }, /unsafe Markdown link/);
+});
+
+test("a fence nested in a list item is code", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  // Fence trong list item mở ở content indent của item, không ở cột 3 tuyệt đối.
+  const after = run({
+    [fileFor(22)]: (text) =>
+      text + "\n- Ví dụ trong list:\n\n    " + tick.repeat(3) + "text\n" +
+      "    - Mục audit: 22; loại: " + tick + "docs" + tick + ".\n    " +
+      tick.repeat(3) + "\n",
+  });
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [],
+  );
+});
+
+test("a link with empty text still has its destination checked", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[](missing-empty-label.md)\n",
+  }, /link hỏng missing-empty-label.md/);
+});
+
+test("scope parsing accepts a heading with closing markers", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  // Gate heading bắt buộc đã chấp nhận closing marker ATX, nên nơi cắt phạm vi
+  // phải hiểu cùng một dạng heading.
+  const after = run({
+    [fileFor(22)]: (text) =>
+      text.replace("## Phạm vi và Git\n", "## Phạm vi và Git ##\n"),
+  });
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [],
+  );
+});
+
+test("a fenced catalog example does not advertise another plan", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  const after = run({
+    "plans/README.md": (text) =>
+      text + "\nVí dụ:\n\n" + tick.repeat(3) +
+      "text\n| 026 | Example only |\n" +
+      tick.repeat(3) + "\n",
   });
   assert.equal(after.thrown, undefined);
   assert.deepEqual(

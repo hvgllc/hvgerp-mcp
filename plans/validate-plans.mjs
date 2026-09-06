@@ -42,19 +42,35 @@ function evidenceSource(sourcePath, sourceRef) {
   return sourceCache.get(key);
 }
 function outsideFencedCode(body, preserveOffsets = false) {
-  let fence;
+  let fence, fenceIndent = 0, listIndent = 0;
   const hidden = (line) => preserveOffsets ? " ".repeat(line.length) : "";
   return body.split("\n").map((line) => {
-    const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    const indentation = line.match(/^[ \t]*/)[0];
+    let width = 0;
+    for (const character of indentation) {
+      width += character === "\t" ? 4 - width % 4 : 1;
+    }
+    const marker = line.match(/^[ \t]*(`{3,}|~{3,})(.*)$/);
     if (fence) {
       if (
-        marker && marker[1][0] === fence[0] &&
+        marker && width <= fenceIndent + 3 && marker[1][0] === fence[0] &&
         marker[1].length >= fence.length && /^[ \t\r]*$/.test(marker[2])
       ) fence = undefined;
       return hidden(line);
     }
-    if (marker && (marker[1][0] === "~" || !marker[2].includes("`"))) {
+    // Fence nằm trong list item mở ở content indent của item, không phải ở cột
+    // 3 tuyệt đối. Đo thụt so với container thì một ví dụ có fence thụt đúng
+    // chuẩn dưới list item mới được nhận là code; ghim cột 3 gốc thì nội dung
+    // của nó bị đọc như văn xuôi sống và các gate tài liệu bắt nhầm.
+    if (line.trim() && width < listIndent) listIndent = 0;
+    const list = line.match(/^ {0,3}(?:[-+*]|[0-9]+[.)])[ \t]+/);
+    if (list) listIndent = list[0].length;
+    if (
+      marker && width <= listIndent + 3 &&
+      (marker[1][0] === "~" || !marker[2].includes("`"))
+    ) {
       fence = marker[1];
+      fenceIndent = width;
       return hidden(line);
     }
     return line;
@@ -85,10 +101,15 @@ function outsideBlockCode(body) {
       return "";
     }
     code = false;
-    paragraph =
-      !/^ {0,3}(?:#{1,6}(?:[ \t]|$)|>|(?:=+|-+)[ \t]*$|(?:\*[ \t]*){3,}$|(?:_[ \t]*){3,}$)/
+    // Một reference definition chưa có destination trên cùng dòng còn tiếp ở
+    // dòng sau, nên dòng đó thuộc cùng block và không được thành code dù thụt
+    // bốn; ngược lại thì definition đã trọn vẹn và đóng block như cũ.
+    const definitionOpen = /^ {0,3}\[(?:\\[^\r\n]|[^\[\]\\\r\n])+\]:[ \t]*\r?$/
+      .test(line);
+    paragraph = definitionOpen ||
+      (!/^ {0,3}(?:#{1,6}(?:[ \t]|$)|>|(?:=+|-+)[ \t]*$|(?:\*[ \t]*){3,}$|(?:_[ \t]*){3,}$)/
         .test(line) &&
-      !/^ {0,3}\[[^\]]+\]:/.test(line);
+        !/^ {0,3}\[[^\]]+\]:/.test(line));
     return line;
   }).join("\n");
 }
@@ -96,10 +117,13 @@ function outsideBlockCode(body) {
 // phải link sống và không được đem đi phân giải. Nhận diện sau khi inline code
 // đã bị xóa, để một backtick chứa "<!--" không mở được comment giả nuốt mất
 // link thật; comment thiếu "-->" cũng không khớp và vẫn bị kiểm. Thay bằng
-// khoảng trắng giữ nguyên dòng để các gate đọc theo dòng không lệch.
+// khoảng trắng giữ nguyên dòng để các gate đọc theo dòng không lệch. Một comment
+// thiếu "-->" chạy tới hết tài liệu chứ không phải là văn bản sống: đòi delimiter
+// đóng thì mọi section sau một "<!--" bỏ quên vẫn được đọc như nội dung thật và
+// một kế hoạch không còn hiển thị phạm vi, bước hay tiêu chí nào vẫn qua gate.
 const outsideHtmlComments = (body) =>
   body.replace(
-    /<!--[\s\S]*?-->/g,
+    /<!--[\s\S]*?(?:-->|$)/g,
     (comment) => comment.replace(/[^\n]/g, " "),
   );
 // Markdown cấu trúc cho các gate metadata: bỏ code (fenced lẫn thụt đầu dòng)
@@ -237,11 +261,10 @@ function inlineLinkTargets(text) {
       else if (text[cursor] === "]") depth--;
       cursor++;
     }
-    // Label rỗng vẫn hợp lệ khi cặp ngoặc thuộc về một image ![](...): ảnh vẫn
-    // render và destination vẫn phải tồn tại thật, không được bỏ qua.
-    const image = index > 0 && text[index - 1] === "!" &&
-      !markdownEscaped(text, index - 1);
-    if (depth !== 0 || (cursor - 1 === index + 1 && !image)) continue;
+    // Label rỗng vẫn là một link sống, y như image ![](...): CommonMark không
+    // đòi link text phải khác rỗng, nên bỏ qua "[](x.md)" để lọt một link hỏng
+    // qua gate mà không ai hỏi tới destination của nó.
+    if (depth !== 0) continue;
     if (text[cursor] !== "(") continue;
     // Tìm dấu ) đóng đúng cặp: bỏ qua ký tự bị escape, ngoặc lồng bên trong
     // destination, và dấu ) nằm trong title được trích dẫn. Title chỉ mở khi
@@ -737,8 +760,13 @@ for (const entry of manifest) {
     fail(entry.file + ": plan and manifest dependencies differ");
   }
   const structuralBody = structuralMarkdown(body);
-  const scopeSection = structuralBody.split("## Phạm vi và Git\n")[1]
-    ?.split("Ngoài phạm vi:")[0] ?? "";
+  // Cắt bằng structuralSection chứ không split chuỗi literal: gate heading bắt
+  // buộc đã chấp nhận closing marker ATX, nên "## Phạm vi và Git ##" qua được
+  // gate đó trong khi split literal trả về rỗng và phạm vi biến mất.
+  const scopeSection =
+    structuralSection(structuralBody, "Phạm vi và Git").split(
+      "Ngoài phạm vi:",
+    )[0];
   const administrativeFiles = [
     "plans/README.md",
     "plans/evidence/" + String(entry.id).padStart(3, "0") + ".md",
@@ -927,12 +955,13 @@ for (const entry of manifest) {
       /<!-- evidence: [^\n]+ -->/g,
     )
   ) {
-    // Đọc trọn delimiter mở rồi đòi đúng nó làm delimiter đóng. Ghim cứng ba
-    // backtick thì backtick thứ tư của một fence dài hơn rơi vào group ngôn ngữ,
-    // biến "````CONTRIBUTING" thành lang "`CONTRIBUTING" và làm gate ngôn ngữ
-    // báo lệch ở một trích dẫn đúng chuẩn.
+    // Đọc trọn delimiter mở rồi đòi delimiter đóng cùng ký tự và dài ít nhất
+    // bằng nó. Ghim cứng ba backtick thì backtick thứ tư của một fence dài hơn
+    // rơi vào group ngôn ngữ, biến "````CONTRIBUTING" thành lang
+    // "`CONTRIBUTING"; đòi đóng dài đúng bằng mở thì một fence đóng dài hơn,
+    // vốn hợp lệ trong CommonMark, lại không được nhận.
     const block = body.slice(annotation.index).match(
-      /^<!-- evidence: ([^\n]+) -->\s*(?:<!-- deno-fmt-ignore -->\s*)?(`{3,})([^\n]*)\n([\s\S]*?)\n\2[ \t]*(?:\n|$)/,
+      /^<!-- evidence: ([^\n]+) -->\s*(?:<!-- deno-fmt-ignore -->\s*)?(`{3,})([^\n]*)\n([\s\S]*?)\n\2`*[ \t]*(?:\n|$)/,
     );
     if (block) {
       block.index = annotation.index;
@@ -1023,9 +1052,12 @@ for (const filePath of planFiles(planRoot)) {
     // phép khoảng trắng trước "[" thì "- [report]: missing.md" biến mất khỏi gate
     // và link hỏng đi qua. Checklist "- [ ] việc" không lọt vào đây vì sau "]"
     // phải là ":".
+    // Destination được phép nằm ở dòng ngay sau "]:" theo CommonMark. Regex chỉ
+    // đọc một dòng thì một definition hợp lệ viết tách dòng cho ra chuỗi rỗng và
+    // bị báo là không hỗ trợ, dù nó trỏ tới file có thật.
     for (
       const definition of markdown.matchAll(
-        /^[ \t]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)*\[(?:\\[^\r\n]|[^\[\]\\\r\n])+\]:([^\r\n]*)$/gm,
+        /^[ \t]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)*\[(?:\\[^\r\n]|[^\[\]\\\r\n])+\]:[ \t]*(?:\r?\n[ \t]*)?([^\r\n]*)$/gm,
       )
     ) {
       const destination = definition[1].trim().match(linkDestination);
@@ -1045,7 +1077,19 @@ for (const filePath of planFiles(planRoot)) {
       // dài từ hai ký tự theo RFC 3986 để "c:\..." vẫn rơi xuống nhánh unsafe
       // bên dưới thay vì được bỏ qua.
       if (/^(?:[a-z][a-z0-9+.-]+:|#)/i.test(target)) continue;
-      const clean = target.split("#")[0];
+      // Destination là URL: bỏ query và fragment rồi giải mã percent-encoding
+      // trước khi đụng tới filesystem. Đem chuỗi thô đi phân giải thì một link
+      // đúng chuẩn tới "link target.md" viết là "link%20target.md" bị báo hỏng.
+      // Kiểm an toàn cũng chạy trên chuỗi đã giải mã, để "%2e%2e%2f" hay "%5c"
+      // không luồn qua được nhánh unsafe.
+      const withoutFragment = target.split("#")[0].split("?")[0];
+      if (!withoutFragment) continue;
+      let clean;
+      try {
+        clean = decodeURIComponent(withoutFragment);
+      } catch {
+        clean = withoutFragment;
+      }
       if (!clean) continue;
       if (isAbsolute(clean) || /^[a-z]:/i.test(clean) || clean.includes("\\")) {
         fail(file + ": unsafe Markdown link " + target);
@@ -1068,7 +1112,10 @@ for (const filePath of planFiles(planRoot)) {
 const indexPath = resolve(planRoot, "README.md");
 if (!existsSync(indexPath)) fail("Thiếu README.md");
 else {
-  const index = readFileSync(indexPath, "utf8");
+  // Danh mục cũng phải đọc trên Markdown cấu trúc: một hàng bảng trong fence ví
+  // dụ được render thành code, không quảng cáo thêm kế hoạch nào, nhưng quét
+  // thô lại coi nó là ID lạ và bác bỏ một README đúng.
+  const index = structuralMarkdown(readFileSync(indexPath, "utf8"));
   // Ánh xạ một-một phải kiểm cả chiều ngược: vòng lặp dưới chỉ hỏi từng ID của
   // manifest có đúng một dòng, nên một dòng danh mục mang ID lạ không bị ai hỏi
   // tới và README quảng cáo thêm kế hoạch ngoài bộ đã duyệt. Đọc ô ID theo đúng
