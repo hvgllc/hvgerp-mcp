@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertThrows } from "@std/assert";
 import { createBoardRefreshController } from "./refresh-controller.ts";
 import type { BoardMutationToken } from "./refresh-controller.ts";
 import type { KanbanRefreshRequestData } from "./refresh.ts";
@@ -314,6 +314,45 @@ Deno.test("recovery rejects an old scope response and a newer host session wins"
   f.calls[2].resolve(c);
   await Promise.resolve();
 });
+
+for (const recovered of [false, true]) {
+  Deno.test(`latest host input rejects late payload after adoption recovered=${recovered}`, async () => {
+    const f = fixture();
+    const b = boardFixture();
+    b.refreshArguments!.project = "B";
+    const c = boardFixture();
+    c.refreshArguments!.project = "C";
+    for (const next of [b, c]) {
+      f.controller.receiveInput({
+        toolName: "erpnext_kanban_get_board",
+        arguments: next.refreshArguments!,
+      });
+    }
+    if (recovered) {
+      f.controller.failHost();
+      const retry = f.controller.request({ ignoreInterval: true });
+      f.calls[0].resolve(c);
+      assertEquals(await retry, true);
+    } else f.controller.receiveBoard(c);
+    const mutation = f.controller.beginMutation();
+    assertThrows(
+      () => f.controller.receiveBoard(b),
+      Error,
+      "identity mismatch",
+    );
+    assertEquals(f.controller.board, c);
+    assertEquals(f.controller.ready, true);
+    assertEquals(f.controller.isCurrent(mutation), true);
+    const canonical = structuredClone(c);
+    canonical.refreshArguments = { project: "C", doctype: "Task" };
+    assertEquals(f.controller.receiveBoard(canonical), false);
+    assertEquals(f.controller.isCurrent(mutation), true);
+    f.controller.endMutation(mutation);
+    assertEquals(f.calls.at(-1)!.request.arguments, canonical.refreshArguments);
+    f.calls.at(-1)!.resolve(canonical);
+    await Promise.resolve();
+  });
+}
 
 for (const hidden of [false, true]) {
   Deno.test(`host snapshot retains a completed write pending refresh hidden=${hidden}`, async () => {

@@ -1138,6 +1138,7 @@ export function KanbanViewer() {
 
     const queueId = nextMove.queueId ?? nextMove.cardId;
     if (refreshController.isCurrent(nextMove.mutation)) {
+      moveErrorRef.current = null;
       const optimistic = applyOptimisticMove(boardRef.current, nextMove);
       snapshotsRef.current[queueId] = optimistic.snapshot;
       updateBoard(optimistic.board);

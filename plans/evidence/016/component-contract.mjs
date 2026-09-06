@@ -225,6 +225,51 @@ function harness({ initialBoard = true, hostContext = "normal" } = {}) {
   };
 }
 
+for (const recovered of [false, true]) {
+  test(`component rejects late host B after C is adopted recovered=${recovered}`, async () => {
+    const h = harness();
+    const b = h.fixtures.boardFixture("B");
+    const c = h.fixtures.boardFixture("B");
+    c.refreshArguments.project = "PROJECT-C";
+    c.title = "Board C";
+    c.cards = c.cards.map((card) => ({
+      ...card,
+      id: card.id.replace("-B-", "-C-"),
+    }));
+    h.input(b.refreshArguments);
+    h.input(c.refreshArguments);
+    if (recovered) {
+      h.result({
+        isError: true,
+        content: [{ type: "text", text: "Host C failed" }],
+      });
+      const retry = h.render().requestBoardRefresh({ ignoreInterval: true });
+      h.calls.at(-1).resolve(payload(c));
+      await retry;
+    } else h.result(payload(c));
+    const session = await openDetail(h);
+    h.result(payload(b));
+    assert.equal(h.render().state.board.title, "Board C");
+    assert.equal(h.render().state.detail.session, session);
+    const refresh = h.render().requestBoardRefresh({ ignoreInterval: true });
+    assert.equal(h.calls.at(-1).request.arguments.project, "PROJECT-C");
+    h.calls.at(-1).resolve(payload(c));
+    await refresh;
+    assert.equal(h.render().state.board.cards[0].id, "TASK-C-1");
+  });
+}
+
+test("paged fixture uses cumulative loadedCount like the server", () => {
+  const h = harness();
+  for (const offset of [0, 50]) {
+    const board = h.fixtures.pagedBoardFixture(offset);
+    assert.equal(board.pagination.loadedCount, offset + board.cards.length);
+    assert.equal(board.pagination.loadedCount, offset === 0 ? 50 : 52);
+    assert.equal(board.pagination.total, 52);
+    assert.equal(board.cards[0].id, `TASK-PAGED-${offset + 1}`);
+  }
+});
+
 test("component same-board rerun preserves actual DetailModal unsaved draft", async () => {
   const h = harness();
   await openDetail(h);
@@ -730,6 +775,54 @@ for (const oldFirst of [true, false]) {
     h.calls[2].resolve(payload(h.render().state.board));
     await tick();
   });
+}
+
+for (const failure of ["reject", "isError", "notOk"]) {
+  for (const nextFails of [false, true]) {
+    test(`component queued move clears preceding failure ${failure} nextFails=${nextFails}`, async () => {
+      const h = harness();
+      const cards = h.render().state.board.cards;
+      h.render().requestMove(cards[0], "Working", "Start");
+      h.render().requestMove(cards[1], "Working", "Start");
+      if (failure === "reject") {
+        h.calls[0].reject(new Error("First move failed"));
+      } else if (failure === "isError") {
+        h.calls[0].resolve({
+          isError: true,
+          content: [{ type: "text", text: "First move failed" }],
+        });
+      } else {
+        h.calls[0].resolve(
+          payload({ ok: false, errorMessage: "First move failed" }),
+        );
+      }
+      await tick();
+      assert.equal(h.calls.length, 2);
+      assert.equal(
+        h.render().state.error,
+        null,
+        "starting queued move clears the previous failure",
+      );
+      if (nextFails) {
+        h.calls[1].resolve(
+          payload({ ok: false, errorMessage: "Second move failed" }),
+        );
+      } else h.calls[1].resolve(payload({ ok: true }));
+      await tick();
+      assert.equal(h.calls.length, 3);
+      assert.equal(h.render().state.board.cards[0].columnId, "Open");
+      assert.equal(
+        h.render().state.board.cards[1].columnId,
+        nextFails ? "Open" : "Working",
+      );
+      h.calls[2].resolve(payload(h.render().state.board));
+      await tick();
+      assert.equal(
+        h.render().state.error,
+        nextFails ? "Second move failed" : null,
+      );
+    });
+  }
 }
 
 test("component serial queue rolls back only failed second move and drains once", async () => {

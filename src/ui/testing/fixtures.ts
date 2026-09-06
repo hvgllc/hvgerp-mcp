@@ -287,7 +287,7 @@ export function pagedBoardFixture(offset: 0 | 50): KanbanBoardData {
     pagination: {
       offset,
       limit: 50,
-      loadedCount: cards.length,
+      loadedCount: offset + cards.length,
       hasMore: offset === 0,
       total: 52,
     },

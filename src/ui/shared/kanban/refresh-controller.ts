@@ -148,7 +148,7 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
     request,
     receiveBoard(next: KanbanBoardData) {
       if (
-        (waitingForHost || recoveringHost) && fallback &&
+        fallback &&
         kanbanRequestIdentity(null, fallback) !==
           kanbanRequestIdentity(null, resolveKanbanRefreshRequest(next, null)!)
       ) throw new Error("Host board response identity mismatch");
