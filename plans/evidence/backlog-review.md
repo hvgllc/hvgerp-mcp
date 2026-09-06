@@ -2377,3 +2377,51 @@ Suite thêm 12 test, lên 648, trong đó hai test khóa lại chiều của hai
 bác. Mẻ dò mười ba ca của vòng này cộng năm ca đối chứng thêm cho vùng vừa sửa
 đều đúng chiều, và bốn mẻ dò guard của ba vòng trước (32 ca) giữ nguyên chiều
 cũ.
+
+## Codex vòng tiếp: review 5126795122
+
+Review đọc đúng head `9a2c3aa3`, nêu ba P2 và không P1 nào. Cả ba tái hiện bằng
+một mẻ dò trước khi động vào code, và cả ba đều đúng. Trọng tài của vòng này là
+GitHub Markdown API, vì cả ba câu hỏi đều là "renderer thật dựng ra phần tử
+nào", chứ không phải "cây cú pháp trông ra sao".
+
+- **Backslash trong thuộc tính của thẻ HTML thô là ký tự dữ liệu.** Bên trong
+  một thẻ thô, luật escape của Markdown không còn hiệu lực: id của
+  `<a id="\&amp;">` đúng là `\&` và fragment tới nó viết thẳng là `#\&amp;`. Id
+  đã đi đường giải mã riêng từ vòng trước, còn đích đến thì chưa, nên cùng một
+  chuỗi bị đọc thành hai thứ khác nhau và một link đúng bị báo hỏng. Đích đến
+  của thuộc tính HTML giờ gom vào danh sách riêng, và mọi bước áp luật escape
+  (giải mã reference, gỡ backslash, tìm ranh giới `#` và `?`) chỉ chạy khi đích
+  đến đến từ cú pháp Markdown. Hai ca đối chứng ghim hai chiều: href thô giữ
+  backslash nên không khớp slug thường, còn destination Markdown vẫn gỡ escape
+  như cũ.
+- **HTML thô trong mô tả của ảnh không dựng ra phần tử nào.** Mô tả của một
+  image render thành văn bản alt, nên `![<img src="missing.png">](target.md)`
+  chỉ tải `target.md`; GitHub trả đúng một thẻ img với `alt` là chuỗi đã escape.
+  Quét cả mô tả thì cổng đem một `src` không ai tải đi phân giải và báo hỏng một
+  tài liệu đúng. `outsideImageDescriptions` che phần mô tả của dạng inline và
+  dạng tham chiếu đầy đủ, đứng cùng chỗ với các lớp che khối mã và văn bản thô.
+  Dạng rút gọn `![nhãn]` cố ý không che: nó chỉ là ảnh khi nhãn có definition,
+  và khi không có thì chính HTML trong đó lại render thật, nên để nguyên là chọn
+  phía fail-closed. Một test ghim đúng ca đó.
+- **Backslash cuối dòng là hard break, không phải escape của ký tự xuống dòng.**
+  Nhảy hai bước qua nó là nhảy qua chính ranh giới khối, nên một `[literal\`
+  đứng cuối đoạn văn và một `](x.md)` bên kia một heading bị nối thành link
+  không renderer nào dựng. GitHub trả đoạn văn rồi heading, không có link nào.
+  Cả hai vòng quét trong `scanInline` mắc cùng lỗi này, nên cả hai giờ dừng lại
+  ở ký tự xuống dòng để nhánh ranh giới khối ngay dưới được hỏi. Đối chứng giữ
+  chiều ngược lại: cùng hình dạng ấy nằm gọn trong một đoạn văn vẫn là link.
+
+| Cổng                                   | Kết quả            |
+| -------------------------------------- | ------------------ |
+| `node plans/validate-plans.mjs`        | Đạt: 25 kế hoạch   |
+| `deno fmt --check`                     | 315 file           |
+| `deno lint`                            | 160 file           |
+| `node --test plans/test-validator.mjs` | 657 pass           |
+| `git diff --check`                     | exit 0             |
+| `node --test plans/test-history.mjs`   | 5 pass, sau commit |
+
+Suite thêm 9 test, lên 657. Mẻ dò sáu ca của vòng này cộng năm ca đối chứng thêm
+cho vùng vừa sửa đều đúng chiều. Bảy mẻ dò guard của bốn vòng trước (41 ca) chạy
+lại trên cả head cũ lẫn cây đã sửa cho output giống nhau từng dòng, nên không có
+chiều nào cũ bị đổi.

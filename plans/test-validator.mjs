@@ -5397,3 +5397,76 @@ test("a tab inside a heading is dropped from the slug", () => {
   assert.equal(result.thrown, undefined);
   assert.equal(result.exitCode, 0, result.messages.join("\n"));
 });
+
+test("a backslash in a raw HTML href is literal data", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<a id="\\&amp;"></a>\n\n<a href="#\\&amp;">n1</a>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a raw HTML href keeps a backslash out of the slug", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n## Anchor i1\n\n<a href="#anchor\\-i1">x</a>\n',
+  }, /anchor hỏng #anchor\\-i1/);
+});
+
+test("a Markdown destination still drops a backslash escape", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## Anchor i1b\n\n[i1b](#anchor\\-i1b)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("raw HTML inside an image description is not a resource", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n![<img src="missing-i2.png">](../../README.md)\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("raw HTML outside an image description is still a resource", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<img src="missing-i2b.png">\n',
+  }, /link hỏng missing-i2b\.png/);
+});
+
+test("a shortcut image label is still scanned for raw HTML", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n![<img src="missing-i2c.png">]\n',
+  }, /link hỏng missing-i2c\.png/);
+});
+
+test("a label ending in a backslash before a heading is literal text", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[literal\\\n## Heading i3](missing-i3.md)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a label ending in a backslash inside a paragraph is still a link", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[literal\\\nnext line i3b](missing-i3b.md)\n",
+  }, /link hỏng missing-i3b\.md/);
+});
+
+test("a destination ending in a backslash before a heading is literal text", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[i3c](missing-i3c.md\\\n## Heading i3c)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});

@@ -1312,6 +1312,11 @@ const decodeReferences = (text, marker = "", escapes = true) =>
           : String.fromCodePoint(c1Replacements.get(code) ?? code));
     },
   );
+// Cùng lý do như tham số escapes của decodeReferences: chỉ destination viết
+// bằng cú pháp Markdown mới gỡ backslash trước dấu câu ASCII. Trong href của
+// một thẻ HTML thô, "\" là ký tự dữ liệu và gỡ nó đi là đổi luôn đích đến.
+const unescapeMarkdown = (text, markdown) =>
+  markdown ? text.replace(/\\([!-/:-@[-`{-~])/g, "$1") : text;
 // Dòng mở một khối chen được vào giữa đoạn đang chạy: dòng trống, ATX heading,
 // thematic break, setext underline, và list item có nội dung. Blockquote không
 // nằm trong danh sách vì "> " ở đầu dòng nối chỉ là chính khối đang mở; cắt ở
@@ -1331,6 +1336,49 @@ function interruptsParagraph(text, newline) {
   return paragraphInterrupts.some((pattern) => pattern.test(line));
 }
 const inlineLinkTargets = (text) => scanInline(text).targets;
+// Mô tả của một image render thành văn bản alt, nên HTML thô nằm trong đó không
+// dựng ra phần tử nào: "![<img src=a.png>](b.md)" chỉ tải b.md. Quét cả mô tả
+// thì gate đem một src không ai tải đi phân giải và báo hỏng một tài liệu đúng.
+// Chỉ che dạng inline "![...](...)" và dạng tham chiếu đầy đủ "![...][...]";
+// dạng rút gọn "![nhãn]" chỉ là ảnh khi nhãn có definition, và khi không có thì
+// chính HTML trong đó lại render thật, nên để nguyên là chọn phía fail-closed.
+function outsideImageDescriptions(text) {
+  let result = "";
+  let index = 0;
+  while (index < text.length) {
+    const opener = text.indexOf("![", index);
+    if (opener < 0) {
+      result += text.slice(index);
+      break;
+    }
+    if (markdownEscaped(text, opener)) {
+      result += text.slice(index, opener + 2);
+      index = opener + 2;
+      continue;
+    }
+    let cursor = opener + 2;
+    let depth = 1;
+    while (cursor < text.length && depth > 0) {
+      if (text[cursor] === "\\") {
+        cursor += 2;
+        continue;
+      }
+      if (text[cursor] === "[") depth++;
+      else if (text[cursor] === "]") depth--;
+      cursor++;
+    }
+    const next = text[cursor];
+    if (depth !== 0 || (next !== "(" && next !== "[")) {
+      result += text.slice(index, opener + 2);
+      index = opener + 2;
+      continue;
+    }
+    result += text.slice(index, opener + 2) +
+      " ".repeat(cursor - opener - 3) + "]";
+    index = cursor;
+  }
+  return result;
+}
 // Trả về cả cờ "đã nhận một link" để chỗ gọi biết label vừa quét có vô hiệu hóa
 // opener bao ngoài hay không.
 function scanInline(text) {
@@ -1359,7 +1407,12 @@ function scanInline(text) {
     let cursor = index + 1;
     while (cursor < text.length && depth > 0) {
       if (text[cursor] === "\\") {
-        cursor += 2;
+        // Backslash cuối dòng là hard break chứ không phải escape của ký tự
+        // xuống dòng, nên nhảy hai bước ở đó là nhảy qua chính ranh giới khối.
+        // Một "[literal\" đứng cuối đoạn rồi một "](x.md)" bên kia heading bị
+        // nối thành link không renderer nào dựng, và gate báo hỏng một tài liệu
+        // đúng. Dừng lại ở ký tự xuống dòng để nhánh ngay dưới hỏi ranh giới.
+        cursor += /[\r\n]/.test(text[cursor + 1] ?? "") ? 1 : 2;
         continue;
       }
       // Nhãn link không bắc qua ranh giới khối: CommonMark kết thúc đoạn ở dòng
@@ -1400,7 +1453,10 @@ function scanInline(text) {
     while (scan < text.length && parens > 0) {
       const character = text[scan];
       if (character === "\\") {
-        scan += 2;
+        // Cùng lý do như trong vòng cân bằng nhãn: nhảy hai bước qua một
+        // backslash cuối dòng là nhảy qua ranh giới khối, nên dừng ở ký tự
+        // xuống dòng để nhánh ngay dưới hỏi ranh giới.
+        scan += /[\r\n]/.test(text[scan + 1] ?? "") ? 1 : 2;
         continue;
       }
       // Destination cũng không bắc qua ranh giới khối: "[literal](" đứng cuối
@@ -3029,12 +3085,19 @@ for (const filePath of planFiles(planRoot)) {
     // đó vẫn render và vẫn hỏng được. Quét lại trước khi block bị xóa, sau khi
     // code và comment đã bị xóa, nên một ví dụ <a href> trong fence không sống.
     const rawHtml = markdownLinkSections(body).map((section) =>
-      outsideRawTextAndComments(outsideInlineCode(outsideBlockCode(section)))
+      outsideImageDescriptions(
+        outsideRawTextAndComments(outsideInlineCode(outsideBlockCode(section))),
+      )
     ).join("\n\n");
+    // Đích đến từ thuộc tính HTML đi đường giải mã riêng: bên trong một thẻ thô,
+    // "\" là ký tự dữ liệu chứ không phải escape của Markdown. Trộn chung thì
+    // href="#\&amp;" bị đọc thành fragment "&amp;" thay vì "\&", khớp nhầm một
+    // id không ai có và một link hỏng thật đi qua cổng.
+    const htmlTargets = [];
     for (const tag of renderedTags(rawHtml)) {
       const element = tag[1].toLowerCase();
       for (const [name, value] of tagAttributes(tag[2])) {
-        if (value) targets.push(...attributeTargets(element, name, value));
+        if (value) htmlTargets.push(...attributeTargets(element, name, value));
       }
     }
     // Kiểm mọi definition, kể cả chưa dùng; không phụ thuộc kiểu
@@ -3054,14 +3117,19 @@ for (const filePath of planFiles(planRoot)) {
       }
       targets.push(destination[1] ?? destination[2]);
     }
-    for (const target of targets) {
+    for (
+      const [target, markdown] of [
+        ...targets.map((value) => [value, true]),
+        ...htmlTargets.map((value) => [value, false]),
+      ]
+    ) {
       // Character reference được giải mã trước mọi câu hỏi khác về destination,
       // vì chuẩn giải mã nó khi dựng URL: ranh giới fragment, ranh giới query và
       // cả scheme đều đọc trên chuỗi đã giải mã. Tìm ranh giới trên chuỗi thô
       // thì "README.md&num;overview" không có dấu # nào và cả chuỗi bị đem đi mở
       // như một tên file, còn "&#35;" lại bị cắt ngay giữa chính reference của
       // nó; cả hai đều báo hỏng một link đúng chuẩn.
-      const decoded = decodeReferences(target);
+      const decoded = decodeReferences(target, "", markdown);
       // Bất kỳ URI scheme nào cũng là địa chỉ ngoài cây làm việc, không riêng
       // http(s): ghim hai scheme đó thì "mailto:" hay "ftp:" bị đem đi phân giải
       // như đường dẫn tương đối và một link đúng chuẩn bị báo hỏng. RFC 3986
@@ -3085,7 +3153,7 @@ for (const filePath of planFiles(planRoot)) {
       // được ký tự thật với vách ngăn.
       if (
         /^(?:[a-z][a-z0-9+.-]+:|\/\/[^\/])/i.test(
-          decoded.replace(/\\([!-/:-@[-`{-~])/g, "$1"),
+          unescapeMarkdown(decoded, markdown),
         )
       ) continue;
       // Destination là URL: bỏ query và fragment rồi giải mã percent-encoding
@@ -3100,7 +3168,7 @@ for (const filePath of planFiles(planRoot)) {
       for (let position = 0; position < decoded.length; position++) {
         if (
           (decoded[position] === "#" || decoded[position] === "?") &&
-          !markdownEscaped(decoded, position)
+          !(markdown && markdownEscaped(decoded, position))
         ) {
           boundary = position;
           break;
@@ -3114,23 +3182,27 @@ for (const filePath of planFiles(planRoot)) {
       // Gỡ backslash sau khi đã giải mã reference, vì decodeReferences tự bỏ qua
       // "&" đã bị escape: gỡ trước thì "\&amp;" mất backslash rồi mới thành
       // "&", tức một chuỗi cố ý viết literal lại bị giải mã.
-      const withoutFragment = decoded.slice(0, boundary)
-        .replace(/\\([!-/:-@[-`{-~])/g, "$1");
+      const withoutFragment = unescapeMarkdown(
+        decoded.slice(0, boundary),
+        markdown,
+      );
       // Fragment là một lời hứa kiểm được y như đường dẫn: nó phải trỏ tới một
       // heading hay một id có thật. Ranh giới đường dẫn ở trên dừng cả ở "?",
       // nên tìm lại dấu "#" chưa escape đầu tiên để lấy đúng phần fragment,
       // bỏ luôn query nếu có.
       let hash = -1;
       for (let position = 0; position < decoded.length; position++) {
-        if (decoded[position] === "#" && !markdownEscaped(decoded, position)) {
+        if (
+          decoded[position] === "#" &&
+          !(markdown && markdownEscaped(decoded, position))
+        ) {
           hash = position;
           break;
         }
       }
       let fragment = "";
       if (hash >= 0) {
-        const raw = decoded.slice(hash + 1)
-          .replace(/\\([!-/:-@[-`{-~])/g, "$1");
+        const raw = unescapeMarkdown(decoded.slice(hash + 1), markdown);
         try {
           fragment = decodeURIComponent(raw);
         } catch {
