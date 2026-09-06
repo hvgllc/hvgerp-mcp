@@ -2055,16 +2055,31 @@ for (const entry of manifest) {
   // tới. Đòi cùng lúc lý do trong metadata và báo cáo evidence tương ứng: lý do
   // nêu quyết định còn thiếu, báo cáo giữ lệnh và kết quả thật.
   if (executionStatus === "BLOCKED") {
-    const blockedPath = resolve(
-      planRoot,
-      "evidence",
-      String(entry.id).padStart(3, "0") + ".md",
-    );
+    const id = String(entry.id).padStart(3, "0");
+    const blockedPath = resolve(planRoot, "evidence", id + ".md");
     if (!blockedReason(body) || !existsSync(blockedPath)) {
       fail(
         entry.file +
           ": BLOCKED requires one nonempty blocked_reason and an evidence report",
       );
+    } else {
+      // Sự tồn tại của file không phải bằng chứng: README đòi báo cáo giữ lệnh
+      // thất bại và quyết định còn thiếu, nên một file rỗng hay một báo cáo cũ
+      // bị xóa ruột vẫn giữ nguyên trạng thái BLOCKED mà không ai trả giá. Ba
+      // dấu hiệu này đo được trên văn bản: báo cáo nói đúng kế hoạch nó thuộc
+      // về, tự khai trạng thái, và giữ ít nhất một khối lệnh chạy thật. Nội
+      // dung văn xuôi thì cổng không phán, đó vẫn là việc của review.
+      const report = readFileSync(blockedPath, "utf8");
+      const missing = [];
+      if (!report.includes(id)) missing.push("the plan id " + id);
+      if (!report.includes("BLOCKED")) missing.push("the BLOCKED status");
+      if (!/^ {0,3}(?:```|~~~)/m.test(report)) missing.push("a command block");
+      if (missing.length) {
+        fail(
+          "evidence/" + id + ".md: BLOCKED evidence report is missing " +
+            missing.join(", "),
+        );
+      }
     }
   }
   if (executionStatus === "IN_PROGRESS" || executionStatus === "DONE") {
@@ -2679,9 +2694,39 @@ function paragraphText(entry) {
 // Nhãn của một reference definition, dừng ở dấu "]" chưa escape nên không ăn
 // sang chuỗi "]:" nằm trong title. "[^label]:" là footnote definition của GFM,
 // phần sau dấu hai chấm là văn xuôi chứ không phải destination, nên đem đi khớp
-// linkDestination sẽ bác bỏ một chú thích đúng chuẩn.
+// linkDestination sẽ bác bỏ một chú thích đúng chuẩn. Nhãn được phép bắc qua
+// nhiều dòng: "[multi\nline]: dest" định nghĩa nhãn "multi line" và một link
+// "[text][multi line]" phía dưới trỏ đích thật, nên lớp ký tự của nhãn không
+// cấm xuống dòng; cấm thì cả definition lẫn đích của nó vắng mặt khỏi gate và
+// một đích hỏng đi qua. Dấu hai chấm và destination vẫn phải nằm trên dòng cuối
+// của cụm, còn dòng trống thì cắt đứt nhãn vì nó kết thúc đoạn.
 const definitionHead =
-  /^ {0,3}\[(?!\^)((?:\\[^\r\n]|[^\[\]\\\r\n])+)\]:[ \t]*(.*)$/;
+  /^ {0,3}\[(?!\^)((?:\\[^\r\n]|[^\[\]\\])+)\]:[ \t]*([^\r\n]*)$/;
+// Chuẩn giới hạn nhãn ở 999 ký tự, nên một dấu "[" mở ra ở đầu một đoạn văn dài
+// không kéo cả đoạn vào một phép thử vô tận.
+const definitionLabelLimit = 999;
+// Cụm definition bắt đầu ở dòng start, nối thêm dòng chừng nào chúng còn là văn
+// bản của cùng khối. Trả về nhãn, destination trên dòng cuối, và chính dòng
+// cuối đó; null khi cụm không phải definition.
+function definitionAt(lines, start) {
+  const depth = lines[start].depth;
+  let candidate = lines[start].text;
+  for (let line = start;; line++) {
+    if (line > start) {
+      const next = lines[line];
+      if (
+        !next || next.opened || next.depth !== depth || !paragraphText(next)
+      ) return null;
+      candidate += "\n" + next.text;
+    }
+    const head = candidate.match(definitionHead);
+    if (head) {
+      return { label: head[1], destination: head[2], line };
+    }
+    if (!/^ {0,3}\[(?!\^)/.test(lines[start].text)) return null;
+    if (candidate.length > definitionLabelLimit) return null;
+  }
+}
 // Definition không ngắt được đoạn đang chạy: "Ordinary paragraph" rồi
 // "[label]: dest" là hai dòng của cùng một đoạn văn, dấu ngoặc ở đó là văn bản
 // literal và "dest" không phải đích của ai cả; đọc nó như definition là đem một
@@ -2707,14 +2752,17 @@ function referenceDefinitions(lines, rawLines) {
       paragraphOpen = false;
     }
     depth = lines[index].depth;
-    const head = paragraphOpen ? null : lines[index].text.match(definitionHead);
+    const head = paragraphOpen ? null : definitionAt(lines, index);
     if (!head) {
       paragraphOpen = paragraphText(lines[index]);
       continue;
     }
     const start = index;
-    let destination = head[2].trim();
-    let raw = rawLines[index];
+    // Nhãn có thể đã ăn thêm mấy dòng, nên con trỏ nhảy tới dòng mang dấu hai
+    // chấm trước khi đi tìm destination ở dòng kế.
+    index = head.line;
+    let destination = head.destination.trim();
+    let raw = rawLines.slice(start, index + 1).join("\n");
     // Dòng nối chỉ mang destination khi nó vẫn là văn bản của cùng khối: một
     // dòng tự mở container, đổi độ sâu, hay mở một khối khác như list item và
     // heading thì "[nhãn]:" ở trên chỉ còn là một đoạn văn thường. Nhận bừa dòng
@@ -2737,7 +2785,7 @@ function referenceDefinitions(lines, rawLines) {
       continue;
     }
     found.push({
-      label: head[1],
+      label: head.label,
       destination,
       raw: raw.trim(),
       start,
@@ -3052,10 +3100,15 @@ for (const filePath of planFiles(planRoot)) {
       // được theo dõi nằm dưới; thư mục rỗng hoặc chỉ chứa file bị ignore không
       // phải artifact. trackedArtifacts đã báo lỗi khi không đọc được index, nên
       // ở đây im lặng để một sự cố không hóa thành hàng loạt lỗi link.
+      // Gốc repo là thư mục được theo dõi như mọi thư mục khác, chỉ khác ở chỗ
+      // relative() mô tả nó bằng chuỗi rỗng. Chuỗi đó không có trong tập file
+      // lẫn tập thư mục, nên "[root](../../)" bị báo chưa theo dõi trong khi
+      // chính nó chứa mọi artifact của repo.
       const indexed = trackedTargets();
       const posix = parts.join("/");
       if (
-        indexed && !indexed.files.has(posix) && !indexed.directories.has(posix)
+        indexed && posix !== "" && !indexed.files.has(posix) &&
+        !indexed.directories.has(posix)
       ) {
         fail(file + ": link chưa được Git theo dõi " + target);
         continue;
@@ -3103,8 +3156,12 @@ else {
   );
   const unexpectedIds = [
     ...new Set(
+      // Ô ID nào cũng phải đối chiếu với manifest, không riêng ô đúng ba chữ
+      // số: ghim độ dài thì một hàng mang "1000" không bị ai hỏi tới và README
+      // quảng cáo thêm kế hoạch ngoài bộ đã duyệt. Manifest chỉ sinh ID ba chữ
+      // số nên mọi ô toàn số khác ba chữ số đều là ID lạ.
       index.split("\n").map((line) => tableCells(line)[1]?.trim()).filter(
-        (cell) => cell !== undefined && /^\d{3}$/.test(cell),
+        (cell) => cell !== undefined && /^\d+$/.test(cell),
       ),
     ),
   ].filter((id) => !planIds.has(id));

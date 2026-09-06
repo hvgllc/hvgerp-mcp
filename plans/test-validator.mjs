@@ -139,6 +139,13 @@ function run(replacements = {}, hidden = [], filesystem = {}, gitOutput) {
         return [...names];
       },
       readFileSync(path, encoding) {
+        // Một mục fixture khai "content" là file chỉ sống trong filesystem ảo,
+        // nên đĩa thật không có gì để đọc. Trả thẳng nội dung đó, nếu không
+        // mọi gate đọc nội dung của một file ảo đều vấp ENOENT.
+        const entry = filesystem[relative(repoRoot, path)];
+        if (entry && typeof entry === "object" && "content" in entry) {
+          return entry.content;
+        }
         const text = readFileSync(path, encoding);
         const replace = replacements[relative(repoRoot, path)];
         return replace ? replace(text) : text;
@@ -844,6 +851,14 @@ function stale(
         "\n",
     );
   return replacements;
+}
+
+// Báo cáo của một kế hoạch BLOCKED phải nói nó thuộc kế hoạch nào, tự khai
+// trạng thái, và giữ lệnh đã chạy; ba thứ đó là những gì cổng đo được.
+function blockedReportFor(id) {
+  return "# Bằng chứng " + String(id).padStart(3, "0") +
+    "\n\nTrạng thái: BLOCKED\n\n" +
+    tick.repeat(3) + "bash\ndeno test\n" + tick.repeat(3) + "\n";
 }
 
 function blocked(id, reason = "Waiting on a framework contract decision") {
@@ -1679,8 +1694,10 @@ test("current source drift regression works without TODO plans in the backlog", 
       "Trạng thái thực thi: " + tick + "TODO" + tick,
     );
     if (wasTodo) {
-      reports["plans/evidence/" + String(entry.id).padStart(3, "0") + ".md"] =
-        "file";
+      reports["plans/evidence/" + String(entry.id).padStart(3, "0") + ".md"] = {
+        kind: "file",
+        content: blockedReportFor(entry.id),
+      };
     }
     base[fileFor(entry.id)] = (text) => {
       const changed = text.replace(
@@ -3955,13 +3972,50 @@ test("BLOCKED with a reason but no evidence report is rejected", () => {
   );
 });
 
+const blockedReport = blockedReportFor(22);
+
 test("BLOCKED with a reason and an evidence report is accepted", () => {
   const result = run(blocked(22), [], {
-    "plans/evidence/022.md": "file",
+    "plans/evidence/022.md": { kind: "file", content: blockedReport },
   });
   assert.equal(result.thrown, undefined);
   assert.equal(result.exitCode, 0, result.messages.join("\n"));
 });
+
+test("an emptied BLOCKED evidence report is rejected", () => {
+  invalid(
+    blocked(22),
+    /evidence\/022\.md: BLOCKED evidence report is missing the plan id 022, the BLOCKED status, a command block/,
+    [],
+    { "plans/evidence/022.md": { kind: "file", content: "# empty\n" } },
+  );
+});
+
+for (
+  const [label, report, pattern] of [
+    [
+      "the plan id",
+      blockedReport.replace("022", "999"),
+      /is missing the plan id 022$/m,
+    ],
+    [
+      "the status",
+      blockedReport.replace("BLOCKED", "TODO"),
+      /is missing the BLOCKED status$/m,
+    ],
+    [
+      "a command block",
+      blockedReport.slice(0, blockedReport.indexOf(tick)) + "deno test\n",
+      /is missing a command block$/m,
+    ],
+  ]
+) {
+  test(`a BLOCKED evidence report without ${label} is rejected`, () => {
+    invalid(blocked(22), pattern, [], {
+      "plans/evidence/022.md": { kind: "file", content: report },
+    });
+  });
+}
 
 test("an empty blocked_reason does not satisfy BLOCKED", () => {
   invalid(
@@ -5091,4 +5145,60 @@ test("the slug merging a definition into a setext heading does not exist", () =>
       text + "\n[f5bref]: ../../README.md\nActual heading probe b\n---\n\n" +
       "[f5b](#f5bref-readmemd-actual-heading-probe-b)\n",
   }, /anchor hỏng #f5bref-readmemd-actual-heading-probe-b/);
+});
+
+test("a reference definition label spanning two lines is parsed", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[f6 multi\nline label]: missing-multiline-label.md\n\n" +
+      "[f6 visible][f6 multi line label]\n",
+  }, /link hỏng missing-multiline-label\.md/);
+});
+
+test("a multiline definition label still resolves a live destination", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[f6b multi\nline label]: ../../README.md\n\n" +
+      "[f6b visible][f6b multi line label]\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+// Dòng trống kết thúc đoạn, nên nhãn không bắc qua nó: cụm dưới đây không định
+// nghĩa nhãn nào và cũng không có đích nào để đem đi phân giải.
+test("a blank line inside a label ends the definition", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[f6c multi\n\nline label]: missing-blank-label.md\n\n" +
+      "[f6c visible][f6c multi line label]\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a definition label cannot span a heading", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[f6d multi\n## Not a label f6d\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a link to the repository root is tracked", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[f7 root](../../)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a README ID outside the three digit shape is still compared", () => {
+  invalid({
+    "plans/README.md": (text) =>
+      text +
+      "| 1000 | [Kế hoạch ngoài manifest](README.md) | P3 | S / LOW | không | TODO |\n",
+  }, /README lists plan IDs outside the manifest: 1000/);
 });

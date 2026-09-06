@@ -2222,3 +2222,48 @@ bằng một mẻ dò mười tám ca trước khi động vào code, và cmark 
 
 Suite thêm 17 test, lên 614. Mẻ dò mười hai ca của vòng này cho cả mười hai đổi
 chiều đúng như mong đợi, và mẻ sáu ca biên kèm theo giữ đúng chiều cả sáu.
+
+## Codex vòng tiếp: review 5126566649
+
+Review đọc đúng head `a1ac4898`, nêu bốn P2 và không P1 nào. Cả bốn tái hiện
+bằng một mẻ dò tám ca trước khi động vào code, và cmark 0.31.2
+(`npm:commonmark`, chạy qua `deno run -A`) làm trọng tài cho ca tranh chấp. Cả
+bốn đúng.
+
+- **Nhãn definition không bắc được qua dòng.** Chuẩn cho nhãn trải nhiều dòng:
+  `[multi` rồi `line]: missing.md` định nghĩa nhãn `multi line`, và cmark render
+  `[visible][multi line]` phía dưới thành một link thật. Lớp ký tự của nhãn cấm
+  ký tự xuống dòng nên cả definition lẫn đích của nó vắng mặt khỏi cổng, và một
+  đích chết đi qua. `definitionAt` nối các dòng kế chừng nào chúng còn là văn
+  bản của cùng khối (`!opened`, cùng `depth`, `paragraphText`) và dừng ở giới
+  hạn 999 ký tự của chuẩn; con trỏ nhảy tới dòng mang dấu hai chấm nên phạm vi
+  che dòng vẫn phủ trọn cụm. Dòng trống vẫn cắt đứt nhãn vì nó kết thúc đoạn,
+  đúng cmark.
+- **Báo cáo BLOCKED chỉ cần tồn tại.** README đòi báo cáo giữ lệnh thất bại và
+  quyết định còn thiếu, nhưng cổng chỉ hỏi file có mặt hay không, nên một báo
+  cáo bị xóa ruột vẫn giữ nguyên trạng thái. Cổng giờ đọc nội dung và đòi ba dấu
+  hiệu đo được: báo cáo nói đúng mã kế hoạch nó thuộc về, tự khai `BLOCKED`, và
+  giữ ít nhất một khối lệnh. Văn xuôi vẫn là việc của review, không phải của
+  cổng.
+- **Link tới gốc repo bị bác oan.** `relative` mô tả gốc repo bằng chuỗi rỗng,
+  thứ không nằm trong tập file lẫn tập thư mục theo dõi, nên `[root](../../)` bị
+  báo là chưa được Git theo dõi dù gốc chứa đầy file theo dõi. Nhánh báo lỗi bỏ
+  qua đúng chuỗi rỗng; thư mục con và đường dẫn ngoài chỉ mục vẫn xử như cũ.
+- **Ô ID README bị ghim ba chữ số.** Manifest chỉ sinh ID ba chữ số, nên mọi ô
+  toàn số khác ba chữ số cũng là ID lạ; ghim độ dài thì một hàng mang `1000`
+  không bị ai hỏi tới và danh mục quảng cáo thêm kế hoạch ngoài bộ đã duyệt. Bộ
+  lọc đổi sang mọi ô toàn số.
+
+| Cổng                                   | Kết quả            |
+| -------------------------------------- | ------------------ |
+| `node plans/validate-plans.mjs`        | Đạt: 25 kế hoạch   |
+| `deno fmt --check`                     | 315 file           |
+| `deno lint`                            | 160 file           |
+| `node --test plans/test-validator.mjs` | 624 pass           |
+| `git diff --check`                     | exit 0             |
+| `node --test plans/test-history.mjs`   | 5 pass, sau commit |
+
+Suite thêm 10 test, lên 624. Harness đọc thêm khoá `content` của filesystem ảo,
+để một gate đọc nội dung file ảo không còn vấp ENOENT. Mẻ dò tám ca của vòng này
+cho cả tám đúng chiều: bốn ca lỗi đổi sang đỏ, bốn ca đối chứng giữ nguyên chiều
+cũ.
