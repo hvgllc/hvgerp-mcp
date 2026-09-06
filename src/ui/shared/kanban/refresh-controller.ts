@@ -160,7 +160,18 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
   // Trả về true chỉ khi thật sự chuyển sang hồi phục, để nơi gọi biết lượt lỗi
   // này có còn thuộc về request đang chờ hay đã bị một lượt khác giải quyết.
   function markHostFailed() {
-    if (!waitingForHost && !recoveringHost) return false;
+    if (!waitingForHost && !recoveringHost) {
+      // Lượt hỏng này đã bị một lượt khác giải quyết nên không được hiện lỗi.
+      // Nhưng bản đã áp dụng có thể là kết quả của lượt CŨ hơn: hai lượt cùng
+      // phạm vi chồng lấn chia chung một seq nên không phân biệt được bản nào
+      // mới. Đọc lại ngay, im lặng, thay vì để board kẹt ở dữ liệu có thể đã cũ
+      // cho tới nhịp refresh sau và cho user thao tác trên đó.
+      pending = true;
+      force = true;
+      retryAt = 0;
+      void drain();
+      return false;
+    }
     waitingForHost = false;
     recoveringHost = true;
     pending = fallback !== null;

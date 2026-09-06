@@ -1032,3 +1032,34 @@ Deno.test("a recovery read retires the seq of the host turn it replaced", async 
   assertEquals(f.controller.receiveBoard(stale, sharedSeq), false);
   assertEquals(f.controller.board, fresh);
 });
+
+Deno.test("an obsolete host failure still schedules a silent revalidation", async () => {
+  const f = fixture();
+  const scope = f.controller.board!.refreshArguments;
+  // Hai lượt host cùng phạm vi chồng lấn: nơi gọi chỉ giữ được seq mới nhất nên
+  // cả hai kết quả đều mang seq chung. Kết quả của lượt CŨ về trước và được áp
+  // dụng, rồi lượt MỚI hỏng. Lỗi đó không được hiện vì đã có bản khác giải
+  // quyết, nhưng bản đang hiển thị có thể cũ hơn bản mà lượt hỏng định trả.
+  f.controller.receiveInput({
+    toolName: "erpnext_kanban_get_board",
+    arguments: scope,
+  });
+  f.controller.receiveInput({
+    toolName: "erpnext_kanban_get_board",
+    arguments: scope,
+  });
+  const sharedSeq = f.controller.inputSeq;
+  const older = structuredClone(boardFixture());
+  older.title = "Board cũ";
+  assertEquals(f.controller.receiveBoard(older, sharedSeq), false);
+  assertEquals(f.controller.board, older);
+  assertEquals(f.calls.length, 0);
+  assertEquals(f.controller.failHost(), false);
+  assertEquals(f.calls.length, 1);
+  assertEquals(f.calls[0].request.arguments, scope);
+  const fresh = structuredClone(boardFixture());
+  fresh.title = "Board mới";
+  f.calls[0].resolve(fresh);
+  await f.calls[0].promise;
+  assertEquals(f.controller.board, fresh);
+});
