@@ -166,6 +166,22 @@ function outsideInlineCode(body) {
     return output + paragraph.slice(start);
   }).join("");
 }
+// Cắt đúng thân của một section cấp hai, dừng ở heading cấp hai kế tiếp. Đếm
+// theo section thay vì theo cả tài liệu để nội dung của section khác không đứng
+// ra thay mặt section đang kiểm.
+function structuralSection(body, heading) {
+  const start = body.match(
+    new RegExp(
+      "^ {0,3}##[ \\t]+" + heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+        "[ \\t]*#*[ \\t]*\\r?$",
+      "m",
+    ),
+  );
+  if (!start) return "";
+  const rest = body.slice(start.index + start[0].length);
+  const next = rest.match(/^ {0,3}##[ \t]+/m);
+  return next ? rest.slice(0, next.index) : rest;
+}
 
 // Destination của một link Markdown: dạng <...> hoặc chuỗi không khoảng trắng,
 // theo sau có thể là title tùy chọn trong "...", '...' hoặc (...). Dùng chung
@@ -288,6 +304,27 @@ function exactLines(source, evidence) {
     evidence.line - 1 + evidence.code.split("\n").length,
   ).join("\n") === evidence.code;
 }
+const objectTypeCache = new Map();
+// Loại của một Git object, hoặc undefined khi repository không có object đó.
+// Thiếu object và có object sai loại là hai lỗi khác nhau, nên tách ra để nơi
+// gọi báo đúng nguyên nhân thay vì gộp thành một thông điệp chung.
+function gitObjectType(ref) {
+  if (!objectTypeCache.has(ref)) {
+    try {
+      objectTypeCache.set(
+        ref,
+        execFileSync("git", ["cat-file", "-t", ref], {
+          cwd: repoRoot,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        }).trim(),
+      );
+    } catch {
+      objectTypeCache.set(ref, undefined);
+    }
+  }
+  return objectTypeCache.get(ref);
+}
 const treeCache = new Map();
 function gitTree(ref) {
   if (!treeCache.has(ref)) {
@@ -297,10 +334,7 @@ function gitTree(ref) {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
       };
-      if (
-        execFileSync("git", ["cat-file", "-t", ref], options).trim() !==
-          "commit"
-      ) {
+      if (gitObjectType(ref) !== "commit") {
         throw new Error("Expected a Git commit");
       }
       const output = execFileSync("git", [
@@ -715,7 +749,8 @@ for (const entry of manifest) {
       fail(`${entry.file}: thiếu ${heading}`);
     }
   }
-  if (!body.match(/Mốc soạn:\s*`([0-9a-f]{7,40})`/)) {
+  const draftingReference = body.match(/Mốc soạn:\s*`([0-9a-f]{7,40})`/)?.[1];
+  if (!draftingReference) {
     fail(entry.file + ": missing valid drafting reference");
   }
   const executionStatus = statusOf(body);
@@ -737,9 +772,7 @@ for (const entry of manifest) {
   if (executionStatus === "DONE") {
     // Đọc từ structuralBody (đã xóa nội dung trong fenced/indented code) để một
     // checklist mẫu nằm trong khối code không tự đứng ra làm bằng chứng hoàn tất.
-    const completion =
-      structuralBody.split("\n## Tiêu chí hoàn tất\n")[1]?.split(/\n## /)[0] ??
-        "";
+    const completion = structuralSection(structuralBody, "Tiêu chí hoàn tất");
     const items = [
       ...completion.matchAll(
         /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\[([ xX])\][ \t]+\S/gm,
@@ -763,7 +796,12 @@ for (const entry of manifest) {
       fail(entry.file + ": DONE requires reviewer approval evidence");
     }
   }
-  const structuralText = outsideInlineCode(structuralBody);
+  // Chỉ đếm trong section "Các bước": nếu đếm cả tài liệu thì một bước nằm ở
+  // section khác (ví dụ "Bảo trì") vẫn tính vào hạn mức và section bước thật sự
+  // có thể rỗng mà vẫn qua cổng.
+  const structuralText = outsideInlineCode(
+    structuralSection(structuralBody, "Các bước"),
+  );
   const steps = [...structuralText.matchAll(/^ {0,3}### Bước \d+:/gm)].length;
   const checks =
     [...structuralText.matchAll(/^ {0,3}\*\*Kiểm tra:\*\*(?=\s|$)/gm)].length;
@@ -789,10 +827,18 @@ for (const entry of manifest) {
         (dependency.newFiles.includes(scoped) ||
           dependency.depends.some((next) => dependencyCreates(next, seen)));
     };
-    if (
-      !entry.newFiles.includes(scoped) &&
-      !entry.depends.some((id) => dependencyCreates(id))
-    ) {
+    if (entry.newFiles.includes(scoped)) {
+      // Nhãn "(tạo mới)" phải đúng ở mốc soạn của chính kế hoạch: nếu file đã có
+      // sẵn từ trước thì đây là sửa file cũ bị khai nhầm, và mọi kiểm tra tracked
+      // /tồn tại/đúng kiểu bên dưới đều bị nhãn này miễn trừ.
+      const baseline = draftingReference && gitTree(draftingReference);
+      if (baseline && scopedObject(baseline, scoped)) {
+        fail(
+          entry.file + ": new file already exists at the drafting reference: " +
+            scoped,
+        );
+      }
+    } else if (!entry.depends.some((id) => dependencyCreates(id))) {
       if (!scopedObject(gitTree("HEAD"), scoped)) {
         fail(entry.file + ": existing scope is not tracked: " + scoped);
       }
@@ -828,6 +874,17 @@ for (const entry of manifest) {
   for (const [index, evidence] of entry.evidence.entries()) {
     if (!/^[0-9a-f]{40}$/.test(evidence.sourceRef ?? "")) {
       fail(entry.file + ": evidence requires a valid sourceRef");
+      continue;
+    }
+    // "git show <ref>:<path>" đọc được cả tree, nên một sourceRef trỏ vào tree
+    // vẫn khớp trích dẫn mà không neo vào lịch sử nào cả. Object thiếu hẳn thì
+    // để evidenceSource báo, ở đây chỉ chặn object có thật nhưng sai loại.
+    const sourceType = gitObjectType(evidence.sourceRef);
+    if (sourceType !== undefined && sourceType !== "commit") {
+      fail(
+        entry.file + ": evidence sourceRef must be a commit: " +
+          evidence.sourceRef,
+      );
       continue;
     }
     if (

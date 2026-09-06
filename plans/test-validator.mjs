@@ -845,17 +845,19 @@ for (
   );
 }
 for (
-  const path of [
-    ".github/fixture.yml",
-    ".gitignore",
-    "src/git/config.ts",
-    "src/.git-fixture.ts",
+  const [path, fresh] of [
+    [".github/fixture.yml", true],
+    // Tên này có thật trong repository nên phải vào nhóm file sẵn có: khai là
+    // tạo mới sẽ bị cổng phân loại từ chối vì lý do không dính tới namespace.
+    [".gitignore", false],
+    ["src/git/config.ts", true],
+    ["src/.git-fixture.ts", true],
   ]
 ) {
   test("Git namespace guard preserves unrelated names: " + path, () => {
     const setup = stale(15, "Namespace control explicitly uses non-DONE state");
     const before = run(setup);
-    const after = run(compose(setup, scopePath(path, true)));
+    const after = run(compose(setup, scopePath(path, fresh)));
     assert.equal(before.thrown, undefined);
     assert.equal(after.thrown, undefined);
     assert.deepEqual(after.messages, before.messages);
@@ -2396,6 +2398,10 @@ test("newFiles cannot exempt an existing scope path without the plan marker", ()
   assert.deepEqual(result.messages, [
     entry.file + ": plan and manifest new-file classifications differ",
     ...definitionFailures(entry.id),
+    // File đã có từ trước mốc soạn nên nhãn tạo mới sai trên hai cơ sở độc lập:
+    // lệch với thân kế hoạch, và lệch với chính lịch sử Git.
+    entry.file + ": new file already exists at the drafting reference: " +
+    "docs/concepts.md",
   ]);
 });
 test("newFiles must be a subset of scope", () => {
@@ -2694,4 +2700,68 @@ test("011 proves both staged and unstaged build sources match HEAD", () => {
   assert(text.includes(
     "git diff --exit-code HEAD -- shim.ts src/compat/legacy-shim.ts Dockerfile.shim",
   ));
+});
+
+test("step and gate counting only reads the steps section", () => {
+  const setup = stale(15, "Section fixture explicitly uses non-DONE state");
+  const before = run(setup);
+  assert.equal(before.thrown, undefined);
+  // Đổi chỗ hai heading: các bước vẫn nằm nguyên trong tài liệu nhưng đã thuộc
+  // section "Bảo trì", còn section "Các bước" chỉ còn văn xuôi bảo trì.
+  const after = run(compose(setup, {
+    [fileFor(15)]: (text) =>
+      text
+        .replace(/^## Các bước[ \t]*$/m, "## Section fixture placeholder")
+        .replace(/^## Bảo trì[ \t]*$/m, "## Các bước")
+        .replace(/^## Section fixture placeholder[ \t]*$/m, "## Bảo trì"),
+  }));
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [fileFor(15).slice(6) + ": bước/gate không khớp"],
+  );
+});
+
+test("a new-file classification cannot name a path that already existed", () => {
+  const setup = stale(
+    15,
+    "Classification fixture explicitly uses non-DONE state",
+  );
+  const before = run(setup);
+  assert.equal(before.thrown, undefined);
+  // AGENTS.md đã có từ trước mốc soạn của kế hoạch 015, nên nhãn tạo mới ở đây
+  // là khai sai và phải bị chặn thay vì được miễn mọi kiểm tra scope.
+  const after = run(compose(setup, scopePath("AGENTS.md", true)));
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [
+      fileFor(15).slice(6) +
+      ": new file already exists at the drafting reference: AGENTS.md",
+    ],
+  );
+});
+
+test("evidence sourceRef must be a commit, not a tree with the same content", () => {
+  const entry = manifest.find((item) => item.id === 2);
+  const tree = execFileSync("git", [
+    "rev-parse",
+    entry.evidence[0].sourceRef + "^{tree}",
+  ], { cwd: repoRoot, encoding: "utf8" }).trim();
+  assert.match(tree, /^[0-9a-f]{40}$/);
+  const setup = stale(2, "Source fixture explicitly uses non-DONE state");
+  const before = run(setup);
+  assert.equal(before.thrown, undefined);
+  // "git show <tree>:<path>" đọc được nên trích đoạn vẫn khớp, nhưng một tree
+  // không neo vào lịch sử nào cả: không có commit để đối chiếu thời điểm.
+  const after = run(compose(setup, {
+    "plans/manifest.json": editManifest((entries) => {
+      entries.find((item) => item.id === 2).evidence[0].sourceRef = tree;
+    }),
+  }));
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [fileFor(2).slice(6) + ": evidence sourceRef must be a commit: " + tree],
+  );
 });
