@@ -17,8 +17,10 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const historicalBrokenHead = "24425057594124b5b8485c900e555c66834c342a";
-const definitionSnapshot = "b9d6d02a9692c3efff11836b97d8cfbc69da1ec7";
-const boundDefinitionFixture = "db2f31fa0b332a7919e02b48f227ae1a6adf9b9e";
+// Commit mang bản duyệt định nghĩa bất biến của kế hoạch 007; mọi commit
+// provenance khác mà snapshot tham chiếu đều là tổ tiên của cha nó.
+const missingApprovalCommit = "ce0899d7cbeeeebd72cedf5cb56926c432fae52d";
+const boundDefinitionFixture = "5b7d00e909476562495e175378bb570aba254818";
 const missingReviewedHeads = [
   "bb78ace761b7ae9b26900c8c80faad699a9adfa6",
   "ecc1b69d7d0f3c7a3310a5696097e2497b482a29",
@@ -213,11 +215,11 @@ test("historical squashed approval references fail in a real isolated checkout",
   });
 });
 
-test("a real clone missing the approved definition ref restores provenance after fetching it", () => {
+test("a real clone missing an approved definition record restores provenance after fetching it", () => {
   isolated((directory) => {
     const seed = join(directory, "definition.git");
     git(repoRoot, ["init", "--bare", "--initial-branch=regression", seed]);
-    const before = git(repoRoot, ["rev-parse", definitionSnapshot + "^"]);
+    const before = git(repoRoot, ["rev-parse", missingApprovalCommit + "^"]);
     git(seed, [
       "fetch",
       "--no-tags",
@@ -229,12 +231,12 @@ test("a real clone missing the approved definition ref restores provenance after
     assert.equal(git(checkout, ["rev-parse", "HEAD"]), before);
     assert.equal(git(checkout, ["status", "--porcelain"]), "");
     assert.equal(
-      run(checkout, "git", ["cat-file", "-t", definitionSnapshot]).status,
+      run(checkout, "git", ["cat-file", "-t", missingApprovalCommit]).status,
       128,
     );
 
-    // Chép nguyên snapshot đã commit và đã có approval thật, không tạo Git object.
-    // Chỉ validator lấy bản hiện tại để regression luôn kiểm implementation mới.
+    // Chép nguyên snapshot đã commit và đã có approval thật, không tạo Git
+    // object, nên bản sao này chỉ thiếu đúng một commit provenance.
     const archive = execFileSync("git", [
       "archive",
       "--format=tar",
@@ -252,70 +254,33 @@ test("a real clone missing the approved definition ref restores provenance after
     });
     assert.ifError(unpacked.error);
     assert.equal(unpacked.status, 0, unpacked.stderr);
-    writeFileSync(
-      join(checkout, "plans/validate-plans.mjs"),
-      execFileSync("git", [
-        "show",
-        definitionSnapshot + ":plans/validate-plans.mjs",
-      ], { cwd: repoRoot }),
-    );
-    const beforeGuard = validate(checkout);
-    assert.equal(
-      beforeGuard.status,
-      0,
-      beforeGuard.stderr || beforeGuard.stdout,
-    );
+    // Chỉ validator lấy bản hiện tại để regression luôn kiểm implementation mới.
     copyFileSync(
       join(repoRoot, "plans/validate-plans.mjs"),
       join(checkout, "plans/validate-plans.mjs"),
     );
     assert.equal(
-      run(checkout, "git", ["cat-file", "-t", definitionSnapshot]).status,
+      run(checkout, "git", ["cat-file", "-t", missingApprovalCommit]).status,
       128,
     );
     const result = validate(checkout);
     assert.equal(result.status, 1);
-    const failures = result.stderr.trim().split("\n");
-    const expected = ["Cannot read Git commit tree: " + definitionSnapshot];
-    // Snapshot lịch sử giữ nguyên nhãn text, không sửa bytes đã được bind.
-    const historicalLanguages = new Map([
-      [7, ["src/ui/tsconfig.json", "deno.json"]],
-      [21, ["scripts/build-node.sh", "scripts/build-node.sh"]],
-      [22, [".github/workflows/publish.yml"]],
+    // 007 là kế hoạch duy nhất neo bản duyệt định nghĩa vào commit còn thiếu,
+    // nên thiếu đúng một object phải hỏng đúng một kế hoạch, không lan ra cả bộ.
+    assert.deepEqual(result.stderr.trim().split("\n"), [
+      "Cannot read Git commit tree: " + missingApprovalCommit,
+      "007-browser-typecheck-gate.md: DONE requires approved definition snapshot",
+      "007-browser-typecheck-gate.md: DONE requires reviewer approval evidence",
     ]);
-    const languageFailures = [];
-    const manifest = JSON.parse(
-      readFileSync(join(checkout, "plans/manifest.json"), "utf8"),
-    );
-    for (const entry of manifest) {
-      const body = readFileSync(join(checkout, "plans", entry.file), "utf8");
-      if (body.includes("Trạng thái thực thi: `DONE`")) {
-        expected.push(
-          entry.file + ": DONE requires approved definition snapshot",
-        );
-        expected.push(
-          entry.file + ": DONE requires reviewer approval evidence",
-        );
-      }
-      for (const path of historicalLanguages.get(entry.id) ?? []) {
-        const message = entry.file + ": evidence language mismatch " + path;
-        expected.push(message);
-        languageFailures.push(message);
-      }
-    }
-    assert.equal(languageFailures.length, 5);
-    assert.equal(expected.length, 32);
-    assert.deepEqual(failures, expected);
     git(checkout, [
       "fetch",
       "--no-tags",
       repoRoot,
-      definitionSnapshot + ":refs/heads/approved-definition",
+      missingApprovalCommit + ":refs/heads/approved-definition",
     ]);
+    // Fetch chỉ khôi phục provenance, không đụng working tree hay HEAD.
     const restored = validate(checkout);
-    // Fetch chỉ khôi phục provenance; năm lỗi language độc lập vẫn phải còn.
-    assert.equal(restored.status, 1);
-    assert.deepEqual(restored.stderr.trim().split("\n"), languageFailures);
+    assert.equal(restored.status, 0, restored.stderr || restored.stdout);
     assert.equal(git(checkout, ["rev-parse", "HEAD"]), before);
   });
 });
