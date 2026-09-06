@@ -1375,6 +1375,19 @@ self/history, giữ đủ 273 tests trước hai findings Codex. Lệnh và ph�
 mạng/build/metadata giống bảng trước. Report này ghi kết quả thực thi, chưa phải
 verdict review độc lập cho source a9a5e73 và không cho phép push/merge.
 
+### Review độc lập validator cuối
+
+Reviewer độc lập APPROVE snapshot `a444fb464798ee64cb486064a39b50de710b2e18`,
+tree `f1f6220b3480ac5a87c3bc7428a68034bf9872a9`, report
+`f91aee15da6c83c12aa68938e781a8cdd5a8e47a`. Review xác nhận năm nhóm fix mới:
+indented code, reference definition trong block quote, steps structural ngoài
+code, dependency chỉ trong metadata và fence language theo manifest. Binding
+definition 007 hợp lệ, execution/completion không đổi; 021/022 chỉ đồng bộ nhãn.
+
+Gate độc lập: validator 25, selftests/history 365/365, format 75 file, lint ba
+helper và diff check đạt. 321 selftests trước vòng này được giữ nguyên byte.
+Review không chứng thực CI/GitHub và không mở phạm vi thành CommonMark đầy đủ.
+
 ## Thực thi năm P2 tại ce94ec9: đang bị chặn bởi ngôn ngữ fence có sẵn
 
 Ngày 2026-09-06. Base review đúng PR25
