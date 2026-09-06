@@ -937,3 +937,59 @@ Deno.test("detail queue sends an old-session queued write without marking it cur
   f.calls[0].resolve(f.rendered);
   await Promise.resolve();
 });
+
+Deno.test("host hydration during a move keeps the pending card in place", () => {
+  const f = fixture();
+  const mutation = f.move();
+  assertEquals(
+    f.controller.board!.cards.find((card) => card.id === "TASK-A-1")!.columnId,
+    "Working",
+  );
+  // Host đọc lại đúng phạm vi cũ nhưng bản đọc chưa thấy write đang chạy: nếu
+  // áp nguyên bản đó thì thẻ nhảy ngược về cột cũ và mất cờ pending, thao tác
+  // kéo mở lại và user gửi trùng một move rồi bị từ chối vì xung đột.
+  f.controller.receiveInput({
+    toolName: "erpnext_kanban_get_board",
+    arguments: boardFixture().refreshArguments,
+  });
+  assertEquals(
+    f.controller.receiveBoard(boardFixture(), f.controller.inputSeq),
+    false,
+  );
+  const card = f.controller.board!.cards.find((item) =>
+    item.id === "TASK-A-1"
+  )!;
+  assertEquals(card.columnId, "Working");
+  assertEquals(card.pending, true);
+  assertEquals(
+    f.controller.board!.columns.find((column) => column.id === "Working")!
+      .count,
+    1,
+  );
+  f.succeed(mutation);
+});
+
+Deno.test("host hydration into another scope does not carry pending cards", () => {
+  const f = fixture();
+  const mutation = f.move();
+  // Đổi phạm vi thì thẻ đang chờ thuộc board cũ, không được gán sang board mới.
+  const other = {
+    ...boardFixture(),
+    title: "Board B",
+    refreshArguments: { ...boardFixture().refreshArguments, project: "B" },
+  };
+  f.controller.receiveInput({
+    toolName: "erpnext_kanban_get_board",
+    arguments: other.refreshArguments,
+  });
+  assertEquals(
+    f.controller.receiveBoard(other, f.controller.inputSeq),
+    true,
+  );
+  const card = f.controller.board!.cards.find((item) =>
+    item.id === "TASK-A-1"
+  )!;
+  assertEquals(card.columnId, "Open");
+  assertEquals(card.pending, undefined);
+  f.succeed(mutation);
+});

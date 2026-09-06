@@ -1355,3 +1355,39 @@ for (const operation of ["Save", "Assign", "Unassign"]) {
     });
   }
 }
+
+test("component keeps a move error created after the host input", async () => {
+  const h = harness();
+  const a = h.fixtures.boardFixture();
+  h.render().requestMove(a.cards[0], "Working", "Start");
+  // Host mở một lượt đọc lại cùng phạm vi trong lúc move đang chạy; lượt này tự
+  // xóa lỗi move cũ, nên mọi lỗi sinh ra sau đó là lỗi đang còn hiệu lực.
+  h.input(a.refreshArguments);
+  h.calls[0].resolve({
+    isError: true,
+    ...payload({ message: "Permission denied" }),
+  });
+  await tick();
+  const message = h.render().state.error;
+  assert.ok(message);
+  // Kết quả host về sau hydrate board; nếu xóa lỗi move vô điều kiện ở đây thì
+  // lỗi biến mất im lặng và user tưởng move đã thành công.
+  h.result(payload(a));
+  assert.equal(h.render().state.error, message);
+});
+
+test("component host snapshot during an active move keeps the card pending", () => {
+  const h = harness();
+  const a = h.fixtures.boardFixture();
+  h.render().requestMove(a.cards[0], "Working", "Start");
+  assert.equal(h.render().state.board.cards[0].pending, true);
+  // Bản host đọc trước khi write kịp ghi: thẻ phải giữ nguyên vị trí lạc quan và
+  // cờ pending, nếu không thao tác kéo mở lại và user gửi trùng cùng một move.
+  h.input(a.refreshArguments);
+  h.result(payload(a));
+  const card = h.render().state.board.cards.find((item) =>
+    item.id === a.cards[0].id
+  );
+  assert.equal(card.pending, true);
+  assert.equal(card.columnId, "Working");
+});

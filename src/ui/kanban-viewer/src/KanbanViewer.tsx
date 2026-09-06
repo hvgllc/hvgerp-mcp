@@ -1311,7 +1311,10 @@ export function KanbanViewer() {
         if (!text) {
           throw new Error("No kanban payload received from tool result");
         }
-        moveErrorRef.current = null;
+        // Không xóa lỗi move ở đây: ontoolinput đã xóa lỗi cũ khi lượt host này
+        // bắt đầu, nên mọi lỗi còn lại là lỗi sinh ra SAU input đó và vẫn đang
+        // đúng. Xóa vô điều kiện sẽ nuốt mất lỗi của move vừa hỏng vì hydrate
+        // board cũng xóa luôn lỗi trong reducer.
         if (
           refreshController.receiveBoard(
             parseBoard(text),

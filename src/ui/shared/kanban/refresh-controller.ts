@@ -1,3 +1,4 @@
+import { preservePendingMoves } from "./interactions.ts";
 import {
   canRequestBoardRefresh,
   kanbanRequestIdentity,
@@ -216,7 +217,14 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
       pending ||= inFlight || mutations.size > 0;
       force = pending;
       retryAt = 0;
-      update(next);
+      // Còn move đang chạy và host trả về đúng phạm vi cũ: giữ lại thẻ đang chờ,
+      // nếu không thẻ nhảy ngược về cột cũ và mở lại thao tác kéo dù move chưa
+      // xong, để user gửi trùng một move rồi bị từ chối vì xung đột.
+      update(
+        !changed && board && mutations.size > 0
+          ? preservePendingMoves(board, next)
+          : next,
+      );
       void drain();
       return changed;
     },
