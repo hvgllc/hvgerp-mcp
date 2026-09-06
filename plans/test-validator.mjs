@@ -96,7 +96,38 @@ function run(replacements = {}, hidden = [], filesystem = {}, gitOutput) {
         if (target === "") throw new Error("ELOOP");
         return target ?? resolve(realpathSync(repoRoot), key);
       },
-      readdirSync,
+      // Fixture là một filesystem ảo, nên readdir của nó phải liệt kê cả các
+      // mục ảo: kiểm hoa thường đọc tên thật trong thư mục cha, và một file chỉ
+      // có trong fixture sẽ không bao giờ xuất hiện nếu chỉ đọc đĩa. Chỉ hợp
+      // nhất cho lời gọi một tham số; nhánh withFileTypes là đường quét file kế
+      // hoạch, nơi mục ảo không được phép trở thành một kế hoạch mới.
+      readdirSync(path, options) {
+        if (options) return readdirSync(path, options);
+        const parent = relative(repoRoot, path);
+        const underParent = (key) =>
+          parent ? key.startsWith(parent + "/") : true;
+        let names;
+        try {
+          names = new Set(readdirSync(path));
+        } catch (error) {
+          // Một thư mục chỉ tồn tại trong fixture thì đĩa thật ném ENOENT. Nuốt
+          // lỗi đúng trường hợp đó, còn đường dẫn không có mục ảo nào vẫn để
+          // lỗi thoát ra như khi chạy thật.
+          if (!Object.keys(filesystem).some(underParent)) throw error;
+          names = new Set();
+        }
+        for (const key of Object.keys(filesystem)) {
+          if (!underParent(key)) continue;
+          const rest = parent ? key.slice(parent.length + 1) : key;
+          if (rest) names.add(rest.split("/")[0]);
+        }
+        for (const key of hidden) {
+          if (!underParent(key)) continue;
+          const rest = parent ? key.slice(parent.length + 1) : key;
+          if (rest && !rest.includes("/")) names.delete(rest);
+        }
+        return [...names];
+      },
       readFileSync(path, encoding) {
         const text = readFileSync(path, encoding);
         const replace = replacements[relative(repoRoot, path)];
@@ -479,7 +510,7 @@ test("PR25 quoted reference keeps valid targets and resolves a continuation", ()
   const result = run({
     "plans/evidence/backlog-review.md": (text) =>
       text +
-      '\n> [local]: ../README.md "Title"\n> [web]: https://example.com\n>> [anchor]: #local\n',
+      '\n> [local]: ../README.md "Title"\n> [web]: https://example.com\n>> [anchor]: #phạm-vi\n',
   });
   assert.equal(result.exitCode, 0, result.messages.join("\n"));
   // Destination trên dòng kế là definition hợp lệ theo CommonMark, nên nó phải
@@ -1713,10 +1744,10 @@ for (
   const target of [
     "../../README.md",
     "../../src/../README.md",
-    "./../evidence/../../README.md#overview",
+    "./../evidence/../../README.md#documentation",
     "https://example.test/../outside-plan.md#overview",
     "http://example.test/document",
-    "#local-anchor",
+    "#phạm-vi",
   ]
 ) {
   test("Markdown repository boundary preserves valid target: " + target, () => {
@@ -1772,10 +1803,10 @@ for (
 for (
   const destination of [
     "../../README.md",
-    '<../../README.md#overview> "Repository"',
+    '<../../README.md#documentation> "Repository"',
     "../../src/../README.md 'Repository'",
     "https://example.test/report",
-    "#local-anchor",
+    "#phạm-vi",
   ]
 ) {
   test(
@@ -3631,6 +3662,138 @@ test("the source of a script element itself is checked", () => {
     "plans/evidence/backlog-review.md": (text) =>
       text + '\n<script src="missing-script-source.js"></script>\n',
   }, /link hỏng missing-script-source\.js/);
+});
+
+test("a lone tag right below a heading opens an HTML block", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## Probe heading\n<custom-widget>\n" +
+      "[not live](missing-after-heading.md)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a lone tag right below a thematic break opens an HTML block", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n---\n<custom-widget>\n[not live](missing-after-break.md)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a lone tag continuing a paragraph opens no HTML block", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nMột đoạn văn đang mở\n<custom-widget>\n" +
+      "[live](missing-after-paragraph.md)\n",
+  }, /link hỏng missing-after-paragraph\.md/);
+});
+
+test("a character reference ends a destination at its fragment", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[encoded fragment](../../README.md&num;documentation)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+// Backslash escape và character reference đi hai đường khác nhau: "a\#b.md"
+// giữ dấu # làm ký tự thật trong tên file, còn "a&#35;b.md" được giải mã thành
+// dấu # nguyên bản rồi ghi thẳng vào href, nên trình duyệt đọc nó là ranh giới
+// fragment. Test kề trên giữ đường thứ nhất, test này giữ đường thứ hai.
+test("a character reference for a hash splits the destination", () => {
+  invalid(
+    {
+      "plans/evidence/backlog-review.md": (text) =>
+        text + "\n[entity hash](a&#35;b.md)\n",
+    },
+    /link hỏng a&#35;b\.md/,
+    [],
+    { "plans/evidence/a#b.md": "file" },
+  );
+});
+
+test("a link differing only in case is broken", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[case](../readme.md)\n",
+  }, /link hỏng \.\.\/readme\.md/);
+});
+
+test("a directory component differing only in case is broken", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[case](../Evidence/backlog-review.md)\n",
+  }, /link hỏng \.\.\/Evidence\/backlog-review\.md/);
+});
+
+test("a bracket inside an HTML attribute does not close a label", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      '\n[<span title="]">target</span>](missing-inline-html-label.md)\n',
+  }, /link hỏng missing-inline-html-label\.md/);
+});
+
+test("a bracket inside an autolink does not close a label", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[<https://example.com/a]b>](missing-autolink-label.md)\n",
+  }, /link hỏng missing-autolink-label\.md/);
+});
+
+test("a fragment-only destination must name a real anchor", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[missing section](#definitely-not-a-heading)\n",
+  }, /anchor hỏng #definitely-not-a-heading/);
+});
+
+test("a fragment-only destination resolves against its own headings", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## Probe anchor target\n\n[here](#probe-anchor-target)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a repeated heading gets the numbered anchor suffix", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## Probe twice\n\n## Probe twice\n\n[second](#probe-twice-1)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an explicit id attribute counts as an anchor", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      '\n<a id="probe-explicit-id"></a>\n\n[there](#probe-explicit-id)\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a cross-file fragment must name a real anchor", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[gone](../README.md#definitely-not-a-heading)\n",
+  }, /anchor hỏng \.\.\/README\.md#definitely-not-a-heading/);
+});
+
+test("a fragment on a source file is not checked as an anchor", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[line](../validate-plans.mjs#L1)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
 });
 
 test("a drafting reference must resolve without any new files", () => {

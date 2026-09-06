@@ -1588,3 +1588,81 @@ prefix này làm bằng chứng nhánh remote mất ref và không nới guard l
 Không network, Browser, build, push hoặc sửa approval. Gate là consistency
 offline, không chứng thực danh tính reviewer. Source/report còn chờ review độc
 lập; executor không ghi APPROVE.
+
+## Codex vòng tiếp: review 5125519048
+
+Sáu finding P2 trên reviewed commit `c751e98`, tái hiện đúng bằng chính
+validator trước khi sửa. Năm cái được sửa, một cái từ chối kèm số đo.
+
+- Finding
+  [3944147990](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944147990):
+  block HTML dạng 7 trước sửa chỉ mở khi dòng trước trống, nên một ví dụ nhúng
+  viết ngay dưới heading ATX không được ẩn và link trong thân nó bị quét như
+  Markdown sống. Thay điều kiện bằng "dòng trước không phải đoạn văn đang mở":
+  heading ATX và thematic break kết thúc ngay tại dòng của chúng. Ca sau heading
+  và sau thematic break xanh sau sửa; ca thẻ lẻ tiếp ngay sau một đoạn văn vẫn
+  đỏ, tức hướng fail-closed không bị nới.
+- Finding
+  [3944147994](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944147994):
+  ranh giới fragment và query trước sửa đọc trên chuỗi thô, nên
+  `README.md&num;overview` bị đem cả cụm đi mở như một tên file và `a&#35;b.md`
+  bị cắt giữa chính reference. Giải mã character reference trước mọi câu hỏi
+  khác về destination, rồi mới tìm ranh giới, kiểm scheme và gỡ backslash.
+  Backslash escape vẫn đi đường riêng: `a\#b.md` giữ dấu `#` làm ký tự thật
+  trong tên file, còn `a&#35;b.md` giải mã thành `#` viết thẳng vào href nên là
+  ranh giới fragment; hai test cạnh nhau giữ hai đường này.
+- Finding
+  [3944147996](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944147996):
+  không sửa, kèm số đo. Đo cả 21 kế hoạch DONE: không cái nào có thân report
+  hiện tại khớp `reviewed_evidence_blob` hay `completed_evidence_blob`, ở mọi
+  quan hệ đã thử. Bằng nhau nguyên file 0/21, bằng nhau sau khi bỏ frontmatter
+  0/21, prefix 0/21; nới nhất là prefix sau khi bỏ frontmatter cả hai phía thì
+  cũng chỉ 1/21. Lý do là thiết kế: blob đã duyệt là ảnh chụp tại thời điểm
+  reviewer APPROVE, khi frontmatter còn nhỏ và các mục sau chưa được ghi, còn
+  report thì tiếp tục được ghi thêm sau approval. Ràng buộc thân hiện tại vào
+  blob đó làm gate đỏ ngay 20 tới 21 kế hoạch và chỉ xanh lại được bằng cách tự
+  hash report mới như thể reviewer đã duyệt nó, đúng điều `plans/README.md` cấm.
+- Finding
+  [3944147999](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944147999):
+  `existsSync` trên macOS và Windows không phân biệt hoa thường, nên
+  `../readme.md` xanh trên máy dev còn hỏng ở bản clone Linux và trên trình
+  duyệt repo. Đã đo `realpathSync` không cứu được: trên macOS nó trả lại đúng
+  chuỗi hoa thường được đưa vào chứ không chuẩn hóa theo tên thật. Thêm
+  `existsCaseExact` so từng thành phần đường dẫn với tên trong thư mục cha, nhớ
+  lại kết quả `readdirSync` theo thư mục. Ca sai hoa thường ở tên file và ở tên
+  thư mục đều đỏ sau sửa.
+- Finding
+  [3944148002](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944148002):
+  vòng đếm ngoặc của nhãn trước sửa coi mọi dấu `]` là ranh giới, nên
+  `[<span title="]">x</span>](y.md)` bị cắt nhãn ngay trong giá trị thuộc tính
+  và cả link biến mất khỏi gate. Thêm mẫu neo đầu cho thẻ HTML thô và autolink
+  rồi nhảy qua nguyên khối. Code span và comment đã bị `outsideInlineCode` và
+  `outsideHtmlComments` xóa trước khi hàm chạy, nên chỉ còn hai dạng này cần
+  nguyên khối. Ca thuộc tính và ca autolink chứa `]` đều đỏ sau sửa.
+- Finding
+  [3944148006](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944148006):
+  destination chỉ có fragment trước sửa được bỏ qua hoàn toàn, và fragment của
+  link liên file cũng không ai hỏi tới. Thêm `documentAnchors` dựng anchor từ
+  heading ATX và setext theo cách GitHub tính slug, cộng mọi `id` và `name` khai
+  tay trong HTML thô; heading trùng slug nhận hậu tố `-1`, `-2`. Chỉ hỏi anchor
+  khi đích là `.md`, vì fragment trên file nguồn là chuyện của trình duyệt repo.
+  Ca `#definitely-not-a-heading` và ca `README.md#` không có thật đỏ sau sửa; ca
+  trỏ đúng heading, ca heading lặp và ca `id` tường minh xanh. Hai fixture cũ
+  dùng anchor hư cấu `#local-anchor` và `#overview` được đổi sang anchor có
+  thật, giữ nguyên ý định kiểm ranh giới destination của chúng.
+
+Harness test đổi theo một chỗ: `readdirSync` một tham số giờ hợp nhất mục ảo của
+fixture, vì kiểm hoa thường đọc tên thật trong thư mục cha và một file chỉ có
+trong fixture sẽ không bao giờ xuất hiện nếu chỉ đọc đĩa. Nhánh `withFileTypes`
+giữ nguyên đường đọc đĩa, để mục ảo không trở thành một kế hoạch mới.
+
+| Lệnh                                   | Kết quả                |
+| -------------------------------------- | ---------------------- |
+| `node plans/validate-plans.mjs`        | exit 0, đủ 25 kế hoạch |
+| `deno fmt --check`                     | exit 0, 315 file       |
+| `deno lint`                            | exit 0, 160 file       |
+| `node --test plans/test-validator.mjs` | 473 pass, 0 fail       |
+| `git diff --check`                     | exit 0                 |
+
+Chạy lại các mẻ probe guard của vòng 14, 15, 16, 17, 18 và 19: không mẻ nào đổi
+kết quả, nên năm sửa lần này không nới guard cũ.

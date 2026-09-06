@@ -212,12 +212,40 @@ const htmlBlockOpeners = [
   ],
 ];
 // Dạng 7 là một thẻ bất kỳ đứng một mình trên dòng, và nó không được cắt ngang
-// một đoạn văn đang mở. Chỉ mở khi dòng trước trống: chặt hơn chuẩn một chút
-// (sau heading chuẩn vẫn cho mở) nhưng lệch về phía fail-closed, tức link vẫn
-// bị kiểm, thay vì phía nuốt mất một link sống.
+// một đoạn văn đang mở. Điều kiện đúng là "dòng trước không phải đoạn văn đang
+// mở", không phải "dòng trước trống": heading ATX và thematic break kết thúc
+// ngay tại chính dòng của chúng, nên dòng kế không tiếp tục đoạn nào và một thẻ
+// lẻ ở đó mở block đúng chuẩn. Đòi dòng trống thì một ví dụ nhúng viết ngay
+// dưới heading không được ẩn, phần thân của nó bị quét như Markdown sống, và
+// gate báo hỏng một tài liệu đúng. Các dòng khác vẫn giữ hướng fail-closed: dòng
+// tiếp sau một đoạn văn, một bullet hay một blockquote đều có thể là phần tiếp
+// của đoạn đó, nên thẻ lẻ ở đấy không mở block.
+const htmlLeafEnd = new RegExp(
+  "^ {0,3}(?:#{1,6}(?:[ \\t]|\\r?$)|(?:\\*[ \\t]*){3,}\\r?$|" +
+    "(?:-[ \\t]*){3,}\\r?$|(?:_[ \\t]*){3,}\\r?$)",
+);
 const htmlLoneTag = new RegExp(
   "^ {0,3}(?:<[A-Za-z][A-Za-z0-9-]*" + htmlAttributes +
     "[ \\t]*/?>|</[A-Za-z][A-Za-z0-9-]*[ \\t]*>)[ \\t]*\\r?$",
+);
+// Trong nhãn của một link, thẻ HTML thô và autolink là nguyên khối: CommonMark
+// parse mỗi cái thành một inline riêng, nên dấu "]" nằm trong giá trị thuộc
+// tính hay trong URL của autolink không đóng nhãn. Đếm ngoặc mà không nhảy qua
+// nguyên thẻ thì [<span title="]">x</span>](y.md) bị cắt nhãn ngay tại dấu "]"
+// của thuộc tính, ký tự kế đó không phải "(", link thật không được thu, và
+// destination hỏng đi qua gate. Mẫu neo đầu (cờ y) để chỉ khớp tại đúng vị trí
+// con trỏ đang đứng.
+const htmlInlineAtomic = new RegExp(
+  "<(?:[A-Za-z][A-Za-z0-9-]*" + htmlAttributes + htmlOptionalSpace + "/?>" +
+    "|/[A-Za-z][A-Za-z0-9-]*" + htmlOptionalSpace + ">" +
+    "|!--[\\s\\S]*?-->" +
+    "|\\?[\\s\\S]*?\\?>" +
+    "|![A-Za-z][\\s\\S]*?>" +
+    "|!\\[CDATA\\[[\\s\\S]*?\\]\\]>" +
+    "|[A-Za-z][A-Za-z0-9+.-]{1,31}:[^ \\t\\r\\n<>]*>" +
+    "|[^ \\t\\r\\n<>@]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?" +
+    "(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*>)",
+  "y",
 );
 const htmlBlank = /^[ \t]*\r?$/;
 const htmlFence = /^ {0,3}(`{3,}|~{3,})(.*)\r?$/;
@@ -252,7 +280,7 @@ const outsideRawText = (body) =>
 // preserveOffsets giữ nguyên độ dài từng dòng, cho những đường quét cần chỉ số
 // trong body gốc; mặc định trả dòng rỗng, đủ cho các đường đọc theo dòng.
 function outsideHtmlBlocks(body, preserveOffsets = false) {
-  let closer, fence, fenceIndent = 0, listIndent = 0, previousBlank = true;
+  let closer, fence, fenceIndent = 0, listIndent = 0, loneTagAllowed = true;
   const track = listIndentTracker();
   const hidden = (line) => preserveOffsets ? " ".repeat(line.length) : "";
   return body.split("\n").map((line) => {
@@ -260,11 +288,11 @@ function outsideHtmlBlocks(body, preserveOffsets = false) {
     if (closer) {
       if (closer === htmlBlank) {
         if (blank) closer = undefined;
-        previousBlank = blank;
+        loneTagAllowed = blank;
         return blank ? line : hidden(line);
       }
       if (closer.test(line)) closer = undefined;
-      previousBlank = false;
+      loneTagAllowed = false;
       return hidden(line);
     }
     const indentation = line.match(/^[ \t]*/)[0];
@@ -288,7 +316,7 @@ function outsideHtmlBlocks(body, preserveOffsets = false) {
         marker && width <= fenceIndent + 3 && marker[1][0] === fence[0] &&
         marker[1].length >= fence.length && /^[ \t\r]*$/.test(marker[2])
       ) fence = undefined;
-      previousBlank = false;
+      loneTagAllowed = false;
       return line;
     }
     const container = track(relative, width, blank);
@@ -299,11 +327,11 @@ function outsideHtmlBlocks(body, preserveOffsets = false) {
     ) {
       fence = marker[1];
       fenceIndent = width;
-      previousBlank = false;
+      loneTagAllowed = false;
       return line;
     }
     if (width > listIndent + 3) {
-      previousBlank = blank;
+      loneTagAllowed = blank;
       return line;
     }
     // Một block HTML mở được ngay trên dòng có dấu list: trong "- <div>", nội
@@ -319,15 +347,15 @@ function outsideHtmlBlocks(body, preserveOffsets = false) {
       if (!opener.test(content)) continue;
       // Điều kiện đóng có thể được thỏa ngay trên dòng mở, ví dụ "<pre>x</pre>".
       closer = end && end.test(line) ? undefined : end ?? htmlBlank;
-      previousBlank = false;
+      loneTagAllowed = false;
       return hidden(line);
     }
-    if (previousBlank && htmlLoneTag.test(content)) {
+    if (loneTagAllowed && htmlLoneTag.test(content)) {
       closer = htmlBlank;
-      previousBlank = false;
+      loneTagAllowed = false;
       return hidden(line);
     }
-    previousBlank = blank;
+    loneTagAllowed = blank || htmlLeafEnd.test(content);
     return line;
   }).join("\n");
 }
@@ -673,6 +701,14 @@ function inlineLinkTargets(text) {
       if (text[cursor] === "\\") {
         cursor += 2;
         continue;
+      }
+      if (text[cursor] === "<") {
+        htmlInlineAtomic.lastIndex = cursor;
+        const tag = htmlInlineAtomic.exec(text);
+        if (tag) {
+          cursor += tag[0].length;
+          continue;
+        }
       }
       if (text[cursor] === "[") depth++;
       else if (text[cursor] === "]") depth--;
@@ -1538,6 +1574,97 @@ for (const entry of manifest) {
     }
   }
 }
+// Filesystem trên macOS và Windows không phân biệt hoa thường, nên existsSync
+// trả true cho "plans/readme.md" trong khi bản clone trên Linux và trình duyệt
+// repo chỉ có "plans/README.md": gate xanh trên máy dev còn link thì hỏng ở mọi
+// nơi khác. realpathSync không cứu được, đã đo trên macOS nó trả lại đúng chuỗi
+// hoa thường được đưa vào chứ không chuẩn hóa theo tên thật. Vì vậy so từng
+// thành phần đường dẫn với đúng tên trong thư mục cha. Kết quả readdirSync được
+// nhớ lại vì mỗi thư mục bị hỏi nhiều lần trên cùng một lần chạy.
+const directoryNames = new Map();
+function existsCaseExact(root, parts) {
+  let current = root;
+  for (const part of parts) {
+    // resolve() đã rút gọn "." và ".." trước khi tới đây; nhánh này chỉ để một
+    // đường dẫn có thành phần rỗng không bị hỏi tên trong thư mục cha.
+    if (part === "" || part === ".") continue;
+    let names = directoryNames.get(current);
+    if (!names) {
+      try {
+        names = new Set(readdirSync(current));
+      } catch {
+        return false;
+      }
+      directoryNames.set(current, names);
+    }
+    if (!names.has(part)) return false;
+    current = resolve(current, part);
+  }
+  return true;
+}
+// Anchor của một tài liệu Markdown gồm slug của mọi heading cộng mọi id hay
+// name khai tay trong HTML thô. GitHub dựng slug bằng cách hạ hoa thường, bỏ
+// ký tự không phải chữ, số, gạch dưới, khoảng trắng hay gạch nối, rồi đổi
+// khoảng trắng thành gạch nối; heading trùng slug nhận hậu tố -1, -2 theo thứ
+// tự xuất hiện.
+const headingSlug = (text) =>
+  text.trim().toLowerCase()
+    .replace(/[^\p{L}\p{N}\p{M}_ -]+/gu, "")
+    .replace(/ /g, "-");
+// Inline markup không vào slug vì GitHub lấy phần văn bản đã render: gỡ code
+// span, nhãn link, thẻ HTML và backslash escape trước khi tính.
+const headingText = (raw) =>
+  raw.replace(/`+([^`]*)`+/g, "$1")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/!?\[([^\]]*)\]\[[^\]]*\]/g, "$1")
+    .replace(/<[^>]*>/g, "")
+    .replace(/\\([!-/:-@[-`{-~])/g, "$1");
+const anchorCache = new Map();
+function documentAnchors(path) {
+  const cached = anchorCache.get(path);
+  if (cached) return cached;
+  const anchors = new Set();
+  let body;
+  try {
+    body = readFileSync(path, "utf8");
+  } catch {
+    anchorCache.set(path, anchors);
+    return anchors;
+  }
+  const seen = new Map();
+  const lines = structuralMarkdown(body).split("\n");
+  for (let index = 0; index < lines.length; index++) {
+    const atx = lines[index].match(/^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*\r?$/);
+    let text;
+    if (atx) text = (atx[2] ?? "").replace(/[ \t]#+[ \t]*$/, "");
+    // Setext: một dòng văn bản không rỗng theo sau bởi hàng chỉ có "=" hoặc
+    // "-". Hàng toàn dấu gạch sau một đoạn văn là heading chứ không phải
+    // thematic break, đúng thứ tự ưu tiên của CommonMark.
+    else if (
+      /^ {0,3}(?:=+|-+)[ \t]*\r?$/.test(lines[index]) && index > 0 &&
+      lines[index - 1].trim() && !/^ {0,3}#/.test(lines[index - 1])
+    ) text = lines[index - 1].trim();
+    else continue;
+    const slug = headingSlug(headingText(text));
+    if (!slug) continue;
+    const count = seen.get(slug) ?? 0;
+    seen.set(slug, count + 1);
+    anchors.add(count ? slug + "-" + count : slug);
+  }
+  // id và name viết tay cũng là anchor thật, và chúng nằm trong chính những
+  // block HTML mà structuralMarkdown đã bỏ, nên quét trên body gốc.
+  const attribute = new RegExp(
+    "\\b(?:id|name)[ \\t]*=[ \\t]*" +
+      "(?:\"([^\"]*)\"|'([^']*)'|([^ \\t\\r\\n\"'=<>`]+))",
+    "g",
+  );
+  for (const match of body.matchAll(attribute)) {
+    const value = match[1] ?? match[2] ?? match[3];
+    if (value) anchors.add(value);
+  }
+  anchorCache.set(path, anchors);
+  return anchors;
+}
 for (const filePath of planFiles(planRoot)) {
   const file = relative(planRoot, filePath);
   const body = readFileSync(filePath, "utf8");
@@ -1607,7 +1734,24 @@ for (const filePath of planFiles(planRoot)) {
       // Không nhận dạng thì isAbsolute() coi nó là đường dẫn tuyệt đối POSIX và
       // một link đúng chuẩn bị báo unsafe. Đòi authority không rỗng, nên
       // "///etc/passwd" vẫn rơi xuống nhánh unsafe bên dưới.
-      if (/^(?:[a-z][a-z0-9+.-]+:|#|\/\/[^\/])/i.test(target)) continue;
+      // Character reference được giải mã trước mọi câu hỏi khác về destination,
+      // vì chuẩn giải mã nó khi dựng URL: ranh giới fragment, ranh giới query và
+      // cả scheme đều đọc trên chuỗi đã giải mã. Tìm ranh giới trên chuỗi thô
+      // thì "README.md&num;overview" không có dấu # nào và cả chuỗi bị đem đi mở
+      // như một tên file, còn "&#35;" lại bị cắt ngay giữa chính reference của
+      // nó; cả hai đều báo hỏng một link đúng chuẩn.
+      const decoded = decodeReferences(target);
+      // Bất kỳ URI scheme nào cũng là địa chỉ ngoài cây làm việc, không riêng
+      // http(s): ghim hai scheme đó thì "mailto:" hay "ftp:" bị đem đi phân giải
+      // như đường dẫn tương đối và một link đúng chuẩn bị báo hỏng. Đòi scheme
+      // dài từ hai ký tự theo RFC 3986 để "c:\..." vẫn rơi xuống nhánh unsafe
+      // bên dưới thay vì được bỏ qua.
+      // "//host/path" là network-path reference của RFC 3986: nó mượn scheme của
+      // trang đang render và trỏ ra ngoài cây làm việc y như một URL đủ scheme.
+      // Không nhận dạng thì isAbsolute() coi nó là đường dẫn tuyệt đối POSIX và
+      // một link đúng chuẩn bị báo unsafe. Đòi authority không rỗng, nên
+      // "///etc/passwd" vẫn rơi xuống nhánh unsafe bên dưới.
+      if (/^(?:[a-z][a-z0-9+.-]+:|\/\/[^\/])/i.test(decoded)) continue;
       // Destination là URL: bỏ query và fragment rồi giải mã percent-encoding
       // trước khi đụng tới filesystem. Đem chuỗi thô đi phân giải thì một link
       // đúng chuẩn tới "link target.md" viết là "link%20target.md" bị báo hỏng.
@@ -1616,11 +1760,11 @@ for (const filePath of planFiles(planRoot)) {
       // Dấu # hoặc ? bị escape là ký tự thật trong tên file, không phải ranh
       // giới fragment/query: cắt ở dấu chưa escape đầu tiên, rồi mới gỡ escape.
       // Cắt trước khi gỡ thì "a\#b.md" bị xẻ đôi và trỏ sang một file khác.
-      let boundary = target.length;
-      for (let position = 0; position < target.length; position++) {
+      let boundary = decoded.length;
+      for (let position = 0; position < decoded.length; position++) {
         if (
-          (target[position] === "#" || target[position] === "?") &&
-          !markdownEscaped(target, position)
+          (decoded[position] === "#" || decoded[position] === "?") &&
+          !markdownEscaped(decoded, position)
         ) {
           boundary = position;
           break;
@@ -1631,12 +1775,41 @@ for (const filePath of planFiles(planRoot)) {
       // một link đúng chuẩn bị báo unsafe. Chỉ gỡ trước dấu câu ASCII, đúng
       // phạm vi escape của CommonMark; "\\" thành một backslash thật và vẫn rơi
       // xuống nhánh unsafe bên dưới, là hướng lệch fail-closed.
-      // Character reference giải mã trước khi gỡ backslash, vì decodeReferences
-      // tự bỏ qua "&" đã bị escape: gỡ trước thì "\&amp;" mất backslash rồi mới
-      // thành "&", tức một chuỗi cố ý viết literal lại bị giải mã.
-      const withoutFragment = decodeReferences(target.slice(0, boundary))
+      // Gỡ backslash sau khi đã giải mã reference, vì decodeReferences tự bỏ qua
+      // "&" đã bị escape: gỡ trước thì "\&amp;" mất backslash rồi mới thành
+      // "&", tức một chuỗi cố ý viết literal lại bị giải mã.
+      const withoutFragment = decoded.slice(0, boundary)
         .replace(/\\([!-/:-@[-`{-~])/g, "$1");
-      if (!withoutFragment) continue;
+      // Fragment là một lời hứa kiểm được y như đường dẫn: nó phải trỏ tới một
+      // heading hay một id có thật. Ranh giới đường dẫn ở trên dừng cả ở "?",
+      // nên tìm lại dấu "#" chưa escape đầu tiên để lấy đúng phần fragment,
+      // bỏ luôn query nếu có.
+      let hash = -1;
+      for (let position = 0; position < decoded.length; position++) {
+        if (decoded[position] === "#" && !markdownEscaped(decoded, position)) {
+          hash = position;
+          break;
+        }
+      }
+      let fragment = "";
+      if (hash >= 0) {
+        const raw = decoded.slice(hash + 1)
+          .replace(/\\([!-/:-@[-`{-~])/g, "$1");
+        try {
+          fragment = decodeURIComponent(raw);
+        } catch {
+          fragment = raw;
+        }
+      }
+      // Destination chỉ có fragment trỏ vào chính tài liệu đang đọc. Bỏ qua nó
+      // thì "[mục](#definitely-not-a-heading)" đi qua gate và người đọc bấm vào
+      // không tới đâu cả.
+      if (!withoutFragment) {
+        if (fragment && !documentAnchors(filePath).has(fragment)) {
+          fail(file + ": anchor hỏng " + target);
+        }
+        continue;
+      }
       let clean;
       try {
         clean = decodeURIComponent(withoutFragment);
@@ -1664,9 +1837,16 @@ for (const filePath of planFiles(planRoot)) {
         fail(file + ": unsafe Markdown link " + target);
         continue;
       }
-      if (!existsSync(resolved)) {
+      if (!existsSync(resolved) || !existsCaseExact(repoRoot, parts)) {
         fail(file + ": link hỏng " + target);
         continue;
+      }
+      // Chỉ tài liệu Markdown mới có anchor dựng từ heading. File nguồn thì
+      // fragment là chuyện của trình duyệt repo, ví dụ "#L12", nên không hỏi.
+      if (fragment && /\.md$/i.test(clean)) {
+        if (!documentAnchors(resolved).has(fragment)) {
+          fail(file + ": anchor hỏng " + target);
+        }
       }
       // Kiểm ranh giới trên đường dẫn từ vựng không nhìn thấy symlink: một link
       // đi qua "plans/evidence/outside-link" trỏ ra /tmp vẫn nằm trong repo về
