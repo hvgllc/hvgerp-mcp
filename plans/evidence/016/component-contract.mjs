@@ -630,6 +630,30 @@ test("component mismatched host payload does not unlock the old board", async ()
   assert.equal(h.render().state.board.title, "Local board B");
 });
 
+test("component overlapping same-scope host results cannot both apply, only the first sticks", async () => {
+  const h = harness();
+  const args = h.fixtures.boardFixture().refreshArguments;
+  // Hai lượt input cùng phạm vi (cùng tham số) dồn dập trước khi có kết quả
+  // nào về: phía component chỉ giữ được seq mới nhất trong một ref dùng
+  // chung, không có id đối chiếu từ SDK để phân biệt hai lượt, nên cả hai
+  // kết quả tới sau đó đều mang cùng một seq. Nếu không chặn, kết quả đến
+  // SAU sẽ đè lên kết quả đến TRƯỚC dù không có gì đảm bảo nó thật sự mới
+  // hơn (host có thể trả lời không theo thứ tự gửi).
+  h.input(args);
+  h.input(args);
+  const first = { ...h.fixtures.boardFixture(), title: "Local board A first" };
+  const second = {
+    ...h.fixtures.boardFixture(),
+    title: "Local board A second",
+  };
+  h.result(payload(first));
+  assert.equal(h.render().state.board.title, "Local board A first");
+  // Kết quả thứ hai mang cùng seq với kết quả đã áp dụng: bị coi là bản sao
+  // trễ của lượt chồng lấn, bỏ qua âm thầm, giữ nguyên board đã có.
+  h.result(payload(second));
+  assert.equal(h.render().state.board.title, "Local board A first");
+});
+
 test("component requestMove reports rejection so callers keep the detail open", () => {
   const h = harness();
   const card = h.render().state.board.cards[0];

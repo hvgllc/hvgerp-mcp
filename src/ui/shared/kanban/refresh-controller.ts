@@ -41,6 +41,16 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
   // Tăng ở mỗi lần host báo input mới, kể cả input trùng identity, để phân biệt
   // hai lần gọi host cùng tham số nhưng khác lượt (chống race kết quả cũ đè mới).
   let inputSeq = 0;
+  // Seq của lượt receiveBoard gần nhất đã được chấp nhận qua vòng kiểm tra seq
+  // (không tính lượt bị chặn ngay vì seq lệch inputSeq). Hai lượt host cùng
+  // phạm vi chồng lấn (input A rồi input B dồn dập trước khi có kết quả nào
+  // về) đều chỉ ghi nhận được seq mới nhất tại nơi gọi (không phân biệt được
+  // input A hay B do phía gọi dùng chung một ref, không có id đối chiếu từ
+  // SDK) nên cả hai kết quả sẽ mang cùng một seq. Nếu không chặn, kết quả về
+  // sau sẽ đè lên kết quả về trước dù nó có thể cũ hơn thật sự (last-write-
+  // wins không an toàn). Ghi nhận seq đã dùng để lượt thứ hai mang seq trùng
+  // bị coi là bản sao trễ và bị bỏ qua, giữ lại kết quả đã áp dụng trước đó.
+  let lastAcceptedSeq = 0;
   const mutations = new Set<symbol>();
   const detailQueues = new Map<string, Promise<void>>();
 
@@ -165,8 +175,13 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
       // seq là input đã ghi nhận lúc host báo input; nếu lệch nghĩa là kết quả
       // này thuộc một lượt host cũ hơn đã bị lượt sau (cùng phạm vi) đè lên.
       // Câu trả lời thật của lượt mới vẫn đang tới, không đụng vào trạng thái
-      // chờ/hồi phục, chỉ bỏ qua bản sao cũ này.
-      if (seq !== undefined && seq !== inputSeq) return false;
+      // chờ/hồi phục, chỉ bỏ qua bản sao cũ này. Nếu seq khớp inputSeq nhưng
+      // trùng với seq của lượt receiveBoard đã chấp nhận trước đó, đây là bản
+      // sao trễ của một lượt host chồng lấn (xem giải thích ở lastAcceptedSeq).
+      if (seq !== undefined && (seq !== inputSeq || seq === lastAcceptedSeq)) {
+        return false;
+      }
+      if (seq !== undefined) lastAcceptedSeq = seq;
       if (
         fallback &&
         kanbanRequestIdentity(null, fallback) !==

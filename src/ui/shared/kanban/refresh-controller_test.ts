@@ -376,6 +376,33 @@ Deno.test("stale input sequence rejects same-identity board even when fallback m
   assertEquals(f.controller.board, fresh);
 });
 
+Deno.test("overlapping host results sharing one captured seq cannot both apply", () => {
+  const f = fixture(false);
+  // Mô phỏng đúng giới hạn phía gọi (KanbanViewer.tsx): hai lượt input cùng
+  // phạm vi dồn dập trước khi có kết quả nào về, nên cả hai kết quả tới sau
+  // đó đều được gọi receiveBoard với CÙNG một seq (seq mới nhất tại nơi gọi,
+  // do phía gọi chỉ giữ được một ref dùng chung, SDK không có id đối chiếu
+  // để tách riêng từng lượt). Controller không được để lượt về sau âm thầm
+  // đè lên lượt về trước chỉ vì chúng trùng seq.
+  f.controller.receiveInput({
+    toolName: "erpnext_kanban_get_board",
+    arguments: boardFixture().refreshArguments,
+  });
+  f.controller.receiveInput({
+    toolName: "erpnext_kanban_get_board",
+    arguments: { ...boardFixture().refreshArguments },
+  });
+  const sharedSeq = f.controller.inputSeq;
+  const arrivedFirst = { ...boardFixture(), title: "Arrived first" };
+  const arrivedSecond = { ...boardFixture(), title: "Arrived second" };
+  assertEquals(f.controller.receiveBoard(arrivedFirst, sharedSeq), true);
+  assertEquals(f.controller.board, arrivedFirst);
+  // Lượt thứ hai mang cùng seq với lượt đã áp dụng: bị coi là bản sao trễ
+  // của lượt chồng lấn, bỏ qua âm thầm, giữ nguyên board đã áp dụng.
+  assertEquals(f.controller.receiveBoard(arrivedSecond, sharedSeq), false);
+  assertEquals(f.controller.board, arrivedFirst);
+});
+
 for (const hidden of [false, true]) {
   Deno.test(`host snapshot retains a completed write pending refresh hidden=${hidden}`, async () => {
     const f = fixture();
