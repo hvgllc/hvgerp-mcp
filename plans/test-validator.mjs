@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+} from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -11,7 +17,7 @@ const planRoot = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(planRoot, "..");
 const tick = String.fromCharCode(96);
 const source = readFileSync(resolve(planRoot, "validate-plans.mjs"), "utf8")
-  .replace(/^import .*;\n/gm, "")
+  .replace(/^import [^;]*;\n/gm, "")
   .replace("dirname(fileURLToPath(import.meta.url))", "injectedPlanRoot");
 const manifest = JSON.parse(
   readFileSync(resolve(planRoot, "manifest.json"), "utf8"),
@@ -52,6 +58,9 @@ function readGitFixture(
   return output;
 }
 
+// Fixture filesystem nhận cả chuỗi loại lẫn object mô tả thêm realpath.
+const kindOf = (entry) => typeof entry === "string" ? entry : entry?.kind;
+
 function run(replacements = {}, hidden = [], filesystem = {}, gitOutput) {
   const messages = [], historicalReads = [], existenceChecks = [];
   let gitSubprocesses = 0;
@@ -66,13 +75,24 @@ function run(replacements = {}, hidden = [], filesystem = {}, gitOutput) {
             existsSync(path));
       },
       lstatSync: (path) => {
-        const kind = filesystem[relative(repoRoot, path)];
+        const kind = kindOf(filesystem[relative(repoRoot, path)]);
         return kind
           ? {
             isFile: () => kind === "file",
             isDirectory: () => kind === "directory",
           }
           : lstatSync(path);
+      },
+      // Một fixture mô tả symlink bằng khoá "realpath": chuỗi rỗng nghĩa là
+      // realpath ném lỗi, như khi link tự vòng. Đường dẫn chỉ tồn tại trong
+      // fixture thì realpath là chính nó, vì realpath thật sẽ báo ENOENT.
+      realpathSync: (path) => {
+        const key = relative(repoRoot, path);
+        if (!Object.hasOwn(filesystem, key)) return realpathSync(path);
+        const entry = filesystem[key];
+        const target = typeof entry === "string" ? undefined : entry?.realpath;
+        if (target === "") throw new Error("ELOOP");
+        return target ?? resolve(realpathSync(repoRoot), key);
       },
       readdirSync,
       readFileSync(path, encoding) {
@@ -3344,4 +3364,121 @@ test("an audit category outside the mapping is rejected", () => {
         "loại: " + tick + "banana" + tick,
       ),
   }, /plan audit category differs from the audit mapping/);
+});
+
+// Vòng 16.
+test("a field declared inside a raw HTML block does not count", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  // Một ví dụ HTML thô nhắc "Trạng thái thực thi:" render thành văn bản, không
+  // thành lần khai thứ hai, nên nó không được làm trường trạng thái mất giá trị.
+  const after = run({
+    [fileFor(22)]: (text) =>
+      text +
+      '\n<script type="text/plain">\nTrạng thái thực thi: giả\n</script>\n',
+  });
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [],
+  );
+});
+
+test("a raw HTML block under a list item is not code", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  // Dưới một list item có content indent bốn, "    <script>" là HTML thô ở cột 0
+  // của container, nên link bên trong nó không phải link sống.
+  const after = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n-   embedded sample\n\n    <script>\n" +
+      "    [not live](missing-list-html.md)\n    </script>\n",
+  });
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [],
+  );
+});
+
+test("a character reference in a link destination is decoded", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  const after = run(
+    {
+      "plans/evidence/backlog-review.md": (text) =>
+        text + "\n[entity target](link&amp;target.md)\n",
+    },
+    [],
+    { "plans/evidence/link&target.md": "file" },
+  );
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [],
+  );
+});
+
+test("an inline link title may wrap to the next line", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  const after = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n[multiline title](../../README.md\n  "Repository title")\n',
+  });
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [],
+  );
+});
+
+test("a symlink leaving the repository is rejected", () => {
+  invalid(
+    {
+      "plans/evidence/backlog-review.md": (text) =>
+        text + "\n[outside](outside-link/probe-target.md)\n",
+    },
+    /unsafe Markdown link outside-link\/probe-target\.md/,
+    [],
+    {
+      "plans/evidence/outside-link/probe-target.md": {
+        kind: "file",
+        realpath: "/private/tmp/outside-of-repo/probe-target.md",
+      },
+    },
+  );
+});
+
+test("an unreadable link target is rejected", () => {
+  invalid(
+    {
+      "plans/evidence/backlog-review.md": (text) =>
+        text + "\n[loop](looping-link.md)\n",
+    },
+    /unsafe Markdown link looping-link\.md/,
+    [],
+    {
+      "plans/evidence/looping-link.md": { kind: "file", realpath: "" },
+    },
+  );
+});
+
+test("an escaped pipe does not shift README columns", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  // "\|" là một ký tự thật trong ô, không phải ranh giới ô: tách thô làm mọi ô
+  // sau nó lệch một bậc và README đúng bị báo hỏng.
+  const after = run({
+    "plans/README.md": (text) =>
+      text.replace(
+        "[Từ chối cấu hình OAuth chưa đầy đủ]",
+        "[Từ chối cấu hình OAuth \\| chưa đầy đủ]",
+      ),
+  });
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [],
+  );
 });

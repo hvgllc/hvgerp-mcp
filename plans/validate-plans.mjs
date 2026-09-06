@@ -1,4 +1,10 @@
-import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+} from "node:fs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
@@ -50,7 +56,10 @@ function outsideFencedCode(body, preserveOffsets = false) {
     for (const character of indentation) {
       width += character === "\t" ? 4 - width % 4 : 1;
     }
-    const marker = line.match(/^[ \t]*(`{3,}|~{3,})(.*)$/);
+    // "." trong JS không khớp "\r", nên "(.*)$" trượt trên mọi dòng fence kết
+    // thúc CRLF và cả block code trong một file CRLF bị đọc như văn xuôi sống.
+    // Phần còn lại của validator đã cố ý CRLF-tolerant, đây là chỗ lệch.
+    const marker = line.match(/^[ \t]*(`{3,}|~{3,})(.*)\r?$/);
     if (fence) {
       if (
         marker && width <= fenceIndent + 3 && marker[1][0] === fence[0] &&
@@ -174,11 +183,11 @@ const htmlLoneTag = new RegExp(
     "[ \\t]*/?>|</[A-Za-z][A-Za-z0-9-]*[ \\t]*>)[ \\t]*\\r?$",
 );
 const htmlBlank = /^[ \t]*\r?$/;
-const htmlFence = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+const htmlFence = /^ {0,3}(`{3,}|~{3,})(.*)\r?$/;
 // preserveOffsets giữ nguyên độ dài từng dòng, cho những đường quét cần chỉ số
 // trong body gốc; mặc định trả dòng rỗng, đủ cho các đường đọc theo dòng.
 function outsideHtmlBlocks(body, preserveOffsets = false) {
-  let closer, fence, previousBlank = true;
+  let closer, fence, fenceIndent = 0, listIndent = 0, previousBlank = true;
   const hidden = (line) => preserveOffsets ? " ".repeat(line.length) : "";
   return body.split("\n").map((line) => {
     const blank = htmlBlank.test(line);
@@ -192,32 +201,54 @@ function outsideHtmlBlocks(body, preserveOffsets = false) {
       previousBlank = false;
       return hidden(line);
     }
+    const indentation = line.match(/^[ \t]*/)[0];
+    let width = 0;
+    for (const character of indentation) {
+      width += character === "\t" ? 4 - width % 4 : 1;
+    }
+    // Một list item dời cột gốc của cả fence lẫn block HTML: dưới item có content
+    // indent bốn, "    <script>" là HTML thô ở cột 0 của container chứ không phải
+    // code. Đo thụt lề so với content indent, giống outsideFencedCode, rồi thử
+    // các dấu mở trên phần đã bỏ thụt lề; ghim cột 3 tuyệt đối thì một ví dụ
+    // nhúng đúng chuẩn dưới list bị đọc như link sống và gate báo hỏng.
+    const relative = line.slice(indentation.length);
     // Fence mở trước thì nội dung của nó là code chứ không phải HTML, nên một
     // "<div>" viết trong ví dụ không được mở block và nuốt mất nội dung sống
     // đứng sau. Chiều ngược lại đã đúng sẵn: block mở trước thì dòng fence bên
     // trong nó bị xóa cùng block. Hai dấu mở không bao giờ khớp cùng một dòng.
-    const marker = line.match(htmlFence);
+    const marker = relative.match(htmlFence);
     if (fence) {
       if (
-        marker && marker[1][0] === fence[0] &&
+        marker && width <= fenceIndent + 3 && marker[1][0] === fence[0] &&
         marker[1].length >= fence.length && /^[ \t\r]*$/.test(marker[2])
       ) fence = undefined;
       previousBlank = false;
       return line;
     }
-    if (marker && (marker[1][0] === "~" || !marker[2].includes("`"))) {
+    if (!blank && width < listIndent) listIndent = 0;
+    const list = line.match(/^ {0,3}(?:[-+*]|[0-9]+[.)])[ \t]+/);
+    if (list) listIndent = list[0].length;
+    if (
+      marker && width <= listIndent + 3 &&
+      (marker[1][0] === "~" || !marker[2].includes("`"))
+    ) {
       fence = marker[1];
+      fenceIndent = width;
       previousBlank = false;
       return line;
     }
+    if (width > listIndent + 3) {
+      previousBlank = blank;
+      return line;
+    }
     for (const [opener, end] of htmlBlockOpeners) {
-      if (!opener.test(line)) continue;
+      if (!opener.test(relative)) continue;
       // Điều kiện đóng có thể được thỏa ngay trên dòng mở, ví dụ "<pre>x</pre>".
       closer = end && end.test(line) ? undefined : end ?? htmlBlank;
       previousBlank = false;
       return hidden(line);
     }
-    if (previousBlank && htmlLoneTag.test(line)) {
+    if (previousBlank && htmlLoneTag.test(relative)) {
       closer = htmlBlank;
       previousBlank = false;
       return hidden(line);
@@ -260,7 +291,7 @@ function markdownLinkSections(body) {
       fence = undefined;
     }
     current.push(line);
-    const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)\r?$/);
     if (fence) {
       if (
         marker && marker[1][0] === fence[0] &&
@@ -340,8 +371,11 @@ function structuralSection(body, heading) {
 // Destination của một link Markdown: dạng <...> hoặc chuỗi không khoảng trắng,
 // theo sau có thể là title tùy chọn trong "...", '...' hoặc (...). Dùng chung
 // cho inline link và reference definition để hai đường không hiểu khác nhau.
+// Giữa destination và title, chuẩn cho phép khoảng trắng gồm tối đa một lần
+// xuống dòng; chỉ nhận space và tab thì một link có title đặt ở dòng dưới không
+// khớp mẫu, cả cụm bị đem đi phân giải như một đường dẫn và bị báo hỏng.
 const linkDestination =
-  /^(?:<([^<>]*)>|([^\s<>]+))(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^)]*\)))?$/;
+  /^(?:<([^<>]*)>|([^\s<>]+))(?:(?:[ \t]+|[ \t]*\r?\n[ \t]*)(?:"[^"]*"|'[^']*'|\([^)]*\)))?$/;
 // Ký tự ở vị trí position chỉ bị escape khi số backslash liền ngay trước nó là
 // số lẻ. Chuỗi chẵn như \\[ là một backslash literal rồi mới tới [ còn hiệu
 // lực, nên kiểm một ký tự đơn text[position - 1] === "\\" sẽ bỏ sót link thật.
@@ -350,6 +384,53 @@ function markdownEscaped(text, position) {
   while (position - run > 0 && text[position - 1 - run] === "\\") run++;
   return run % 2 === 1;
 }
+// Một ô bảng được phép chứa dấu | literal, viết là "\|". split("|") thô coi nó
+// là vách ngăn và đẩy lệch mọi cột phía sau, nên một README đúng bị báo sai hàng
+// lẫn sai phụ thuộc. Tách ở vách chưa escape rồi mới trả về ký tự literal.
+function tableCells(row) {
+  const cells = [];
+  let current = "";
+  for (let position = 0; position < row.length; position++) {
+    if (row[position] === "|" && !markdownEscaped(row, position)) {
+      cells.push(current);
+      current = "";
+      continue;
+    }
+    current += row[position];
+  }
+  cells.push(current);
+  return cells.map((cell) => cell.replaceAll("\\|", "|"));
+}
+// CommonMark giải mã character reference trong destination trước khi phân giải,
+// nên "[x](link&amp;target.md)" trỏ tới file "link&target.md". Chỉ giải mã tham
+// chiếu số cùng năm tên định sẵn của XML: bảng tên HTML5 đầy đủ hơn hai nghìn
+// mục, quá khổ cho một validator, và mọi tên còn lại đại diện một ký tự viết
+// thẳng được trong đường dẫn nên tác giả không bị buộc dùng entity. Tên không
+// nhận ra thì giữ nguyên chuỗi thô và link vẫn bị kiểm, tức fail-closed.
+const namedReferences = new Map([
+  ["amp", "&"],
+  ["lt", "<"],
+  ["gt", ">"],
+  ["quot", '"'],
+  ["apos", "'"],
+]);
+const decodeReferences = (text) =>
+  text.replace(
+    /&(#\d{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]*);/g,
+    (whole, name, offset) => {
+      // Một "&" bị escape là ký tự literal, không mở được entity.
+      if (markdownEscaped(text, offset)) return whole;
+      if (name[0] !== "#") return namedReferences.get(name) ?? whole;
+      const code = name[1] === "x" || name[1] === "X"
+        ? parseInt(name.slice(2), 16)
+        : parseInt(name.slice(1), 10);
+      // Chuẩn thay code point không hợp lệ bằng U+FFFD. Ký tự đó không nằm trong
+      // đường dẫn nào của repo nên link vẫn bị báo hỏng, đúng hướng.
+      return code === 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)
+        ? "�"
+        : String.fromCodePoint(code);
+    },
+  );
 function inlineLinkTargets(text) {
   // Regex phẳng \[[^\]]+\]\(...\) không parse được label lồng ngoặc vuông
   // như "[outer [inner]](x)": nó dừng ở ] đầu tiên rồi không khớp tiếp, nên
@@ -462,12 +543,15 @@ const auditCategories = new Map([
 const auditCategory = (audit) => auditCategories.get(audit) ?? "bug";
 // Đếm số lần khai một trường phải bỏ qua Markdown không render. Một fence ví dụ
 // mang đúng khuôn metadata là tài liệu hợp lệ, không phải lần khai thứ hai, nên
-// đếm trên body thô sẽ từ chối kế hoạch đúng. Vẫn đếm trên cả tài liệu cấu trúc
-// chứ không riêng section metadata, để hai lần khai mâu thuẫn ở hai section khác
-// nhau vẫn bị chặn.
+// đếm trên body thô sẽ từ chối kế hoạch đúng. Cùng lý do đó, một ví dụ HTML thô
+// nhắc "Trạng thái thực thi:" cũng không render thành trường: bỏ block HTML
+// trước code, đúng thứ tự structuralMarkdown dùng. Vẫn đếm trên cả tài liệu cấu
+// trúc chứ không riêng section metadata, để hai lần khai mâu thuẫn ở hai section
+// khác nhau vẫn bị chặn.
 const declarations = (body, field) =>
-  outsideHtmlComments(outsideInlineCode(outsideBlockCode(body))).split(field)
-    .length - 1;
+  outsideHtmlComments(
+    outsideInlineCode(outsideBlockCode(outsideHtmlBlocks(body))),
+  ).split(field).length - 1;
 function statusOf(body) {
   if (declarations(body, "Trạng thái thực thi:") !== 1) return undefined;
   return metadataSection(body).match(
@@ -1127,8 +1211,13 @@ for (const entry of manifest) {
     // rơi vào group ngôn ngữ, biến "````CONTRIBUTING" thành lang
     // "`CONTRIBUTING"; đòi đóng dài đúng bằng mở thì một fence đóng dài hơn,
     // vốn hợp lệ trong CommonMark, lại không được nhận.
+    // Ký tự xuống dòng của chính fence có thể là CRLF: "\r" không thuộc info
+    // string, nên gộp vào thì lang đọc ra "text\r" và một fence đúng bị báo lệch
+    // ngôn ngữ. Chỉ nới ở ba dòng biên của fence; thân trích đoạn vẫn so nguyên
+    // byte, vì chênh lệch ký tự xuống dòng giữa trích đoạn và nguồn là chênh
+    // lệch thật, không phải chuyện định dạng.
     const block = body.slice(annotation.index).match(
-      /^<!-- evidence: ([^\n]+) -->\s*(?:<!-- deno-fmt-ignore -->\s*)?(`{3,})([^\n]*)\n([\s\S]*?)\n\2`*[ \t]*(?:\n|$)/,
+      /^<!-- evidence: ([^\n]+) -->\s*(?:<!-- deno-fmt-ignore -->\s*)?(`{3,})([^\n\r]*)\r?\n([\s\S]*?)\r?\n\2`*[ \t]*(?:\r?\n|$)/,
     );
     if (block) {
       block.index = annotation.index;
@@ -1269,10 +1358,11 @@ for (const filePath of planFiles(planRoot)) {
       // một link đúng chuẩn bị báo unsafe. Chỉ gỡ trước dấu câu ASCII, đúng
       // phạm vi escape của CommonMark; "\\" thành một backslash thật và vẫn rơi
       // xuống nhánh unsafe bên dưới, là hướng lệch fail-closed.
-      const withoutFragment = target.slice(0, boundary).replace(
-        /\\([!-/:-@[-`{-~])/g,
-        "$1",
-      );
+      // Character reference giải mã trước khi gỡ backslash, vì decodeReferences
+      // tự bỏ qua "&" đã bị escape: gỡ trước thì "\&amp;" mất backslash rồi mới
+      // thành "&", tức một chuỗi cố ý viết literal lại bị giải mã.
+      const withoutFragment = decodeReferences(target.slice(0, boundary))
+        .replace(/\\([!-/:-@[-`{-~])/g, "$1");
       if (!withoutFragment) continue;
       let clean;
       try {
@@ -1294,6 +1384,23 @@ for (const filePath of planFiles(planRoot)) {
       }
       if (!existsSync(resolved)) {
         fail(file + ": link hỏng " + target);
+        continue;
+      }
+      // Kiểm ranh giới trên đường dẫn từ vựng không nhìn thấy symlink: một link
+      // đi qua "plans/evidence/outside-link" trỏ ra /tmp vẫn nằm trong repo về
+      // mặt chuỗi, nhưng đích thật ở ngoài checkout nên không phải artifact của
+      // repo và sẽ không tồn tại ở một bản clone sạch. Phân giải cả hai đầu rồi
+      // so lại; realpath cả repoRoot vì chính cây làm việc có thể nằm dưới một
+      // symlink (trên macOS /tmp là symlink tới /private/tmp).
+      let realScoped;
+      try {
+        realScoped = relative(realpathSync(repoRoot), realpathSync(resolved));
+      } catch {
+        fail(file + ": unsafe Markdown link " + target);
+        continue;
+      }
+      if (isAbsolute(realScoped) || realScoped.split(/[\\/]/)[0] === "..") {
+        fail(file + ": unsafe Markdown link " + target);
       }
     }
   }
@@ -1315,7 +1422,7 @@ else {
   );
   const unexpectedIds = [
     ...new Set(
-      index.split("\n").map((line) => line.split("|")[1]?.trim()).filter(
+      index.split("\n").map((line) => tableCells(line)[1]?.trim()).filter(
         (cell) => cell !== undefined && /^\d{3}$/.test(cell),
       ),
     ),
@@ -1331,17 +1438,19 @@ else {
     }
     const id = String(entry.id).padStart(3, "0");
     const rows = index.split("\n").filter((line) =>
-      line.split("|")[1]?.trim() === id
+      tableCells(line)[1]?.trim() === id
     );
     if (rows.length !== 1) fail("README requires exactly one row for ID " + id);
-    const row = rows[0];
-    const target = row?.split("|")[2]?.trim().match(/^\[[^\]]+\]\(([^)]+)\)$/)
-      ?.[1];
+    const cells = tableCells(rows[0] ?? "");
+    const target = cells[2]?.trim().match(/^\[[^\]]+\]\(([^)]+)\)$/)?.[1];
     if (target !== entry.file) fail("README row file does not match ID " + id);
-    const rowStatus = row?.match(
-      /\|\s*(TODO|IN_PROGRESS|BLOCKED|DONE|STALE)\s*\|$/,
-    )?.[1];
-    const indexDependencies = dependencies(row?.split("|")[5]);
+    // Ô trạng thái đọc theo cùng bộ tách ô, để chỗ này và các ô khác không hiểu
+    // một hàng theo hai kiểu. Ô cuối phải rỗng, tức hàng vẫn đóng bằng "|".
+    const rowStatus = cells.at(-1)?.trim() === ""
+      ? cells.at(-2)?.trim().match(/^(TODO|IN_PROGRESS|BLOCKED|DONE|STALE)$/)
+        ?.[1]
+      : undefined;
+    const indexDependencies = dependencies(cells[5]);
     if (!indexDependencies || !sameSet(indexDependencies, entry.depends)) {
       fail(entry.file + ": index and manifest dependencies differ");
     }
