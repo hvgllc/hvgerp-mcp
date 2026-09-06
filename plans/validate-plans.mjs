@@ -812,6 +812,24 @@ const decodeReferences = (text) =>
         : String.fromCodePoint(c1Replacements.get(code) ?? code);
     },
   );
+// Dòng mở một khối chen được vào giữa đoạn đang chạy: dòng trống, ATX heading,
+// thematic break, setext underline, và list item có nội dung. Blockquote không
+// nằm trong danh sách vì "> " ở đầu dòng nối chỉ là chính khối đang mở; cắt ở
+// đó sẽ bỏ qua một nhãn link viết trên nhiều dòng trong blockquote và thả một
+// destination hỏng qua cổng.
+const paragraphInterrupts = [
+  /^[ \t]*$/,
+  /^ {0,3}#{1,6}(?:[ \t]|$)/,
+  /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/,
+  /^ {0,3}(?:=+|-+)[ \t]*$/,
+  /^ {0,3}(?:[-*+]|1[.)])[ \t]+\S/,
+];
+function interruptsParagraph(text, newline) {
+  const end = text.indexOf("\n", newline + 1);
+  const line = text.slice(newline + 1, end === -1 ? text.length : end)
+    .replace(/\r$/, "");
+  return paragraphInterrupts.some((pattern) => pattern.test(line));
+}
 function inlineLinkTargets(text) {
   // Regex phẳng \[[^\]]+\]\(...\) không parse được label lồng ngoặc vuông
   // như "[outer [inner]](x)": nó dừng ở ] đầu tiên rồi không khớp tiếp, nên
@@ -840,14 +858,13 @@ function inlineLinkTargets(text) {
         cursor += 2;
         continue;
       }
-      // Nhãn link không bắc qua dòng trống: CommonMark kết thúc đoạn ở đó, nên
-      // một "[" đứng cuối đoạn này và một "](x.md)" mở đầu đoạn sau là hai
-      // chuỗi literal, không phải một link. Quét xuyên qua ranh giới thì gate
-      // đem một destination không ai viết đi phân giải và báo hỏng một tài liệu
-      // đúng. Thoát với depth còn dương để nhánh bên dưới bỏ qua cả cụm.
-      if (text[cursor] === "\n" && /^\n[ \t]*\r?\n/.test(text.slice(cursor))) {
-        break;
-      }
+      // Nhãn link không bắc qua ranh giới khối: CommonMark kết thúc đoạn ở dòng
+      // trống và cũng ở dòng mở một khối chen được vào giữa đoạn, nên một "["
+      // đứng cuối đoạn này và một "](x.md)" bên kia ranh giới là hai chuỗi
+      // literal, không phải một link. Quét xuyên qua thì gate đem một
+      // destination không ai viết đi phân giải và báo hỏng một tài liệu đúng.
+      // Thoát với depth còn dương để nhánh bên dưới bỏ qua cả cụm.
+      if (text[cursor] === "\n" && interruptsParagraph(text, cursor)) break;
       if (text[cursor] === "<") {
         htmlInlineAtomic.lastIndex = cursor;
         const tag = htmlInlineAtomic.exec(text);
@@ -1840,11 +1857,24 @@ const autolinkText = new RegExp(
     "(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)>",
   "g",
 );
-const headingText = (raw) =>
+// Reference link chỉ render thành văn bản nhãn khi label của nó có định nghĩa.
+// "## [Ghost][undefined-ref]" không có "[undefined-ref]:" nào thì render nguyên
+// văn cả cụm và id GitHub sinh ra là "ghostundefined-ref"; thu gọn vô điều kiện
+// ghi "ghost", tức vừa nhận một link tới anchor không tồn tại vừa báo hỏng link
+// tới anchor thật. Label rỗng của dạng collapsed thì thu gọn kiểu nào cũng ra
+// một slug, nên không cần hỏi định nghĩa.
+const referenceLabel = (raw) => raw.trim().replace(/\s+/g, " ").toLowerCase();
+const headingText = (raw, definitions) =>
   raw.split(/(`+[^`]*`+)/).map((part, index) =>
     index % 2 ? part.replace(/^`+|`+$/g, "") : decodeReferences(
       part.replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
-        .replace(/!?\[([^\]]*)\]\[[^\]]*\]/g, "$1")
+        .replace(
+          /!?\[([^\]]*)\]\[([^\]]*)\]/g,
+          (whole, text, label) =>
+            !label.trim() || definitions.has(referenceLabel(label))
+              ? text
+              : whole,
+        )
         .replace(autolinkText, "$1")
         .replace(/<[^>]*>/g, ""),
     ).replace(/\\([!-/:-@[-`{-~])/g, "$1")
@@ -1861,14 +1891,58 @@ const headingText = (raw) =>
 // không tồn tại đi qua cổng.
 const containerPrefix =
   /^ {0,3}(?:>[ \t]?|(?:[-*+]|\d{1,9}[.)])(?:[ \t]{1,4}(?![ \t])|[ \t](?=[ \t])|$))/;
-function outsideContainers(line) {
-  let text = line, previous;
-  do {
-    previous = text;
-    text = text.replace(containerPrefix, "");
-  } while (text !== previous);
-  return text;
+// Container mở ra ở một dòng còn hiệu lực cho những dòng sau nó: nội dung của
+// một list item nằm ở cột ngay sau marker, nên "123. item" rồi một dòng thụt
+// năm khoảng trắng mang "## X" vẫn là heading thật bên trong item. Gỡ container
+// theo từng dòng rời rạc thì dòng nối đó còn nguyên thụt, bị đọc thành indented
+// code, và một link đúng tới heading bị báo hỏng. Quét tuần tự cả tài liệu và
+// giữ ngăn xếp container đang mở, để dòng nối được gỡ đúng phần thụt kế thừa.
+// Mỗi dòng trả về văn bản đã gỡ, độ sâu container của nó, và việc dòng đó có tự
+// mở container mới hay không; nhánh setext cần cả ba để biết hai dòng có nằm
+// trong cùng một khối hay không.
+function scanContainers(rawLines) {
+  const open = [];
+  return rawLines.map((line) => {
+    let rest = line.replace(/\r$/, "");
+    let matched = 0;
+    while (matched < open.length) {
+      const container = open[matched];
+      // Blockquote đòi marker trên mọi dòng, list item chỉ đòi đủ thụt.
+      if (container.indent === null) {
+        const quote = rest.match(/^ {0,3}>[ \t]?/);
+        if (!quote) break;
+        rest = rest.slice(quote[0].length);
+      } else {
+        if (!rest.trim()) break;
+        const spaces = rest.length - rest.replace(/^ +/, "").length;
+        if (spaces < container.indent) break;
+        rest = rest.slice(container.indent);
+      }
+      matched++;
+    }
+    // Dòng trống không đóng container nào, nó chỉ không mang thụt để đo, nên
+    // ngăn xếp phải sống qua khoảng trống giữa hai khối của cùng một item.
+    if (!rest.trim()) return { text: "", depth: matched, opened: false };
+    open.length = matched;
+    let opened = false;
+    for (;;) {
+      const prefix = rest.match(containerPrefix);
+      if (!prefix) break;
+      open.push({
+        indent: /^ {0,3}>/.test(prefix[0]) ? null : prefix[0].length,
+      });
+      rest = rest.slice(prefix[0].length);
+      opened = true;
+    }
+    return { text: rest, depth: open.length, opened };
+  });
 }
+// Một dòng chỉ góp vào heading setext khi nó là văn bản đoạn thường: heading
+// ATX, hàng gạch của đoạn trước và thematic break đều kết thúc đoạn.
+const paragraphText = (entry) =>
+  entry.text.trim() && !/^ {0,3}#/.test(entry.text) &&
+  !/^ {0,3}(?:=+|-+)[ \t]*$/.test(entry.text) &&
+  !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(entry.text);
 const anchorCache = new Map();
 function documentAnchors(path) {
   const cached = anchorCache.get(path);
@@ -1882,33 +1956,51 @@ function documentAnchors(path) {
     return anchors;
   }
   const seen = new Map();
-  const rawLines = structuralMarkdown(body).split("\n");
-  const lines = rawLines.map(outsideContainers);
-  // Tiền tố container của từng dòng, giữ lại để nhánh setext biết hai dòng có
-  // cùng một khối hay không.
-  const prefixes = rawLines.map((line, index) =>
-    line.slice(0, line.length - lines[index].length)
-  );
+  const structural = structuralMarkdown(body);
+  // Nhãn reference được định nghĩa ở bất kỳ đâu trong tài liệu, kể cả sau
+  // heading dùng nó, nên tập định nghĩa phải dựng trước vòng quét heading. Một
+  // dòng "[label]: dest" nằm giữa đoạn văn không mở định nghĩa nào; đọc rộng
+  // như đây chỉ khiến nhãn đó được coi là sống, tức thu gọn đúng như cách viết
+  // phổ biến thay vì ghi nguyên văn dấu ngoặc vào slug.
+  const definitions = new Set();
+  for (
+    const match of structural.matchAll(/^ {0,3}\[((?:[^\[\]\\\n]|\\.)+)\]:/gm)
+  ) definitions.add(referenceLabel(match[1]));
+  const lines = scanContainers(structural.split("\n"));
   for (let index = 0; index < lines.length; index++) {
-    const atx = lines[index].match(/^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*\r?$/);
+    const atx = lines[index].text.match(
+      /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$/,
+    );
     let text;
     if (atx) text = (atx[2] ?? "").replace(/[ \t]#+[ \t]*$/, "");
     // Setext: một dòng văn bản không rỗng theo sau bởi hàng chỉ có "=" hoặc
     // "-". Hàng toàn dấu gạch sau một đoạn văn là heading chứ không phải
     // thematic break, đúng thứ tự ưu tiên của CommonMark.
-    // Hai dòng phải thuộc cùng một khối, nên tiền tố container của chúng phải
-    // giống nhau. Đọc trên dòng đã gỡ tiền tố thì "- Ghost list item" theo sau
-    // bởi "---" trông như setext, trong khi chuẩn render ra một list rồi một
-    // thematic break; anchor tưởng tượng đó cho link hỏng đi qua cổng. So sánh
-    // nguyên văn nên một underline thụt vào trong cùng list item bị bỏ qua thay
-    // vì nhận nhầm, tức lệch về phía báo hỏng chứ không phía bỏ lọt.
+    // Hai dòng phải thuộc cùng một khối, nên chúng phải cùng độ sâu container
+    // và hàng gạch không được tự mở container mới. Đọc trên dòng đã gỡ tiền tố
+    // mà bỏ qua điều đó thì "- Ghost list item" theo sau bởi "---" trông như
+    // setext, trong khi chuẩn render ra một list rồi một thematic break; anchor
+    // tưởng tượng đó cho link hỏng đi qua cổng.
+    // CommonMark gộp cả đoạn văn ngay trước hàng gạch thành một heading, nên
+    // "Multiline setext" rồi "heading probe" rồi "---" mang id
+    // "multiline-setext-heading-probe". Chỉ lấy dòng cuối thì slug ghi
+    // "heading-probe": link tới id thật bị báo hỏng còn link tới id không tồn
+    // tại lại qua cổng.
     else if (
-      /^ {0,3}(?:=+|-+)[ \t]*\r?$/.test(lines[index]) && index > 0 &&
-      lines[index - 1].trim() && !/^ {0,3}#/.test(lines[index - 1]) &&
-      prefixes[index] === prefixes[index - 1]
-    ) text = lines[index - 1].trim();
-    else continue;
-    const slug = headingSlug(headingText(text));
+      /^ {0,3}(?:=+|-+)[ \t]*$/.test(lines[index].text) &&
+      !lines[index].opened && index > 0 && paragraphText(lines[index - 1]) &&
+      lines[index - 1].depth === lines[index].depth
+    ) {
+      let start = index - 1;
+      while (
+        start > 0 && !lines[start].opened &&
+        paragraphText(lines[start - 1]) &&
+        lines[start - 1].depth === lines[index].depth
+      ) start--;
+      text = lines.slice(start, index).map((entry) => entry.text.trim())
+        .join(" ");
+    } else continue;
+    const slug = headingSlug(headingText(text, definitions));
     if (!slug) continue;
     // GitHub bỏ qua id đã phát sinh khi chọn hậu tố: với "## Collision probe",
     // "## Collision probe-1" rồi "## Collision probe", heading thứ ba nhận

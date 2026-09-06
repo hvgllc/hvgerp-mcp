@@ -4278,6 +4278,119 @@ test("a backslash still escapes a comment opener outside an HTML block", () => {
   }, /link hỏng missing-live\.md/);
 });
 
+test("an undefined reference label stays literal in a heading anchor", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## [Ghost][undefined-ref]\n\n[ok](#ghostundefined-ref)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an undefined reference label does not collapse to a shorter anchor", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## [Ghost][undefined-ref]\n\n[broken](#ghost)\n",
+  }, /anchor hỏng #ghost/);
+});
+
+test("a defined reference label still collapses in a heading anchor", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[live-ref]: ../../README.md\n\n## [Ghost live][live-ref]\n" +
+      "\n[ok](#ghost-live)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a multiline Setext heading keeps every one of its lines", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nMultiline setext\nheading probe\n---\n" +
+      "\n[ok](#multiline-setext-heading-probe)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a multiline Setext heading does not record only its last line", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      "\nMultiline setext\nheading probe\n---\n\n[broken](#heading-probe)\n",
+  }, /anchor hỏng #heading-probe/);
+});
+
+test("an ATX heading ends a link label", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nParagraph ends here [\n# Boundary heading probe\n" +
+      "](missing-atx.md)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a thematic break ends a link label", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nParagraph ends here [\n***\n](missing-break.md)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a list item ends a link label", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nParagraph ends here [\n- new item\n](missing-list.md)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a link label still spans lines inside a blockquote", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n> [a real\n> multiline label](missing-inquote.md)\n",
+  }, /link hỏng missing-inquote\.md/);
+});
+
+test("a link label still spans lines inside a list item", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n- [a real\n  indented label](missing-inlist.md)\n",
+  }, /link hỏng missing-inlist\.md/);
+});
+
+test("a heading on a list continuation line creates its anchor", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n123. list item\n\n     ## Continued list heading\n" +
+      "\n[ok](#continued-list-heading)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an indented heading outside any list stays code", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nPlain paragraph before.\n\n     ## Not a heading probe\n" +
+      "\n[broken](#not-a-heading-probe)\n",
+  }, /anchor hỏng #not-a-heading-probe/);
+});
+
+test("a Setext underline inside a list item still creates its anchor", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n- Setext in item\n  ---\n\n[ok](#setext-in-item)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
 test("a spaced thematic break does not turn text into a heading", () => {
   invalid({
     "plans/evidence/backlog-review.md": (text) =>

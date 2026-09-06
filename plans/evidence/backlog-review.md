@@ -1928,3 +1928,54 @@ Hai phía phải chạy tuần tự chứ không song song, và chín mẻ dò c
 đường dẫn cây làm việc đã được sửa để nhận tham số. Chạy chồng thì hai tiến
 trình cùng ghi rồi cùng khôi phục một tập tin, và bảng so ra hàng loạt khác biệt
 giả không thuộc về sửa nào cả.
+
+## Codex vòng tiếp: review 5126018121
+
+Review đọc đúng head `ca744cde2c`, nêu bốn finding P2, tất cả trên
+`plans/validate-plans.mjs`. Cả bốn tái hiện bằng chính validator trước khi động
+vào code, và sau khi sửa đều đảo chiều. Mẻ dò đối kháng mười bốn ca chạy trước
+review không lộ thêm lỗi nào, và chạy lại sau khi sửa vẫn giữ nguyên kết quả.
+
+- **Nhãn reference chết bị thu gọn trong slug heading.**
+  `## [Ghost][undefined-ref]` không có định nghĩa nào thì CommonMark render
+  nguyên văn cả cụm và id GitHub sinh ra là `ghostundefined-ref`; thu gọn vô
+  điều kiện ghi `ghost`, tức vừa nhận link tới anchor không tồn tại vừa báo hỏng
+  link tới anchor thật. `documentAnchors` giờ dựng tập nhãn có định nghĩa từ
+  Markdown cấu trúc, chuẩn hóa nhãn theo cách CommonMark so khớp, và
+  `headingText` chỉ thu gọn khi nhãn sống. Dạng collapsed nhãn rỗng vẫn thu gọn
+  vô điều kiện vì hai lối đọc cùng ra một slug.
+- **Heading setext nhiều dòng chỉ lấy dòng cuối.** `Multiline setext` rồi
+  `heading probe` rồi `---` là một heading với id
+  `multiline-setext-heading-probe`; ghi mỗi `heading-probe` thì link tới id thật
+  bị báo hỏng còn link tới id tưởng tượng lại qua cổng. Nhánh setext giờ lùi hết
+  đoạn văn ngay trước hàng gạch rồi nối bằng một khoảng trắng, dừng ở dòng
+  trống, ở heading ATX, ở một hàng gạch khác, ở thematic break, và ở dòng tự mở
+  container.
+- **Nhãn link bắc qua ranh giới khối.** Một đoạn kết thúc bằng `[` rồi ngay dòng
+  sau là `# Boundary heading probe` rồi `](missing.md)` không render ra link
+  nào, nhưng vòng cân bằng nhãn chỉ dừng ở dòng trống nên gate đem destination
+  đó đi phân giải và báo hỏng một tài liệu đúng. Phép kiểm dòng trống giờ là một
+  mục trong danh sách dòng chen được vào giữa đoạn: dòng trống, heading ATX,
+  thematic break, hàng gạch setext, và list item có nội dung. Blockquote cố ý
+  vắng mặt, vì `>` đầu dòng nối thuộc về chính khối đang mở và cắt ở đó sẽ thả
+  một destination hỏng qua cổng.
+- **Dòng nối của list item không được gỡ thụt kế thừa.** `123. list item` rồi
+  một dòng thụt năm khoảng trắng mang `## Continued list heading` là heading
+  thật bên trong item, nhưng phép gỡ container chạy rời rạc từng dòng để lại
+  nguyên thụt và đọc nó thành indented code. `outsideContainers` được thay bằng
+  `scanContainers`, một lượt quét giữ ngăn xếp container đang mở: blockquote đòi
+  marker trên mọi dòng, list item chỉ đòi đủ thụt, và dòng trống không đóng
+  container nào. Nhánh setext giờ so độ sâu container cùng cờ tự mở container
+  thay vì so chuỗi tiền tố, nên vừa giữ được guard của vòng trước vừa nhận đúng
+  `- Setext in item` theo sau bởi một hàng gạch thụt.
+
+| Cổng                                   | Kết quả            |
+| -------------------------------------- | ------------------ |
+| `node plans/validate-plans.mjs`        | Đạt: 25 kế hoạch   |
+| `deno fmt --check`                     | 315 file           |
+| `deno lint`                            | 160 file           |
+| `node --test plans/test-validator.mjs` | 542 pass           |
+| `git diff --check`                     | exit 0             |
+| `node --test plans/test-history.mjs`   | 5 pass, sau commit |
+
+Suite thêm 13 test, lên 542.
