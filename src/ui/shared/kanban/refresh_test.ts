@@ -2,6 +2,7 @@ import { assertEquals } from "@std/assert";
 import {
   canRequestBoardRefresh,
   type KanbanRefreshGate,
+  kanbanRequestIdentity,
   resolveKanbanRefreshRequest,
 } from "./refresh.ts";
 import type { KanbanBoardData } from "./types.ts";
@@ -52,6 +53,45 @@ function makeGate(
 
 Deno.test("kanban refresh - allows visible idle auto-refresh after the interval", () => {
   assertEquals(canRequestBoardRefresh(makeGate()), true);
+});
+
+Deno.test("kanban request identity includes every nested argument but ignores object key order", () => {
+  const board = makeBoard();
+  const identity = (args: Record<string, unknown>) =>
+    kanbanRequestIdentity(board, {
+      toolName: "erpnext_kanban_get_board",
+      arguments: args,
+    });
+  assertEquals(
+    identity({ project: "A", filter: { b: 2, a: 1 } }),
+    identity({ filter: { a: 1, b: 2 }, project: "A" }),
+  );
+  const original = identity({
+    doctype: "Task",
+    project: "A",
+    offset: 0,
+    limit: 50,
+    priority: "Low",
+    filter: ["a", "b"],
+  });
+  for (
+    const change of [{ project: "B" }, { offset: 50 }, { limit: 20 }, {
+      priority: "High",
+    }, { filter: ["b", "a"] }]
+  ) {
+    assertEquals(
+      identity({
+        doctype: "Task",
+        project: "A",
+        offset: 0,
+        limit: 50,
+        priority: "Low",
+        filter: ["a", "b"],
+        ...change,
+      }) === original,
+      false,
+    );
+  }
 });
 
 Deno.test("kanban refresh - blocks background refresh while the document is hidden", () => {

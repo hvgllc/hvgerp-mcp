@@ -47,6 +47,30 @@ export function applyOptimisticMove(
   };
 }
 
+// Host có thể đã đọc board trước khi write đang chạy kịp ghi, nên bản trả về
+// mang vị trí cũ và không có cờ pending. Giữ lại các thẻ đang chờ của board hiện
+// tại để thẻ không nhảy ngược và mở lại thao tác kéo khi move chưa xong.
+export function preservePendingMoves(
+  previous: KanbanBoardData,
+  next: KanbanBoardData,
+): KanbanBoardData {
+  const held = new Map(
+    previous.cards.filter((card) => card.pending).map((
+      card,
+    ) => [card.id, card]),
+  );
+  if (held.size === 0) return next;
+  let changed = false;
+  const cards = next.cards.map((card) => {
+    const pendingCard = held.get(card.id);
+    if (!pendingCard) return card;
+    changed = true;
+    return { ...card, columnId: pendingCard.columnId, pending: true };
+  });
+  if (!changed) return next;
+  return { ...next, cards, columns: recalculateColumns(next, cards) };
+}
+
 export function reconcileMoveSuccess(
   board: KanbanBoardData,
   result: {
