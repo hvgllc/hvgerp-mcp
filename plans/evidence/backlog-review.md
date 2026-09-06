@@ -1375,6 +1375,91 @@ self/history, giữ đủ 273 tests trước hai findings Codex. Lệnh và ph�
 mạng/build/metadata giống bảng trước. Report này ghi kết quả thực thi, chưa phải
 verdict review độc lập cho source a9a5e73 và không cho phép push/merge.
 
+## Thực thi năm P2 tại ce94ec9: đang bị chặn bởi ngôn ngữ fence có sẵn
+
+Ngày 2026-09-06. Base review đúng PR25
+`ce94ec9b0fb768ad68708f22d13f3b2b4a59cab9`. Source mới
+`f83acbad04b3ea7495301d9179a03ba774dd5a4b`, tree
+`19a017bb8c46f5bc2f1d906a17cad19d558c13bb`. Chỉ sửa validator, selftests và
+report này. Không sửa plan definition, manifest, metadata approval, AGENTS,
+history helper hoặc source ứng dụng. Trạng thái: source đã triển khai, gate chưa
+đạt; không có verdict review độc lập hoặc quyền push/merge.
+
+### Hành vi đã triển khai
+
+- Bỏ indented code bắt đầu tại ranh giới paragraph, indentation ít nhất bốn cột;
+  tab tiến tới tab stop bốn cột. Không để indentation ngắt paragraph sống hoặc
+  che dòng tiếp của list. Sau code, link sống vẫn được kiểm.
+- Bóc prefix blockquote, kể cả quote lồng nhau và indentation 0 đến 3 space,
+  trước khi kiểm reference definition. Mỗi container có ranh giới riêng; fence
+  chưa đóng không che link sau khi thoát container. Marker quote nằm trong code
+  vẫn là nội dung ví dụ, không tạo container mới. Target unsafe vẫn bị từ chối
+  trước filesystem lookup. Reference destination xuống dòng chưa được hỗ trợ,
+  báo lỗi rõ thay vì im lặng bỏ kiểm.
+- Đếm bước và gate từ nội dung cấu trúc ngoài fenced/indented/inline code. Bước
+  phải là heading cấp 3; nhãn kiểm tra phải đứng đầu dòng. Các snippet evidence
+  tiếp tục được so exact text trên body gốc, không qua lớp lọc code.
+- Chỉ nhận đúng một dòng `- Phụ thuộc:` sống trong section metadata. Dòng ở
+  prose ngoài section không thể thay trường bị thiếu và không tạo duplicate.
+  Không cho whitespace regex ăn sang giá trị ở dòng sau.
+- Khi manifest có own property `lang`, yêu cầu string và fence language khớp
+  nguyên giá trị; chuỗi rỗng yêu cầu fence không nhãn. Khi không có property,
+  không suy ra language mặc định mới. Không bỏ kiểm code/path/ref/line vì có
+  language mismatch.
+
+Đây vẫn là parser giới hạn, không phải toàn bộ CommonMark: chưa diễn giải HTML
+block, toàn bộ grammar reference nhiều dòng hoặc code lồng list. Dòng tiếp list
+được giữ để kiểm target theo hướng bảo thủ. Không quảng cáo các giới hạn đó là
+đã được hỗ trợ đầy đủ.
+
+### Red thực, controls và gate không đạt
+
+Trước khi sửa production helper, chạy:
+
+```sh
+node --test --test-name-pattern='^PR25 (indented|live target after|indentation|quoted|execution steps|example checks|inline check|dependency|evidence language|absent evidence|explicit matching)' plans/test-validator.mjs
+```
+
+Kết quả **34 ca: 6 pass, 28 fail, 0 cancelled, 0 skipped**, exit 1. Failure là
+assertion diagnostic/exit code ở đủ năm nhóm, không phải import/Git hoặc
+exception ngoài ý nghĩa test. Sau đó thêm sáu controls về quote trong fence,
+inline nhiều dòng, code trong quote, language rỗng và kiểu language sai; tổng 40
+test mới. Node assertion xác nhận sau khi bỏ duy nhất đoạn test mới, toàn bộ 321
+selftests cũ khớp byte với ce94ec9.
+
+Lượt chạy helper mới chưa thể ghi green vì rule language phát hiện năm mismatch
+thật có sẵn. Parent đã yêu cầu giữ rule và không sửa definition/approval để lách
+gate. Bảng đối chiếu đọc từ manifest và fence tại snapshot:
+
+| Plan | Trích đoạn                         | Manifest lang | Fence thực tế |
+| ---- | ---------------------------------- | ------------- | ------------- |
+| 007  | `src/ui/tsconfig.json:19`          | `json`        | `text`        |
+| 007  | `deno.json:16`                     | `json`        | `text`        |
+| 021  | `scripts/build-node.sh:65`         | `json`        | `text`        |
+| 021  | `scripts/build-node.sh:80`         | `bash`        | `text`        |
+| 022  | `.github/workflows/publish.yml:15` | `yaml`        | `text`        |
+
+Không thay các assertion cũ để dung thứ năm diagnostic này. Probe thuần trong VM
+trên các helper mới đạt 12 controls về indented/fenced/quoted code, quote
+reference sống, list continuation và container exit; probe không đổi plan hoặc
+approval trong bộ nhớ. Lần đầu gõ probe gặp SyntaxError do escape chuỗi trong
+script tạm, đã sửa script và chạy lại; không tính lỗi đó là red nghiệp vụ.
+
+| Lệnh                                                                                             | Kết quả thực tế                                                                              |
+| ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| `node plans/validate-plans.mjs`                                                                  | exit 1, đúng năm language mismatch trong bảng                                                |
+| `node --test plans/test-validator.mjs`                                                           | exit 1: 361 ca, 242 pass, 119 fail, 0 cancelled, 0 skipped                                   |
+| `node --test plans/test-history.mjs` sau source commit sạch                                      | exit 1: 1 pass, 3 fail; baseline clone và expected diagnostics bị chặn bởi cùng năm mismatch |
+| `deno fmt --no-config --check plans/`                                                            | exit 0, 75 file trước report                                                                 |
+| `deno lint --no-config plans/validate-plans.mjs plans/test-validator.mjs plans/test-history.mjs` | exit 0, 3 file                                                                               |
+| `git diff --check`                                                                               | exit 0                                                                                       |
+
+History negative về missing/squashed reviewed refs vẫn chạy, nhưng không lấy một
+ca đạt làm bằng chứng full history xanh. Chưa có full green sau khi xử lý
+definition, chưa gọi source này đã được duyệt. Cần parent xử lý mismatch bằng
+workflow review definition hợp lệ, sau đó chạy lại full validator/self/history.
+Không network, Browser, build, push, publish hoặc sửa approval trong lượt này.
+
 ### Review độc lập sau correction
 
 Reviewer độc lập đã đọc snapshot cuối
