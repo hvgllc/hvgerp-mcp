@@ -1727,3 +1727,58 @@ liệu.
 
 Chạy lại các mẻ probe guard của vòng 14, 15, 16, 17, 18, 19 và 21: không mẻ nào
 đổi kết quả.
+
+## Codex vòng tiếp: review 5125774509
+
+Reviewed commit `9d3c0371f8`, sáu finding P2, tất cả trên
+`plans/validate-plans.mjs`. Tái hiện đủ sáu ca bằng chính validator trước khi
+chạm vào code, cộng một ca đối chứng cho finding về heading slug.
+
+- Finding
+  [3944392985](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944392985):
+  comment và raw text element bị xử lý bằng hai hàm nối tiếp, nên hàm chạy trước
+  luôn thắng bất kể vị trí. Một chuỗi `"<!--"` viết trong `<script>` mở được
+  comment giả nuốt tới hết tài liệu. Gộp thành một lượt quét bằng alternation để
+  thứ tự trong tài liệu quyết định; ca ngược lại, `<script>` viết trong comment,
+  cũng được kiểm và vẫn phải ở trạng thái đã bị comment hóa.
+- Finding
+  [3944392989](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944392989):
+  numeric reference dải C1 phải đổi theo bảng windows-1252 của chuẩn HTML. Bảng
+  ánh xạ viết theo số chứ không theo ký tự, vì `&#x97;` giải mã ra U+2014, thứ
+  mà chính gate của repo cấm xuất hiện trong file.
+- Finding
+  [3944392995](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944392995):
+  `headingText` giữ nguyên tên entity nên slug ghi nhận một id không tồn tại,
+  trong khi id thật bị coi là anchor hỏng. Giải mã đặt giữa bước gỡ thẻ và bước
+  gỡ backslash escape, vì `decodeReferences` dựa vào dấu escape còn nguyên để
+  biết một `&` đã bị vô hiệu.
+- Finding
+  [3944392996](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944392996):
+  đổi độ sâu marker luôn cắt section, nên một code span vắt qua lazy
+  continuation của blockquote bị tách làm đôi và destination bên trong nó thành
+  link sống. Nhận lazy continuation, giới hạn bằng bốn điều kiện để không nới
+  quá: không trong fence, dòng này không trống, dòng trước không trống, và dòng
+  này không tự mở một block mới.
+- Finding
+  [3944392999](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944392999):
+  vòng cân bằng nhãn quét xuyên dòng trống, dựng ra một link từ hai chuỗi
+  literal ở hai đoạn khác nhau. Dừng đúng tại ranh giới đoạn, thoát với `depth`
+  còn dương để nhánh sẵn có bỏ qua cả cụm. Chỉ dừng ở dòng trống chứ không dừng
+  ở mọi ranh giới block: nhãn được phép xuống dòng trong cùng một đoạn.
+- Finding
+  [3944393001](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944393001):
+  bộ đếm theo từng slug gốc cấp lại một id đã có chủ. Chọn hậu tố theo tập id đã
+  phát sinh, giữ bộ đếm cũ làm điểm bắt đầu để trường hợp thường vẫn một lần tra
+  và vẫn đánh số theo thứ tự tài liệu.
+
+| Lệnh                                   | Kết quả                |
+| -------------------------------------- | ---------------------- |
+| `node plans/validate-plans.mjs`        | exit 0, đủ 25 kế hoạch |
+| `deno fmt --check`                     | exit 0, 315 file       |
+| `deno lint`                            | exit 0, 160 file       |
+| `node --test plans/test-validator.mjs` | 500 pass, 0 fail       |
+| `git diff --check`                     | exit 0                 |
+| `node --test plans/test-history.mjs`   | 5 pass, 0 fail         |
+
+Chạy lại các mẻ probe guard của vòng 14, 15, 16, 17, 18, 19, 21 và 22, cộng mẻ
+đối kháng 13 ca dựng sau vòng 22: không mẻ nào đổi kết quả.

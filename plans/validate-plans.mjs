@@ -266,17 +266,39 @@ const htmlLinkAttribute = new RegExp(
 // src của chính nó vẫn bị kiểm, chỉ xóa phần thân và thay bằng khoảng trắng để
 // các đường quét theo dòng không lệch. Thiếu thẻ đóng thì thân chạy tới hết tài
 // liệu, đúng như chuẩn mô tả.
-const rawTextElement = new RegExp(
-  "(<(script|style|textarea)" + htmlAttributes + htmlOptionalSpace + ">)" +
+// Comment và raw text element là hai token cùng cấp: cái nào mở trước trong
+// tài liệu thì cái đó thắng. Chạy hai hàm nối tiếp thì hàm chạy trước luôn
+// thắng bất kể vị trí, nên một chuỗi "<!--" nằm trong <script> mở được một
+// comment giả nuốt tới hết tài liệu và mọi thẻ sau đó biến mất khỏi gate. Một
+// alternation quét trái sang phải để thứ tự trong tài liệu quyết định.
+const rawTextOrComment = new RegExp(
+  "<!--[\\s\\S]*?(?:-->|$)" +
+    "|(<(script|style|textarea)" + htmlAttributes + htmlOptionalSpace + ">)" +
     "([\\s\\S]*?)(</\\2" + htmlOptionalSpace + ">|$)",
   "gi",
 );
-const outsideRawText = (body) =>
-  body.replace(
-    rawTextElement,
-    (_whole, open, _name, content, close) =>
-      open + content.replace(/[^\n]/g, " ") + close,
-  );
+function outsideRawTextAndComments(body) {
+  let output = "", cursor = 0, match;
+  rawTextOrComment.lastIndex = 0;
+  while ((match = rawTextOrComment.exec(body))) {
+    // Dấu mở bị escape là ký tự literal, không mở token nào; quét tiếp ngay sau
+    // nó để một token thật đứng sau vẫn được nhận, cùng cách outsideHtmlComments
+    // xử lý "\<!--".
+    if (markdownEscaped(body, match.index)) {
+      rawTextOrComment.lastIndex = match.index + 1;
+      continue;
+    }
+    // Comment xóa cả cụm; raw text giữ nguyên thẻ mở để src của chính nó vẫn bị
+    // kiểm và chỉ xóa phần thân. Cả hai thay bằng khoảng trắng để các đường quét
+    // theo dòng không lệch.
+    const replacement = match[1] === undefined
+      ? match[0].replace(/[^\n]/g, " ")
+      : match[1] + match[3].replace(/[^\n]/g, " ") + match[4];
+    output += body.slice(cursor, match.index) + replacement;
+    cursor = match.index + match[0].length;
+  }
+  return output + body.slice(cursor);
+}
 // preserveOffsets giữ nguyên độ dài từng dòng, cho những đường quét cần chỉ số
 // trong body gốc; mặc định trả dòng rỗng, đủ cho các đường đọc theo dòng.
 function outsideHtmlBlocks(body, preserveOffsets = false) {
@@ -375,6 +397,11 @@ function outsideHtmlBlocks(body, preserveOffsets = false) {
 // tài liệu.
 const structuralMarkdown = (body) =>
   outsideHtmlComments(outsideBlockCode(outsideHtmlBlocks(body)));
+// Những dòng tự mở một block mới nên không bao giờ là lazy continuation của
+// đoạn văn phía trên: heading ATX, fence, list marker, thematic break, setext
+// underline và thẻ HTML đầu dòng.
+const blockStart =
+  /^ {0,3}(?:#{1,6}(?:[ \t]|$)|`{3,}|~{3,}|[-*+](?:[ \t]|$)|\d{1,9}[.)](?:[ \t]|$)|=+[ \t]*\r?$|(?:\*[ \t]*){3,}\r?$|(?:_[ \t]*){3,}\r?$|(?:-[ \t]*){3,}\r?$|<)/;
 function markdownLinkSections(body) {
   const sections = [];
   let depth, fence, current = [];
@@ -385,8 +412,18 @@ function markdownLinkSections(body) {
       nextDepth++;
       line = line.slice(prefix[0].length);
     }
+    // Một dòng thiếu ">" vẫn thuộc đoạn văn đang mở của blockquote: CommonMark
+    // gọi đó là lazy continuation, nên inline span mở ở dòng trước vẫn đóng
+    // được ở dòng này. Cắt section chỉ vì độ sâu marker đổi thì một code span
+    // viết vắt qua dòng lười bị tách làm đôi, destination bên trong nó thành
+    // link sống và một tài liệu đúng bị báo hỏng. Lazy chỉ áp cho văn bản tiếp
+    // nối của một đoạn: không áp khi đang trong fence, khi dòng trống, khi dòng
+    // trước trống, hay khi chính dòng này mở một block mới.
+    const lazy = nextDepth < depth && !fence && line.trim() !== "" &&
+      (current[current.length - 1] ?? "").trim() !== "" &&
+      !blockStart.test(line);
     // Rời container cũng kết thúc fence chưa đóng và inline span của container.
-    if (nextDepth !== depth) {
+    if (nextDepth !== depth && !lazy) {
       if (current.length) sections.push(current.join("\n"));
       current = [];
       depth = nextDepth;
@@ -670,6 +707,40 @@ const namedReferences = new Map([
   ["yen", "¥"],
   ["yuml", "ÿ"],
 ]);
+// Numeric reference trong dải C1 không trả về chính code point đó: chuẩn HTML
+// thay bằng ký tự windows-1252 tương ứng, và CommonMark dùng đúng phép giải mã
+// ấy. Trả thẳng U+0080 thì một đường dẫn viết bằng "&#x80;" không còn trỏ tới
+// file thật và một link đúng bị báo hỏng. Bảng ánh xạ theo số chứ không theo ký
+// tự, để chính file này không phải chứa U+2014, thứ gate của repo cấm.
+const c1Replacements = new Map([
+  [0x80, 0x20ac],
+  [0x82, 0x201a],
+  [0x83, 0x0192],
+  [0x84, 0x201e],
+  [0x85, 0x2026],
+  [0x86, 0x2020],
+  [0x87, 0x2021],
+  [0x88, 0x02c6],
+  [0x89, 0x2030],
+  [0x8a, 0x0160],
+  [0x8b, 0x2039],
+  [0x8c, 0x0152],
+  [0x8e, 0x017d],
+  [0x91, 0x2018],
+  [0x92, 0x2019],
+  [0x93, 0x201c],
+  [0x94, 0x201d],
+  [0x95, 0x2022],
+  [0x96, 0x2013],
+  [0x97, 0x2014],
+  [0x98, 0x02dc],
+  [0x99, 0x2122],
+  [0x9a, 0x0161],
+  [0x9b, 0x203a],
+  [0x9c, 0x0153],
+  [0x9e, 0x017e],
+  [0x9f, 0x0178],
+]);
 const decodeReferences = (text) =>
   text.replace(
     /&(#\d{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]*);/g,
@@ -684,7 +755,7 @@ const decodeReferences = (text) =>
       // đường dẫn nào của repo nên link vẫn bị báo hỏng, đúng hướng.
       return code === 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)
         ? "�"
-        : String.fromCodePoint(code);
+        : String.fromCodePoint(c1Replacements.get(code) ?? code);
     },
   );
 function inlineLinkTargets(text) {
@@ -714,6 +785,14 @@ function inlineLinkTargets(text) {
       if (text[cursor] === "\\") {
         cursor += 2;
         continue;
+      }
+      // Nhãn link không bắc qua dòng trống: CommonMark kết thúc đoạn ở đó, nên
+      // một "[" đứng cuối đoạn này và một "](x.md)" mở đầu đoạn sau là hai
+      // chuỗi literal, không phải một link. Quét xuyên qua ranh giới thì gate
+      // đem một destination không ai viết đi phân giải và báo hỏng một tài liệu
+      // đúng. Thoát với depth còn dương để nhánh bên dưới bỏ qua cả cụm.
+      if (text[cursor] === "\n" && /^\n[ \t]*\r?\n/.test(text.slice(cursor))) {
+        break;
       }
       if (text[cursor] === "<") {
         htmlInlineAtomic.lastIndex = cursor;
@@ -1663,13 +1742,20 @@ const headingSlug = (text) =>
     .replace(/[^\p{L}\p{N}\p{M}_ -]+/gu, "")
     .replace(/ /g, "-");
 // Inline markup không vào slug vì GitHub lấy phần văn bản đã render: gỡ code
-// span, nhãn link, thẻ HTML và backslash escape trước khi tính.
+// span, nhãn link, thẻ HTML và backslash escape trước khi tính. Character
+// reference cũng render thành ký tự thật, nên "## Probe &amp; heading" có
+// anchor dựng từ "Probe & heading"; để nguyên tên entity thì slug ghi nhận
+// "probe-amp-heading", một id không tồn tại, và link tới anchor thật bị báo
+// hỏng trong khi link tới id tưởng tượng lại qua cổng. Giải mã trước khi gỡ
+// backslash escape, vì chính decodeReferences dựa vào dấu escape còn nguyên để
+// biết một "&" đã bị vô hiệu.
 const headingText = (raw) =>
-  raw.replace(/`+([^`]*)`+/g, "$1")
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/!?\[([^\]]*)\]\[[^\]]*\]/g, "$1")
-    .replace(/<[^>]*>/g, "")
-    .replace(/\\([!-/:-@[-`{-~])/g, "$1");
+  decodeReferences(
+    raw.replace(/`+([^`]*)`+/g, "$1")
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/!?\[([^\]]*)\]\[[^\]]*\]/g, "$1")
+      .replace(/<[^>]*>/g, ""),
+  ).replace(/\\([!-/:-@[-`{-~])/g, "$1");
 const anchorCache = new Map();
 function documentAnchors(path) {
   const cached = anchorCache.get(path);
@@ -1698,9 +1784,16 @@ function documentAnchors(path) {
     else continue;
     const slug = headingSlug(headingText(text));
     if (!slug) continue;
-    const count = seen.get(slug) ?? 0;
-    seen.set(slug, count + 1);
-    anchors.add(count ? slug + "-" + count : slug);
+    // GitHub bỏ qua id đã phát sinh khi chọn hậu tố: với "## Collision probe",
+    // "## Collision probe-1" rồi "## Collision probe", heading thứ ba nhận
+    // "collision-probe-2" chứ không nhận lại "collision-probe-1". Đếm riêng
+    // từng slug gốc thì hai heading khác nhau cùng nhận một id, id thật sự được
+    // sinh ra không có trong tập anchor, và một link đúng bị báo hỏng.
+    let suffix = seen.get(slug) ?? 0;
+    let unique = suffix ? slug + "-" + suffix : slug;
+    while (anchors.has(unique)) unique = slug + "-" + ++suffix;
+    seen.set(slug, suffix + 1);
+    anchors.add(unique);
   }
   // id và name viết tay cũng là anchor thật, và chúng nằm trong chính những
   // block HTML mà structuralMarkdown đã bỏ, nên phải quét trước khi bỏ block.
@@ -1709,11 +1802,9 @@ function documentAnchors(path) {
   // vẫn qua cổng. Dựng đúng khung nhìn HTML render như đường quét href/src: bỏ
   // code và comment trước, xóa thân raw text, rồi chỉ đọc thuộc tính nằm trong
   // thẻ mở thật sự, để "id=" viết trong văn xuôi cũng không thành anchor.
-  const renderedHtml = outsideRawText(
-    markdownLinkSections(body).map((section) =>
-      outsideHtmlComments(outsideInlineCode(outsideBlockCode(section)))
-    ).join("\n\n"),
-  );
+  const renderedHtml = markdownLinkSections(body).map((section) =>
+    outsideRawTextAndComments(outsideInlineCode(outsideBlockCode(section)))
+  ).join("\n\n");
   const attribute = new RegExp(
     "\\b(?:id|name)" + htmlOptionalSpace + "=" + htmlOptionalSpace +
       "(?:\"([^\"]*)\"|'([^']*)'|([^ \\t\\r\\n\"'=<>`]+))",
@@ -1745,11 +1836,9 @@ for (const filePath of planFiles(planRoot)) {
     // Markdown bên trong nó không render; nhưng thuộc tính link của chính HTML
     // đó vẫn render và vẫn hỏng được. Quét lại trước khi block bị xóa, sau khi
     // code và comment đã bị xóa, nên một ví dụ <a href> trong fence không sống.
-    const rawHtml = outsideRawText(
-      markdownLinkSections(body).map((section) =>
-        outsideHtmlComments(outsideInlineCode(outsideBlockCode(section)))
-      ).join("\n\n"),
-    );
+    const rawHtml = markdownLinkSections(body).map((section) =>
+      outsideRawTextAndComments(outsideInlineCode(outsideBlockCode(section)))
+    ).join("\n\n");
     for (const tag of rawHtml.matchAll(htmlTagAttributes)) {
       for (const attribute of tag[1].matchAll(htmlLinkAttribute)) {
         const value = attribute[1] ?? attribute[2] ?? attribute[3];

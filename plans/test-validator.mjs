@@ -3956,6 +3956,128 @@ test("an empty blocked_reason does not satisfy BLOCKED", () => {
   );
 });
 
+test("a comment-like literal inside a script hides nothing after it", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<script>const value = "<!--";</script>\n\n' +
+      '<a href="missing-after-script.md">anchor</a>\n',
+  }, /link hỏng missing-after-script\.md/);
+});
+
+test("a script tag written inside a comment stays commented out", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n<!-- <script> -->\n\n" +
+      '<a href="missing-after-comment.md">anchor</a>\n',
+  }, /link hỏng missing-after-comment\.md/);
+});
+
+test("a C1 numeric reference decodes to its windows-1252 character", () => {
+  const result = run(
+    {
+      "plans/evidence/backlog-review.md": (text) =>
+        text + "\n[c1](link&#x80;target.md)\n",
+    },
+    [],
+    { "plans/evidence/link€target.md": "file" },
+  );
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a numeric reference outside C1 keeps its own code point", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[readme](../READM&#x45;.md)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a heading with a character reference gets the rendered anchor", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## Probe &amp; heading\n\n[ok](#probe--heading)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a heading anchor is not built from the entity name", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## Probe &amp; heading\n\n[broken](#probe-amp-heading)\n",
+  }, /anchor hỏng #probe-amp-heading/);
+});
+
+test("an escaped ampersand in a heading stays literal", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## Probe \\&amp; heading\n\n[ok](#probe-amp-heading)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a code span survives a lazy blockquote continuation", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n> `quoted code begins\n[not live](missing-lazy-quote.md)`\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a link on a lazy continuation line is still checked", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n> quoted paragraph\n[live](missing-lazy-link.md)\n",
+  }, /link hỏng missing-lazy-link\.md/);
+});
+
+test("a line that opens its own block is not a lazy continuation", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n> `quoted code begins\n- [live](missing-lazy-bullet.md)`\n",
+  }, /link hỏng missing-lazy-bullet\.md/);
+});
+
+test("a link label does not span a blank line", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nĐoạn kết thúc bằng [\n\n](missing-across-blank.md) đoạn sau.\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a label broken across two lines is still one label", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[label spanning\ntwo lines](missing-two-line-label.md)\n",
+  }, /link hỏng missing-two-line-label\.md/);
+});
+
+test("a generated anchor suffix skips an id already taken", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## Collision probe\n\n## Collision probe-1\n\n" +
+      "## Collision probe\n\n[third](#collision-probe-2)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("repeated headings still number in order when nothing collides", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## Probe thrice\n\n## Probe thrice\n\n## Probe thrice\n\n" +
+      "[third](#probe-thrice-2)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
 test("a drafting reference must resolve without any new files", () => {
   invalid({
     [fileFor(22)]: (text) =>
