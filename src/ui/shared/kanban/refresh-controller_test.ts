@@ -1,4 +1,4 @@
-import { assertEquals, assertThrows } from "@std/assert";
+import { assertEquals } from "@std/assert";
 import { createBoardRefreshController } from "./refresh-controller.ts";
 import type { BoardMutationToken } from "./refresh-controller.ts";
 import type { KanbanRefreshRequestData } from "./refresh.ts";
@@ -335,11 +335,9 @@ for (const recovered of [false, true]) {
       assertEquals(await retry, true);
     } else f.controller.receiveBoard(c);
     const mutation = f.controller.beginMutation();
-    assertThrows(
-      () => f.controller.receiveBoard(b),
-      Error,
-      "identity mismatch",
-    );
+    // Kết quả lệch identity là race vô hại của host trả trễ: bỏ qua âm thầm
+    // (return false), không throw, để không hiện lỗi giả cho user.
+    assertEquals(f.controller.receiveBoard(b), false);
     assertEquals(f.controller.board, c);
     assertEquals(f.controller.ready, true);
     assertEquals(f.controller.isCurrent(mutation), true);
@@ -353,6 +351,30 @@ for (const recovered of [false, true]) {
     await Promise.resolve();
   });
 }
+
+Deno.test("stale input sequence rejects same-identity board even when fallback matches", () => {
+  const f = fixture(false);
+  f.controller.receiveInput({
+    toolName: "erpnext_kanban_get_board",
+    arguments: boardFixture().refreshArguments,
+  });
+  const staleSeq = f.controller.inputSeq;
+  // Host báo lại input y hệt (duplicate invocation): identity không đổi
+  // nhưng inputSeq vẫn phải tăng để phân biệt hai lượt.
+  f.controller.receiveInput({
+    toolName: "erpnext_kanban_get_board",
+    arguments: { ...boardFixture().refreshArguments },
+  });
+  const freshSeq = f.controller.inputSeq;
+  assertEquals(staleSeq === freshSeq, false);
+  const stale = { ...boardFixture(), title: "Stale response" };
+  const fresh = { ...boardFixture(), title: "Fresh response" };
+  // Kết quả của lượt cũ về sau lượt mới: bỏ qua âm thầm dù identity khớp.
+  assertEquals(f.controller.receiveBoard(stale, staleSeq), false);
+  assertEquals(f.controller.board, null);
+  assertEquals(f.controller.receiveBoard(fresh, freshSeq), true);
+  assertEquals(f.controller.board, fresh);
+});
 
 for (const hidden of [false, true]) {
   Deno.test(`host snapshot retains a completed write pending refresh hidden=${hidden}`, async () => {

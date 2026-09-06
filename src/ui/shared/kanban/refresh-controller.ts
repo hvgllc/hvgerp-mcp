@@ -38,6 +38,9 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
   let force = false;
   let lastStarted = 0;
   let retryAt = 0;
+  // Tăng ở mỗi lần host báo input mới, kể cả input trùng identity, để phân biệt
+  // hai lần gọi host cùng tham số nhưng khác lượt (chống race kết quả cũ đè mới).
+  let inputSeq = 0;
   const mutations = new Set<symbol>();
   const detailQueues = new Map<string, Promise<void>>();
 
@@ -136,6 +139,18 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
     force = true;
     return token;
   }
+  // Dùng chung cho failHost() và cho nhánh identity lệch trong receiveBoard:
+  // nếu đã có lượt khác giải quyết xong (không còn chờ/hồi phục) thì không
+  // làm gì; ngược lại chuyển sang hồi phục để lần request sau tự retry.
+  function markHostFailed() {
+    if (!waitingForHost && !recoveringHost) return;
+    waitingForHost = false;
+    recoveringHost = true;
+    pending = fallback !== null;
+    force = mutationPending && pending;
+    retryAt = force ? 0 : ports.now() + ports.minIntervalMs;
+    if (force) void drain();
+  }
   function endMutation(token: BoardMutationToken) {
     if (!mutations.delete(token.id)) return;
     pending = true;
@@ -146,12 +161,23 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
   return {
     update,
     request,
-    receiveBoard(next: KanbanBoardData) {
+    receiveBoard(next: KanbanBoardData, seq?: number) {
+      // seq là input đã ghi nhận lúc host báo input; nếu lệch nghĩa là kết quả
+      // này thuộc một lượt host cũ hơn đã bị lượt sau (cùng phạm vi) đè lên.
+      // Câu trả lời thật của lượt mới vẫn đang tới, không đụng vào trạng thái
+      // chờ/hồi phục, chỉ bỏ qua bản sao cũ này.
+      if (seq !== undefined && seq !== inputSeq) return false;
       if (
         fallback &&
         kanbanRequestIdentity(null, fallback) !==
           kanbanRequestIdentity(null, resolveKanbanRefreshRequest(next, null)!)
-      ) throw new Error("Host board response identity mismatch");
+      ) {
+        // Host trả lời sai phạm vi input hiện tại: bỏ qua âm thầm, không hiện
+        // lỗi cho user, nhưng vẫn đánh dấu hồi phục nếu còn đang chờ thật sự
+        // (markHostFailed tự no-op nếu một lượt khác đã giải quyết xong rồi).
+        markHostFailed();
+        return false;
+      }
       const changed = !board || kanbanRequestIdentity(
             board,
             resolveKanbanRefreshRequest(board, null)!,
@@ -169,6 +195,7 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
       return changed;
     },
     receiveInput(next: KanbanRefreshRequestData | null) {
+      inputSeq++;
       const previous = waitingForHost || recoveringHost
         ? fallback
         : currentRequest();
@@ -188,15 +215,7 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
       retryAt = 0;
       return changed;
     },
-    failHost() {
-      if (!waitingForHost && !recoveringHost) return;
-      waitingForHost = false;
-      recoveringHost = true;
-      pending = fallback !== null;
-      force = mutationPending && pending;
-      retryAt = force ? 0 : ports.now() + ports.minIntervalMs;
-      if (force) void drain();
-    },
+    failHost: markHostFailed,
     beginMutation,
     runDetailMutation<T>(
       doctype: string,
@@ -233,6 +252,9 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
     },
     get pending() {
       return pending;
+    },
+    get inputSeq() {
+      return inputSeq;
     },
     get ready() {
       return board !== null && !waitingForHost && !recoveringHost;

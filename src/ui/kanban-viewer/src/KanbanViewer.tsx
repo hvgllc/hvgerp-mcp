@@ -1056,6 +1056,9 @@ export function KanbanViewer() {
   const draggedCardIdRef = useRef<string | null>(null);
   const draggingRef = useRef(false);
   const moveErrorRef = useRef<string | null>(null);
+  // Ghi lại lượt input mới nhất để đối chiếu khi host trả kết quả, chống race
+  // hai lượt gọi host cùng identity nhưng lượt cũ trả về sau lượt mới.
+  const pendingInputSeqRef = useRef(0);
   const controllerRef = useRef<
     ReturnType<typeof createBoardRefreshController> | null
   >(null);
@@ -1223,12 +1226,20 @@ export function KanbanViewer() {
     }
   }
 
-  function requestMove(card: KanbanCardData, toColumn: string, label: string) {
+  // Trả về true khi move thật sự được nhận vào queue, false khi bị chặn âm
+  // thầm (chưa sẵn sàng, đang pending, cùng cột) hoặc bị từ chối (không cho
+  // phép). Caller (vd. detail modal) dựa vào giá trị này để quyết định có
+  // đóng modal hay không, tránh mất draft khi move chưa hề xảy ra.
+  function requestMove(
+    card: KanbanCardData,
+    toColumn: string,
+    label: string,
+  ): boolean {
     const board = boardRef.current;
     if (
       !board || !refreshController.ready || card.pending ||
       card.columnId === toColumn
-    ) return;
+    ) return false;
 
     const transition = board.allowedTransitions.find((candidate) =>
       candidate.allowed &&
@@ -1240,7 +1251,7 @@ export function KanbanViewer() {
       const message = `Move to ${label} is not allowed`;
       setError(message);
       setLiveMessage(message);
-      return;
+      return false;
     }
 
     const queuedMove: SessionQueuedMove = {
@@ -1264,6 +1275,7 @@ export function KanbanViewer() {
 
     queueRef.current = [...queueRef.current, queuedMove];
     void processQueue();
+    return true;
   }
 
   useEffect(() => {
@@ -1284,6 +1296,7 @@ export function KanbanViewer() {
           }
           : null,
       );
+      pendingInputSeqRef.current = refreshController.inputSeq;
       if (changed) closeDetail();
 
       if (!boardRef.current) {
@@ -1299,7 +1312,12 @@ export function KanbanViewer() {
           throw new Error("No kanban payload received from tool result");
         }
         moveErrorRef.current = null;
-        if (refreshController.receiveBoard(parseBoard(text))) closeDetail();
+        if (
+          refreshController.receiveBoard(
+            parseBoard(text),
+            pendingInputSeqRef.current,
+          )
+        ) closeDetail();
       } catch (error) {
         refreshController.failHost();
         setError(

@@ -966,7 +966,9 @@ export function CardDetailModal({
   detail: CardDetailState;
   board: KanbanBoardData;
   onClose: () => void;
-  onMove: (card: KanbanCardData, toColumn: string, label: string) => void;
+  // true nghĩa là move đã được nhận vào queue; false nghĩa là bị chặn âm
+  // thầm hoặc từ chối, khi đó modal không được đóng để tránh mất draft.
+  onMove: (card: KanbanCardData, toColumn: string, label: string) => boolean;
   onSave?: (
     session: DetailSessionToken,
     data: Record<string, string>,
@@ -1457,8 +1459,9 @@ export function CardDetailModal({
                   key={target.columnId}
                   type="button"
                   onClick={() => {
-                    onMove(card, target.columnId, target.label);
-                    onClose();
+                    if (onMove(card, target.columnId, target.label)) {
+                      onClose();
+                    }
                   }}
                   style={{
                     ...styles.button,

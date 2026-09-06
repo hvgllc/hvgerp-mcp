@@ -618,7 +618,9 @@ test("component mismatched host payload does not unlock the old board", async ()
   const b = h.fixtures.boardFixture("B");
   h.input(b.refreshArguments);
   h.result(payload(h.fixtures.boardFixture()));
-  assert.match(h.render().state.error, /identity mismatch/);
+  // Kết quả lệch phạm vi input hiện tại bị bỏ qua âm thầm, không hiện lỗi
+  // giả cho user; controller tự chuyển sang hồi phục để retry đúng B bên dưới.
+  assert.equal(h.render().state.error, null);
   h.render().requestMove(h.render().state.board.cards[0], "Working", "Start");
   assert.equal(h.calls.length, 0);
   const retry = h.render().requestBoardRefresh({ ignoreInterval: true });
@@ -626,6 +628,31 @@ test("component mismatched host payload does not unlock the old board", async ()
   h.calls[0].resolve(payload(b));
   await retry;
   assert.equal(h.render().state.board.title, "Local board B");
+});
+
+test("component requestMove reports rejection so callers keep the detail open", () => {
+  const h = harness();
+  const card = h.render().state.board.cards[0];
+  // Đang chờ host trả lời cho input mới (waitingForHost=true, board cũ vẫn
+  // còn): move phải bị chặn âm thầm và báo false, không phải bị lờ đi, để
+  // detail modal (dùng giá trị trả về này) không đóng nhầm và mất draft.
+  h.input(h.fixtures.boardFixture("B").refreshArguments);
+  assert.equal(h.render().requestMove(card, "Working", "Start"), false);
+  assert.equal(h.calls.length, 0);
+  assert.equal(h.render().state.error, null);
+  h.result(payload(h.fixtures.boardFixture("B")));
+  // Chuyển không được phép (không nằm trong allowedTransitions) cũng phải
+  // báo false, dù đã setError, vì bản thân move chưa hề xảy ra.
+  const readyCard = h.render().state.board.cards[0];
+  assert.equal(
+    h.render().requestMove(readyCard, "Completed", "Complete"),
+    false,
+  );
+  assert.match(h.render().state.error, /not allowed/);
+  assert.equal(h.calls.length, 0);
+  // Move hợp lệ, sẵn sàng: phải báo true để caller biết là đã nhận vào queue.
+  assert.equal(h.render().requestMove(readyCard, "Working", "Start"), true);
+  assert.equal(h.calls.length, 1);
 });
 
 test("component a new explicit move clears the previous move failure", async () => {
