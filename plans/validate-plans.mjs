@@ -76,7 +76,11 @@ function outsideBlockCode(body) {
     if (listIndent !== undefined && width < listIndent) listIndent = undefined;
     const list = line.match(/^ {0,3}(?:[-+*]|[0-9]+[.)])[ \t]+/);
     if (list) listIndent = list[0].length;
-    if (width >= 4 && listIndent === undefined && (code || !paragraph)) {
+    // Trong list item, code block bắt đầu ở content indent của item cộng bốn,
+    // không phải bốn tuyệt đối. Tắt hẳn nhận diện code khi đang trong list thì
+    // một ví dụ thụt đúng chuẩn trở thành văn xuôi và mọi link giả trong ví dụ
+    // bị gate tài liệu báo hỏng.
+    if (width >= (listIndent ?? 0) + 4 && (code || !paragraph)) {
       code = true;
       return "";
     }
@@ -255,8 +259,14 @@ function inlineLinkTargets(text) {
   }
   return targets;
 }
+// Section metadata phải cắt từ Markdown cấu trúc. Split thô trên body lấy lần
+// xuất hiện đầu tiên của chuỗi heading, kể cả khi nó nằm trong một fence ví dụ
+// đứng trước section thật: khi đó cả audit, phụ thuộc, mốc soạn và trạng thái
+// đều đọc từ văn bản không render, còn section thật thiếu trường vẫn qua gate.
+// Dùng chung structuralSection với các gate khác để một tài liệu chỉ được hiểu
+// theo một cách.
 const metadataSection = (body) =>
-  body.split("\n## Trạng thái và mục tiêu\n")[1]?.split("\n## ")[0] ?? "";
+  structuralSection(outsideBlockCode(body), "Trạng thái và mục tiêu");
 function auditOf(body) {
   const fields = body.split("\n").filter((line) =>
     /^\s*-\s*Mục audit\b/.test(line)
@@ -686,7 +696,7 @@ for (const entry of manifest) {
   }
   const body = readFileSync(path, "utf8");
   const dependencyFields = [
-    ...outsideBlockCode(metadataSection(body)).matchAll(
+    ...metadataSection(body).matchAll(
       /^- Phụ thuộc:[ \t]*(.*)$/gm,
     ),
   ];

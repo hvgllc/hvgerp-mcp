@@ -2824,3 +2824,60 @@ test("README cannot advertise plan IDs outside the manifest", () => {
     ["README lists plan IDs outside the manifest: 026"],
   );
 });
+
+test("metadata inside a fenced example cannot stand in for the real section", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  // Một fence ví dụ đứng trước section thật cũng mang chuỗi heading, nên phép
+  // cắt thô sẽ đọc trọn metadata từ văn bản không render, còn section thật
+  // thiếu trường vẫn qua gate.
+  const fields = [
+    "- Mục audit: 22; loại: " + tick + "docs" + tick + ".",
+    "- Phụ thuộc: " + tick + "021" + tick + ".",
+    "- Mốc soạn: " + tick + "d2c5305" + tick +
+    ", 2026-09-05. Trạng thái thực thi: " + tick + "TODO" + tick + ".",
+  ];
+  const after = run({
+    [fileFor(22)]: (text) => {
+      const stripped = fields.reduce(
+        (body, field) => body.replace(field + "\n", ""),
+        text,
+      );
+      return stripped.replace(
+        "\n## Trạng thái và mục tiêu\n",
+        "\n" + tick.repeat(3) + "markdown\n## Trạng thái và mục tiêu\n\n" +
+          fields.join("\n") + "\n" + tick.repeat(3) +
+          "\n\n## Trạng thái và mục tiêu\n",
+      );
+    },
+  });
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [
+      fileFor(22).slice(6) + ": plan and manifest dependencies differ",
+      fileFor(22).slice(6) + ": missing valid drafting reference",
+      fileFor(22).slice(6) + ": missing valid execution status",
+      fileFor(22).slice(6) + ": plan and manifest audit mappings differ",
+      fileFor(22).slice(6) + ": index and plan status differ",
+    ],
+  );
+});
+
+test("an indented example nested in a list item stays code", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  // Trong list item, code block bắt đầu ở content indent cộng bốn. Nếu nhận
+  // diện code bị tắt suốt list thì ví dụ thụt đúng chuẩn hóa thành văn xuôi và
+  // link giả bên trong bị báo hỏng, chặn gate tài liệu bằng lỗi giả.
+  const after = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n- Ví dụ code lồng trong list item:\n\n" +
+      "      [Literal](missing-list-code.md)\n",
+  });
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [],
+  );
+});
