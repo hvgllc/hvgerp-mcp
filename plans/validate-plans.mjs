@@ -167,6 +167,19 @@ function outsideInlineCode(body) {
   }).join("");
 }
 
+// Destination của một link Markdown: dạng <...> hoặc chuỗi không khoảng trắng,
+// theo sau có thể là title tùy chọn trong "...", '...' hoặc (...). Dùng chung
+// cho inline link và reference definition để hai đường không hiểu khác nhau.
+const linkDestination =
+  /^(?:<([^<>]*)>|([^\s<>]+))(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^)]*\)))?$/;
+// Ký tự ở vị trí position chỉ bị escape khi số backslash liền ngay trước nó là
+// số lẻ. Chuỗi chẵn như \\[ là một backslash literal rồi mới tới [ còn hiệu
+// lực, nên kiểm một ký tự đơn text[position - 1] === "\\" sẽ bỏ sót link thật.
+function markdownEscaped(text, position) {
+  let run = 0;
+  while (position - run > 0 && text[position - 1 - run] === "\\") run++;
+  return run % 2 === 1;
+}
 function inlineLinkTargets(text) {
   // Regex phẳng \[[^\]]+\]\(...\) không parse được label lồng ngoặc vuông
   // như "[outer [inner]](x)": nó dừng ở ] đầu tiên rồi không khớp tiếp, nên
@@ -174,7 +187,7 @@ function inlineLinkTargets(text) {
   // tìm đúng ] đóng label, có tính escape \[ \], rồi mới đọc (destination).
   const targets = [];
   for (let index = 0; index < text.length; index++) {
-    if (text[index] !== "[" || text[index - 1] === "\\") continue;
+    if (text[index] !== "[" || markdownEscaped(text, index)) continue;
     let depth = 1;
     let cursor = index + 1;
     while (cursor < text.length && depth > 0) {
@@ -186,14 +199,43 @@ function inlineLinkTargets(text) {
       else if (text[cursor] === "]") depth--;
       cursor++;
     }
-    if (depth !== 0 || cursor - 1 === index + 1) continue;
-    if (text[cursor] === "(") {
-      const close = text.indexOf(")", cursor + 1);
-      if (close !== -1) {
-        targets.push(text.slice(cursor + 1, close));
-        index = close;
+    // Label rỗng vẫn hợp lệ khi cặp ngoặc thuộc về một image ![](...): ảnh vẫn
+    // render và destination vẫn phải tồn tại thật, không được bỏ qua.
+    const image = index > 0 && text[index - 1] === "!" &&
+      !markdownEscaped(text, index - 1);
+    if (depth !== 0 || (cursor - 1 === index + 1 && !image)) continue;
+    if (text[cursor] !== "(") continue;
+    // Tìm dấu ) đóng đúng cặp: bỏ qua ký tự bị escape, ngoặc lồng bên trong
+    // destination, và dấu ) nằm trong title được trích dẫn. Title chỉ mở khi
+    // dấu nháy đứng sau khoảng trắng, để dấu nháy trong tên file không tính.
+    let scan = cursor + 1;
+    let parens = 1;
+    let quote;
+    while (scan < text.length && parens > 0) {
+      const character = text[scan];
+      if (character === "\\") {
+        scan += 2;
+        continue;
       }
+      if (quote) {
+        if (character === quote) quote = undefined;
+      } else if (
+        (character === '"' || character === "'") &&
+        /^[ \t]$/.test(text[scan - 1] ?? "")
+      ) {
+        quote = character;
+      } else if (character === "(") parens++;
+      else if (character === ")") parens--;
+      scan++;
     }
+    if (parens !== 0) continue;
+    // Tách destination khỏi title tùy chọn, nếu không title bị ghép vào đường
+    // dẫn và bước kiểm tra file sau đó tìm một tên file không tồn tại. Phần
+    // không parse được vẫn đẩy vào để bị báo lỗi thay vì im lặng bỏ qua.
+    const inside = text.slice(cursor + 1, scan - 1).trim();
+    const destination = inside.match(linkDestination);
+    targets.push(destination ? destination[1] ?? destination[2] : inside);
+    index = scan - 1;
   }
   return targets;
 }
@@ -318,13 +360,42 @@ function canonicalValue(value) {
   }
   return value;
 }
+// Các trường bản duyệt định nghĩa phải trùng nhau giữa báo cáo hiện tại và bản
+// ghi bất biến, nếu không verdict và bộ hash có thể bị sửa lệch nhau về sau.
+const definitionApprovalFields = [
+  "plan_id",
+  "definition_review_verdict",
+  "definition_commit",
+  "definition_plan_blob",
+  "definition_manifest_blob",
+];
+// Bản duyệt định nghĩa phải nằm trong một commit bất biến tự mang verdict và bộ
+// hash của chính nó. Nếu chỉ tin verdict APPROVE đọc từ báo cáo hiện tại trong
+// working tree, người commit tự cấp được duyệt bằng cách trỏ definition_commit
+// vào một commit bất kỳ có đúng bytes plan và manifest mong muốn, vì snapshot
+// đối chiếu phía sau chỉ phủ sáu trường thực thi chứ không phủ phần định nghĩa.
+function definitionApprovalRecorded(field, entry, ref, blob) {
+  const reportPath = "plans/evidence/" + String(entry.id).padStart(3, "0") +
+    ".md";
+  const record = scopedObject(gitTree(ref), reportPath);
+  if (!record || record.oid !== blob) return false;
+  const snapshot = evidenceSource(reportPath, ref);
+  if (snapshot === undefined || blobId(snapshot) !== blob) return false;
+  const recorded = reportFields(snapshot);
+  if (recorded("definition_review_verdict") !== "APPROVE") return false;
+  return definitionApprovalFields.every((key) =>
+    recorded(key) !== undefined && recorded(key) === field(key)
+  );
+}
 function definitionApproved(field, entry, planBody) {
   if (field("definition_review_verdict") !== "APPROVE") return false;
   const ref = field("definition_commit");
   const planBlob = field("definition_plan_blob");
   const manifestBlob = field("definition_manifest_blob");
+  const approvalRef = field("definition_approval_commit");
+  const approvalBlob = field("definition_approval_blob");
   if (
-    ![ref, planBlob, manifestBlob].every((value) =>
+    ![ref, planBlob, manifestBlob, approvalRef, approvalBlob].every((value) =>
       /^[0-9a-f]{40}$/.test(value ?? "")
     )
   ) {
@@ -332,6 +403,9 @@ function definitionApproved(field, entry, planBody) {
   }
   const tree = gitTree(ref);
   if (!tree) return false;
+  if (!definitionApprovalRecorded(field, entry, approvalRef, approvalBlob)) {
+    return false;
+  }
   const planObject = scopedObject(tree, "plans/" + entry.file);
   const manifestObject = scopedObject(tree, "plans/manifest.json");
   if (
@@ -661,8 +735,11 @@ for (const entry of manifest) {
     }
   }
   if (executionStatus === "DONE") {
+    // Đọc từ structuralBody (đã xóa nội dung trong fenced/indented code) để một
+    // checklist mẫu nằm trong khối code không tự đứng ra làm bằng chứng hoàn tất.
     const completion =
-      body.split("\n## Tiêu chí hoàn tất\n")[1]?.split(/\n## /)[0] ?? "";
+      structuralBody.split("\n## Tiêu chí hoàn tất\n")[1]?.split(/\n## /)[0] ??
+        "";
     const items = [
       ...completion.matchAll(
         /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\[([ xX])\][ \t]+\S/gm,
@@ -818,9 +895,7 @@ for (const filePath of planFiles(planRoot)) {
         /^[ \t]*\[(?:\\[^\r\n]|[^\[\]\\\r\n])+\]:([^\r\n]*)$/gm,
       )
     ) {
-      const destination = definition[1].trim().match(
-        /^(?:<([^<>]*)>|([^\s<>]+))(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^)]*\)))?$/,
-      );
+      const destination = definition[1].trim().match(linkDestination);
       if (!destination) {
         fail(
           file + ": unsupported Markdown reference definition " +

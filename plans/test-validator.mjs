@@ -294,6 +294,32 @@ test("Markdown link label with a nested bracket still exposes its destination", 
       text + "\n[outer [inner]](missing-nested.md)\n",
   }, /link hỏng missing-nested\.md/);
 });
+test("Markdown inline link title is not part of the destination", () => {
+  // Title tùy chọn sau destination bị ghép nguyên vào đường dẫn ở bản cũ nên một
+  // link tới file có thật vẫn bị báo hỏng; tách title ra thì link này hợp lệ.
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n[readme](../../README.md "Repository readme")\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+test("Markdown image with an empty alt still exposes its destination", () => {
+  // ![](...) có label rỗng nhưng ảnh vẫn render, nên destination phải tồn tại
+  // thật; bản cũ bỏ qua mọi cặp ngoặc rỗng và để link hỏng lọt qua gate.
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n![](missing-diagram.png)\n",
+  }, /link hỏng missing-diagram\.png/);
+});
+test("Markdown even backslash run leaves the bracket live", () => {
+  // Hai backslash là một backslash literal rồi mới tới [, nên link vẫn sống.
+  // Bản cũ chỉ nhìn một ký tự liền trước nên coi là escape và bỏ sót.
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n\\\\[Live](missing-even-escape.md)\n",
+  }, /link hỏng missing-even-escape\.md/);
+});
 test("Markdown heading outside a closed example satisfies the requirement", () => {
   const setup = stale(21);
   const before = run(setup);
@@ -754,6 +780,8 @@ const definitionFields = [
   "definition_commit",
   "definition_plan_blob",
   "definition_manifest_blob",
+  "definition_approval_commit",
+  "definition_approval_blob",
 ];
 const definitionFailures = (id) => [
   fileFor(id).slice("plans/".length) +
@@ -1107,6 +1135,41 @@ test("DONE definition rejects real commit without plan snapshot", () => {
   const ref = report.match(/^reviewed_commit: (.+)$/m)[1];
   invalid(definitionField("definition_commit", ref), /001.*definition/);
 });
+test("DONE definition rejects an approval record without definition fields", () => {
+  // Bản duyệt trỏ tới một commit lịch sử có đúng file báo cáo nhưng bản đó chưa
+  // hề mang verdict và bộ hash định nghĩa. Nếu chỉ tin verdict đọc từ working
+  // tree, người commit tự cấp duyệt được bằng cách trỏ vào một commit bất kỳ.
+  const blob = execFileSync(
+    "git",
+    ["rev-parse", definitionRef + ":plans/evidence/001.md"],
+    { cwd: repoRoot, encoding: "utf8" },
+  ).trim();
+  invalid({
+    "plans/evidence/001.md": (text) =>
+      text
+        .replace(
+          /^definition_approval_commit:.*$/m,
+          "definition_approval_commit: " + definitionRef,
+        )
+        .replace(
+          /^definition_approval_blob:.*$/m,
+          "definition_approval_blob: " + blob,
+        ),
+  }, /001.*definition/);
+});
+test("DONE definition rejects an approval blob that is not the recorded report", () => {
+  // Giữ nguyên commit duyệt thật nhưng đổi blob sang một blob hợp lệ khác: cây
+  // của commit đó không chứa blob này nên bản duyệt phải bị từ chối.
+  const blob = execFileSync(
+    "git",
+    ["rev-parse", definitionRef + ":plans/evidence/001.md"],
+    { cwd: repoRoot, encoding: "utf8" },
+  ).trim();
+  invalid(
+    definitionField("definition_approval_blob", blob),
+    /001.*definition/,
+  );
+});
 test("DONE definition compares only the matching manifest record", () => {
   assertNonDoneSemantic("unrelated manifest record");
 });
@@ -1173,6 +1236,18 @@ test("DONE requires a completion checklist", () => {
     { [fileFor(24)]: (text) => text.replace(/- \[[ xX]\]/g, "-") },
     /024.*completion checklist/,
   );
+});
+test("DONE completion checklist cannot come from a fenced example", () => {
+  // Xóa hết mục checklist sống rồi để lại đúng một ví dụ trong khối code: ví dụ
+  // literal không được phép tự đứng ra chứng minh kế hoạch đã hoàn tất.
+  invalid({
+    [fileFor(24)]: (text) =>
+      text.replace(/- \[[ xX]\]/g, "-").replace(
+        "## Tiêu chí hoàn tất\n",
+        "## Tiêu chí hoàn tất\n\n" + tick.repeat(3) + "md\n- [x] Example only\n" +
+          tick.repeat(3) + "\n",
+      ),
+  }, /024.*completion checklist/);
 });
 for (const marker of ["1.", "1)", "  12.", "42)"]) {
   test("DONE ordered completion rejects an unchecked item: " + marker, () => {
