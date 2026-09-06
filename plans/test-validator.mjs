@@ -3223,3 +3223,53 @@ test("parentheses inside an angle-bracket destination stay balanced", () => {
       text + "\n[target](<khong-ton-tai(angle.md>)\n",
   }, /link hỏng khong-ton-tai\(angle\.md/);
 });
+
+test("a raw HTML block is not scanned for Markdown links", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  // CommonMark không phân giải inline Markdown trong block HTML, nên chuỗi
+  // trong <script> chỉ là văn bản thô và không được đem đi phân giải.
+  const after = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n<script>\nvar sample = '[x](khong-ton-tai.md)';\n</script>\n",
+  });
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [],
+  );
+});
+
+test("a blank line ends an HTML block so the link stays live", () => {
+  // Dòng trống đóng block dạng 6, nên link sau nó lại là link sống. Chạy tới
+  // thẻ đóng thì một link hỏng thật nằm giữa hai thẻ không còn ai hỏi tới.
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n<div>\n\n[live](khong-ton-tai.md)\n\n</div>\n",
+  }, /link hỏng khong-ton-tai\.md/);
+});
+
+test("a lone tag does not interrupt an open paragraph", () => {
+  // Block HTML dạng 7 không cắt ngang một đoạn văn, nên dòng sau nó vẫn thuộc
+  // đoạn văn đang mở và link trong đó vẫn phải kiểm.
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nMột đoạn văn\n<custom-tag>\n[live](khong-ton-tai.md)\n",
+  }, /link hỏng khong-ton-tai\.md/);
+});
+
+test("an HTML tag inside an inline code span opens no block", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nVăn bản " + tick + "mã\n<div>\nthêm" + tick +
+      " [live](khong-ton-tai.md)\n",
+  }, /link hỏng khong-ton-tai\.md/);
+});
+
+test("a duplicate required section is rejected", () => {
+  // Mọi gate section cắt ở lần xuất hiện đầu, nên bản trùng phía sau hiển thị
+  // mà không gate nào kiểm và có thể cho phép file ngoài manifest.
+  invalid({
+    [fileFor(22)]: (text) => text + "\n## Phạm vi và Git\n\n- `server.ts`\n",
+  }, /duplicate section Phạm vi và Git/);
+});

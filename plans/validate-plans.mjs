@@ -139,6 +139,71 @@ function outsideHtmlComments(body) {
   }
   return output + body.slice(cursor);
 }
+// Bên trong một block HTML, CommonMark không phân giải inline Markdown, nên
+// "[x](y.md)" nằm trong <script>, <pre> hay <div> chỉ là văn bản thô chứ không
+// phải link sống. Giữ nguyên nó thì một ví dụ nhúng hợp lệ làm gate link báo
+// hỏng và chặn một thay đổi tài liệu không liên quan. Chạy sau khi inline code
+// đã bị xóa, để một backtick chứa "<div>" ở đầu dòng không mở được block giả
+// nuốt mất link thật. Thay bằng dòng rỗng để các gate đọc theo dòng không lệch.
+const htmlBlockNames =
+  "address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul";
+const htmlAttributes =
+  "(?:[ \\t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \\t]*=[ \\t]*(?:[^ \\t\"'=<>`]+|'[^']*'|\"[^\"]*\"))?)*";
+// Điều kiện đóng null nghĩa là block chạy tới dòng trống đầu tiên. Không có
+// dạng comment ở đây: "<!--" đã do outsideHtmlComments xử lý theo span, và
+// nhánh <![A-Za-z] bên dưới không khớp dấu gạch nên hai đường không giẫm nhau.
+const htmlBlockOpeners = [
+  [
+    /^ {0,3}<(?:script|pre|style|textarea)(?:[ \t>]|$)/i,
+    /<\/(?:script|pre|style|textarea)>/i,
+  ],
+  [/^ {0,3}<\?/, /\?>/],
+  [/^ {0,3}<!\[CDATA\[/, /\]\]>/],
+  [/^ {0,3}<![A-Za-z]/, />/],
+  [
+    new RegExp("^ {0,3}</?(?:" + htmlBlockNames + ")(?:[ \\t]|/?>|$)", "i"),
+    null,
+  ],
+];
+// Dạng 7 là một thẻ bất kỳ đứng một mình trên dòng, và nó không được cắt ngang
+// một đoạn văn đang mở. Chỉ mở khi dòng trước trống: chặt hơn chuẩn một chút
+// (sau heading chuẩn vẫn cho mở) nhưng lệch về phía fail-closed, tức link vẫn
+// bị kiểm, thay vì phía nuốt mất một link sống.
+const htmlLoneTag = new RegExp(
+  "^ {0,3}(?:<[A-Za-z][A-Za-z0-9-]*" + htmlAttributes +
+    "[ \\t]*/?>|</[A-Za-z][A-Za-z0-9-]*[ \\t]*>)[ \\t]*\\r?$",
+);
+const htmlBlank = /^[ \t]*\r?$/;
+function outsideHtmlBlocks(body) {
+  let closer, previousBlank = true;
+  return body.split("\n").map((line) => {
+    const blank = htmlBlank.test(line);
+    if (closer) {
+      if (closer === htmlBlank) {
+        if (blank) closer = undefined;
+        previousBlank = blank;
+        return blank ? line : "";
+      }
+      if (closer.test(line)) closer = undefined;
+      previousBlank = false;
+      return "";
+    }
+    for (const [opener, end] of htmlBlockOpeners) {
+      if (!opener.test(line)) continue;
+      // Điều kiện đóng có thể được thỏa ngay trên dòng mở, ví dụ "<pre>x</pre>".
+      closer = end && end.test(line) ? undefined : end ?? htmlBlank;
+      previousBlank = false;
+      return "";
+    }
+    if (previousBlank && htmlLoneTag.test(line)) {
+      closer = htmlBlank;
+      previousBlank = false;
+      return "";
+    }
+    previousBlank = blank;
+    return line;
+  }).join("\n");
+}
 // Markdown cấu trúc cho các gate metadata: bỏ code (fenced lẫn thụt đầu dòng)
 // rồi bỏ HTML comment. Comment không render, nên một trường khai bên trong nó
 // không phải nội dung sống: đọc nó khiến một kế hoạch có section hiển thị trống
@@ -842,13 +907,21 @@ for (const entry of manifest) {
   if (!sameSet(planNewFiles, entry.newFiles)) {
     fail(entry.file + ": plan and manifest new-file classifications differ");
   }
-  const structuralHeadings = new Set(
-    [...structuralBody.matchAll(/^ {0,3}##[ \t]+([^\r\n]+)\r?$/gm)]
-      .map((match) => match[1].replace(/[ \t]+#+[ \t]*$/, "").trim()),
-  );
+  const structuralHeadings = [
+    ...structuralBody.matchAll(/^ {0,3}##[ \t]+([^\r\n]+)\r?$/gm),
+  ].map((match) => match[1].replace(/[ \t]+#+[ \t]*$/, "").trim());
   for (const heading of headings) {
-    if (!structuralHeadings.has(heading)) {
+    const occurrences = structuralHeadings.filter((name) =>
+      name === heading
+    ).length;
+    if (!occurrences) {
       fail(`${entry.file}: thiếu ${heading}`);
+    } else if (occurrences > 1) {
+      // Mọi gate section đều cắt ở lần xuất hiện đầu tiên, nên một section
+      // trùng tên phía sau hiển thị với người đọc mà không gate nào kiểm: một
+      // "## Phạm vi và Git" thứ hai cho phép thêm file ngoài manifest mà vẫn
+      // qua. Từ chối bản trùng thay vì gộp, để tài liệu chỉ có một nguồn.
+      fail(`${entry.file}: duplicate section ${heading}`);
     }
   }
   const draftingReference = draftingOf(body);
@@ -1072,7 +1145,9 @@ for (const filePath of planFiles(planRoot)) {
   }
   if (file.endsWith(".md")) {
     const markdown = markdownLinkSections(body).map((section) =>
-      outsideHtmlComments(outsideInlineCode(outsideBlockCode(section)))
+      outsideHtmlComments(
+        outsideHtmlBlocks(outsideInlineCode(outsideBlockCode(section))),
+      )
     ).join("\n\n");
     const targets = inlineLinkTargets(markdown);
     // Kiểm mọi definition, kể cả chưa dùng; không phụ thuộc kiểu full/collapsed/shortcut.
