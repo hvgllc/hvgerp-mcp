@@ -2174,3 +2174,51 @@ Suite thêm 22 test, lên 597. Mười lăm mẻ dò guard của các vòng trư
 trên cây mới cho kết quả trùng ảnh chụp vòng trước, và mẻ mười tám ca của vòng
 này cho mười bảy ca đổi chiều đúng như mong đợi, ca thứ mười tám giữ nguyên vì
 đó là ca bị bác bỏ.
+
+## Codex vòng tiếp: review 5126488095
+
+Review đọc đúng head `669c6638`, nêu năm P2 và không P1 nào. Cả năm tái hiện
+bằng một mẻ dò mười tám ca trước khi động vào code, và cmark 0.31.2
+(`npm:commonmark`, chạy qua `deno run -A`) làm trọng tài cho từng ca. Cả năm
+đúng.
+
+- **`srcset` không vào tập đích.** Trình duyệt chọn và tải đúng một ứng viên
+  trong danh sách theo mật độ điểm ảnh hay khổ màn hình, nên mọi URL ở đó là tài
+  nguyên thật. `attributeTargets` tách `srcset` trên `img` và `source` theo đúng
+  thuật toán của HTML: dấu phẩy chỉ kết thúc ứng viên khi đứng cuối URL hoặc
+  cuối descriptor, nên `a.png 1x, b.png 2x` cho hai URL còn `a.png 1x` cho một,
+  và không descriptor nào bị đem đi phân giải như tên file.
+- **List ngắt đoạn văn vô điều kiện.** Chuẩn chỉ cho một list ngắt đoạn đang
+  chạy khi item đầu có nội dung và, với list đánh số, khi số bắt đầu là 1;
+  `Paragraph` rồi `2. ## Ghost` vì thế vẫn là một đoạn văn. `scanContainers`
+  mang theo trạng thái đoạn và từ chối mở container list không đủ điều kiện.
+  Luật khoanh hẹp: blockquote vẫn ngắt được mọi lúc, thoát khỏi container là đã
+  đóng đoạn bên trong nên `1. item` rồi `2. item` vẫn mở hai item, và container
+  ngoài vừa mở trên cùng dòng cũng đóng đoạn cũ.
+- **Title của definition bị đọc như văn bản render.** Title là metadata, đi ra
+  HTML nguyên văn trong thuộc tính `title`, nên nhãn trông giống link nằm trong
+  đó không phải link của ai cả. Definition được phân giải trước vòng quét inline
+  và những dòng chúng chiếm bị che khỏi văn bản đưa cho `inlineLinkTargets`;
+  đích thật vẫn vào gate ở vòng definition ngay dưới, nên che dòng không mở lỗ
+  nào. Một cụm có title hỏng vẫn bị bác như cũ.
+- **Đuôi link trong heading chỉ cần ngoặc cân bằng.** Đích trần chứa khoảng
+  trắng làm cả đuôi thành văn bản literal, nên một heading viết
+  `## [Ghost](https://example.com bad)` không mang id `ghost`. `linkTail` đòi
+  phần trong ngoặc khớp grammar destination trước khi báo có đuôi; đuôi đúng
+  grammar vẫn cho slug lấy từ nhãn.
+- **Setext gộp cả reference definition vào slug.** Definition là khối riêng và
+  không góp gì vào heading. `referenceDefinitions` trả thêm phạm vi dòng của
+  từng definition, và vòng quét ngược của setext dừng ở những dòng đó, cả với
+  dòng ngay trên hàng gạch lẫn mọi dòng nó lùi qua.
+
+| Cổng                                   | Kết quả            |
+| -------------------------------------- | ------------------ |
+| `node plans/validate-plans.mjs`        | Đạt: 25 kế hoạch   |
+| `deno fmt --check`                     | 315 file           |
+| `deno lint`                            | 160 file           |
+| `node --test plans/test-validator.mjs` | 614 pass           |
+| `git diff --check`                     | exit 0             |
+| `node --test plans/test-history.mjs`   | 5 pass, sau commit |
+
+Suite thêm 17 test, lên 614. Mẻ dò mười hai ca của vòng này cho cả mười hai đổi
+chiều đúng như mong đợi, và mẻ sáu ca biên kèm theo giữ đúng chiều cả sáu.

@@ -4942,3 +4942,153 @@ test("a drafting reference must resolve without any new files", () => {
       ),
   }, /Cannot read Git commit tree: deadbee/);
 });
+
+test("an img srcset candidate is a real target", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<img src="../../README.md" srcset="missing-srcset.png 2x">\n',
+  }, /link hỏng missing-srcset\.png/);
+});
+
+test("a source srcset candidate is a real target", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<picture><source srcset="missing-source-set.png"></picture>\n',
+  }, /link hỏng missing-source-set\.png/);
+});
+
+test("srcset descriptors are not read as paths", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      '\n<img src="../../README.md" srcset="../../README.md 1x, ' +
+      '../../README.md 2x">\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("srcset on an element without it is not a target", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<div srcset="missing-div-srcset.png"></div>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an ordered marker other than 1 does not interrupt a paragraph", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nParagraph probe f2\n2. ## Ghost ordered\n\n" +
+      "[f2](#ghost-ordered)\n",
+  }, /anchor hỏng #ghost-ordered/);
+});
+
+test("an ordered marker of 1 still interrupts a paragraph", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nParagraph probe f2b\n1. ## Real ordered\n\n" +
+      "[f2b](#real-ordered)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an ordered marker other than 1 still opens a list after a blank line", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n2. ## Standalone ordered\n\n[f2c](#standalone-ordered)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an empty list item does not interrupt a paragraph", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nParagraph probe g1\n* \nGhost setext\n---\n\n" +
+      "[g1](#ghost-setext)\n",
+  }, /anchor hỏng #ghost-setext/);
+});
+
+test("the setext slug keeps every line across an empty marker", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nParagraph probe g1b\n* \nGhost setext b\n---\n\n" +
+      "[g1b](#paragraph-probe-g1b--ghost-setext-b)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a blockquote still interrupts a paragraph", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nParagraph probe g4\n> ## Quoted heading g4\n\n" +
+      "[g4](#quoted-heading-g4)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a later ordered marker still opens an item in the same list", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n1. ## Item one g5\n2. ## Item two g5\n\n[g5](#item-two-g5)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a reference definition title is not an inline link", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      '\n[f3ref]: ../../README.md "Title [hidden](missing-ref-title.md)"\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a definition with an unclosed title is still rejected", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      '\n[f3b]: ../../README.md "unclosed [hidden](missing-real-link.md)\n',
+  }, /unsupported Markdown reference definition/);
+});
+
+test("a heading link tail must match the destination grammar", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## [Ghost](https://example.com bad)\n\n[f4](#ghost)\n",
+  }, /anchor hỏng #ghost/);
+});
+
+test("a well formed heading link tail still yields the label slug", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## [Real f4b](https://example.com)\n\n[f4b](#real-f4b)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a reference definition above a setext heading stays out of the slug", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[f5ref]: ../../README.md\nActual heading probe\n---\n\n" +
+      "[f5](#actual-heading-probe)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("the slug merging a definition into a setext heading does not exist", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[f5bref]: ../../README.md\nActual heading probe b\n---\n\n" +
+      "[f5b](#f5bref-readmemd-actual-heading-probe-b)\n",
+  }, /anchor hỏng #f5bref-readmemd-actual-heading-probe-b/);
+});
