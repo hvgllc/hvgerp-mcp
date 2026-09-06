@@ -166,6 +166,37 @@ function outsideInlineCode(body) {
     return output + paragraph.slice(start);
   }).join("");
 }
+
+function inlineLinkTargets(text) {
+  // Regex phẳng \[[^\]]+\]\(...\) không parse được label lồng ngoặc vuông
+  // như "[outer [inner]](x)": nó dừng ở ] đầu tiên rồi không khớp tiếp, nên
+  // bỏ sót cả link, khiến destination hỏng lọt qua gate. Quét đếm độ sâu để
+  // tìm đúng ] đóng label, có tính escape \[ \], rồi mới đọc (destination).
+  const targets = [];
+  for (let index = 0; index < text.length; index++) {
+    if (text[index] !== "[" || text[index - 1] === "\\") continue;
+    let depth = 1;
+    let cursor = index + 1;
+    while (cursor < text.length && depth > 0) {
+      if (text[cursor] === "\\") {
+        cursor += 2;
+        continue;
+      }
+      if (text[cursor] === "[") depth++;
+      else if (text[cursor] === "]") depth--;
+      cursor++;
+    }
+    if (depth !== 0 || cursor - 1 === index + 1) continue;
+    if (text[cursor] === "(") {
+      const close = text.indexOf(")", cursor + 1);
+      if (close !== -1) {
+        targets.push(text.slice(cursor + 1, close));
+        index = close;
+      }
+    }
+  }
+  return targets;
+}
 const metadataSection = (body) =>
   body.split("\n## Trạng thái và mục tiêu\n")[1]?.split("\n## ")[0] ?? "";
 function auditOf(body) {
@@ -779,8 +810,7 @@ for (const filePath of planFiles(planRoot)) {
     const markdown = markdownLinkSections(body).map((section) =>
       outsideInlineCode(outsideBlockCode(section))
     ).join("\n\n");
-    const targets = [...markdown.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)]
-      .map((match) => match[1]);
+    const targets = inlineLinkTargets(markdown);
     // Kiểm mọi definition, kể cả chưa dùng; không phụ thuộc kiểu full/collapsed/shortcut.
     // Label dừng ở ] không escape, không được ăn sang chuỗi ]: trong title.
     for (

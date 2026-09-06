@@ -286,6 +286,14 @@ test("Markdown inline code keeps live links and definitions outside spans", () =
     "evidence/backlog-review.md: link hỏng missing-definition.md",
   ]);
 });
+test("Markdown link label with a nested bracket still exposes its destination", () => {
+  // Regex phẳng cũ dừng ở ] đầu tiên trong label nên bỏ sót cả link, khiến
+  // destination hỏng lọt qua gate; label lồng ngoặc vuông phải vẫn bị bắt.
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[outer [inner]](missing-nested.md)\n",
+  }, /link hỏng missing-nested\.md/);
+});
 test("Markdown heading outside a closed example satisfies the requirement", () => {
   const setup = stale(21);
   const before = run(setup);
