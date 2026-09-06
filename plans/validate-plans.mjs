@@ -41,8 +41,9 @@ function evidenceSource(sourcePath, sourceRef) {
   }
   return sourceCache.get(key);
 }
-function outsideFencedCode(body) {
+function outsideFencedCode(body, preserveOffsets = false) {
   let fence;
+  const hidden = (line) => preserveOffsets ? " ".repeat(line.length) : "";
   return body.split("\n").map((line) => {
     const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
     if (fence) {
@@ -50,11 +51,11 @@ function outsideFencedCode(body) {
         marker && marker[1][0] === fence[0] &&
         marker[1].length >= fence.length && /^[ \t\r]*$/.test(marker[2])
       ) fence = undefined;
-      return "";
+      return hidden(line);
     }
     if (marker && (marker[1][0] === "~" || !marker[2].includes("`"))) {
       fence = marker[1];
-      return "";
+      return hidden(line);
     }
     return line;
   }).join("\n");
@@ -546,7 +547,8 @@ for (const entry of manifest) {
   ) {
     fail(entry.file + ": plan and manifest dependencies differ");
   }
-  const scopeSection = body.split("## Phạm vi và Git\n")[1]
+  const structuralBody = outsideBlockCode(body);
+  const scopeSection = structuralBody.split("## Phạm vi và Git\n")[1]
     ?.split("Ngoài phạm vi:")[0] ?? "";
   const administrativeFiles = [
     "plans/README.md",
@@ -599,7 +601,6 @@ for (const entry of manifest) {
   if (!sameSet(planNewFiles, entry.newFiles)) {
     fail(entry.file + ": plan and manifest new-file classifications differ");
   }
-  const structuralBody = outsideBlockCode(body);
   const structuralHeadings = new Set(
     [...structuralBody.matchAll(/^ {0,3}##[ \t]+([^\r\n]+)\r?$/gm)]
       .map((match) => match[1].replace(/[ \t]+#+[ \t]*$/, "").trim()),
@@ -698,11 +699,21 @@ for (const entry of manifest) {
       }
     }
   }
-  const blocks = [
-    ...body.matchAll(
-      /<!-- evidence: ([^\n]+) -->\s*(?:<!-- deno-fmt-ignore -->\s*)?```([^\n]*)\n([\s\S]*?)\n```/g,
-    ),
-  ];
+  const blocks = [];
+  // Chỉ annotation sống được mở block; snippet và vị trí citation vẫn đọc body gốc.
+  for (
+    const annotation of outsideFencedCode(body, true).matchAll(
+      /<!-- evidence: [^\n]+ -->/g,
+    )
+  ) {
+    const block = body.slice(annotation.index).match(
+      /^<!-- evidence: ([^\n]+) -->\s*(?:<!-- deno-fmt-ignore -->\s*)?```([^\n]*)\n([\s\S]*?)\n```/,
+    );
+    if (block) {
+      block.index = annotation.index;
+      blocks.push(block);
+    }
+  }
   if (blocks.length !== entry.evidence.length) {
     fail(entry.file + ": evidence excerpt count mismatch");
   }

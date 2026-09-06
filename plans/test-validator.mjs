@@ -582,6 +582,123 @@ test("PR25 evidence language rejects malformed manifest types", () => {
   }
 });
 
+function firstEvidenceExample(text) {
+  const record = manifest.find((entry) => entry.id === 21).evidence[0];
+  const start = text.indexOf(`${tick}${record.path}:${record.line}${tick}:`);
+  assert(start >= 0);
+  const block = text.slice(start).match(
+    /^[\s\S]*?<!-- evidence: [^\n]+ -->\s*(?:<!-- deno-fmt-ignore -->\s*)?```[^\n]*\n[\s\S]*?\n```/,
+  );
+  assert(block);
+  return block[0];
+}
+for (const marker of [tick.repeat(4), tick.repeat(5), "~~~", "   ~~~~"]) {
+  test(`PR25 outer fence cannot supply a missing evidence block ${marker}`, () => {
+    invalid(
+      compose(stale(21), {
+        [fileFor(21)]: (text) => {
+          const example = firstEvidenceExample(text);
+          return text.replace(
+            example,
+            `${marker}md\n${example}\n${marker.trim()}`,
+          );
+        },
+      }),
+      /021.*evidence excerpt count mismatch/,
+    );
+  });
+  test(`PR25 outer fenced evidence example does not duplicate live evidence ${marker}`, () => {
+    const result = run(compose(stale(21), {
+      [fileFor(21)]: (text) =>
+        text +
+        `\n${marker}md\n${firstEvidenceExample(text)}\n${marker.trim()}\n`,
+    }));
+    assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  });
+}
+test("PR25 live evidence after a fenced annotation remains validated", () => {
+  const setup = compose(stale(21), {
+    [fileFor(21)]: (text) => {
+      const example = firstEvidenceExample(text);
+      return text.replace(
+        example,
+        `${tick.repeat(4)}md\n<!-- evidence: fake.ts -->\n${
+          tick.repeat(3)
+        }text\nExample\n${tick.repeat(4)}\n\n${example}`,
+      );
+    },
+  });
+  const result = run(setup);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  invalid(
+    compose(setup, {
+      [fileFor(21)]: (text) =>
+        text.replace("node_modules/\ndeno.lock", "CHANGED/\ndeno.lock"),
+    }),
+    /021.*excerpt mismatch/,
+  );
+});
+test("PR25 unclosed outer fence cannot supply evidence through EOF", () => {
+  invalid(
+    compose(stale(21), {
+      [fileFor(21)]: (text) => {
+        const example = firstEvidenceExample(text);
+        return text.replace(example, "") +
+          `\n${tick.repeat(4)}md\n${example}\n`;
+      },
+    }),
+    /021.*evidence excerpt count mismatch/,
+  );
+});
+for (const marker of [tick.repeat(4), "~~~"]) {
+  test(`PR25 fenced scope list cannot replace live scope ${marker}`, () => {
+    invalid(
+      compose(stale(21), {
+        [fileFor(21)]: (text) =>
+          text.replace(
+            /(## Phạm vi và Git\n)([\s\S]*?)(\nNgoài phạm vi:)/,
+            `$1\n${marker}md\n$2\n${marker}\n$3`,
+          ),
+      }),
+      /021.*plan and manifest scope differ/,
+    );
+  });
+  test(`PR25 fenced scope bullets and terminators cannot change live scope ${marker}`, () => {
+    const result = run(compose(stale(21), {
+      [fileFor(21)]: (text) =>
+        text.replace(
+          "## Phạm vi và Git\n",
+          `## Phạm vi và Git\n\n${marker}md\n- ${tick}fake.ts${tick}\nNgoài phạm vi:\n${marker}\n`,
+        ),
+    }));
+    assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  });
+  test(`PR25 fenced scope heading before the live section is ignored ${marker}`, () => {
+    const result = run(compose(stale(21), {
+      [fileFor(21)]: (text) =>
+        text.replace(
+          "## Phạm vi và Git\n",
+          `${marker}md\n## Phạm vi và Git\n- ${tick}fake.ts${tick}\nNgoài phạm vi:\n${marker}\n\n## Phạm vi và Git\n`,
+        ),
+    }));
+    assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  });
+}
+test("PR25 fenced scope cannot hide live scope mismatch", () => {
+  invalid(
+    compose(stale(21), {
+      [fileFor(21)]: (text) =>
+        text.replace("- `.gitignore`\n", "") +
+        `\n${
+          tick.repeat(4)
+        }md\n## Phạm vi và Git\n- ${tick}.gitignore${tick}\nNgoài phạm vi:\n${
+          tick.repeat(4)
+        }\n`,
+    }),
+    /021.*plan and manifest scope differ/,
+  );
+});
+
 function editManifest(edit) {
   return (text) => {
     const entries = JSON.parse(text);
