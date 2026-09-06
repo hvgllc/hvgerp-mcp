@@ -376,7 +376,34 @@ Deno.test("stale input sequence rejects same-identity board even when fallback m
   assertEquals(f.controller.board, fresh);
 });
 
-Deno.test("overlapping host results sharing one captured seq cannot both apply", () => {
+Deno.test("wrong-scope host result must not consume the seq of the pending scope", () => {
+  const f = fixture(false);
+  // Hai lượt input KHÁC phạm vi dồn dập; nơi gọi chỉ giữ được seq mới nhất nên
+  // kết quả của lượt cũ cũng mang seq của lượt mới. Kết quả sai phạm vi bị bỏ
+  // qua, nhưng không được tiêu mất seq, nếu không kết quả thật của lượt đang
+  // chờ sẽ bị chặn nhầm và board kẹt ở dữ liệu cũ cho tới lượt hồi phục sau.
+  const boardB = structuredClone(boardFixture());
+  boardB.title = "Board B";
+  boardB.refreshArguments = { doctype: "Task", project: "B" };
+  const boardC = structuredClone(boardFixture());
+  boardC.title = "Board C";
+  boardC.refreshArguments = { doctype: "Task", project: "C" };
+  f.controller.receiveInput({
+    toolName: "erpnext_kanban_get_board",
+    arguments: boardB.refreshArguments,
+  });
+  f.controller.receiveInput({
+    toolName: "erpnext_kanban_get_board",
+    arguments: boardC.refreshArguments,
+  });
+  const sharedSeq = f.controller.inputSeq;
+  assertEquals(f.controller.receiveBoard(boardB, sharedSeq), false);
+  assertEquals(f.controller.board, null);
+  assertEquals(f.controller.receiveBoard(boardC, sharedSeq), true);
+  assertEquals(f.controller.board, boardC);
+});
+
+Deno.test("overlapping host results sharing one captured seq cannot both apply", async () => {
   const f = fixture(false);
   // Mô phỏng đúng giới hạn phía gọi (KanbanViewer.tsx): hai lượt input cùng
   // phạm vi dồn dập trước khi có kết quả nào về, nên cả hai kết quả tới sau
@@ -399,8 +426,17 @@ Deno.test("overlapping host results sharing one captured seq cannot both apply",
   assertEquals(f.controller.board, arrivedFirst);
   // Lượt thứ hai mang cùng seq với lượt đã áp dụng: bị coi là bản sao trễ
   // của lượt chồng lấn, bỏ qua âm thầm, giữ nguyên board đã áp dụng.
+  assertEquals(f.calls.length, 0);
   assertEquals(f.controller.receiveBoard(arrivedSecond, sharedSeq), false);
   assertEquals(f.controller.board, arrivedFirst);
+  // Không có cách nào biết bản nào thật sự mới hơn, nên phải xếp ngay một lượt
+  // đọc lại thay vì để board đứng yên ở dữ liệu có thể đã cũ tới nhịp sau.
+  assertEquals(f.calls.length, 1);
+  const revalidated = { ...boardFixture(), title: "Revalidated" };
+  f.calls[0].resolve(revalidated);
+  await f.calls[0].promise;
+  await Promise.resolve();
+  assertEquals(f.controller.board, revalidated);
 });
 
 for (const hidden of [false, true]) {

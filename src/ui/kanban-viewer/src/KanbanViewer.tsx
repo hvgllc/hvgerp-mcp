@@ -1319,7 +1319,10 @@ export function KanbanViewer() {
           )
         ) closeDetail();
       } catch (error) {
-        refreshController.failHost();
+        // Chỉ báo lỗi khi lượt hỏng này đúng là request đang chờ. Nếu một lượt
+        // host chồng lấn đã trả board mới xong trước đó, failHost không chuyển
+        // trạng thái và lỗi cũ không được phép hiện đè lên board đang dùng.
+        if (!refreshController.failHost()) return;
         setError(
           error instanceof Error
             ? error.message

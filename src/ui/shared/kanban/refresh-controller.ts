@@ -41,15 +41,13 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
   // Tăng ở mỗi lần host báo input mới, kể cả input trùng identity, để phân biệt
   // hai lần gọi host cùng tham số nhưng khác lượt (chống race kết quả cũ đè mới).
   let inputSeq = 0;
-  // Seq của lượt receiveBoard gần nhất đã được chấp nhận qua vòng kiểm tra seq
-  // (không tính lượt bị chặn ngay vì seq lệch inputSeq). Hai lượt host cùng
-  // phạm vi chồng lấn (input A rồi input B dồn dập trước khi có kết quả nào
-  // về) đều chỉ ghi nhận được seq mới nhất tại nơi gọi (không phân biệt được
-  // input A hay B do phía gọi dùng chung một ref, không có id đối chiếu từ
-  // SDK) nên cả hai kết quả sẽ mang cùng một seq. Nếu không chặn, kết quả về
-  // sau sẽ đè lên kết quả về trước dù nó có thể cũ hơn thật sự (last-write-
-  // wins không an toàn). Ghi nhận seq đã dùng để lượt thứ hai mang seq trùng
-  // bị coi là bản sao trễ và bị bỏ qua, giữ lại kết quả đã áp dụng trước đó.
+  // Seq của lượt receiveBoard gần nhất đã áp dụng được (đã qua cả kiểm tra seq
+  // lẫn kiểm tra phạm vi). Hai lượt host cùng phạm vi chồng lấn (input A rồi
+  // input B dồn dập trước khi có kết quả nào về) đều chỉ ghi nhận được seq mới
+  // nhất tại nơi gọi (không phân biệt được input A hay B do phía gọi dùng
+  // chung một ref, không có id đối chiếu từ SDK) nên cả hai kết quả sẽ mang
+  // cùng một seq. Nếu không chặn, kết quả về sau sẽ đè lên kết quả về trước dù
+  // nó có thể cũ hơn thật sự (last-write-wins không an toàn).
   let lastAcceptedSeq = 0;
   const mutations = new Set<symbol>();
   const detailQueues = new Map<string, Promise<void>>();
@@ -152,14 +150,17 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
   // Dùng chung cho failHost() và cho nhánh identity lệch trong receiveBoard:
   // nếu đã có lượt khác giải quyết xong (không còn chờ/hồi phục) thì không
   // làm gì; ngược lại chuyển sang hồi phục để lần request sau tự retry.
+  // Trả về true chỉ khi thật sự chuyển sang hồi phục, để nơi gọi biết lượt lỗi
+  // này có còn thuộc về request đang chờ hay đã bị một lượt khác giải quyết.
   function markHostFailed() {
-    if (!waitingForHost && !recoveringHost) return;
+    if (!waitingForHost && !recoveringHost) return false;
     waitingForHost = false;
     recoveringHost = true;
     pending = fallback !== null;
     force = mutationPending && pending;
     retryAt = force ? 0 : ports.now() + ports.minIntervalMs;
     if (force) void drain();
+    return true;
   }
   function endMutation(token: BoardMutationToken) {
     if (!mutations.delete(token.id)) return;
@@ -175,13 +176,8 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
       // seq là input đã ghi nhận lúc host báo input; nếu lệch nghĩa là kết quả
       // này thuộc một lượt host cũ hơn đã bị lượt sau (cùng phạm vi) đè lên.
       // Câu trả lời thật của lượt mới vẫn đang tới, không đụng vào trạng thái
-      // chờ/hồi phục, chỉ bỏ qua bản sao cũ này. Nếu seq khớp inputSeq nhưng
-      // trùng với seq của lượt receiveBoard đã chấp nhận trước đó, đây là bản
-      // sao trễ của một lượt host chồng lấn (xem giải thích ở lastAcceptedSeq).
-      if (seq !== undefined && (seq !== inputSeq || seq === lastAcceptedSeq)) {
-        return false;
-      }
-      if (seq !== undefined) lastAcceptedSeq = seq;
+      // chờ/hồi phục, chỉ bỏ qua bản sao cũ này.
+      if (seq !== undefined && seq !== inputSeq) return false;
       if (
         fallback &&
         kanbanRequestIdentity(null, fallback) !==
@@ -190,9 +186,24 @@ export function createBoardRefreshController(ports: BoardRefreshPorts) {
         // Host trả lời sai phạm vi input hiện tại: bỏ qua âm thầm, không hiện
         // lỗi cho user, nhưng vẫn đánh dấu hồi phục nếu còn đang chờ thật sự
         // (markHostFailed tự no-op nếu một lượt khác đã giải quyết xong rồi).
+        // Kiểm phạm vi phải chạy TRƯỚC khi ghi nhận seq, nếu không một kết quả
+        // sai phạm vi sẽ tiêu mất seq của lượt đúng và chặn luôn kết quả thật.
         markHostFailed();
         return false;
       }
+      if (seq !== undefined && seq === lastAcceptedSeq) {
+        // Đúng phạm vi nhưng trùng seq với lượt đã áp dụng: hai lượt host chồng
+        // lấn cùng phạm vi chỉ ghi nhận được một seq chung ở nơi gọi, nên không
+        // có cách nào biết bản nào mới hơn. Giữ bản đã áp dụng thay vì để bản
+        // này đè lên, đồng thời xếp một lượt đọc lại để board không kẹt ở dữ
+        // liệu có thể đã cũ cho tới nhịp refresh sau.
+        pending = true;
+        force = true;
+        retryAt = 0;
+        void drain();
+        return false;
+      }
+      if (seq !== undefined) lastAcceptedSeq = seq;
       const changed = !board || kanbanRequestIdentity(
             board,
             resolveKanbanRefreshRequest(board, null)!,

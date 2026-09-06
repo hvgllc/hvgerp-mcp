@@ -650,8 +650,34 @@ test("component overlapping same-scope host results cannot both apply, only the 
   assert.equal(h.render().state.board.title, "Local board A first");
   // Kết quả thứ hai mang cùng seq với kết quả đã áp dụng: bị coi là bản sao
   // trễ của lượt chồng lấn, bỏ qua âm thầm, giữ nguyên board đã có.
+  assert.equal(h.calls.length, 0);
   h.result(payload(second));
   assert.equal(h.render().state.board.title, "Local board A first");
+  // Không biết bản nào mới hơn nên component phải tự đọc lại ngay, thay vì
+  // hiển thị dữ liệu có thể đã cũ cho tới nhịp refresh theo interval sau.
+  assert.equal(h.calls.length, 1);
+  h.calls[0].resolve(
+    payload({ ...h.fixtures.boardFixture(), title: "Local board A fresh" }),
+  );
+  await tick();
+  assert.equal(h.render().state.board.title, "Local board A fresh");
+  assert.equal(h.render().state.error, null);
+});
+
+test("component obsolete host failure does not surface after a newer result settled", () => {
+  const h = harness();
+  const b = h.fixtures.boardFixture("B");
+  // Hai lượt host chồng lấn khác phạm vi; lượt B trả board hợp lệ trước và
+  // được nhận, nên request đang chờ đã kết thúc.
+  h.input(h.fixtures.boardFixture().refreshArguments);
+  h.input(b.refreshArguments);
+  h.result(payload(b));
+  assert.equal(h.render().state.board.title, "Local board B");
+  // Lượt cũ mới lỗi sau đó: failHost không còn trạng thái nào để chuyển, nên
+  // lỗi đã lỗi thời này không được phép hiện đè lên board vừa nhận.
+  h.result({ isError: true, ...payload({ message: "Obsolete failure" }) });
+  assert.equal(h.render().state.error, null);
+  assert.equal(h.render().state.board.title, "Local board B");
 });
 
 test("component requestMove reports rejection so callers keep the detail open", () => {
