@@ -267,11 +267,26 @@ const htmlTagAttributes = new RegExp(
     "/?>",
   "g",
 );
-const htmlLinkAttribute = new RegExp(
-  "\\b(?:href|src)" + htmlOptionalSpace + "=" + htmlOptionalSpace +
-    "(?:\"([^\"]*)\"|'([^']*)'|([^ \\t\\r\\n\"'=<>`]+))",
-  "gi",
+// Một thuộc tính của thẻ mở, quét tuần tự từ trái sang phải. Dò thẳng tên
+// thuộc tính bằng regex thì chuỗi trông như thuộc tính nằm bên trong giá trị
+// của thuộc tính khác cũng trúng, và một <span title="href='missing.md'"> hoàn
+// toàn vô hại làm gate báo link hỏng. Khớp cả cặp tên và giá trị thì giá trị đặt
+// trong nháy bị nuốt trọn cùng thuộc tính chứa nó nên không còn tự đứng ra.
+const htmlAttributePair = new RegExp(
+  "([A-Za-z_:][A-Za-z0-9_.:-]*)(?:" + htmlOptionalSpace + "=" +
+    htmlOptionalSpace + "(?:\"([^\"]*)\"|'([^']*)'|([^ \\t\\r\\n\"'=<>`]+)))?",
+  "g",
 );
+function tagAttributes(text) {
+  const pairs = [];
+  htmlAttributePair.lastIndex = 0;
+  let match;
+  while ((match = htmlAttributePair.exec(text))) {
+    const value = match[2] ?? match[3] ?? match[4];
+    if (value !== undefined) pairs.push([match[1].toLowerCase(), value]);
+  }
+  return pairs;
+}
 // Nội dung của script, style và textarea là văn bản thô: CommonMark không đọc
 // markup bên trong, nên một chuỗi JS trông như thẻ không phải link sống và đem
 // href của nó đi phân giải sẽ báo hỏng một tài liệu đúng. Giữ nguyên thẻ mở để
@@ -290,6 +305,14 @@ const rawTextOrComment = new RegExp(
   "gi",
 );
 function outsideRawTextAndComments(body) {
+  // Backslash chỉ vô hiệu hóa ký tự trong văn bản Markdown. Bên trong một khối
+  // HTML thô nó là ký tự thường của HTML, nên "\<!--" ở đó vẫn mở một comment
+  // thật và phần thân comment không render. Hỏi luật Markdown ở mọi vị trí thì
+  // thân comment đó ở lại trước mắt đường thu link và một tài liệu đúng bị báo
+  // hỏng vì một href đã bị chú thích. Mặt nạ giữ nguyên offset nên hỏi được
+  // theo vị trí, và chỉ dựng khi thật sự gặp một dấu mở có backslash đứng
+  // trước, vốn hiếm.
+  let htmlBlockMask;
   let output = "", cursor = 0, match;
   rawTextOrComment.lastIndex = 0;
   while ((match = rawTextOrComment.exec(body))) {
@@ -297,8 +320,11 @@ function outsideRawTextAndComments(body) {
     // nó để một token thật đứng sau vẫn được nhận, cùng cách outsideHtmlComments
     // xử lý "\<!--".
     if (markdownEscaped(body, match.index)) {
-      rawTextOrComment.lastIndex = match.index + 1;
-      continue;
+      htmlBlockMask ??= outsideHtmlBlocks(body, true);
+      if (htmlBlockMask[match.index] === body[match.index]) {
+        rawTextOrComment.lastIndex = match.index + 1;
+        continue;
+      }
     }
     // Comment xóa cả cụm; raw text giữ nguyên thẻ mở để src của chính nó vẫn bị
     // kiểm và chỉ xóa phần thân. Cả hai thay bằng khoảng trắng để các đường quét
@@ -537,8 +563,12 @@ function structuralSection(body, heading) {
 // Giữa destination và title, chuẩn cho phép khoảng trắng gồm tối đa một lần
 // xuống dòng; chỉ nhận space và tab thì một link có title đặt ở dòng dưới không
 // khớp mẫu, cả cụm bị đem đi phân giải như một đường dẫn và bị báo hỏng.
+// Title chứa được chính dấu bao quanh nó khi dấu đó được escape, nên mẫu phải
+// nuốt cặp backslash trước khi xét dấu đóng. Dừng ở dấu nháy đã escape thì cả
+// destination lẫn title bị gộp làm một đường dẫn và một link đúng chuẩn tới
+// file có thật bị báo hỏng.
 const linkDestination =
-  /^(?:<([^<>]*)>|([^\s<>]+))(?:(?:[ \t]+|[ \t]*\r?\n[ \t]*)(?:"[^"]*"|'[^']*'|\([^)]*\)))?$/;
+  /^(?:<([^<>]*)>|([^\s<>]+))(?:(?:[ \t]+|[ \t]*\r?\n[ \t]*)(?:"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|\((?:\\[\s\S]|[^()\\])*\)))?$/;
 // Ký tự ở vị trí position chỉ bị escape khi số backslash liền ngay trước nó là
 // số lẻ. Chuỗi chẵn như \\[ là một backslash literal rồi mới tới [ còn hiệu
 // lực, nên kiểm một ký tự đơn text[position - 1] === "\\" sẽ bỏ sót link thật.
@@ -1800,11 +1830,22 @@ const headingSlug = (text) =>
 // "probe-amp-code". Giải mã cả phần đó thì slug thành "probe--code" và mọi link
 // tới heading có entity trong backtick bị báo hỏng, nên chỉ phần ngoài span mới
 // đi qua decode, gỡ nhãn link, gỡ thẻ và gỡ escape.
+// Autolink không phải thẻ: "## See <https://example.com>" render ra một link mà
+// văn bản hiển thị chính là URL, nên id GitHub sinh ra là "see-httpsexamplecom".
+// Gỡ nó như gỡ thẻ thì slug chỉ còn "see-" và mọi link tới heading có autolink
+// bị báo hỏng, nên giữ lại phần trong dấu ngoặc trước khi gỡ thẻ thật.
+const autolinkText = new RegExp(
+  "<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^ \\t\\r\\n<>]*" +
+    "|[^ \\t\\r\\n<>@]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?" +
+    "(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)>",
+  "g",
+);
 const headingText = (raw) =>
   raw.split(/(`+[^`]*`+)/).map((part, index) =>
     index % 2 ? part.replace(/^`+|`+$/g, "") : decodeReferences(
       part.replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
         .replace(/!?\[([^\]]*)\]\[[^\]]*\]/g, "$1")
+        .replace(autolinkText, "$1")
         .replace(/<[^>]*>/g, ""),
     ).replace(/\\([!-/:-@[-`{-~])/g, "$1")
   ).join("");
@@ -1813,7 +1854,13 @@ const headingText = (raw) =>
 // GitHub. Đọc nguyên dòng thì heading đó vắng mặt trong tập anchor và một link
 // đúng bị báo hỏng. Gỡ lặp vì container lồng được; một thematic break kiểu
 // "- - -" gỡ hết thành dòng rỗng nên không hóa thành setext underline giả.
-const containerPrefix = /^ {0,3}(?:>[ \t]?|(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$))/;
+// Nhánh khoảng trắng sau list marker chép đúng luật thụt của CommonMark: từ một
+// tới bốn khoảng trắng thì nội dung bắt đầu ngay sau chúng, còn từ năm trở lên
+// thì chỉ một khoảng trắng thuộc về marker và phần dư là indented code. Gỡ hết
+// khoảng trắng sẽ biến "-     ## X" thành heading giả và cho một link tới anchor
+// không tồn tại đi qua cổng.
+const containerPrefix =
+  /^ {0,3}(?:>[ \t]?|(?:[-*+]|\d{1,9}[.)])(?:[ \t]{1,4}(?![ \t])|[ \t](?=[ \t])|$))/;
 function outsideContainers(line) {
   let text = line, previous;
   do {
@@ -1835,7 +1882,13 @@ function documentAnchors(path) {
     return anchors;
   }
   const seen = new Map();
-  const lines = structuralMarkdown(body).split("\n").map(outsideContainers);
+  const rawLines = structuralMarkdown(body).split("\n");
+  const lines = rawLines.map(outsideContainers);
+  // Tiền tố container của từng dòng, giữ lại để nhánh setext biết hai dòng có
+  // cùng một khối hay không.
+  const prefixes = rawLines.map((line, index) =>
+    line.slice(0, line.length - lines[index].length)
+  );
   for (let index = 0; index < lines.length; index++) {
     const atx = lines[index].match(/^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*\r?$/);
     let text;
@@ -1843,9 +1896,16 @@ function documentAnchors(path) {
     // Setext: một dòng văn bản không rỗng theo sau bởi hàng chỉ có "=" hoặc
     // "-". Hàng toàn dấu gạch sau một đoạn văn là heading chứ không phải
     // thematic break, đúng thứ tự ưu tiên của CommonMark.
+    // Hai dòng phải thuộc cùng một khối, nên tiền tố container của chúng phải
+    // giống nhau. Đọc trên dòng đã gỡ tiền tố thì "- Ghost list item" theo sau
+    // bởi "---" trông như setext, trong khi chuẩn render ra một list rồi một
+    // thematic break; anchor tưởng tượng đó cho link hỏng đi qua cổng. So sánh
+    // nguyên văn nên một underline thụt vào trong cùng list item bị bỏ qua thay
+    // vì nhận nhầm, tức lệch về phía báo hỏng chứ không phía bỏ lọt.
     else if (
       /^ {0,3}(?:=+|-+)[ \t]*\r?$/.test(lines[index]) && index > 0 &&
-      lines[index - 1].trim() && !/^ {0,3}#/.test(lines[index - 1])
+      lines[index - 1].trim() && !/^ {0,3}#/.test(lines[index - 1]) &&
+      prefixes[index] === prefixes[index - 1]
     ) text = lines[index - 1].trim();
     else continue;
     const slug = headingSlug(headingText(text));
@@ -1876,17 +1936,15 @@ function documentAnchors(path) {
   // là tên trường, không phải đích cuộn. Nhận cả hai ở mọi thẻ thì một link tới
   // "#ghost-name" của <div name="ghost-name"> đi qua cổng trong khi bấm vào nó
   // không tới đâu cả.
-  const attribute = (name) =>
-    new RegExp(
-      "\\b(?:" + name + ")" + htmlOptionalSpace + "=" + htmlOptionalSpace +
-        "(?:\"([^\"]*)\"|'([^']*)'|([^ \\t\\r\\n\"'=<>`]+))",
-      "gi",
-    );
+  // Giá trị thuộc tính đi qua bộ giải mã character reference y như văn bản, nên
+  // id thật của <a id="probe&amp;anchor"> là "probe&anchor" và link đúng tới nó
+  // viết "#probe%26anchor". Ghi lại nguyên văn cách viết thì id thật vắng mặt
+  // trong tập anchor còn một chuỗi không tồn tại lại có mặt.
   for (const tag of renderedHtml.matchAll(htmlTagAttributes)) {
-    const names = tag[1].toLowerCase() === "a" ? "id|name" : "id";
-    for (const match of tag[2].matchAll(attribute(names))) {
-      const value = match[1] ?? match[2] ?? match[3];
-      if (value) anchors.add(value);
+    const anchorTag = tag[1].toLowerCase() === "a";
+    for (const [name, value] of tagAttributes(tag[2])) {
+      if (name !== "id" && !(anchorTag && name === "name")) continue;
+      if (value) anchors.add(decodeReferences(value));
     }
   }
   anchorCache.set(path, anchors);
@@ -1913,9 +1971,8 @@ for (const filePath of planFiles(planRoot)) {
       outsideRawTextAndComments(outsideInlineCode(outsideBlockCode(section)))
     ).join("\n\n");
     for (const tag of rawHtml.matchAll(htmlTagAttributes)) {
-      for (const attribute of tag[2].matchAll(htmlLinkAttribute)) {
-        const value = attribute[1] ?? attribute[2] ?? attribute[3];
-        if (value) targets.push(value);
+      for (const [name, value] of tagAttributes(tag[2])) {
+        if ((name === "href" || name === "src") && value) targets.push(value);
       }
     }
     // Kiểm mọi definition, kể cả chưa dùng; không phụ thuộc kiểu full/collapsed/shortcut.
@@ -1976,7 +2033,17 @@ for (const filePath of planFiles(planRoot)) {
       // Không nhận dạng thì isAbsolute() coi nó là đường dẫn tuyệt đối POSIX và
       // một link đúng chuẩn bị báo unsafe. Đòi authority không rỗng, nên
       // "///etc/passwd" vẫn rơi xuống nhánh unsafe bên dưới.
-      if (/^(?:[a-z][a-z0-9+.-]+:|\/\/[^\/])/i.test(decoded)) continue;
+      // Backslash escape cũng được gỡ trước khi dựng URL, nên
+      // "https\://example.com" render ra một địa chỉ ngoài đủ scheme. Hỏi câu
+      // này trên chuỗi còn backslash thì nó rơi xuống nhánh đường dẫn cục bộ và
+      // một link đúng chuẩn bị báo hỏng. Ranh giới fragment và query bên dưới
+      // vẫn đọc trên bản còn escape, vì ở đó chính dấu escape mới phân biệt
+      // được ký tự thật với vách ngăn.
+      if (
+        /^(?:[a-z][a-z0-9+.-]+:|\/\/[^\/])/i.test(
+          decoded.replace(/\\([!-/:-@[-`{-~])/g, "$1"),
+        )
+      ) continue;
       // Destination là URL: bỏ query và fragment rồi giải mã percent-encoding
       // trước khi đụng tới filesystem. Đem chuỗi thô đi phân giải thì một link
       // đúng chuẩn tới "link target.md" viết là "link%20target.md" bị báo hỏng.

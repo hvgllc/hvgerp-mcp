@@ -1847,3 +1847,84 @@ của vòng 19 đổi từ `Đạt` sang `link chưa được Git theo dõi`. Đ
 trên đĩa mà không thêm vào chỉ mục. Thông báo mới vẫn chứng minh đúng điều ca đó
 đo: đường dẫn phải giải mã ra `©` mới đi qua được kiểm tồn tại và kiểm hoa
 thường, rồi mới vướng kiểm chỉ mục; giải mã sai thì lỗi đã là `link hỏng`.
+
+## Codex vòng tiếp: review 5125941162
+
+Review đọc đúng head `e1ddf95596`, nêu tám finding: một P1 về cách đưa nhánh vào
+main và bảy P2 trên `plans/validate-plans.mjs`. Mẻ dò đối kháng chạy trước khi
+review về lộ thêm một lỗi cùng họ, nên vòng này khép tám sửa code.
+
+Cả tám đều tái hiện bằng chính validator trước khi động vào code, và sau khi sửa
+đều đảo chiều. Bốn ca đối chứng phải giữ xanh vẫn xanh: thẻ thật trong heading
+vẫn bị gỡ, setext trong blockquote vẫn là heading, comment thật trong khối HTML
+vẫn che link, và ngoài khối HTML thì backslash vẫn vô hiệu hóa dấu mở comment.
+
+- **Provenance phải còn trong ancestry của commit được đưa vào main** (P1).
+  Finding đo đúng thứ đã ghi: một commit chỉ mang cây kết quả làm mất mọi
+  revision đã ghim, và validator không đọc nổi `definition_commit` lẫn
+  `reviewed_commit` trong một clone sạch. Không có gì để sửa trong code; ràng
+  buộc nằm ở `plans/AGENTS.md` dòng 30-35 và `plans/README.md` dòng 137, và
+  nhánh phải vào main bằng merge commit chứ không squash hay rebase.
+- **Nội dung thụt năm khoảng trắng sau list marker bị nhận là heading** (tự phát
+  hiện). `outsideContainers` gỡ sạch khoảng trắng sau marker, nên
+  `-     ## Indented probe` hóa thành ATX heading trong khi CommonMark render nó
+  là indented code. Anchor tưởng tượng đó cho một link hỏng đi qua cổng. Nhánh
+  khoảng trắng của `containerPrefix` giờ chép đúng luật thụt: một tới bốn khoảng
+  trắng thì nội dung bắt đầu ngay sau chúng, từ năm trở lên thì chỉ một khoảng
+  trắng thuộc về marker và phần dư là code.
+- **Autolink trong heading bị gỡ như thẻ.** `## See <https://example.com>`
+  render ra link mà văn bản hiển thị chính là URL, nên id là
+  `see-httpsexamplecom`; gỡ cả cụm để lại `see-`. `headingText` giờ trả autolink
+  URI và thư điện tử về văn bản hiển thị trước khi gỡ thẻ thật.
+- **Character reference trong `id` và `name` không được giải mã.** Trình duyệt
+  đọc id của `<a id="probe&amp;anchor">` là `probe&anchor`, và phía link đã
+  percent-decode fragment từ trước. Ghi nguyên văn cách viết thì id thật vắng
+  mặt còn một chuỗi không tồn tại lại có mặt; giá trị giờ đi qua
+  `decodeReferences`.
+- **Thuộc tính được dò bằng chuỗi con thay vì tách token.**
+  `<span title="href='missing.md'">` làm gate báo link hỏng vì mẫu `href|src`
+  khớp vào bên trong giá trị của thuộc tính khác. `tagAttributes()` quét cặp tên
+  và giá trị từ trái sang phải, nên giá trị trong nháy bị nuốt cùng thuộc tính
+  sở hữu nó. Cùng hàm này thay luôn đường dò `id`/`name` vốn mắc y hệt.
+- **Title của link không nhận dấu bao quanh đã escape.**
+  `[readme](../../README.md "a \"quoted\" title")` bị đem cả destination lẫn
+  title đi phân giải như một đường dẫn. Ba dạng title trong `linkDestination`
+  giờ nuốt cặp backslash trước khi xét dấu đóng.
+- **Scheme được phân loại trước khi gỡ backslash.**
+  `[external](https\://example.com/path)` render ra địa chỉ ngoài đủ scheme
+  nhưng rơi xuống nhánh đường dẫn cục bộ. Phân loại giờ chạy trên bản đã gỡ
+  escape, còn ranh giới fragment và query vẫn đọc bản còn escape, vì ở đó chính
+  dấu escape phân biệt ký tự thật với vách ngăn.
+- **Setext được suy ra qua ranh giới container.** `- Ghost list item` theo sau
+  bởi `---` render ra một list rồi một thematic break, nhưng tiền tố container
+  bị xóa trước phép kiểm kề nhau nên hai dòng trông như một đoạn và underline
+  của nó. `documentAnchors` giữ lại tiền tố từng dòng và chỉ nhận setext khi hai
+  dòng cùng tiền tố. Một underline thụt sâu hơn trong cùng list item bị bỏ qua
+  thay vì nhận nhầm, tức lệch về phía báo hỏng chứ không phía bỏ lọt.
+- **Backslash được coi là escape cả bên trong khối HTML thô.** Trong một khối
+  HTML, backslash là ký tự thường nên `\<!--` vẫn mở comment thật và thân
+  comment không render. Hỏi luật Markdown ở mọi vị trí thì một href đã bị chú
+  thích ở lại trước mắt đường thu link. `outsideRawTextAndComments` giờ tra một
+  mặt nạ khối HTML giữ nguyên offset, và chỉ dựng mặt nạ khi thật sự gặp dấu mở
+  có backslash đứng trước.
+
+| Cổng                                   | Kết quả            |
+| -------------------------------------- | ------------------ |
+| `node plans/validate-plans.mjs`        | Đạt: 25 kế hoạch   |
+| `deno fmt --check`                     | 315 file           |
+| `deno lint`                            | 160 file           |
+| `node --test plans/test-validator.mjs` | 529 pass           |
+| `git diff --check`                     | exit 0             |
+| `node --test plans/test-history.mjs`   | 5 pass, sau commit |
+
+Suite thêm 16 test, lên 529.
+
+Chạy lại toàn bộ mẻ dò guard của các vòng 14, 14b, 14c, 15, 15b, 16, 17, 18,
+18f, 18g, 19, 21, 22, 23 và 24 trên một worktree tách ở `e1ddf95` rồi so từng
+dòng với chính chúng chạy trên cây đã sửa. Mọi ca giữ nguyên kết quả; khác biệt
+duy nhất là thời gian chạy in kèm một test của mẻ 18f.
+
+Hai phía phải chạy tuần tự chứ không song song, và chín mẻ dò cũ vốn ghim cứng
+đường dẫn cây làm việc đã được sửa để nhận tham số. Chạy chồng thì hai tiến
+trình cùng ghi rồi cùng khôi phục một tập tin, và bảng so ra hàng loạt khác biệt
+giả không thuộc về sửa nào cả.

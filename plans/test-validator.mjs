@@ -4138,6 +4138,146 @@ test("a heading inside a list item still creates its anchor", () => {
   assert.equal(result.exitCode, 0, result.messages.join("\n"));
 });
 
+test("content indented five spaces after a marker is code, not a heading", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      "\n-     ## Indented anchor probe\n\n[broken](#indented-anchor-probe)\n",
+  }, /anchor hỏng #indented-anchor-probe/);
+});
+
+test("content indented four spaces after a marker is still a heading", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n-    ## Spaced anchor probe\n\n[ok](#spaced-anchor-probe)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("content indented five spaces after an ordered marker is code", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      "\n1.     ## Ordered anchor probe\n\n[broken](#ordered-anchor-probe)\n",
+  }, /anchor hỏng #ordered-anchor-probe/);
+});
+
+test("a heading nested in two list markers still creates its anchor", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      "\n- - ## Nested list anchor probe\n\n[ok](#nested-list-anchor-probe)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a list item followed by a thematic break is not a Setext heading", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n- Ghost list item\n---\n\n[broken](#ghost-list-item)\n",
+  }, /anchor hỏng #ghost-list-item/);
+});
+
+test("a Setext heading inside a blockquote still creates its anchor", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n> Quoted setext probe\n> ---\n\n[ok](#quoted-setext-probe)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an autolink in a heading keeps its displayed URL", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## See <https://example.com>\n\n[ok](#see-httpsexamplecom)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an email autolink in a heading keeps its displayed address", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## Mail <a@example.com>\n\n[ok](#mail-aexamplecom)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a real tag in a heading is still stripped from the anchor", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## Tag <em>probe</em>\n\n[ok](#tag-probe)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("character references in an id attribute are decoded", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<a id="probe&amp;anchor"></a>\n\n[ok](#probe%26anchor)\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an href inside another attribute value is not a live link", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n<span title=\"href='missing-nested-attribute.md'\">p</span>\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a link title may contain escaped quotes", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n[ok](../../README.md "a \\"quoted\\" title")\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a parenthesized link title may contain escaped parentheses", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[ok](../../README.md (a \\(paren\\) title))\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an escaped scheme is still classified as an external address", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[ok](https\\://example.com/path)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a backslash does not escape a comment opener inside an HTML block", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<div>\n\\<!-- <a href="missing-in-html.md">hidden</a> -->\n' +
+      "</div>\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a backslash still escapes a comment opener outside an HTML block", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\nvăn xuôi \\<!-- <a href="missing-live.md">shown</a> -->\n',
+  }, /link hỏng missing-live\.md/);
+});
+
 test("a spaced thematic break does not turn text into a heading", () => {
   invalid({
     "plans/evidence/backlog-review.md": (text) =>
