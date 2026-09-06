@@ -47,7 +47,7 @@ export const SERVER_VERSION = "3.4.0";
 <!-- evidence: .github/workflows/publish.yml -->
 
 <!-- deno-fmt-ignore -->
-```text
+```yaml
   release:
     types: [published]
 ```

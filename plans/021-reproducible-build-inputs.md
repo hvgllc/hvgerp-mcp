@@ -34,7 +34,7 @@ dist-node/
 <!-- evidence: scripts/build-node.sh -->
 
 <!-- deno-fmt-ignore -->
-```text
+```json
   "devDependencies": {
     "esbuild": "^0.25.12",
     "tsx": "^4.20.6",
@@ -47,7 +47,7 @@ dist-node/
 <!-- evidence: scripts/build-node.sh -->
 
 <!-- deno-fmt-ignore -->
-```text
+```bash
 pushd "$DIST_DIR" >/dev/null
 npm install --no-fund --no-audit
 ```

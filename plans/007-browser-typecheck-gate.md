@@ -24,7 +24,7 @@ viewer mà không che lỗi hoặc kiểm nhầm môi trường.
 <!-- evidence: src/ui/tsconfig.json -->
 
 <!-- deno-fmt-ignore -->
-```text
+```json
   "include": ["**/*.ts", "**/*.tsx"],
   "exclude": ["node_modules", "dist"]
 ```
@@ -34,7 +34,7 @@ viewer mà không che lỗi hoặc kiểm nhầm môi trường.
 <!-- evidence: deno.json -->
 
 <!-- deno-fmt-ignore -->
-```text
+```json
     "check": "deno check mod.ts server.ts",
 ```
 
