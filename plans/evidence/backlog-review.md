@@ -1473,6 +1473,70 @@ definition, chưa gọi source này đã được duyệt. Cần parent xử lý
 workflow review definition hợp lệ, sau đó chạy lại full validator/self/history.
 Không network, Browser, build, push, publish hoặc sửa approval trong lượt này.
 
+## Sửa P2 3942538497 và 3942538499: không lấy evidence hoặc scope từ fenced example
+
+Ngày 2026-09-06, base đúng HEAD PR25 `c897f0fbce5008059f0c5832be274b87a2cbeefa`.
+Source mới `1d21220cfd30d175502a0d0f8be4acc7683549eb`, tree
+`4fa162f99cd4422582e1689f4aced941853a8621`. Chỉ sửa validator, selftests và
+report này; không thay scope/definition/manifest/approval, AGENTS, history
+helper hoặc source ứng dụng.
+
+Parser trước quét evidence bằng regex trên body gốc, nên annotation và snippet
+chỉ nằm trong outer fenced example vẫn có thể thay evidence thật hoặc tạo
+duplicate. Scope cũng được tách từ body gốc: heading, bullet và chuỗi kết thúc
+trong fenced example có thể bị hiểu là scope sống.
+
+Bản sửa cho lớp lọc fence giữ offset khi cần: thay các ký tự trong vùng code
+bằng khoảng trắng cùng độ dài, giữ newline. Chỉ annotation ngoài fence mới được
+dùng để mở evidence block. Sau khi chọn annotation, regex snippet vẫn đọc body
+gốc tại đúng offset; path/code/lang và citation liền trước vẫn được kiểm nguyên
+văn. Không làm sạch snippet để che drift. Mỗi annotation được xét riêng, không
+để một annotation giả trong code kéo regex qua evidence thật phía sau.
+
+Scope dùng cùng structural body đã loại fenced/indented code như kiểm heading.
+Heading giả, bullet giả và `Ngoài phạm vi:` trong code không còn thay đổi scope
+sống. Ngữ nghĩa marker fence, closing length/type và fence chưa đóng tới EOF giữ
+nguyên; không mở phạm vi thành parser CommonMark đầy đủ.
+
+### Red/green và bảo toàn kiểm thử
+
+Trước sửa production helper, chạy:
+
+```sh
+node --test --test-name-pattern='^PR25 (outer fence|outer fenced|live evidence after|unclosed outer|fenced scope)' plans/test-validator.mjs
+```
+
+Kết quả **1 pass, 16 fail, 0 cancelled, 0 skipped**, exit 1. Có cả lỗi nhận
+evidence/scope giả và lỗi báo duplicate/scope mismatch cho example hợp lệ. Ca
+đối chứng scope thật thiếu vẫn bị từ chối. Đây là assertion nghiệp vụ, không
+phải exception hoặc lỗi Git. Sau sửa cùng 17 ca đạt 17/17.
+
+Các fixture gồm outer backtick dài 4/5, tilde và indentation 3 space, fence chưa
+đóng, annotation giả trước evidence thật, sửa snippet thật sau example, scope
+list chỉ có trong fence, heading giả trước section thật, terminator giả trong
+code và scope mismatch thật. Node assertion xác nhận toàn bộ 361 selftests trước
+lượt này còn nguyên byte sau khi bỏ duy nhất đoạn test mới.
+
+| Lệnh                                                                                             | Kết quả                                  |
+| ------------------------------------------------------------------------------------------------ | ---------------------------------------- |
+| `node --test plans/test-validator.mjs`                                                           | 378 pass, 0 fail, 0 cancelled, 0 skipped |
+| `node --test plans/test-history.mjs` sau source commit sạch                                      | 4 pass, 0 fail, 0 cancelled, 0 skipped   |
+| `node plans/validate-plans.mjs`                                                                  | exit 0, đủ 25 kế hoạch                   |
+| `deno fmt --no-config --check plans/`                                                            | exit 0, 75 file                          |
+| `deno lint --no-config plans/validate-plans.mjs plans/test-validator.mjs plans/test-history.mjs` | exit 0, 3 file                           |
+| `git diff --check`                                                                               | exit 0                                   |
+
+Tổng 382 self/history tests. Kiểm `fc39` chỉ là chẩn đoán Git local riêng:
+`git rev-parse --verify fc39^{commit}` exit 128 vì object là tree;
+`git rev-parse --disambiguate=fc39` trả duy nhất
+`fc3999c2ee85b667adbed01db7393063c5548dd2`, `git cat-file -t fc39` trả `tree`.
+Chưa có full reviewed SHA của P1 để kiểm ancestry đúng đối tượng; không dùng
+prefix này làm bằng chứng nhánh remote mất ref và không nới guard lịch sử.
+
+Không network, Browser, build, push hoặc sửa approval. Gate là consistency
+offline, không chứng thực danh tính reviewer. Source/report còn chờ review độc
+lập; executor không ghi APPROVE.
+
 ### Gate sau khi parent đồng bộ definition và fence
 
 Parent cung cấp snapshot `ce0899d7cbeeeebd72cedf5cb56926c432fae52d`, gồm commit
