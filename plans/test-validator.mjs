@@ -64,7 +64,9 @@ const kindOf = (entry) => typeof entry === "string" ? entry : entry?.kind;
 function run(replacements = {}, hidden = [], filesystem = {}, gitOutput) {
   const messages = [], historicalReads = [], existenceChecks = [];
   let gitSubprocesses = 0;
-  const state = { exitCode: 0 };
+  // argv của một lần chạy thường: không cờ nào, nên chế độ liệt kê provenance
+  // không bật và các test đọc messages vẫn chỉ thấy output của gate.
+  const state = { exitCode: 0, argv: [] };
   let thrown;
   try {
     runInNewContext(source, {
@@ -3582,4 +3584,61 @@ test("a scheme-relative destination is left to the browser", () => {
   });
   assert.equal(result.thrown, undefined);
   assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+// Vòng 19.
+test("a Latin-1 character reference in a destination is decoded", () => {
+  const result = run(
+    {
+      "plans/evidence/backlog-review.md": (text) =>
+        text + "\n[entity](link&copy;target.md)\n",
+    },
+    [],
+    { "plans/evidence/link©target.md": "file" },
+  );
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a destination in a multi-line HTML tag is checked", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<a\n  href="missing-multiline-html.md">missing</a>\n',
+  }, /link hỏng missing-multiline-html\.md/);
+});
+
+test("a blank line ends an HTML tag before its attributes", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<a\n\nhref="missing-blank-line-html.md">x</a>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a string that looks like a tag inside a script is not a link", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n<script>\nconst example = '<a href=\"missing-script-literal" +
+      ".md\">';\n</script>\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("the source of a script element itself is checked", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<script src="missing-script-source.js"></script>\n',
+  }, /link hỏng missing-script-source\.js/);
+});
+
+test("a drafting reference must resolve without any new files", () => {
+  invalid({
+    [fileFor(22)]: (text) =>
+      text.replace(
+        /^- Mốc soạn: `[0-9a-f]{7,40}`/m,
+        "- Mốc soạn: `deadbee`",
+      ),
+  }, /Cannot read Git commit tree: deadbee/);
 });

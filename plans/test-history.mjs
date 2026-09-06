@@ -64,37 +64,25 @@ function clone(source, destination) {
     destination,
   ]);
 }
-function validate(directory) {
-  return run(directory, process.execPath, ["plans/validate-plans.mjs"]);
+function validate(directory, ...args) {
+  return run(directory, process.execPath, [
+    "plans/validate-plans.mjs",
+    ...args,
+  ]);
 }
-// Trạng thái thực thi phải đọc trên Markdown cấu trúc, giống statusOf trong
-// validator. Tìm chuỗi thô trên cả body thì một dòng metadata mẫu viết trong
-// fence hoặc trong HTML comment cũng được tính là khai báo, và gate này đòi
-// artifact provenance của một kế hoạch chưa hề DONE. Bỏ hai lớp không render
-// rồi khớp đúng dòng metadata canonical là đủ cho khác biệt đó.
-function executionStatus(body) {
-  const structural = body
-    .replace(/<!--[\s\S]*?(?:-->|$)/g, "")
-    .split("\n")
-    .reduce(({ lines, fence }, line) => {
-      const marker = line.match(/^ {0,3}(`{3,}|~{3,})/);
-      if (fence) {
-        if (
-          marker && marker[1][0] === fence[0] &&
-          marker[1].length >= fence.length
-        ) {
-          return { lines, fence: undefined };
-        }
-        return { lines, fence };
-      }
-      if (marker) return { lines, fence: marker[1] };
-      return { lines: lines.concat(line), fence };
-    }, { lines: [], fence: undefined })
-    .lines
-    .join("\n");
-  return structural.match(
-    /^- Mốc soạn: `[0-9a-f]{7,40}`, \d{4}-\d{2}-\d{2}\. Trạng thái thực thi: `(TODO|IN_PROGRESS|BLOCKED|DONE|STALE)`\.$/m,
-  )?.[1];
+// Tập commit mà validator vừa phân giải, đọc thẳng từ chính lần chạy đó. Gate
+// này từng tự đọc lại kế hoạch để đoán xem cái nào cần provenance; đó là một bộ
+// đọc Markdown thứ hai, và nó hiểu tài liệu khác validator ngay lần đầu ai đó
+// bọc metadata trong một block không render. Nhận danh sách từ đúng một nguồn
+// thì hai bên không còn chỗ để lệch nhau.
+function provenanceReferences(checkout) {
+  const result = validate(checkout, "--print-references");
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const references = result.stdout.split("\n")
+    .filter((line) => line.startsWith("reference: "))
+    .map((line) => line.slice("reference: ".length).trim());
+  assert(references.length > 0, "Validator listed no provenance references");
+  return references;
 }
 
 test("completion artifacts reject real index and working-tree additions without fake approvals", () => {
@@ -150,23 +138,37 @@ test("completion artifacts reject real index and working-tree additions without 
   });
 });
 
-test("execution status ignores metadata quoted in code or comments", () => {
-  const line =
-    "- Mốc soạn: `abc1234`, 2026-01-01. Trạng thái thực thi: `DONE`.";
-  const fence = "`".repeat(3);
-  assert.equal(executionStatus("# x\n\n" + line + "\n"), "DONE");
-  assert.equal(
-    executionStatus("# x\n\n" + fence + "text\n" + line + "\n" + fence + "\n"),
-    undefined,
+test("the listed provenance covers drafting and approval commits", () => {
+  const references = provenanceReferences(repoRoot);
+  const manifest = JSON.parse(
+    readFileSync(join(repoRoot, "plans/manifest.json"), "utf8"),
   );
-  assert.equal(executionStatus("# x\n\n<!--\n" + line + "\n-->\n"), undefined);
-  assert.equal(
-    executionStatus(
-      line.replace("DONE", "TODO") + "\n\n" + fence + "text\n" + line + "\n" +
-        fence + "\n",
-    ),
-    "TODO",
-  );
+  for (const entry of manifest) {
+    for (const evidence of entry.evidence) {
+      assert(
+        references.includes(evidence.sourceRef),
+        "Missing evidence source " + evidence.sourceRef,
+      );
+    }
+    // Mốc soạn của mọi kế hoạch phải nằm trong danh sách, kể cả kế hoạch chưa
+    // thêm file nào: nó là đường cơ sở cho nhãn "(tạo mới)", nên một mốc không
+    // phân giải được vẫn là lịch sử hỏng dù hôm nay chưa ai đọc tới nó.
+    // Khớp mọi lần xuất hiện rồi đòi ít nhất một cái nằm trong danh sách: một
+    // dòng metadata mẫu viết trong fence không làm test đỏ, còn dòng thật thì
+    // vẫn buộc phải có mặt. Chọn ra đúng dòng canonical là việc của validator,
+    // và gate này cố ý không đoán lại.
+    const body = readFileSync(join(repoRoot, "plans", entry.file), "utf8");
+    const drafting = [...body.matchAll(/- Mốc soạn: `([0-9a-f]{7,40})`/g)]
+      .map((match) => match[1]);
+    assert(
+      drafting.length > 0,
+      "Plan lacks a drafting reference: " + entry.file,
+    );
+    assert(
+      drafting.some((ref) => references.includes(ref)),
+      "No listed drafting reference for " + entry.file,
+    );
+  }
 });
 
 test("committed plan provenance survives a clean single-branch clone", () => {
@@ -195,32 +197,7 @@ test("committed plan provenance survives a clean single-branch clone", () => {
     assert.equal(git(checkout, ["rev-parse", "HEAD"]), head);
     const result = validate(checkout);
     assert.equal(result.status, 0, result.stderr || result.stdout);
-    const manifest = JSON.parse(
-      readFileSync(join(checkout, "plans/manifest.json"), "utf8"),
-    );
-    const references = new Set();
-    for (const entry of manifest) {
-      for (const evidence of entry.evidence) references.add(evidence.sourceRef);
-      const body = readFileSync(join(checkout, "plans", entry.file), "utf8");
-      if (executionStatus(body) !== "DONE") continue;
-      const id = String(entry.id).padStart(3, "0");
-      const report = readFileSync(
-        join(checkout, "plans/evidence/" + id + ".md"),
-        "utf8",
-      );
-      for (
-        const key of [
-          "reviewed_commit",
-          "completed_commit",
-          "definition_commit",
-        ]
-      ) {
-        const ref = report.match(new RegExp("^" + key + ": (.+)$", "m"))?.[1];
-        assert(ref, "Validated DONE evidence must contain " + key);
-        references.add(ref);
-      }
-    }
-    for (const ref of references) {
+    for (const ref of provenanceReferences(checkout)) {
       git(checkout, ["merge-base", "--is-ancestor", ref, "HEAD"]);
     }
   });

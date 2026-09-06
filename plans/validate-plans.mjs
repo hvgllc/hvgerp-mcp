@@ -27,8 +27,15 @@ function dependencies(value) {
   if (!/^\d{3}(?:\s*,\s*\d{3})*$/.test(text)) return undefined;
   return text.split(",").map((id) => Number(id.trim()));
 }
+// Mọi commit mà validator đem đi phân giải. Gate lịch sử phải kiểm đúng tập
+// này: tự đọc lại tài liệu để đoán xem kế hoạch nào cần provenance là dựng một
+// bộ đọc Markdown thứ hai, và hai bộ đọc sẽ hiểu cùng một tài liệu theo hai kiểu
+// ngay lần đầu ai đó bọc metadata trong một block không render. Cờ
+// --print-references in tập này ra để gate lịch sử nhận nó từ đúng một nguồn.
+const gitReferences = new Set();
 const sourceCache = new Map();
 function evidenceSource(sourcePath, sourceRef) {
+  gitReferences.add(sourceRef);
   const key = sourceRef + ":" + sourcePath;
   if (!sourceCache.has(key)) {
     try {
@@ -177,8 +184,17 @@ function outsideHtmlComments(body) {
 // nuốt mất link thật. Thay bằng dòng rỗng để các gate đọc theo dòng không lệch.
 const htmlBlockNames =
   "address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul";
-const htmlAttributes =
-  "(?:[ \\t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \\t]*=[ \\t]*(?:[^ \\t\"'=<>`]+|'[^']*'|\"[^\"]*\"))?)*";
+// Khoảng trắng bên trong một thẻ HTML được phép chứa xuống dòng; chuẩn chỉ cấm
+// dòng trống. Chỉ nhận space và tab thì một thẻ mở viết tách dòng không khớp mẫu
+// nào, href của nó không bao giờ được thu, và một link hỏng đi qua gate. Mỗi
+// khoảng nhận tối đa một lần xuống dòng, nên hai newline liền, tức dòng trống,
+// vẫn kết thúc thẻ đúng chuẩn.
+const htmlSpace = "(?:[ \\t]+|[ \\t]*\\r?\\n[ \\t]*)";
+const htmlOptionalSpace = "(?:[ \\t]*\\r?\\n)?[ \\t]*";
+const htmlAttributes = "(?:" + htmlSpace +
+  "[A-Za-z_:][A-Za-z0-9_.:-]*(?:" + htmlOptionalSpace + "=" +
+  htmlOptionalSpace +
+  "(?:[^ \\t\\r\\n\"'=<>`]+|'[^']*'|\"[^\"]*\"))?)*";
 // Điều kiện đóng null nghĩa là block chạy tới dòng trống đầu tiên. Không có
 // dạng comment ở đây: "<!--" đã do outsideHtmlComments xử lý theo span, và
 // nhánh <![A-Za-z] bên dưới không khớp dấu gạch nên hai đường không giẫm nhau.
@@ -208,11 +224,31 @@ const htmlFence = /^ {0,3}(`{3,}|~{3,})(.*)\r?$/;
 // Thẻ mở của HTML thô, giữ nguyên phần thuộc tính để đọc lại. Dùng chính
 // htmlAttributes nên giá trị đặt trong nháy vẫn chứa được ">" mà không cắt sớm.
 const htmlTagAttributes = new RegExp(
-  "<[A-Za-z][A-Za-z0-9-]*(" + htmlAttributes + ")[ \\t]*/?>",
+  "<[A-Za-z][A-Za-z0-9-]*(" + htmlAttributes + ")" + htmlOptionalSpace + "/?>",
   "g",
 );
-const htmlLinkAttribute =
-  /\b(?:href|src)[ \t]*=[ \t]*(?:"([^"]*)"|'([^']*)'|([^ \t"'=<>`]+))/gi;
+const htmlLinkAttribute = new RegExp(
+  "\\b(?:href|src)" + htmlOptionalSpace + "=" + htmlOptionalSpace +
+    "(?:\"([^\"]*)\"|'([^']*)'|([^ \\t\\r\\n\"'=<>`]+))",
+  "gi",
+);
+// Nội dung của script, style và textarea là văn bản thô: CommonMark không đọc
+// markup bên trong, nên một chuỗi JS trông như thẻ không phải link sống và đem
+// href của nó đi phân giải sẽ báo hỏng một tài liệu đúng. Giữ nguyên thẻ mở để
+// src của chính nó vẫn bị kiểm, chỉ xóa phần thân và thay bằng khoảng trắng để
+// các đường quét theo dòng không lệch. Thiếu thẻ đóng thì thân chạy tới hết tài
+// liệu, đúng như chuẩn mô tả.
+const rawTextElement = new RegExp(
+  "(<(script|style|textarea)" + htmlAttributes + htmlOptionalSpace + ">)" +
+    "([\\s\\S]*?)(</\\2" + htmlOptionalSpace + ">|$)",
+  "gi",
+);
+const outsideRawText = (body) =>
+  body.replace(
+    rawTextElement,
+    (_whole, open, _name, content, close) =>
+      open + content.replace(/[^\n]/g, " ") + close,
+  );
 // preserveOffsets giữ nguyên độ dài từng dòng, cho những đường quét cần chỉ số
 // trong body gốc; mặc định trả dòng rỗng, đủ cho các đường đọc theo dòng.
 function outsideHtmlBlocks(body, preserveOffsets = false) {
@@ -440,17 +476,171 @@ function tableCells(row) {
   return cells.map((cell) => cell.replaceAll("\\|", "|"));
 }
 // CommonMark giải mã character reference trong destination trước khi phân giải,
-// nên "[x](link&amp;target.md)" trỏ tới file "link&target.md". Chỉ giải mã tham
-// chiếu số cùng năm tên định sẵn của XML: bảng tên HTML5 đầy đủ hơn hai nghìn
-// mục, quá khổ cho một validator, và mọi tên còn lại đại diện một ký tự viết
-// thẳng được trong đường dẫn nên tác giả không bị buộc dùng entity. Tên không
-// nhận ra thì giữ nguyên chuỗi thô và link vẫn bị kiểm, tức fail-closed.
+// nên "[x](link&amp;target.md)" trỏ tới file "link&target.md". Bảng tên đầy đủ
+// của HTML5 có hơn hai nghìn mục, phần lớn trỏ tới ký hiệu toán, chữ Hy Lạp hay
+// mũi tên, và nhúng trọn bộ vào đây thì đưa cả ký tự điều khiển lẫn ký tự vô
+// hình vào source mà không ai đọc lại được. Giữ đúng phần dùng được trong một
+// đường dẫn: mọi tên trỏ tới một ký tự Latin-1, tức toàn bộ dấu câu ASCII và
+// bảng chữ có dấu, trừ hai tên trỏ tới tab và xuống dòng vì destination chưa
+// escape không chứa khoảng trắng. Tên ngoài bảng giữ nguyên chuỗi thô và link
+// vẫn bị kiểm, tức fail-closed.
 const namedReferences = new Map([
+  ["AElig", "Æ"],
+  ["AMP", "&"],
+  ["Aacute", "Á"],
+  ["Acirc", "Â"],
+  ["Agrave", "À"],
+  ["Aring", "Å"],
+  ["Atilde", "Ã"],
+  ["Auml", "Ä"],
+  ["COPY", "©"],
+  ["Ccedil", "Ç"],
+  ["Cedilla", "¸"],
+  ["CenterDot", "·"],
+  ["DiacriticalAcute", "´"],
+  ["DiacriticalGrave", "`"],
+  ["Dot", "¨"],
+  ["DoubleDot", "¨"],
+  ["ETH", "Ð"],
+  ["Eacute", "É"],
+  ["Ecirc", "Ê"],
+  ["Egrave", "È"],
+  ["Euml", "Ë"],
+  ["GT", ">"],
+  ["Hat", "^"],
+  ["Iacute", "Í"],
+  ["Icirc", "Î"],
+  ["Igrave", "Ì"],
+  ["Iuml", "Ï"],
+  ["LT", "<"],
+  ["NonBreakingSpace", "\u00a0"],
+  ["Ntilde", "Ñ"],
+  ["Oacute", "Ó"],
+  ["Ocirc", "Ô"],
+  ["Ograve", "Ò"],
+  ["Oslash", "Ø"],
+  ["Otilde", "Õ"],
+  ["Ouml", "Ö"],
+  ["PlusMinus", "±"],
+  ["QUOT", '"'],
+  ["REG", "®"],
+  ["THORN", "Þ"],
+  ["Uacute", "Ú"],
+  ["Ucirc", "Û"],
+  ["Ugrave", "Ù"],
+  ["UnderBar", "_"],
+  ["Uuml", "Ü"],
+  ["VerticalLine", "|"],
+  ["Yacute", "Ý"],
+  ["aacute", "á"],
+  ["acirc", "â"],
+  ["acute", "´"],
+  ["aelig", "æ"],
+  ["agrave", "à"],
   ["amp", "&"],
-  ["lt", "<"],
-  ["gt", ">"],
-  ["quot", '"'],
+  ["angst", "Å"],
   ["apos", "'"],
+  ["aring", "å"],
+  ["ast", "*"],
+  ["atilde", "ã"],
+  ["auml", "ä"],
+  ["brvbar", "¦"],
+  ["bsol", "\\"],
+  ["ccedil", "ç"],
+  ["cedil", "¸"],
+  ["cent", "¢"],
+  ["centerdot", "·"],
+  ["circledR", "®"],
+  ["colon", ":"],
+  ["comma", ","],
+  ["commat", "@"],
+  ["copy", "©"],
+  ["curren", "¤"],
+  ["deg", "°"],
+  ["die", "¨"],
+  ["div", "÷"],
+  ["divide", "÷"],
+  ["dollar", "$"],
+  ["eacute", "é"],
+  ["ecirc", "ê"],
+  ["egrave", "è"],
+  ["equals", "="],
+  ["eth", "ð"],
+  ["euml", "ë"],
+  ["excl", "!"],
+  ["frac12", "½"],
+  ["frac14", "¼"],
+  ["frac34", "¾"],
+  ["grave", "`"],
+  ["gt", ">"],
+  ["half", "½"],
+  ["iacute", "í"],
+  ["icirc", "î"],
+  ["iexcl", "¡"],
+  ["igrave", "ì"],
+  ["iquest", "¿"],
+  ["iuml", "ï"],
+  ["laquo", "«"],
+  ["lbrace", "{"],
+  ["lbrack", "["],
+  ["lcub", "{"],
+  ["lowbar", "_"],
+  ["lpar", "("],
+  ["lsqb", "["],
+  ["lt", "<"],
+  ["macr", "¯"],
+  ["micro", "µ"],
+  ["midast", "*"],
+  ["middot", "·"],
+  ["nbsp", "\u00a0"],
+  ["not", "¬"],
+  ["ntilde", "ñ"],
+  ["num", "#"],
+  ["oacute", "ó"],
+  ["ocirc", "ô"],
+  ["ograve", "ò"],
+  ["ordf", "ª"],
+  ["ordm", "º"],
+  ["oslash", "ø"],
+  ["otilde", "õ"],
+  ["ouml", "ö"],
+  ["para", "¶"],
+  ["percnt", "%"],
+  ["period", "."],
+  ["plus", "+"],
+  ["plusmn", "±"],
+  ["pm", "±"],
+  ["pound", "£"],
+  ["quest", "?"],
+  ["quot", '"'],
+  ["raquo", "»"],
+  ["rbrace", "}"],
+  ["rbrack", "]"],
+  ["rcub", "}"],
+  ["reg", "®"],
+  ["rpar", ")"],
+  ["rsqb", "]"],
+  ["sect", "§"],
+  ["semi", ";"],
+  ["shy", "\u00ad"],
+  ["sol", "/"],
+  ["strns", "¯"],
+  ["sup1", "¹"],
+  ["sup2", "²"],
+  ["sup3", "³"],
+  ["szlig", "ß"],
+  ["thorn", "þ"],
+  ["times", "×"],
+  ["uacute", "ú"],
+  ["ucirc", "û"],
+  ["ugrave", "ù"],
+  ["uml", "¨"],
+  ["uuml", "ü"],
+  ["verbar", "|"],
+  ["vert", "|"],
+  ["yacute", "ý"],
+  ["yen", "¥"],
+  ["yuml", "ÿ"],
 ]);
 const decodeReferences = (text) =>
   text.replace(
@@ -670,6 +860,7 @@ function gitObjectType(ref) {
 }
 const treeCache = new Map();
 function gitTree(ref) {
+  gitReferences.add(ref);
   if (!treeCache.has(ref)) {
     try {
       const options = {
@@ -1116,6 +1307,14 @@ for (const entry of manifest) {
   const draftingReference = draftingOf(body);
   if (!draftingReference) {
     fail(entry.file + ": missing valid drafting reference");
+  } else {
+    // Mốc soạn là một tuyên bố về lịch sử, không phải một chuỗi trang trí: nó
+    // định nghĩa đường cơ sở mà nhãn "(tạo mới)" đối chiếu. Chỉ kiểm cú pháp
+    // hex thì một kế hoạch chưa có file mới nào khai được một mốc không tồn
+    // tại, và tới lúc kế hoạch đó thêm file thì đường cơ sở mới vỡ, ở một
+    // commit khác hẳn commit đã đưa lời khai vào. Phân giải mọi mốc ngay tại
+    // chỗ khai, để lời khai sai hỏng đúng nơi nó được viết.
+    gitTree(draftingReference);
   }
   const executionStatus = statusOf(body);
   if (!executionStatus) fail(entry.file + ": missing valid execution status");
@@ -1356,9 +1555,11 @@ for (const filePath of planFiles(planRoot)) {
     // Markdown bên trong nó không render; nhưng thuộc tính link của chính HTML
     // đó vẫn render và vẫn hỏng được. Quét lại trước khi block bị xóa, sau khi
     // code và comment đã bị xóa, nên một ví dụ <a href> trong fence không sống.
-    const rawHtml = markdownLinkSections(body).map((section) =>
-      outsideHtmlComments(outsideInlineCode(outsideBlockCode(section)))
-    ).join("\n\n");
+    const rawHtml = outsideRawText(
+      markdownLinkSections(body).map((section) =>
+        outsideHtmlComments(outsideInlineCode(outsideBlockCode(section)))
+      ).join("\n\n"),
+    );
     for (const tag of rawHtml.matchAll(htmlTagAttributes)) {
       for (const attribute of tag[1].matchAll(htmlLinkAttribute)) {
         const value = attribute[1] ?? attribute[2] ?? attribute[3];
@@ -1553,4 +1754,12 @@ if (failures.length) {
       order.map((id) => String(id).padStart(3, "0")).join(", ")
     }`,
   );
+  // Chỉ liệt kê khi mọi gate đã xanh: một tập references thu dở, từ một lần
+  // chạy đã bỏ giữa chừng, sẽ khiến gate lịch sử báo sạch trên đúng những
+  // commit mà validator chưa kịp hỏi tới.
+  if (process.argv.includes("--print-references")) {
+    for (const ref of [...gitReferences].sort()) {
+      console.log("reference: " + ref);
+    }
+  }
 }
