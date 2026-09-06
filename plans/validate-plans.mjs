@@ -102,6 +102,14 @@ const outsideHtmlComments = (body) =>
     /<!--[\s\S]*?-->/g,
     (comment) => comment.replace(/[^\n]/g, " "),
   );
+// Markdown cấu trúc cho các gate metadata: bỏ code (fenced lẫn thụt đầu dòng)
+// rồi bỏ HTML comment. Comment không render, nên một trường khai bên trong nó
+// không phải nội dung sống: đọc nó khiến một kế hoạch có section hiển thị trống
+// vẫn qua gate. Không xóa inline code ở đây vì chính các gate metadata đọc giá
+// trị nằm trong backtick; hệ quả là một backtick chứa "<!--" vẫn mở được comment
+// giả, nhưng hướng lệch đó là fail-closed (trường biến mất, gate báo thiếu).
+const structuralMarkdown = (body) =>
+  outsideHtmlComments(outsideBlockCode(body));
 function markdownLinkSections(body) {
   const sections = [];
   let depth, fence, current = [];
@@ -276,9 +284,12 @@ function inlineLinkTargets(text) {
 // Dùng chung structuralSection với các gate khác để một tài liệu chỉ được hiểu
 // theo một cách.
 const metadataSection = (body) =>
-  structuralSection(outsideBlockCode(body), "Trạng thái và mục tiêu");
+  structuralSection(structuralMarkdown(body), "Trạng thái và mục tiêu");
 function auditOf(body) {
-  const fields = body.split("\n").filter((line) =>
+  // Lọc trên Markdown cấu trúc: một dòng "Mục audit" nằm trong fence ví dụ hoặc
+  // trong HTML comment không phải lần khai thứ hai, nhưng lọc trên body thô lại
+  // đếm nó và bác bỏ kế hoạch đúng khuôn.
+  const fields = structuralMarkdown(body).split("\n").filter((line) =>
     /^\s*-\s*Mục audit\b/.test(line)
   );
   if (
@@ -295,7 +306,8 @@ function auditOf(body) {
 // chứ không riêng section metadata, để hai lần khai mâu thuẫn ở hai section khác
 // nhau vẫn bị chặn.
 const declarations = (body, field) =>
-  outsideInlineCode(outsideBlockCode(body)).split(field).length - 1;
+  outsideHtmlComments(outsideInlineCode(outsideBlockCode(body))).split(field)
+    .length - 1;
 function statusOf(body) {
   if (declarations(body, "Trạng thái thực thi:") !== 1) return undefined;
   return metadataSection(body).match(
@@ -314,7 +326,7 @@ function draftingOf(body) {
   )?.[1];
 }
 function staleReason(body) {
-  const fields = body.split("\n").filter((line) =>
+  const fields = structuralMarkdown(body).split("\n").filter((line) =>
     /^\s*-\s*stale_reason\s*:/.test(line)
   );
   if (
@@ -724,7 +736,7 @@ for (const entry of manifest) {
   ) {
     fail(entry.file + ": plan and manifest dependencies differ");
   }
-  const structuralBody = outsideBlockCode(body);
+  const structuralBody = structuralMarkdown(body);
   const scopeSection = structuralBody.split("## Phạm vi và Git\n")[1]
     ?.split("Ngoài phạm vi:")[0] ?? "";
   const administrativeFiles = [
@@ -843,13 +855,23 @@ for (const entry of manifest) {
   // Đếm suông không phân biệt được bước trùng số với bước thiếu: hai "Bước 1"
   // và không có "Bước 2" vẫn ra đúng hạn mức. Đòi dãy số đọc được đúng bằng
   // 1..N theo thứ tự xuất hiện, để một bước bị nhân đôi hoặc bỏ sót lộ ra.
-  const stepNumbers = [...structuralText.matchAll(/^ {0,3}### Bước (\d+):/gm)]
-    .map((match) => Number(match[1]));
-  const checks =
-    [...structuralText.matchAll(/^ {0,3}\*\*Kiểm tra:\*\*(?=\s|$)/gm)].length;
+  // So tổng số marker với tổng số bước cũng chưa đủ: một bước mất gate còn bước
+  // kế mang hai gate vẫn ra đúng tổng. Cắt section theo heading bước rồi đòi
+  // đúng một marker sống trong thân của từng bước, và không marker nào đứng
+  // trước bước đầu tiên.
+  const stepParts = structuralText.split(/^ {0,3}### Bước (\d+):/gm);
+  const checkMarker = /^ {0,3}\*\*Kiểm tra:\*\*(?=\s|$)/gm;
+  const countChecks = (text) => [...text.matchAll(checkMarker)].length;
+  const stepNumbers = [];
+  const stepChecks = [];
+  for (let index = 1; index < stepParts.length; index += 2) {
+    stepNumbers.push(Number(stepParts[index]));
+    stepChecks.push(countChecks(stepParts[index + 1]));
+  }
   if (
-    stepNumbers.length < 2 || stepNumbers.length !== checks ||
-    stepNumbers.some((number, index) => number !== index + 1)
+    stepNumbers.length < 2 || countChecks(stepParts[0]) !== 0 ||
+    stepNumbers.some((number, index) => number !== index + 1) ||
+    stepChecks.some((count) => count !== 1)
   ) {
     fail(`${entry.file}: bước/gate không khớp`);
   }
@@ -905,8 +927,12 @@ for (const entry of manifest) {
       /<!-- evidence: [^\n]+ -->/g,
     )
   ) {
+    // Đọc trọn delimiter mở rồi đòi đúng nó làm delimiter đóng. Ghim cứng ba
+    // backtick thì backtick thứ tư của một fence dài hơn rơi vào group ngôn ngữ,
+    // biến "````CONTRIBUTING" thành lang "`CONTRIBUTING" và làm gate ngôn ngữ
+    // báo lệch ở một trích dẫn đúng chuẩn.
     const block = body.slice(annotation.index).match(
-      /^<!-- evidence: ([^\n]+) -->\s*(?:<!-- deno-fmt-ignore -->\s*)?```([^\n]*)\n([\s\S]*?)\n```/,
+      /^<!-- evidence: ([^\n]+) -->\s*(?:<!-- deno-fmt-ignore -->\s*)?(`{3,})([^\n]*)\n([\s\S]*?)\n\2[ \t]*(?:\n|$)/,
     );
     if (block) {
       block.index = annotation.index;
@@ -968,12 +994,12 @@ for (const entry of manifest) {
           evidence.path + ":" + evidence.line,
       );
     }
-    if (!block || block[1] !== evidence.path || block[3] !== evidence.code) {
+    if (!block || block[1] !== evidence.path || block[4] !== evidence.code) {
       fail(entry.file + ": excerpt mismatch " + evidence.path);
     }
     if (
       Object.hasOwn(evidence, "lang") &&
-      (typeof evidence.lang !== "string" || block?.[2] !== evidence.lang)
+      (typeof evidence.lang !== "string" || block?.[3] !== evidence.lang)
     ) {
       fail(entry.file + ": evidence language mismatch " + evidence.path);
     }
@@ -1013,7 +1039,12 @@ for (const filePath of planFiles(planRoot)) {
       targets.push(destination[1] ?? destination[2]);
     }
     for (const target of targets) {
-      if (/^(https?:|#)/.test(target)) continue;
+      // Bất kỳ URI scheme nào cũng là địa chỉ ngoài cây làm việc, không riêng
+      // http(s): ghim hai scheme đó thì "mailto:" hay "ftp:" bị đem đi phân giải
+      // như đường dẫn tương đối và một link đúng chuẩn bị báo hỏng. Đòi scheme
+      // dài từ hai ký tự theo RFC 3986 để "c:\..." vẫn rơi xuống nhánh unsafe
+      // bên dưới thay vì được bỏ qua.
+      if (/^(?:[a-z][a-z0-9+.-]+:|#)/i.test(target)) continue;
       const clean = target.split("#")[0];
       if (!clean) continue;
       if (isAbsolute(clean) || /^[a-z]:/i.test(clean) || clean.includes("\\")) {

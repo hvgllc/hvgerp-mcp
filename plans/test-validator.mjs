@@ -2932,3 +2932,105 @@ test("a link inside an HTML comment is not resolved", () => {
     [],
   );
 });
+
+test("a fenced audit declaration is not a second mapping", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  // Ánh xạ audit phải đọc trên Markdown cấu trúc. Một fence ví dụ mang đúng khuôn
+  // "Mục audit" là tài liệu hợp lệ, không phải lần khai thứ hai; lọc trên body
+  // thô đếm nó và bác bỏ kế hoạch đúng.
+  const after = run({
+    [fileFor(22)]: (text) =>
+      text + "\nVí dụ khuôn audit:\n\n" + tick.repeat(3) + "text\n" +
+      "- Mục audit: 22; loại: " + tick + "docs" + tick + ".\n" +
+      tick.repeat(3) + "\n",
+  });
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [],
+  );
+});
+
+test("metadata hidden in an HTML comment does not satisfy the gate", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  // Comment không render: một kế hoạch có section metadata hiển thị trống không
+  // được qua gate chỉ vì các trường còn nằm trong ghi chú bảo trì.
+  const after = run({
+    [fileFor(22)]: (text) =>
+      text.replace(
+        "- Mốc soạn: " + tick + "d2c5305" + tick +
+          ", 2026-09-05. Trạng thái thực thi: " + tick + "TODO" + tick + ".",
+        "<!--\n- Mốc soạn: " + tick + "d2c5305" + tick +
+          ", 2026-09-05. Trạng thái thực thi: " + tick + "TODO" + tick +
+          ".\n-->",
+      ),
+  });
+  assert.equal(after.thrown, undefined);
+  assert.ok(
+    after.messages.some((message) =>
+      message.includes("missing valid execution status")
+    ),
+    after.messages.join("\n"),
+  );
+});
+
+test("a non-HTTP URI scheme is not resolved as a repository path", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  // mailto: là địa chỉ ngoài cây làm việc y như https:; phân giải nó thành đường
+  // dẫn tương đối biến một link đúng chuẩn thành lỗi giả.
+  const after = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[Security contact](mailto:security@example.com)\n",
+  });
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [],
+  );
+});
+
+test("each execution step needs its own validation check", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  // Chỉ so tổng số marker với tổng số bước thì một bước mất gate còn bước kế
+  // mang hai gate vẫn ra đúng tổng và lọt cổng.
+  const after = run({
+    [fileFor(22)]: (text) => {
+      const moved = text.replace("**Kiểm tra:**", "**Xác minh:**");
+      return moved.replace(
+        "### Bước 2: Sửa hướng dẫn có thể làm theo\n",
+        "### Bước 2: Sửa hướng dẫn có thể làm theo\n\n**Kiểm tra:** thừa.\n",
+      );
+    },
+  });
+  assert.equal(after.thrown, undefined);
+  assert.ok(
+    after.messages.some((message) => message.includes("bước/gate không khớp")),
+    after.messages.join("\n"),
+  );
+});
+
+test("a longer evidence fence delimiter is parsed completely", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  // Ghim cứng ba backtick thì backtick thứ tư rơi vào group ngôn ngữ và gate
+  // ngôn ngữ báo lệch ở một trích dẫn đúng chuẩn.
+  const after = run({
+    [fileFor(22)]: (text) =>
+      text.replace(
+        tick.repeat(3) + "text\n1. Update the version in ",
+        tick.repeat(4) + "text\n1. Update the version in ",
+      ).replace(
+        "plus " + tick + "CHANGELOG.md" + tick + ".\n" + tick.repeat(3) + "\n",
+        "plus " + tick + "CHANGELOG.md" + tick + ".\n" + tick.repeat(4) + "\n",
+      ),
+  });
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [],
+  );
+});
