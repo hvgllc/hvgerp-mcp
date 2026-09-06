@@ -2267,3 +2267,55 @@ Suite thêm 10 test, lên 624. Harness đọc thêm khoá `content` của filesy
 để một gate đọc nội dung file ảo không còn vấp ENOENT. Mẻ dò tám ca của vòng này
 cho cả tám đúng chiều: bốn ca lỗi đổi sang đỏ, bốn ca đối chứng giữ nguyên chiều
 cũ.
+
+## Codex vòng tiếp: review 5126647497
+
+Review đọc đúng head `e7e11cfa`, nêu năm P2 và không P1 nào. Cả năm tái hiện
+bằng một mẻ dò mười một ca trước khi động vào code, và cmark 0.31.2
+(`npm:commonmark`, chạy qua `deno run -A`) làm trọng tài cho từng ca tranh chấp.
+Cả năm đúng. Hai trong số đó là hồi quy của chính vòng trước, và một ca đối
+chứng còn lộ thêm một lỗi thứ sáu không ai nêu.
+
+- **Title ở dòng nối không được nuốt.** Chuẩn cho title nằm hẳn ở dòng dưới
+  destination, và cả cụm vẫn là một khối metadata không render chữ nào. Cổng chỉ
+  nuốt dòng nối khi destination còn trống, nên dòng title ở lại trong văn bản
+  đưa cho vòng quét inline và một chuỗi trông giống link nằm trong title bị đem
+  đi phân giải. Điều kiện nhận giờ là chính grammar: chỉ gộp khi cả cụm hai dòng
+  khớp destination kèm title, nên một dòng văn xuôi thường vẫn ở lại ngoài.
+- **`poster` của video không vào tập đích.** Trình duyệt vẽ khung hình đó trước
+  khi ai bấm play, nên nó là tài nguyên thật và hỏng được y như `src`.
+  `attributeTargets` nhận `poster` trên `video`, khoanh phạm vi đúng cách
+  `srcset` được khoanh cho `img` và `source`.
+- **Giới hạn nhãn 999 ký tự bị kiểm sau khi đã nhận.** Hồi quy của vòng trước:
+  `definitionAt` trả kết quả khớp trước khi hỏi độ dài, nên một nhãn 1000 ký tự
+  vẫn thành definition trong khi cmark trả nó về văn bản literal, và một đích
+  không ai render bị đem đi phân giải. Giờ đo chính nhãn đã bắt được, trước khi
+  trả.
+- **Marker đánh số không bị chặn ở chín chữ số.** Chuẩn ghim đúng chín, nên
+  `1234567890. ~~~` là một đoạn văn thường. Nhận nó là list thì phần sau dấu
+  chấm mở được cả fence lẫn block HTML và những dòng sống nằm dưới bị ẩn khỏi
+  mọi cổng. `listIndentTracker` dùng cùng giới hạn với `containerPrefix`.
+- **Nhãn tham chiếu chỉ được hạ chữ thường.** `[Σ]` và `[ς]` là một nhãn sau
+  case folding của Unicode, nên chỉ hạ chữ thường thì một reference link thật bị
+  đọc thành văn bản literal và slug của heading chứa nó sai theo.
+  `referenceLabel` dùng đúng công thức `normalizeReference` của commonmark.js,
+  thứ đang làm trọng tài cho mọi tranh chấp CommonMark ở đây.
+- **Lỗi thứ sáu, từ ca đối chứng.** Đối chứng cho ca marker chín chữ số cho thấy
+  cmark vẫn render link nằm dưới thành link sống: một fence mở trong list item
+  đóng lại khi văn bản thoát khỏi item. Cổng ghi độ sâu blockquote của fence
+  nhưng không ghi lề list của nó, nên `- ~~~` rồi một dòng không thụt ẩn trọn
+  phần còn lại của tài liệu. `outsideFencedCode` ghi thêm lề đó và đóng fence
+  khi một dòng không trống thụt ít hơn, đúng cách luật blockquote đã làm. Fence
+  không đóng ở cấp ngoài cùng vẫn ẩn phần còn lại, đúng chuẩn.
+
+| Cổng                                   | Kết quả            |
+| -------------------------------------- | ------------------ |
+| `node plans/validate-plans.mjs`        | Đạt: 25 kế hoạch   |
+| `deno fmt --check`                     | 315 file           |
+| `deno lint`                            | 160 file           |
+| `node --test plans/test-validator.mjs` | 636 pass           |
+| `git diff --check`                     | exit 0             |
+| `node --test plans/test-history.mjs`   | 5 pass, sau commit |
+
+Suite thêm 12 test, lên 636. Mẻ dò mười một ca của vòng này cho cả mười một đúng
+chiều, và ba mẻ dò guard của hai vòng trước (26 ca) giữ nguyên chiều cũ.

@@ -65,8 +65,13 @@ function listIndentTracker() {
   return (relative, width, blank) => {
     if (blank) return { indent: innermost(), marker: undefined };
     while (stack.length && width < innermost()) stack.pop();
+    // Marker đánh số dài quá chín chữ số không mở list: chuẩn ghim đúng chín,
+    // nên "1234567890. ~~~" là một đoạn văn thường. Nhận nó là list thì phần
+    // sau dấu chấm mở được cả fence lẫn block HTML, và những dòng sống nằm dưới
+    // bị ẩn khỏi mọi gate. Cùng giới hạn với containerPrefix, để hai đường quét
+    // không hiểu một tài liệu theo hai kiểu.
     const marker = width <= innermost() + 3
-      ? relative.match(/^(?:[-+*]|[0-9]+[.)])[ \t]+/)
+      ? relative.match(/^(?:[-+*]|\d{1,9}[.)])[ \t]+/)
       : undefined;
     if (marker) stack.push(width + marker[0].length);
     return { indent: innermost(), marker: marker?.[0] };
@@ -89,7 +94,7 @@ function stripQuoteMarkers(line) {
   }
 }
 function outsideFencedCode(body, preserveOffsets = false) {
-  let fence, fenceQuote = 0, listIndent = 0;
+  let fence, fenceQuote = 0, fenceIndent = 0, listIndent = 0;
   const track = listIndentTracker();
   const hidden = (line) => preserveOffsets ? " ".repeat(line.length) : "";
   return body.split("\n").map((line) => {
@@ -105,6 +110,12 @@ function outsideFencedCode(body, preserveOffsets = false) {
     // thúc CRLF và cả block code trong một file CRLF bị đọc như văn xuôi sống.
     // Phần còn lại của validator đã cố ý CRLF-tolerant, đây là chỗ lệch.
     const marker = source.match(/^[ \t]*(`{3,}|~{3,})(.*)\r?$/);
+    // Ra khỏi list item là ra khỏi cả fence mở bên trong nó, y như blockquote:
+    // "- ~~~" rồi một dòng không thụt là hai khối khác nhau, dòng dưới đã nằm
+    // ngoài item nên nó là Markdown sống. Giữ fence tiếp thì phần còn lại của
+    // tài liệu bị ẩn và mọi link ở đó vắng mặt khỏi cổng. Dòng trống không tính:
+    // nó chưa đóng item nào.
+    if (fence && source.trim() && width < fenceIndent) fence = undefined;
     if (fence) {
       // Dấu đóng đo thụt so với lề của container đang chứa fence, không so với
       // chính dòng mở: chuẩn cho closer thụt tối đa ba cột kể từ lề đó, nên một
@@ -146,6 +157,7 @@ function outsideFencedCode(body, preserveOffsets = false) {
     ) {
       fence = opener[1];
       fenceQuote = quote.depth;
+      fenceIndent = listIndent;
       return hidden(line);
     }
     return line;
@@ -751,10 +763,15 @@ function srcsetTargets(value) {
   }
   return found;
 }
-// Mọi đích mà một thuộc tính dựng ra, đã tách sẵn: "href" và "src" cho đúng một
-// đích, "srcset" cho cả danh sách, tên khác cho danh sách rỗng.
+// "poster" của video là URL của khung hình trình duyệt vẽ trước khi ai bấm
+// play, nên nó là một tài nguyên thật và hỏng được y như "src". Bỏ qua tên đó
+// là để một video mất ảnh nền đi qua cổng và vỡ trên đúng lần xem đầu tiên.
+const posterElements = new Set(["video"]);
+// Mọi đích mà một thuộc tính dựng ra, đã tách sẵn: "href", "src" và "poster"
+// cho đúng một đích, "srcset" cho cả danh sách, tên khác cho danh sách rỗng.
 const attributeTargets = (element, name, value) =>
-  linkAttribute(element, name)
+  linkAttribute(element, name) ||
+    (name === "poster" && posterElements.has(element))
     ? [value]
     : name === "srcset" && srcsetElements.has(element)
     ? srcsetTargets(value)
@@ -2370,7 +2387,14 @@ const autolinkText = new RegExp(
 // ghi "ghost", tức vừa nhận một link tới anchor không tồn tại vừa báo hỏng link
 // tới anchor thật. Label rỗng của dạng collapsed thì thu gọn kiểu nào cũng ra
 // một slug, nên không cần hỏi định nghĩa.
-const referenceLabel = (raw) => raw.trim().replace(/\s+/g, " ").toLowerCase();
+// Hai nhãn bằng nhau sau case folding của Unicode là một nhãn: "[Σ]" định nghĩa
+// và "[ς]" tham chiếu cùng một link, vì sigma cuối từ gấp về cùng một ký tự với
+// sigma thường. Chỉ hạ chữ thường thì "σ" và "ς" khác nhau, một reference link
+// thật bị đọc thành văn bản literal, và slug của heading chứa nó sai theo. Hạ
+// rồi nâng là đúng công thức normalizeReference của commonmark.js, thứ đang làm
+// trọng tài cho mọi tranh chấp CommonMark ở đây.
+const referenceLabel = (raw) =>
+  raw.trim().replace(/\s+/g, " ").toLowerCase().toUpperCase();
 // Dấu nhấn không để lại ký tự nào trong văn bản render: "## _Emphasized_ probe"
 // ra "Emphasized probe" và id GitHub là "emphasized-probe". Dấu sao đã tự biến
 // mất vì headingSlug xóa mọi ký tự ngoài chữ, số, "_", " " và "-", nhưng gạch
@@ -2721,7 +2745,13 @@ function definitionAt(lines, start) {
     }
     const head = candidate.match(definitionHead);
     if (head) {
-      return { label: head[1], destination: head[2], line };
+      // Nhãn dài quá giới hạn thì cả cụm là văn bản literal, không phải
+      // definition: nhận nó là đem một đích không ai render đi phân giải rồi
+      // báo hỏng một tài liệu đúng. Đo chính nhãn đã bắt được, chứ không đo cả
+      // dòng, vì giới hạn của chuẩn nói về nội dung giữa hai dấu ngoặc.
+      return head[1].length > definitionLabelLimit
+        ? null
+        : { label: head[1], destination: head[2], line };
     }
     if (!/^ {0,3}\[(?!\^)/.test(lines[start].text)) return null;
     if (candidate.length > definitionLabelLimit) return null;
@@ -2774,6 +2804,23 @@ function referenceDefinitions(lines, rawLines) {
       paragraphText(next)
     ) {
       destination = next.text.trim();
+      raw += "\n" + rawLines[index + 1];
+      index++;
+    }
+    // Title là phần tuỳ chọn của cùng một definition và chuẩn cho phép nó nằm
+    // hẳn ở dòng dưới: '[ref]: dest' rồi '  "Title"' vẫn là một khối metadata,
+    // không render ra chữ nào. Chỉ nuốt dòng nối khi destination còn trống thì
+    // dòng title ở lại trong văn bản đưa cho vòng quét inline, một chuỗi trông
+    // giống link nằm trong title bị đem đi phân giải, và gate báo hỏng một tài
+    // liệu đúng. Điều kiện nhận là chính grammar: chỉ gộp khi cả cụm hai dòng
+    // khớp destination kèm title, nên một dòng văn xuôi thường vẫn ở lại ngoài.
+    const continuation = lines[index + 1];
+    if (
+      destination && continuation && !continuation.opened &&
+      continuation.depth === depth && paragraphText(continuation) &&
+      linkDestination.test(destination + "\n" + continuation.text.trim())
+    ) {
+      destination += "\n" + continuation.text.trim();
       raw += "\n" + rawLines[index + 1];
       index++;
     }

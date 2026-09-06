@@ -5202,3 +5202,102 @@ test("a README ID outside the three digit shape is still compared", () => {
       "| 1000 | [Kế hoạch ngoài manifest](README.md) | P3 | S / LOW | không | TODO |\n",
   }, /README lists plan IDs outside the manifest: 1000/);
 });
+
+test("a definition title on its own line is not scanned for links", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n[g1ref]: ../../README.md\n  "Title [hidden](missing-g1.md)"\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a continuation that is not a title stays ordinary paragraph text", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[g1bref]: ../../README.md\n[live](missing-g1b.md) văn xuôi\n",
+  }, /link hỏng missing-g1b\.md/);
+});
+
+test("a video poster is a real resource", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<video poster="missing-poster.png"></video>\n',
+  }, /link hỏng missing-poster\.png/);
+});
+
+test("a poster on another element is not a target", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<div poster="missing-div-poster.png"></div>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a label of 1000 characters is not a definition", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[" + "a".repeat(1000) + "]: missing-g3.md\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a label of 999 characters is still a definition", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[" + "a".repeat(999) + "]: missing-g3b.md\n",
+  }, /link hỏng missing-g3b\.md/);
+});
+
+test("a ten digit ordered marker does not open a list", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n1234567890. ~~~\n\n[live](missing-g4.md)\n",
+  }, /link hỏng missing-g4\.md/);
+});
+
+test("a nine digit ordered marker still opens a list", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n123456789. ~~~\n  văn bản trong fence\n  ~~~\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a fence opened inside a list item closes when text leaves the item", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n- ~~~\n\n[live](missing-g4c.md)\n",
+  }, /link hỏng missing-g4c\.md/);
+});
+
+test("an unclosed fence outside a list still hides the rest", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n~~~\n[live](missing-g4d.md)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("reference labels are compared with Unicode case folding", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      "\n[Σ]: ../../README.md\n\n## [Visible g5][ς]\n\n[g5](#visible-g5)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("labels that really differ still do not match", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      "\n[g5b alpha]: ../../README.md\n\n## [Visible g5b][g5b beta]\n\n" +
+      "[g5b](#visible-g5b)\n",
+  }, /anchor hỏng #visible-g5b/);
+});
