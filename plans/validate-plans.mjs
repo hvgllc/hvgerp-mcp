@@ -730,15 +730,23 @@ const srcElements = new Set([
   "track",
   "audio",
   "video",
-  "input",
   "frame",
 ]);
+// <input src> chỉ tải ảnh khi type là "image"; ở mọi type khác, kể cả khi thẻ
+// không viết type và mặc định về "text", thuộc tính đó không trỏ tới tài nguyên
+// nào. Nhận nó vô điều kiện thì <input type="text" src="missing.png"> bị báo
+// link hỏng trong khi trình duyệt không tải gì cả.
+const imageInput = (attributes) =>
+  decodeAttribute(attributes.get("type") ?? "").trim().toLowerCase() ===
+    "image";
 // SVG vẫn hỗ trợ dạng cũ "xlink:href" và trình duyệt phân giải nó y như "href",
 // nên bỏ qua tên đó là để một tài nguyên SVG hỏng thật đi qua cổng.
-const linkAttribute = (element, name) =>
+const linkAttribute = (element, name, attributes) =>
   name === "href" || name === "xlink:href"
     ? hrefElements.has(element)
-    : name === "src" && srcElements.has(element);
+    : name === "src" &&
+      (srcElements.has(element) ||
+        (element === "input" && imageInput(attributes)));
 // "srcset" mang cả một danh sách ứng viên và trình duyệt tải đúng một trong số
 // đó theo mật độ điểm ảnh hay khổ màn hình, nên mọi URL trong danh sách đều là
 // tài nguyên thật và đều hỏng được. Chỉ đọc "src" thì một ảnh 2x thiếu file đi
@@ -797,13 +805,19 @@ const attributeTarget = (value) => value.replace(/[\t\r\n]/g, "").trim();
 // Mọi đích mà một thuộc tính dựng ra, đã tách sẵn: "href", "src", "poster" và
 // "data" cho đúng một đích, "srcset" cho cả danh sách, tên khác cho danh sách
 // rỗng.
-const attributeTargets = (element, name, value) =>
-  (linkAttribute(element, name) ||
+// Character reference được giải mã ngay từ đây vì trình duyệt giải mã giá trị
+// thuộc tính lúc đọc thẻ, trước cả máy tách srcset lẫn bước bỏ khoảng trắng.
+// Đẩy nguyên văn xuống thì href="../../&NewLine;README.md" giữ lại tên
+// reference thay vì thành một xuống dòng bị bỏ đi, dựng ra một đường dẫn không
+// tồn tại và báo hỏng một link đúng; srcset viết "a.png&#44;b.png" thì mất luôn
+// ranh giới giữa hai ứng viên.
+const attributeTargets = (element, name, value, attributes) =>
+  (linkAttribute(element, name, attributes) ||
       (name === "poster" && posterElements.has(element)) ||
       (name === "data" && dataElements.has(element))
-    ? [value]
+    ? [decodeAttribute(value)]
     : name === "srcset" && srcsetElements.has(element)
-    ? srcsetTargets(value)
+    ? srcsetTargets(decodeAttribute(value))
     : []).map(attributeTarget).filter(Boolean);
 // Một ô bảng được phép chứa dấu | literal, viết là "\|". split("|") thô coi nó
 // là vách ngăn và đẩy lệch mọi cột phía sau, nên một README đúng bị báo sai hàng
@@ -1249,6 +1263,26 @@ const namedReferences = new Map(
     ];
   }),
 );
+// Bảng trên chỉ chứa cách viết đủ dấu chấm phẩy vì CommonMark không nhận dạng
+// viết tắt trong Markdown. Bên trong giá trị thuộc tính của một thẻ HTML thô
+// thì có: đúng 106 tên còn lại từ thời HTML 4 vẫn giải mã khi thiếu dấu chấm
+// phẩy, nên id thật của <a id="legacy&amp"> là "legacy&" và fragment tới nó
+// viết "#legacy%26". Đòi dấu chấm phẩy ở đó là ghi vào tập anchor một chuỗi
+// không ai có rồi báo hỏng một link đúng.
+const legacyReferenceNames = new Set(
+  [
+    "AElig AMP Aacute Acirc Agrave Aring Atilde Auml COPY Ccedil ETH ",
+    "Eacute Ecirc Egrave Euml GT Iacute Icirc Igrave Iuml LT Ntilde ",
+    "Oacute Ocirc Ograve Oslash Otilde Ouml QUOT REG THORN Uacute Ucirc ",
+    "Ugrave Uuml Yacute aacute acirc acute aelig agrave amp aring ",
+    "atilde auml brvbar ccedil cedil cent copy curren deg divide eacute ",
+    "ecirc egrave eth euml frac12 frac14 frac34 gt iacute icirc iexcl ",
+    "igrave iquest iuml laquo lt macr micro middot nbsp not ntilde ",
+    "oacute ocirc ograve ordf ordm oslash otilde ouml para plusmn pound ",
+    "quot raquo reg sect shy sup1 sup2 sup3 szlig thorn times uacute ",
+    "ucirc ugrave uml uuml yacute yen yuml",
+  ].join("").split(" "),
+);
 // Numeric reference trong dải C1 không trả về chính code point đó: chuẩn HTML
 // thay bằng ký tự windows-1252 tương ứng, và CommonMark dùng đúng phép giải mã
 // ấy. Trả thẳng U+0080 thì một đường dẫn viết bằng "&#x80;" không còn trỏ tới
@@ -1286,20 +1320,29 @@ const c1Replacements = new Map([
 // marker được chèn ngay trước mỗi ký tự do reference sinh ra, để chỗ gọi phân
 // biệt được nó với ký tự viết thẳng: một "_" đến từ "&#95;" là ký tự thật, nó
 // không mở được cặp nhấn.
-// escapes tắt được vì luật backslash của Markdown chỉ sống trong văn bản
-// Markdown. Bên trong giá trị thuộc tính của một thẻ HTML thô, "\" là ký tự dữ
-// liệu bình thường: id của <a id="\&amp;"> đúng là "\&" và fragment tới nó là
-// "#%5C%26". Áp luật escape ở đó thì gate giữ nguyên "&amp;", dựng ra một id
-// không ai có và báo hỏng một link đúng.
-const decodeReferences = (text, marker = "", escapes = true) =>
+// attribute bật được vì luật giải mã bên trong giá trị thuộc tính của một thẻ
+// HTML thô khác Markdown ở hai điểm. Thứ nhất, "\" ở đó là ký tự dữ liệu bình
+// thường chứ không phải escape: id của <a id="\&amp;"> đúng là "\&" và fragment
+// tới nó là "#%5C%26"; áp luật escape thì gate giữ nguyên "&amp;", dựng ra một
+// id không ai có và báo hỏng một link đúng. Thứ hai, reference thiếu dấu chấm
+// phẩy vẫn giải mã: numeric thì luôn luôn, còn named chỉ khi tên nằm trong nhóm
+// legacy và ký tự ngay sau nó không phải "=". Vế "=" là luật thật của HTML, để
+// một query string kiểu "?a&amp=b" giữ nguyên tham số của nó.
+const decodeReferences = (text, marker = "", attribute = false) =>
   text.replace(
-    /&(#\d{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]*);/g,
-    (whole, name, offset) => {
+    /&(#\d{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]*)(;)?/g,
+    (whole, name, semicolon, offset) => {
       // Một "&" bị escape là ký tự literal, không mở được entity.
-      if (escapes && markdownEscaped(text, offset)) return whole;
+      if (!attribute && markdownEscaped(text, offset)) return whole;
+      if (!semicolon && !attribute) return whole;
       if (name[0] !== "#") {
         const named = namedReferences.get(name);
-        return named === undefined ? whole : marker + named;
+        if (named === undefined) return whole;
+        return !semicolon &&
+            (!legacyReferenceNames.has(name) ||
+              text[offset + whole.length] === "=")
+          ? whole
+          : marker + named;
       }
       const code = name[1] === "x" || name[1] === "X"
         ? parseInt(name.slice(2), 16)
@@ -1312,7 +1355,9 @@ const decodeReferences = (text, marker = "", escapes = true) =>
           : String.fromCodePoint(c1Replacements.get(code) ?? code));
     },
   );
-// Cùng lý do như tham số escapes của decodeReferences: chỉ destination viết
+// Một tên gọi cho đúng một luật, dùng ở mọi chỗ đọc giá trị thuộc tính HTML.
+const decodeAttribute = (value) => decodeReferences(value, "", true);
+// Cùng lý do như tham số attribute của decodeReferences: chỉ destination viết
 // bằng cú pháp Markdown mới gỡ backslash trước dấu câu ASCII. Trong href của
 // một thẻ HTML thô, "\" là ký tự dữ liệu và gỡ nó đi là đổi luôn đích đến.
 const unescapeMarkdown = (text, markdown) =>
@@ -2658,6 +2703,13 @@ function stripHeadingLinks(text, definitions) {
 // phần đuôi của chính thẻ rơi vào slug: "<span title=">Ghost">B</span>" để lại
 // "Ghost"B" và heading nhận một id không ai có. Dùng chính mẫu nguyên khối đã
 // dùng ở đường quét inline.
+// Thẻ không để lại ký tự nào, nhưng nó vẫn là ranh giới cho cặp nhấn: trong
+// "a<span></span>_b_" ký tự đứng ngay trước "_" là ">" chứ không phải "a", nên
+// cặp mở được và GitHub render ra "ab". Xóa thẳng thẻ thì "_" dính vào chữ, bị
+// đọc thành gạch dưới giữa từ, và slug thành "a_b_" trong khi id thật là "ab".
+// Để lại một dấu riêng, không phải chữ cũng không phải số, nên nó đóng đúng vai
+// ranh giới rồi được gỡ đi cùng lúc với dấu NUL.
+const inlineHtmlMark = "\u0001";
 function stripInlineHtml(text) {
   let output = "";
   for (let index = 0; index < text.length; index++) {
@@ -2666,6 +2718,7 @@ function stripInlineHtml(text) {
       const tag = htmlInlineAtomic.exec(text);
       if (tag) {
         index += tag[0].length - 1;
+        output += inlineHtmlMark;
         continue;
       }
     }
@@ -2685,7 +2738,7 @@ const headingText = (raw, definitions) =>
         "\0",
       ).replace(/\\([!-/:-@[-`{-~])/g, "\0$1")
     ).join(""),
-  ).replaceAll("\0", "");
+  ).replaceAll("\0", "").replaceAll(inlineHtmlMark, "");
 // Blockquote và list item chỉ đặt tiền tố lên đầu dòng chứ không đổi bản chất
 // khối bên trong: "> ## Ghi chú" vẫn render ra một heading và vẫn sinh id trên
 // GitHub. Đọc nguyên dòng thì heading đó vắng mặt trong tập anchor và một link
@@ -3046,7 +3099,7 @@ function documentAnchors(path) {
     const anchorTag = tag[1].toLowerCase() === "a";
     for (const [name, value] of tagAttributes(tag[2])) {
       if (name !== "id" && !(anchorTag && name === "name")) continue;
-      if (value) anchors.add(decodeReferences(value, "", false));
+      if (value) anchors.add(decodeAttribute(value));
     }
   }
   anchorCache.set(path, anchors);
@@ -3096,8 +3149,15 @@ for (const filePath of planFiles(planRoot)) {
     const htmlTargets = [];
     for (const tag of renderedTags(rawHtml)) {
       const element = tag[1].toLowerCase();
-      for (const [name, value] of tagAttributes(tag[2])) {
-        if (value) htmlTargets.push(...attributeTargets(element, name, value));
+      // Cả thẻ đi cùng nhau vì một thuộc tính không tự nói hết vai trò của nó:
+      // src của <input> chỉ là tài nguyên khi type của chính thẻ đó là "image".
+      const attributes = new Map(tagAttributes(tag[2]));
+      for (const [name, value] of attributes) {
+        if (value) {
+          htmlTargets.push(
+            ...attributeTargets(element, name, value, attributes),
+          );
+        }
       }
     }
     // Kiểm mọi definition, kể cả chưa dùng; không phụ thuộc kiểu
@@ -3128,8 +3188,11 @@ for (const filePath of planFiles(planRoot)) {
       // cả scheme đều đọc trên chuỗi đã giải mã. Tìm ranh giới trên chuỗi thô
       // thì "README.md&num;overview" không có dấu # nào và cả chuỗi bị đem đi mở
       // như một tên file, còn "&#35;" lại bị cắt ngay giữa chính reference của
-      // nó; cả hai đều báo hỏng một link đúng chuẩn.
-      const decoded = decodeReferences(target, "", markdown);
+      // nó; cả hai đều báo hỏng một link đúng chuẩn. Đích đến từ thuộc tính
+      // HTML đã đi qua bộ giải mã ngay lúc đọc thẻ, nên chỉ destination viết
+      // bằng cú pháp Markdown còn phải giải mã ở đây; chạy lại lượt thứ hai thì
+      // "&amp;#35;" mất luôn một tầng và một link đúng bị cắt sai chỗ.
+      const decoded = markdown ? decodeReferences(target) : target;
       // Bất kỳ URI scheme nào cũng là địa chỉ ngoài cây làm việc, không riêng
       // http(s): ghim hai scheme đó thì "mailto:" hay "ftp:" bị đem đi phân giải
       // như đường dẫn tương đối và một link đúng chuẩn bị báo hỏng. RFC 3986

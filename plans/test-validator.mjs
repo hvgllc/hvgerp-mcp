@@ -5470,3 +5470,107 @@ test("a destination ending in a backslash before a heading is literal text", () 
   assert.equal(result.thrown, undefined);
   assert.equal(result.exitCode, 0, result.messages.join("\n"));
 });
+
+test("an entity in a raw HTML href is decoded before whitespace is stripped", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<a href="../../&NewLine;README.md">root p1</a>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an entity splitting a srcset candidate makes two resources", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      '\n<img src="../README.md" srcset="../README.md 1x&#44;missing-p1b.png 2x">\n',
+  }, /link hỏng missing-p1b\.png/);
+});
+
+test("a legacy entity without a semicolon decodes in an attribute", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<a id="legacy&amp"></a>\n\n[p2](#legacy%26)\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a legacy entity followed by a letter stays literal in an attribute", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<a id="legacy&ampX"></a>\n\n[p2b](#legacy%26X)\n',
+  }, /anchor hỏng #legacy%26X/);
+});
+
+test("a legacy entity followed by an equals sign stays literal", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<a id="legacy&amp=tail"></a>\n\n[p2c](#legacy%26tail)\n',
+  }, /anchor hỏng #legacy%26tail/);
+});
+
+test("a numeric entity without a semicolon decodes in an attribute", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<a id="numeric&#38tail"></a>\n\n[p2d](#numeric%26tail)\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a non legacy entity without a semicolon stays literal", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<a id="modern&zwj"></a>\n\n[p2e](#modern%E2%80%8D)\n',
+  }, /anchor hỏng #modern%E2%80%8D/);
+});
+
+test("a Markdown destination still needs a semicolon on an entity", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[p2f](missing&amp-p2f.md)\n",
+  }, /link hỏng missing&amp-p2f\.md/);
+});
+
+test("src on a text input is not a resource", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<input type="text" src="missing-p3.png">\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("src on an input without a type is not a resource", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<input src="missing-p3c.png">\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("src on an image input is still a resource", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<input type=" IMAGE " src="missing-p3b.png">\n',
+  }, /link hỏng missing-p3b\.png/);
+});
+
+test("an inline tag keeps an emphasis delimiter out of a word", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## a<span></span>_b_\n\n[p4](#ab)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an underscore inside a word is still literal in a heading", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## a_b_ p4b\n\n[p4b](#ab-p4b)\n",
+  }, /anchor hỏng #ab-p4b/);
+});

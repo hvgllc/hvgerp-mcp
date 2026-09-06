@@ -2425,3 +2425,43 @@ Suite thêm 9 test, lên 657. Mẻ dò sáu ca của vòng này cộng năm ca �
 cho vùng vừa sửa đều đúng chiều. Bảy mẻ dò guard của bốn vòng trước (41 ca) chạy
 lại trên cả head cũ lẫn cây đã sửa cho output giống nhau từng dòng, nên không có
 chiều nào cũ bị đổi.
+
+## Codex vòng tiếp: review 5126869647
+
+Review đọc đúng head `f19a0160`, nêu bốn P2 và không P1 nào. Cả bốn tái hiện
+bằng một mẻ dò tám ca trước khi động vào code, và cả bốn đều đúng.
+
+- Giá trị thuộc tính HTML được giải mã ngay lúc đọc thẻ, trước máy tách `srcset`
+  và trước bước bỏ tab, xuống dòng rồi cắt khoảng trắng. GitHub trả
+  `href="../../\nREADME.md"` cho `href="../../&NewLine;README.md"`, tức link đó
+  đúng; gate cũ giữ nguyên tên reference và báo hỏng. Đích đến từ HTML vì thế
+  không giải mã lần thứ hai ở vòng kiểm target.
+- Bên trong giá trị thuộc tính, reference thiếu dấu chấm phẩy vẫn giải mã. Đo
+  bằng GitHub (`id="user-content-legacy&amp;"` cho `id="legacy&amp"`, còn
+  `&ampX` giữ nguyên) và bằng `npm:entities@6.0.1` ở chế độ thuộc tính: `&amp`
+  giải mã, `&amp=` và `&ampX` và `&notin` và `&zwj` thì không, `&not.` có,
+  `&#38` và `&#38=` đều có. Luật rút ra: named thiếu chấm phẩy chỉ giải mã khi
+  cả tên khớp một trong 106 tên legacy và ký tự kế không phải `=`; numeric thiếu
+  chấm phẩy thì luôn giải mã. Markdown không đổi, vẫn đòi dấu chấm phẩy.
+- `src` của `<input>` chỉ tải ảnh khi `type` là `image`; thiếu `type` thì mặc
+  định `text` và không tải gì. GitHub xóa hẳn thẻ `input` nên không tự trả lời
+  được câu này, mà gate cố ý không mô phỏng sanitizer, nên luật HTML là trọng
+  tài: khoanh `src` của `input` theo `type`, giống cách `poster` khoanh cho
+  `video` và `data` cho `object`.
+- Thẻ HTML inline không để lại ký tự nào nhưng vẫn là ranh giới của cặp nhấn.
+  GitHub trả `<h2>a<span></span><em>b</em></h2>` cho `## a<span></span>_b_`, tức
+  id thật là `ab`. Xóa thẳng thẻ khiến `_` dính vào chữ và slug thành `a_b_`;
+  giờ thẻ để lại một dấu sentinel, được gỡ cùng lúc với dấu NUL sẵn có.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 670 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+Chín mẻ dò guard của các vòng trước (46 ca) chạy trên cả head cũ lẫn cây đã sửa
+cho output giống nhau từng dòng, nên bốn thay đổi này không đổi kết luận của bất
+kỳ ca nào đã chốt trước đó.
