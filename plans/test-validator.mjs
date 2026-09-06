@@ -2881,3 +2881,54 @@ test("an indented example nested in a list item stays code", () => {
     [],
   );
 });
+
+test("execution steps must be numbered 1..N without repeats", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  // Đếm suông không phân biệt bước nhân đôi với bước bị bỏ: hai "Bước 1" và
+  // không có "Bước 2" vẫn ra đúng hạn mức, nên một kế hoạch thiếu bước đi qua.
+  const after = run({
+    [fileFor(22)]: (text) => text.replace("### Bước 2:", "### Bước 1:"),
+  });
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [fileFor(22).slice(6) + ": bước/gate không khớp"],
+  );
+});
+
+test("a fenced metadata example is not a second declaration", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  // Kiểm duy nhất phải đếm trên Markdown cấu trúc. Một fence ví dụ mang đúng
+  // khuôn metadata là tài liệu hợp lệ, không phải lần khai thứ hai, nên đếm
+  // trên body thô sẽ từ chối kế hoạch đúng.
+  const after = run({
+    [fileFor(22)]: (text) =>
+      text + "\nVí dụ khuôn metadata:\n\n" + tick.repeat(3) + "text\n" +
+      "- Mốc soạn: " + tick + "abc1234" + tick +
+      ", 2026-01-01. Trạng thái thực thi: " + tick + "TODO" + tick + ".\n" +
+      tick.repeat(3) + "\n",
+  });
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [],
+  );
+});
+
+test("a link inside an HTML comment is not resolved", () => {
+  const before = run();
+  assert.equal(before.thrown, undefined);
+  // HTML comment không render, nên ghi chú bảo trì chứa link literal không phải
+  // link sống; phân giải nó biến một tài liệu đúng thành lỗi giả.
+  const after = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n<!-- [literal note](missing-comment.md) -->\n",
+  });
+  assert.equal(after.thrown, undefined);
+  assert.deepEqual(
+    after.messages.filter((message) => !before.messages.includes(message)),
+    [],
+  );
+});

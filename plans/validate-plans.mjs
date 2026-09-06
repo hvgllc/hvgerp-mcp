@@ -92,6 +92,16 @@ function outsideBlockCode(body) {
     return line;
   }).join("\n");
 }
+// HTML comment không render, nên một ghi chú bảo trì chứa link literal không
+// phải link sống và không được đem đi phân giải. Nhận diện sau khi inline code
+// đã bị xóa, để một backtick chứa "<!--" không mở được comment giả nuốt mất
+// link thật; comment thiếu "-->" cũng không khớp và vẫn bị kiểm. Thay bằng
+// khoảng trắng giữ nguyên dòng để các gate đọc theo dòng không lệch.
+const outsideHtmlComments = (body) =>
+  body.replace(
+    /<!--[\s\S]*?-->/g,
+    (comment) => comment.replace(/[^\n]/g, " "),
+  );
 function markdownLinkSections(body) {
   const sections = [];
   let depth, fence, current = [];
@@ -279,8 +289,15 @@ function auditOf(body) {
     /^- Mục audit: ([1-9]|1\d|2[0-2]|Hướng phát triển [1-3]); loại: `[^`]+`\.$/,
   )?.[1];
 }
+// Đếm số lần khai một trường phải bỏ qua Markdown không render. Một fence ví dụ
+// mang đúng khuôn metadata là tài liệu hợp lệ, không phải lần khai thứ hai, nên
+// đếm trên body thô sẽ từ chối kế hoạch đúng. Vẫn đếm trên cả tài liệu cấu trúc
+// chứ không riêng section metadata, để hai lần khai mâu thuẫn ở hai section khác
+// nhau vẫn bị chặn.
+const declarations = (body, field) =>
+  outsideInlineCode(outsideBlockCode(body)).split(field).length - 1;
 function statusOf(body) {
-  if (body.split("Trạng thái thực thi:").length !== 2) return undefined;
+  if (declarations(body, "Trạng thái thực thi:") !== 1) return undefined;
   return metadataSection(body).match(
     /^- Mốc soạn: `[0-9a-f]{7,40}`, \d{4}-\d{2}-\d{2}\. Trạng thái thực thi: `(TODO|IN_PROGRESS|BLOCKED|DONE|STALE)`\.$/m,
   )?.[1];
@@ -291,7 +308,7 @@ function statusOf(body) {
 // hai trường cùng một dòng mà lại lấy từ hai chỗ khác nhau. Đòi hỏi duy nhất một
 // lần xuất hiện, cùng khuôn với statusOf, để cách khai hai mốc bị chặn hẳn.
 function draftingOf(body) {
-  if (body.split("Mốc soạn:").length !== 2) return undefined;
+  if (declarations(body, "Mốc soạn:") !== 1) return undefined;
   return metadataSection(body).match(
     /^- Mốc soạn: `([0-9a-f]{7,40})`, \d{4}-\d{2}-\d{2}\. Trạng thái thực thi: `(?:TODO|IN_PROGRESS|BLOCKED|DONE|STALE)`\.$/m,
   )?.[1];
@@ -823,10 +840,17 @@ for (const entry of manifest) {
   const structuralText = outsideInlineCode(
     structuralSection(structuralBody, "Các bước"),
   );
-  const steps = [...structuralText.matchAll(/^ {0,3}### Bước \d+:/gm)].length;
+  // Đếm suông không phân biệt được bước trùng số với bước thiếu: hai "Bước 1"
+  // và không có "Bước 2" vẫn ra đúng hạn mức. Đòi dãy số đọc được đúng bằng
+  // 1..N theo thứ tự xuất hiện, để một bước bị nhân đôi hoặc bỏ sót lộ ra.
+  const stepNumbers = [...structuralText.matchAll(/^ {0,3}### Bước (\d+):/gm)]
+    .map((match) => Number(match[1]));
   const checks =
     [...structuralText.matchAll(/^ {0,3}\*\*Kiểm tra:\*\*(?=\s|$)/gm)].length;
-  if (steps < 2 || steps !== checks) {
+  if (
+    stepNumbers.length < 2 || stepNumbers.length !== checks ||
+    stepNumbers.some((number, index) => number !== index + 1)
+  ) {
     fail(`${entry.file}: bước/gate không khớp`);
   }
   if (entry.id <= 22 && entry.audit !== String(entry.id)) {
@@ -963,7 +987,7 @@ for (const filePath of planFiles(planRoot)) {
   }
   if (file.endsWith(".md")) {
     const markdown = markdownLinkSections(body).map((section) =>
-      outsideInlineCode(outsideBlockCode(section))
+      outsideHtmlComments(outsideInlineCode(outsideBlockCode(section)))
     ).join("\n\n");
     const targets = inlineLinkTargets(markdown);
     // Kiểm mọi definition, kể cả chưa dùng; không phụ thuộc kiểu full/collapsed/shortcut.
