@@ -3021,3 +3021,50 @@ container khác đọc trên phần sau dấu trích dẫn, và dấu mở comme
 | `node --test plans/test-validator.mjs` | 811 pass          |
 | `git diff --check`                     | sạch              |
 | `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+## Codex vòng tiếp: review 5129588976
+
+Bốn finding P2 trên head `5537cfb`. Tái hiện đủ bốn và nhận cả bốn, nhưng hai
+finding phải sửa lại phần mô tả trước khi sửa mã.
+
+- H1: dòng mở một HTML block cắt được đoạn văn đang chạy, nên một backtick lẻ ở
+  trên nó không bắt được cặp. Ví dụ trong finding có dòng trống trước `<div>`
+  nên cổng đã báo hỏng sẵn; chỗ hỏng thật là dấu mở đứng ngay dòng kế tiếp.
+  GitHub trả về `<p>prefix` + backtick trong văn bản + `code</p>` rồi tới một
+  thẻ `<img>` sống. Nay `inlineCodeSpans` ngắt đoạn ở cả năm mẫu của
+  `htmlBlockOpeners`. Dạng 7 nằm ngoài danh sách, và chiều ấy cũng được đo: một
+  `<img>` đứng lẻ trên dòng vẫn nằm trong code span dưới dạng chữ, cắt ở đó là
+  báo hỏng một đường dẫn không renderer nào tải.
+- H2: lần khai trạng thái thứ hai viết dấu hai chấm bằng character reference thì
+  phép đếm trên chuỗi thô không thấy. GitHub render `Trạng thái thực thi&#58;`
+  thành đúng nhãn trường có dấu hai chấm thật, nên trang quảng cáo một trạng
+  thái trái với metadata canonical mà cổng vẫn xanh. `declarations` nay giải mã
+  reference trước khi đếm; bộ giải mã ấy đã tôn trọng dấu escape của Markdown
+  nên `\&#58;` vẫn là chữ literal.
+- H3: danh mục một-một chỉ đọc con trực tiếp của `plans/`, nên
+  `plans/archive/026-hidden.md` được quét nội dung mà không cần ID, dòng
+  manifest hay hàng README. Hai cách sửa mà finding đề nghị đều không dùng được.
+  Đưa file lồng vào danh mục là bất khả vì trường `file` của manifest đã cấm dấu
+  phân cách đường dẫn. Cấm tên đánh số ngoài thư mục gốc thì từ chối chính nội
+  dung repo đang có: chứng cứ đặt tên theo số kế hoạch nó phục vụ, và luật ấy
+  làm cổng đỏ ngay trên `plans/evidence/001-executor-local.md` và
+  `plans/evidence/002-contract-extension.md`. Bất biến đúng hẹp hơn: một
+  artifact mang số kế hoạch phải trỏ tới một ID có thật.
+- H4: `srcdoc` của `<iframe>` là cả một tài liệu HTML lồng, và tài nguyên tương
+  đối trong đó phân giải theo địa chỉ của trang bao ngoài. Đo bằng access log
+  của một server cục bộ: trang chỉ có `<iframe srcdoc>` phát ra đúng một yêu cầu
+  tới ảnh viết bên trong. `src` của chính `<iframe>` đã nằm trong danh sách tài
+  nguyên từ đầu, nên bỏ qua `srcdoc` là lệch với chính lời hứa của cổng. Vòng
+  quét thẻ thô nay là một hàm, và `<iframe srcdoc>` giải mã giá trị rồi chạy lại
+  đúng hàm ấy trên tài liệu lồng. Đệ quy dừng chắc chắn vì giá trị `srcdoc` luôn
+  ngắn hơn tài liệu chứa nó; `srcdoc` trên phần tử khác không phải browsing
+  context nên bị bỏ qua.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 820 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |

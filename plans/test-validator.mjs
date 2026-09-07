@@ -87,13 +87,25 @@ function run(replacements = {}, hidden = [], filesystem = {}, gitOutput) {
             existsSync(path));
       },
       lstatSync: (path) => {
-        const kind = kindOf(filesystem[relative(repoRoot, path)]);
-        return kind
-          ? {
+        const key = relative(repoRoot, path);
+        const kind = kindOf(filesystem[key]);
+        if (kind) {
+          return {
             isFile: () => kind === "file",
             isDirectory: () => kind === "directory",
-          }
-          : lstatSync(path);
+          };
+        }
+        // Thư mục trung gian của một mục fixture cũng là một phần của
+        // filesystem ảo: readdir đã liệt kê tên nó ra từ chính khoá ấy, nên
+        // lstat phải trả lời được. Đẩy xuống đĩa thật thì một đường dẫn chỉ
+        // sống trong fixture ném ENOENT ngay giữa một vòng quét thư mục.
+        if (
+          key &&
+          Object.keys(filesystem).some((name) => name.startsWith(key + "/"))
+        ) {
+          return { isFile: () => false, isDirectory: () => true };
+        }
+        return lstatSync(path);
       },
       // Một fixture mô tả symlink bằng khoá "realpath": chuỗi rỗng nghĩa là
       // realpath ném lỗi, như khi link tự vòng. Đường dẫn chỉ tồn tại trong
@@ -122,8 +134,14 @@ function run(replacements = {}, hidden = [], filesystem = {}, gitOutput) {
         } catch (error) {
           // Một thư mục chỉ tồn tại trong fixture thì đĩa thật ném ENOENT. Nuốt
           // lỗi đúng trường hợp đó, còn đường dẫn không có mục ảo nào vẫn để
-          // lỗi thoát ra như khi chạy thật.
-          if (!Object.keys(filesystem).some(underParent)) throw error;
+          // lỗi thoát ra như khi chạy thật. Một mục khai thẳng là "directory"
+          // cũng thuộc trường hợp đó dù không có con nào: lstat của fixture nói
+          // đó là thư mục, nên liệt kê nó phải ra danh sách rỗng chứ không phải
+          // ENOENT, đúng như một thư mục rỗng thật.
+          if (
+            !Object.keys(filesystem).some(underParent) &&
+            kindOf(filesystem[parent]) !== "directory"
+          ) throw error;
           names = new Set();
         }
         for (const key of Object.keys(filesystem)) {
@@ -3426,12 +3444,19 @@ test("a lone tag does not interrupt an open paragraph", () => {
   }, /link hỏng khong-ton-tai\.md/);
 });
 
-test("an HTML tag inside an inline code span opens no block", () => {
-  invalid({
+test("an HTML block opener ends the span that would have hidden it", () => {
+  // Cấu trúc khối quyết trước phần inline, nên "<div>" cắt đoạn đang mở dù một
+  // backtick phía trên còn chờ dấu đóng. Đo trên renderer của GitHub: cụm này
+  // trả về "<p>Văn bản `mã</p>" rồi một thẻ <div> chứa nguyên văn dòng cuối,
+  // tức đích trong ngoặc là chữ literal chứ không phải link. Đòi báo hỏng ở đây
+  // là bắt cổng bắt buộc từ chối một tài liệu không renderer nào đọc thành link.
+  const result = run({
     "plans/evidence/backlog-review.md": (text) =>
       text + "\nVăn bản " + tick + "mã\n<div>\nthêm" + tick +
       " [live](khong-ton-tai.md)\n",
-  }, /link hỏng khong-ton-tai\.md/);
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
 });
 
 test("a duplicate required section is rejected", () => {
@@ -6844,6 +6869,90 @@ test("a name anchor written inside svg still defines its fragment", () => {
   const result = run({
     [review]: (text) =>
       text + '\n<svg><a name="ghost-svg"></a></svg>\n\n[ok](#ghost-svg)\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+// Vòng 46.
+test("an html block opener ends a code span paragraph", () => {
+  // Đo trên renderer của GitHub: dòng <div> cắt đoạn đang mở, backtick lẻ ở
+  // trên không bắt được cặp, và thẻ <img> phía sau là markup sống.
+  invalid({
+    [review]: (text) =>
+      text + "\n" + tick +
+      'code\n<div><img src="missing-r46a.png"></div>\nend' + tick + "\n",
+  }, /link hỏng missing-r46a\.png/);
+});
+
+test("a raw text block opener also ends a code span paragraph", () => {
+  invalid({
+    [review]: (text) =>
+      text + "\n" + tick +
+      'code\n<pre>x</pre>\n<img src="missing-r46b.png">\nend' + tick + "\n",
+  }, /link hỏng missing-r46b\.png/);
+});
+
+test("a lone tag inside a code span stays inside the span", () => {
+  // Dạng 7 không cắt được đoạn văn: GitHub trả về đúng một code span chứa cả
+  // thẻ ảnh dưới dạng chữ, nên không renderer nào tải đường dẫn ấy.
+  const result = run({
+    [review]: (text) =>
+      text + "\n" + tick + 'code\n<img src="missing-r46c.png">\nend' + tick +
+      "\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a status declaration written with a character reference counts", () => {
+  // "&#58;" render thành đúng dấu hai chấm, nên đây là lần khai thứ hai và nó
+  // mâu thuẫn với metadata canonical của kế hoạch.
+  invalid({
+    "plans/022-release-security-documentation.md": (text) =>
+      text + "\nTrạng thái thực thi&#58; " + tick + "DONE" + tick + "\n",
+  }, /missing valid execution status/);
+});
+
+test("an escaped ampersand does not open a status declaration", () => {
+  const result = run({
+    [review]: (text) =>
+      text + "\nTrạng thái thực thi\\&#58; " + tick + "DONE" + tick + "\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a numbered artifact naming a missing plan is rejected", () => {
+  invalid({}, /Numbered artifact names a plan that does not exist/, [], {
+    "plans/archive": { kind: "directory" },
+    "plans/archive/026-hidden.md": { kind: "file", content: "# Ẩn\n" },
+  });
+});
+
+test("a numbered artifact naming an existing plan is accepted", () => {
+  const result = run({}, [], {
+    "plans/archive": { kind: "directory" },
+    "plans/archive/025-note.md": { kind: "file", content: "# Ghi chú\n" },
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a resource inside iframe srcdoc is checked", () => {
+  // Đo bằng access log của một server cục bộ: trình duyệt xin đúng đường dẫn
+  // ấy, phân giải theo địa chỉ của trang bao ngoài.
+  invalid({
+    [review]: (text) =>
+      text +
+      "\n<iframe srcdoc=\"&lt;img src='missing-r46d.png'&gt;\"></iframe>\n",
+  }, /link hỏng missing-r46d\.png/);
+});
+
+test("srcdoc outside an iframe is not a nested document", () => {
+  const result = run({
+    [review]: (text) =>
+      text + "\n<div srcdoc=\"&lt;img src='missing-r46e.png'&gt;\"></div>\n",
   });
   assert.equal(result.thrown, undefined);
   assert.equal(result.exitCode, 0, result.messages.join("\n"));

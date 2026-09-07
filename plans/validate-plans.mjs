@@ -804,7 +804,16 @@ function inlineCodeSpans(body) {
       // biến mất cùng comment. Coi dòng ấy là phần thân của code span thì dấu
       // mở thành chữ literal, mọi thứ sau nó ở lại trước mắt cổng, và một
       // fragment đã bị comment nuốt vẫn được nhận.
-      /^ {0,3}<!--/.test(inner);
+      /^ {0,3}<!--/.test(inner) ||
+      // Cùng lý do đó cho năm dạng HTML block còn lại: chúng đều chen được vào
+      // giữa một đoạn đang mở, nên dòng mở của chúng đóng đoạn trước khi một
+      // backtick lẻ kịp bắt cặp. Đo trên renderer của GitHub: "prefix `code",
+      // rồi "<div><img src=\"x.png\"></div>", rồi "end`" trả về một đoạn chứa
+      // "prefix `code" và ngay sau đó là thẻ <img> sống. Nuốt dòng ấy vào code
+      // span thì thẻ ảnh biến mất khỏi cổng và một tài nguyên hỏng đi qua. Dạng
+      // 7, tức một thẻ bất kỳ đứng lẻ trên dòng, không nằm trong danh sách này
+      // vì chuẩn cấm nó cắt ngang đoạn văn.
+      htmlBlockOpeners.some(([opener]) => opener.test(inner));
     // Dấu ordered chỉ là dấu list khi số của nó dài tối đa chín chữ số, đúng
     // giới hạn mà listIndentTracker và containerPrefix đã áp. Nhận số dài hơn
     // là cắt đoạn ở một dòng mà chuẩn giữ nguyên trong đoạn, code span viết vắt
@@ -2128,9 +2137,19 @@ const auditCategory = (audit) => auditCategories.get(audit) ?? "bug";
 // trước code, đúng thứ tự structuralMarkdown dùng. Vẫn đếm trên cả tài liệu cấu
 // trúc chứ không riêng section metadata, để hai lần khai mâu thuẫn ở hai section
 // khác nhau vẫn bị chặn.
+// Character reference được giải mã trước khi đếm, vì renderer đổi nó thành ký
+// tự thật và người đọc thấy đúng một nhãn trường. Đo trên renderer của GitHub:
+// "Trạng thái thực thi&#58; `DONE`" trả về "Trạng thái thực thi:" kèm thẻ
+// <code>DONE</code>, không khác gì viết thẳng dấu hai chấm. Đếm trên chuỗi thô
+// thì lần khai thứ hai ấy vô hình với cổng, và một kế hoạch quảng cáo trên
+// trang một trạng thái trái với metadata canonical lẫn hàng README của nó vẫn
+// đi qua. Chỗ này chỉ đếm số lần xuất hiện nên việc giải mã làm lệch offset
+// không ảnh hưởng gì; các gate đọc theo vị trí vẫn dùng chuỗi chưa giải mã.
 const declarations = (body, field) =>
-  outsideHtmlComments(
-    outsideInlineCode(outsideBlockCode(outsideHtmlBlocks(body))),
+  decodeReferences(
+    outsideHtmlComments(
+      outsideInlineCode(outsideBlockCode(outsideHtmlBlocks(body))),
+    ),
   ).split(field).length - 1;
 function statusOf(body) {
   if (declarations(body, "Trạng thái thực thi:") !== 1) return undefined;
@@ -2533,6 +2552,34 @@ const files = readdirSync(planRoot).filter((name) =>
   /^\d{3}-.*\.md$/.test(name)
 );
 if (files.length !== 25) fail(`Có ${files.length} file kế hoạch thay vì 25`);
+// Danh mục một-một chỉ đọc con trực tiếp của plans/, còn vòng quét tài liệu thì
+// đệ quy xuống thư mục con. Một file tên "026-hidden.md" đặt dưới plans/archive
+// vì thế vẫn được kiểm link và ký tự cấm, nhưng không cần ID, không cần dòng
+// manifest và không cần hàng README: trước mắt người đọc nó mang số của một kế
+// hoạch thứ 26, trước mắt danh mục nó không tồn tại.
+// Cấm hẳn tên đánh số ngoài thư mục gốc thì lại sai theo chiều kia: chứng cứ
+// của repo này đặt tên theo đúng số của kế hoạch nó phục vụ, từ
+// evidence/001.md tới evidence/002-contract-extension.md, và luật ấy sẽ từ chối
+// một quy ước đang dùng. Bất biến thật là hẹp hơn: một artifact mang số kế
+// hoạch phải trỏ tới một ID có thật. Số lạ ở thư mục gốc đã bị chặn bởi phép
+// đếm và ánh xạ manifest; ở thư mục con thì tới đây mới bị chặn.
+function nestedNames(directory, prefix) {
+  return readdirSync(directory).flatMap((name) => {
+    const path = resolve(directory, name);
+    const nested = prefix ? prefix + "/" + name : name;
+    return lstatSync(path).isDirectory()
+      ? nestedNames(path, nested)
+      : prefix
+      ? [nested]
+      : [];
+  });
+}
+for (const nested of nestedNames(planRoot, "")) {
+  const numbered = nested.split("/").pop().match(/^(\d{3})(?:-.*)?\.md$/);
+  if (numbered && !ids.has(Number(numbered[1]))) {
+    fail("Numbered artifact names a plan that does not exist: " + nested);
+  }
+}
 const manifestFiles = new Set();
 for (const entry of manifest) {
   if (manifestFiles.has(entry.file)) {
@@ -3706,6 +3753,64 @@ function documentAnchors(path) {
   anchorCache.set(path, anchors);
   return anchors;
 }
+// Mọi đích mà thuộc tính của HTML thô dựng ra trong một khối văn bản. Tách
+// thành hàm riêng vì "srcdoc" của <iframe> là cả một tài liệu HTML lồng bên
+// trong: trình duyệt giải mã giá trị ấy rồi phân tích nó như một trang, và tài
+// nguyên tương đối trong đó phân giải theo địa chỉ của trang bao ngoài. Đo bằng
+// access log của một server cục bộ: trang chỉ có
+// <iframe srcdoc="&lt;img src='missing-srcdoc.png'&gt;"> phát ra đúng một yêu
+// cầu tới missing-srcdoc.png, ngang hàng với một <img> viết thẳng. Bỏ qua nội
+// dung ấy là để một tài nguyên hỏng đi qua cổng, trong khi src của chính
+// <iframe> đã nằm trong srcElements từ đầu. Đệ quy dừng chắc chắn vì giá trị
+// srcdoc luôn là một đoạn con thực sự ngắn hơn tài liệu chứa nó.
+function htmlAttributeTargets(rawHtml) {
+  const htmlTargets = [];
+  const rawTags = renderedTags(rawHtml);
+  const pictures = elementRanges(rawHtml, rawTags, "picture");
+  const svgs = elementRanges(rawHtml, rawTags, "svg");
+  const audios = elementRanges(rawHtml, rawTags, "audio");
+  const videos = elementRanges(rawHtml, rawTags, "video");
+  for (const tag of rawTags) {
+    const inside = (ranges) =>
+      ranges.some(([start, end]) => tag.index > start && tag.index < end);
+    // Vùng bao gần nhất là vùng mở muộn nhất trong số các vùng chứa thẻ. Chỉ
+    // vùng ấy mới nói được vai trò của một <source>: cụm ảnh và cụm media
+    // lồng nhau được, và phần tử chọn tài nguyên luôn là phần tử bên trong.
+    const opensAt = (ranges) =>
+      ranges.reduce(
+        (latest, [start, end]) =>
+          tag.index > start && tag.index < end && start > latest
+            ? start
+            : latest,
+        -1,
+      );
+    const svg = inside(svgs);
+    const media = Math.max(opensAt(audios), opensAt(videos)) >
+      opensAt(pictures);
+    // Ngoài SVG, bộ phân tích HTML đổi thẳng thẻ mở "image" thành "img", nên
+    // <image src="x.png"> tải tài nguyên y như <img>. Đo trong Chrome: cây
+    // DOM trả về IMG và trang phát ra đúng một yêu cầu tới "x.png". Chỉ nhận
+    // cách viết "img" thì một đích hỏng đi qua cổng. Trong SVG thì "image"
+    // vẫn là chính nó và dùng href, đúng như hrefElements đang ghi.
+    const element = !svg && tag[1].toLowerCase() === "image"
+      ? "img"
+      : tag[1].toLowerCase();
+    // Cả thẻ đi cùng nhau vì một thuộc tính không tự nói hết vai trò của nó:
+    // src của <input> chỉ là tài nguyên khi type của chính thẻ đó là "image".
+    const attributes = new Map(tagAttributes(tag[2], tag.blockRaw));
+    for (const [name, value] of attributes) {
+      if (!value) continue;
+      if (name === "srcdoc" && element === "iframe") {
+        htmlTargets.push(...htmlAttributeTargets(decodeAttribute(value)));
+        continue;
+      }
+      htmlTargets.push(
+        ...attributeTargets(element, name, value, attributes, media, svg),
+      );
+    }
+  }
+  return htmlTargets;
+}
 for (const filePath of planFiles(planRoot)) {
   const file = relative(planRoot, filePath);
   const body = readFileSync(filePath, "utf8");
@@ -3760,55 +3865,7 @@ for (const filePath of planFiles(planRoot)) {
     // "\" là ký tự dữ liệu chứ không phải escape của Markdown. Trộn chung thì
     // href="#\&amp;" bị đọc thành fragment "&amp;" thay vì "\&", khớp nhầm một
     // id không ai có và một link hỏng thật đi qua cổng.
-    const htmlTargets = [];
-    const rawTags = renderedTags(rawHtml);
-    const pictures = elementRanges(rawHtml, rawTags, "picture");
-    const svgs = elementRanges(rawHtml, rawTags, "svg");
-    const audios = elementRanges(rawHtml, rawTags, "audio");
-    const videos = elementRanges(rawHtml, rawTags, "video");
-    for (const tag of rawTags) {
-      const inside = (ranges) =>
-        ranges.some(([start, end]) => tag.index > start && tag.index < end);
-      // Vùng bao gần nhất là vùng mở muộn nhất trong số các vùng chứa thẻ. Chỉ
-      // vùng ấy mới nói được vai trò của một <source>: cụm ảnh và cụm media
-      // lồng nhau được, và phần tử chọn tài nguyên luôn là phần tử bên trong.
-      const opensAt = (ranges) =>
-        ranges.reduce(
-          (latest, [start, end]) =>
-            tag.index > start && tag.index < end && start > latest
-              ? start
-              : latest,
-          -1,
-        );
-      const svg = inside(svgs);
-      const media = Math.max(opensAt(audios), opensAt(videos)) >
-        opensAt(pictures);
-      // Ngoài SVG, bộ phân tích HTML đổi thẳng thẻ mở "image" thành "img", nên
-      // <image src="x.png"> tải tài nguyên y như <img>. Đo trong Chrome: cây
-      // DOM trả về IMG và trang phát ra đúng một yêu cầu tới "x.png". Chỉ nhận
-      // cách viết "img" thì một đích hỏng đi qua cổng. Trong SVG thì "image"
-      // vẫn là chính nó và dùng href, đúng như hrefElements đang ghi.
-      const element = !svg && tag[1].toLowerCase() === "image"
-        ? "img"
-        : tag[1].toLowerCase();
-      // Cả thẻ đi cùng nhau vì một thuộc tính không tự nói hết vai trò của nó:
-      // src của <input> chỉ là tài nguyên khi type của chính thẻ đó là "image".
-      const attributes = new Map(tagAttributes(tag[2], tag.blockRaw));
-      for (const [name, value] of attributes) {
-        if (value) {
-          htmlTargets.push(
-            ...attributeTargets(
-              element,
-              name,
-              value,
-              attributes,
-              media,
-              svg,
-            ),
-          );
-        }
-      }
-    }
+    const htmlTargets = htmlAttributeTargets(rawHtml);
     // Kiểm mọi definition, kể cả chưa dùng; không phụ thuộc kiểu
     // full/collapsed/shortcut. Container được gỡ trước nên một definition mở đầu
     // list item hay nằm trong blockquote vẫn vào gate; checklist "- [ ] việc"
