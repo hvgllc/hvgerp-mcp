@@ -2843,3 +2843,65 @@ cổng phải báo hỏng đúng chuỗi ấy.
 | `node --test plans/test-validator.mjs` | 756 pass          |
 | `git diff --check`                     | sạch              |
 | `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+## Codex vòng tiếp: review 5128124635
+
+Sáu finding P2 trên head `b40cceb`. Tái hiện đủ sáu bằng probe, trọng tài bằng
+`gh api /markdown` cho năm cái và bằng Chrome thật cho cái còn lại, nhận cả sáu.
+
+- F1: một mục checklist sau đoạn văn đang mở vẫn được đếm là tiêu chí hoàn tất.
+  GitHub render `2. [x] tiêu chí` đứng ngay dưới một dòng văn xuôi thành
+  `<p>...<br>2. [x] tiêu chí</p>`, tức nó vẫn là văn xuôi chứ không phải mục.
+  Luật cắt đoạn văn của CommonMark nay được áp cho chính bộ đếm tiêu chí, nên
+  một kế hoạch DONE chỉ có văn xuôi không còn qua cổng bằng một mục giả.
+- F2: hàng danh mục được đếm dù bảng không có dòng dấu phân cách. Bỏ dòng ấy đi
+  thì GitHub render toàn bộ danh mục thành một đoạn văn, không hàng bảng nào,
+  nhưng cổng vẫn thấy đủ hàng. Cổng nay dựng thân bảng trước rồi mới chọn hàng
+  trong thân đó.
+- F3: dòng nối lười bị coi là dòng thoát khỏi blockquote, nên `---` ngay sau nó
+  hóa thành heading setext và sinh một anchor không có thật. GitHub render cụm
+  ấy thành `<blockquote>...</blockquote><hr>`. Bộ quét container nay giữ dòng
+  thiếu tiền tố ở lại trong container khi đoạn văn của container còn mở và bản
+  thân dòng ấy không mở khối nào.
+- F4: nhãn reference chuẩn hóa bằng `trim()` và `\s+`, mà hai thứ đó nuốt cả
+  U+00A0. GitHub để `[Ghost][label\u00a0]` nguyên văn còn `[Ghost2][label2 ]`
+  thành link, tức khoảng trắng của CommonMark không gồm U+00A0. Nhãn nay chuẩn
+  hóa đúng năm ký tự khoảng trắng mà đặc tả liệt kê.
+- F5: `href` trên `<script>` được đưa vào cổng, nhưng đó là thuộc tính chết của
+  HTML. Vì đây là hướng nới lỏng nên đo bằng Chrome thật trước: trong bốn thẻ
+  dựng sẵn chỉ `h-src.js`, `s-src.js`, `s-href.js` và `s-xlink.js` phát ra yêu
+  cầu mạng, `h-href.js` thì không. `href` và `xlink:href` trên `script` nay chỉ
+  vào cổng khi thẻ nằm trong một `<svg>`.
+- F6: dấu ngoặc vuông không thuộc tập ký tự local part của autolink email, nên
+  `<foo[bar](missing.md)@example.com>` không phải autolink và link bên trong nó
+  sống thật: GitHub trả về
+  `<p>&lt;foo<a href="missing-f6.md">bar</a>@example.com&gt;</p>`. Cổng nay dùng
+  đúng tập ký tự của đặc tả, và `<a_b!c@example.com>` vẫn là autolink hợp lệ.
+
+Một test đổi kỳ vọng có chủ ý: `README rejects duplicate row IDs` trước đây nhân
+đôi hàng `| 005` bằng cách nối thêm vào cuối tài liệu sau một dòng trống. Với
+thân bảng của F2 thì dòng ấy không còn là hàng, và `gh api /markdown` xác nhận
+GitHub cũng render nó thành `<p>| 005 | a |</p>`. Test nay nhân đôi hàng ngay
+tại chỗ trong thân bảng, và có thêm một test đối chứng khẳng định bản sao đặt
+ngoài bảng không phải hàng.
+
+Bản sửa F2 từng gây một hồi quy nới rộng: khung bảng đọc trên khung nhìn đã xóa
+code span, nên một hàng kẹp giữa hai dòng chỉ có một backtick tạo ra dòng trống
+giả cắt thân bảng và mọi hàng sau đó bị báo mất. `gh api /markdown` trả về đúng
+một bảng liên tục cho cụm ấy, chỉ ô bị kẹp mới mất link. Khung bảng nay đọc trên
+Markdown cấu trúc vì cấu trúc khối được quyết định trước phần inline; bộ probe
+guard 20 batch sau đó trùng khít baseline.
+
+Vòng này cũng ghim luôn mười dạng tự soi còn nợ từ vòng 42: `<PICTURE>` viết hoa
+vẫn mở vùng, còn `<picture>` bị escape, nằm trong `<script>` hoặc trong comment
+thì không; khối lệnh lồng hai lớp blockquote vẫn được đếm; và ba dạng thẻ hỏng
+trong HTML block vẫn để lộ đích.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 786 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |

@@ -354,6 +354,16 @@ const htmlLoneTag = new RegExp(
 // của thuộc tính, ký tự kế đó không phải "(", link thật không được thu, và
 // destination hỏng đi qua gate. Mẫu neo đầu (cờ y) để chỉ khớp tại đúng vị trí
 // con trỏ đang đứng.
+// Phần local của một email autolink chỉ nhận đúng tập ký tự của CommonMark.
+// Nới thành "mọi thứ không phải khoảng trắng, <, > hay @" là nuốt cả dấu ngoặc
+// vuông: "<foo[bar](x.md)@example.com>" khi đó thành một autolink nguyên khối và
+// link "[bar](x.md)" bên trong biến mất khỏi gate, dù GitHub render cụm đó thành
+// văn bản literal bọc một thẻ <a href="x.md"> sống. Dấu "-" đứng cuối lớp ký tự
+// để nó là ký tự thật chứ không mở một khoảng.
+const emailLocalPart = "[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+";
+const emailAutolinkBody = emailLocalPart +
+  "@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?" +
+  "(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*";
 const htmlInlineAtomic = new RegExp(
   "<(?:[A-Za-z][A-Za-z0-9-]*" + htmlAttributes + htmlOptionalSpace + "/?>" +
     "|/[A-Za-z][A-Za-z0-9-]*" + htmlOptionalSpace + ">" +
@@ -362,8 +372,7 @@ const htmlInlineAtomic = new RegExp(
     "|![A-Za-z][\\s\\S]*?>" +
     "|!\\[CDATA\\[[\\s\\S]*?\\]\\]>" +
     "|[A-Za-z][A-Za-z0-9+.-]{1,31}:[^ \\t\\r\\n<>]*>" +
-    "|[^ \\t\\r\\n<>@]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?" +
-    "(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*>)",
+    "|" + emailAutolinkBody + ">)",
   "y",
 );
 const htmlBlank = /^[ \t]*\r?$/;
@@ -645,6 +654,42 @@ const htmlBlockStart = (line) =>
   /^ {0,3}<!--/.test(line) || htmlLoneTag.test(line);
 const blockStart = (line) =>
   blockMarkerStart.test(line) || htmlBlockStart(line);
+// Dấu ordered chỉ mở list khi số của nó dài tối đa chín chữ số, giống giới hạn
+// đã dùng ở listIndentTracker và containerPrefix. Nhận dấu dài hơn thì
+// "1234567890. [x] ..." được tính là một tiêu chí, trong khi trên GitHub dòng đó
+// chỉ là văn xuôi và không có checklist nào cả.
+const completionItem =
+  /^[ \t]*((?:[-*+]|\d{1,9}[.)]))[ \t]+\[([ xX])\][ \t]+\S/;
+// Cùng luật ngắt đoạn: một list mới chỉ cắt được đoạn văn đang mở khi marker của
+// nó không đánh số hoặc đánh số 1. Quét thô từng dòng thì "2. [x] tiêu chí" viết
+// ngay dưới một đoạn văn được tính là một tiêu chí đã đạt, và cổng DONE bắt buộc
+// đi qua mà không có checklist nào; renderer của GitHub giữ đúng dòng ấy trong
+// đoạn văn phía trên. Item thứ hai trở đi của một list đang mở thì không ngắt gì
+// cả nên vẫn được nhận, và dòng thụt là phần tiếp của item nên không đóng list.
+function completionItems(section) {
+  const found = [];
+  let paragraphOpen = false;
+  let listOpen = false;
+  for (const raw of section.split("\n")) {
+    const line = raw.replace(/\r$/, "");
+    if (!line.trim()) {
+      paragraphOpen = false;
+      continue;
+    }
+    const item = line.match(completionItem);
+    if (item) {
+      if (!paragraphOpen || listOpen || interruptingListMarker(item[1], line)) {
+        found.push({ checked: item[2] !== " " });
+        listOpen = true;
+      }
+      paragraphOpen = true;
+      continue;
+    }
+    if (!/^[ \t]/.test(line)) listOpen = false;
+    paragraphOpen = !blockStart(line);
+  }
+  return found;
+}
 function markdownLinkSections(body) {
   const sections = [];
   let depth, fence, current = [];
@@ -934,9 +979,17 @@ const submitter = (element, attributes) => {
 };
 // SVG vẫn hỗ trợ dạng cũ "xlink:href" và trình duyệt phân giải nó y như "href",
 // nên bỏ qua tên đó là để một tài nguyên SVG hỏng thật đi qua cổng.
-const linkAttribute = (element, name, attributes, picture) =>
+// "script" nằm trong danh sách href vì SVG nạp mã bằng <script href>, nhưng
+// trên một <script> của HTML thì href là thuộc tính chết: thuộc tính tài nguyên
+// của nó là src. Đo trong Chrome trên cùng một trang, chỉ h-src.js, s-href.js,
+// s-src.js và s-xlink.js phát ra yêu cầu mạng; href của <script> ngoài SVG
+// không sinh yêu cầu nào. Hỏi nó ở đó là bắt cổng bắt buộc từ chối một tài liệu
+// đúng vì một đường dẫn không renderer nào tải. Ancestry đọc từ vùng <svg> nên
+// một <script> viết trong foreignObject vẫn bị tính là SVG: đó là hướng chặt,
+// cùng lắm báo thừa chứ không bỏ sót đích hỏng.
+const linkAttribute = (element, name, attributes, picture, svg) =>
   name === "href" || name === "xlink:href"
-    ? hrefElements.has(element)
+    ? hrefElements.has(element) && (element !== "script" || svg)
     : name === "src" &&
       ((srcElements.has(element) && !(element === "source" && picture)) ||
         (element === "input" && imageInput(attributes)));
@@ -955,14 +1008,19 @@ const linkAttribute = (element, name, attributes, picture) =>
 // Dấu đóng đi đường riêng vì renderedTags chỉ nhận thẻ mở: chỉ tính "</picture>"
 // nằm ngoài mọi thẻ đã nhận, để cùng chuỗi ấy viết trong một thuộc tính không
 // đóng được vùng nào.
-const pictureClose = /<\/picture(?=[ \t\r\n/>])/gi;
-function pictureRanges(text, tags) {
+const closingTag = (name) =>
+  new RegExp("</" + name + "(?=[ \\t\\r\\n/>])", "gi");
+const elementClose = new Map([["picture", closingTag("picture")], [
+  "svg",
+  closingTag("svg"),
+]]);
+function elementRanges(text, tags, name) {
   const spans = tags.map((tag) => [tag.index, tag.index + tag[0].length]);
   const events = [];
   for (const tag of tags) {
-    if (tag[1].toLowerCase() === "picture") events.push([tag.index, 1]);
+    if (tag[1].toLowerCase() === name) events.push([tag.index, 1]);
   }
-  for (const match of text.matchAll(pictureClose)) {
+  for (const match of text.matchAll(elementClose.get(name))) {
     const inside = spans.some(([start, end]) =>
       match.index >= start && match.index < end
     );
@@ -1101,8 +1159,8 @@ const attributeTarget = (value) => {
 // reference thay vì thành một xuống dòng bị bỏ đi, dựng ra một đường dẫn không
 // tồn tại và báo hỏng một link đúng; srcset viết "a.png&#44;b.png" thì mất luôn
 // ranh giới giữa hai ứng viên.
-const attributeTargets = (element, name, value, attributes, picture) =>
-  (linkAttribute(element, name, attributes, picture) ||
+const attributeTargets = (element, name, value, attributes, picture, svg) =>
+  (linkAttribute(element, name, attributes, picture, svg) ||
       (name === "poster" && posterElements.has(element)) ||
       (name === "data" && dataElements.has(element)) ||
       (name === "action" && element === "form") ||
@@ -1127,6 +1185,45 @@ function tableCells(row) {
   }
   cells.push(current);
   return cells.map((cell) => cell.replaceAll("\\|", "|"));
+}
+// Một hàng chỉ tồn tại khi bảng của nó tồn tại. GFM đòi hàng tiêu đề đi kèm một
+// dòng dấu có đúng số ô của tiêu đề; bỏ dòng dấu ra khỏi README thì mọi dòng ống
+// chỉ còn là văn xuôi của một đoạn văn, renderer của GitHub trả về đúng một thẻ
+// <p>. Quét thô từng dòng vẫn đọc chúng thành hàng, nên danh mục một-một biến
+// mất khỏi trang trước mắt người đọc trong khi cổng bắt buộc vẫn xanh.
+const delimiterCell = /^[ \t]*:?-+:?[ \t]*$/;
+// Dấu ống ngoài cùng là tùy chọn, nên bỏ một ô rỗng ở mỗi đầu trước khi đếm cột.
+function rowCells(line) {
+  const cells = tableCells(line);
+  if (cells.length < 2) return undefined;
+  if (!cells[0].trim()) cells.shift();
+  if (cells.length > 1 && !cells.at(-1).trim()) cells.pop();
+  return cells;
+}
+// Thân bảng chạy tới dòng trống hoặc tới dòng mở một khối khác; đo trên renderer
+// của GitHub, một dòng không có dấu ống nào vẫn là một hàng một ô và bảng chạy
+// tiếp, còn một bảng thì ngắt được đoạn văn ngay phía trên nó.
+function tableBodyLines(lines) {
+  const body = new Set();
+  let at = 0;
+  while (at + 1 < lines.length) {
+    const header = rowCells(lines[at]);
+    const delimiter = rowCells(lines[at + 1]);
+    if (
+      !header || !delimiter || delimiter.length !== header.length ||
+      !delimiter.every((cell) => delimiterCell.test(cell))
+    ) {
+      at++;
+      continue;
+    }
+    let row = at + 2;
+    for (; row < lines.length; row++) {
+      if (!lines[row].trim() || blockStart(lines[row])) break;
+      body.add(row);
+    }
+    at = row;
+  }
+  return body;
 }
 // CommonMark giải mã character reference trước khi phân giải một destination
 // và trước khi dựng id của heading, nên "[x](link&amp;target.md)" trỏ tới file
@@ -2588,19 +2685,11 @@ for (const entry of manifest) {
     // Đọc từ structuralBody (đã xóa nội dung trong fenced/indented code) để một
     // checklist mẫu nằm trong khối code không tự đứng ra làm bằng chứng hoàn tất.
     const completion = structuralSection(structuralBody, "Tiêu chí hoàn tất");
-    const items = [
-      ...completion.matchAll(
-        // Dấu ordered chỉ mở list khi số của nó dài tối đa chín chữ số, giống
-        // giới hạn đã dùng ở listIndentTracker và containerPrefix. Nhận dấu dài
-        // hơn thì "1234567890. [x] ..." được tính là một tiêu chí, trong khi
-        // trên GitHub dòng đó chỉ là văn xuôi và không có checklist nào cả.
-        /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\[([ xX])\][ \t]+\S/gm,
-      ),
-    ];
+    const items = completionItems(completion);
     if (!items.length) {
       fail(entry.file + ": DONE requires a completion checklist");
     }
-    if (items.some((item) => item[1] === " ")) {
+    if (items.some((item) => !item.checked)) {
       fail(entry.file + ": DONE has unchecked completion criteria");
     }
     const evidencePath = resolve(
@@ -2856,8 +2945,7 @@ const headingSlug = (text) =>
 // bị báo hỏng, nên giữ lại phần trong dấu ngoặc trước khi gỡ thẻ thật.
 const autolinkText = new RegExp(
   "<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^ \\t\\r\\n<>]*" +
-    "|[^ \\t\\r\\n<>@]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?" +
-    "(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)>",
+    "|" + emailAutolinkBody + ")>",
   "g",
 );
 // Reference link chỉ render thành văn bản nhãn khi label của nó có định nghĩa.
@@ -2872,8 +2960,24 @@ const autolinkText = new RegExp(
 // thật bị đọc thành văn bản literal, và slug của heading chứa nó sai theo. Hạ
 // rồi nâng là đúng công thức normalizeReference của commonmark.js, thứ đang làm
 // trọng tài cho mọi tranh chấp CommonMark ở đây.
+// Phép thu gọn chỉ gộp đúng tập khoảng trắng của CommonMark: space, tab,
+// newline, line tabulation, form feed và carriage return. String.trim() và "\s"
+// còn nuốt cả U+00A0, nên một nhãn kết thúc bằng U+00A0 bị đọc thành nhãn đã
+// cắt sạch và một reference chưa hề được định nghĩa hóa thành đã định nghĩa. Đo
+// trên renderer của GitHub: một heading "[Ghost][label" kèm U+00A0 rồi "]", đi
+// cùng "[label]: ...", render nguyên văn cả cụm chứ không thành link, trong khi
+// cùng hình dạng đó viết bằng dấu cách thường thì thành link thật. Thu gọn rộng
+// tay ghi một id "#ghost" không renderer nào dựng và một link tới nó đi qua cổng.
+// Viết bằng mã ký tự để không vướng no-control-regex.
+const commonmarkSpaceClass = "[\\u0020\\u0009\\u000a\\u000b\\u000c\\u000d]";
+const commonmarkSpaceRun = new RegExp(commonmarkSpaceClass + "+", "g");
+const commonmarkSpaceEdge = new RegExp(
+  "^" + commonmarkSpaceClass + "+|" + commonmarkSpaceClass + "+$",
+  "g",
+);
 const referenceLabel = (raw) =>
-  raw.trim().replace(/\s+/g, " ").toLowerCase().toUpperCase();
+  raw.replace(commonmarkSpaceEdge, "").replace(commonmarkSpaceRun, " ")
+    .toLowerCase().toUpperCase();
 // Dấu nhấn không để lại ký tự nào trong văn bản render: "## _Emphasized_ probe"
 // ra "Emphasized probe" và id GitHub là "emphasized-probe". Dấu sao đã tự biến
 // mất vì headingSlug xóa mọi ký tự ngoài chữ, số, "_", " " và "-", nhưng gạch
@@ -3171,6 +3275,17 @@ function scanContainers(rawLines) {
       paragraphOpen = false;
       return { text: "", depth: matched, opened: false };
     }
+    // Nối lười: khi đoạn văn của một container còn đang mở, một dòng thiếu tiền
+    // tố mà tự nó không mở khối nào vẫn thuộc về container đó. Cắt ngăn xếp vô
+    // điều kiện là đọc sai cả cụm: "> Quoted first line" rồi "lazy continuation"
+    // rồi "---" bị hiểu thành một setext heading ở mức ngoài, gate ghi một id
+    // "#lazy-continuation" và một link tới nó đi qua cổng, trong khi renderer
+    // của GitHub giữ dòng hai trong blockquote và dựng dòng ba thành <hr>, tức
+    // không có heading nào. Dòng tự mở khối mới thì không lười được, nên nó vẫn
+    // đi tiếp đường cắt ngăn xếp bên dưới.
+    if (paragraphOpen && matched < paragraphDepth && !blockStart(rest)) {
+      return { text: rest, depth: paragraphDepth, opened: false };
+    }
     open.length = matched;
     let opened = false;
     for (;;) {
@@ -3222,12 +3337,11 @@ const definitionLabelLimit = 999;
 // của chuẩn hẹp hơn String.trim(): chỉ space, tab, newline, line tabulation,
 // form feed và carriage return. Đo bằng trim() thì một nhãn chỉ gồm U+00A0 bị
 // coi là rỗng, definition thật của nó biến mất khỏi gate và đích hỏng của nó
-// đi qua. Viết bằng mã ký tự để không vướng no-control-regex.
-const commonmarkWhitespace = new Set([0x20, 0x09, 0x0a, 0x0b, 0x0c, 0x0d]);
-const labelIsBlank = (label) =>
-  [...label].every((character) =>
-    commonmarkWhitespace.has(character.codePointAt(0))
-  );
+// đi qua. Dùng chung đúng một lớp ký tự với referenceLabel: hai chỗ cùng trả
+// lời câu "ký tự này có phải khoảng trắng của chuẩn không" nên không được có
+// hai định nghĩa.
+const labelBlank = new RegExp("^" + commonmarkSpaceClass + "*$");
+const labelIsBlank = (label) => labelBlank.test(label);
 // Cụm definition bắt đầu ở dòng start, nối thêm dòng chừng nào chúng còn là văn
 // bản của cùng khối. Trả về nhãn, destination trên dòng cuối, và chính dòng
 // cuối đó; null khi cụm không phải definition.
@@ -3544,19 +3658,28 @@ for (const filePath of planFiles(planRoot)) {
     // id không ai có và một link hỏng thật đi qua cổng.
     const htmlTargets = [];
     const rawTags = renderedTags(rawHtml);
-    const pictures = pictureRanges(rawHtml, rawTags);
+    const pictures = elementRanges(rawHtml, rawTags, "picture");
+    const svgs = elementRanges(rawHtml, rawTags, "svg");
     for (const tag of rawTags) {
       const element = tag[1].toLowerCase();
-      const picture = pictures.some(([start, end]) =>
-        tag.index > start && tag.index < end
-      );
+      const inside = (ranges) =>
+        ranges.some(([start, end]) => tag.index > start && tag.index < end);
+      const picture = inside(pictures);
+      const svg = inside(svgs);
       // Cả thẻ đi cùng nhau vì một thuộc tính không tự nói hết vai trò của nó:
       // src của <input> chỉ là tài nguyên khi type của chính thẻ đó là "image".
       const attributes = new Map(tagAttributes(tag[2], tag.blockRaw));
       for (const [name, value] of attributes) {
         if (value) {
           htmlTargets.push(
-            ...attributeTargets(element, name, value, attributes, picture),
+            ...attributeTargets(
+              element,
+              name,
+              value,
+              attributes,
+              picture,
+              svg,
+            ),
           );
         }
       }
@@ -3777,6 +3900,13 @@ else {
   const rendered = outsideInlineCode(index);
   const indexLines = index.split("\n");
   const renderedLines = rendered.split("\n");
+  // Khung bảng đọc trên Markdown cấu trúc chứ không trên khung nhìn đã xóa code
+  // span: cấu trúc khối được quyết định trước phần inline, nên một hàng kẹp
+  // giữa hai dòng chỉ có một backtick vẫn là hàng của bảng và những hàng phía
+  // sau nó vẫn là hàng. Đo trên renderer của GitHub: cả cụm ấy trả về một bảng
+  // đủ hàng, chỉ ô bị kẹp mới mất link. Đo khung trên renderedLines thì dòng
+  // trống giả cắt thân bảng và mọi hàng sau đó bị báo mất.
+  const bodyRows = tableBodyLines(indexLines);
   // Ánh xạ một-một phải kiểm cả chiều ngược: vòng lặp dưới chỉ hỏi từng ID của
   // manifest có đúng một dòng, nên một dòng danh mục mang ID lạ không bị ai hỏi
   // tới và README quảng cáo thêm kế hoạch ngoài bộ đã duyệt. Đọc ô ID theo đúng
@@ -3806,7 +3936,7 @@ else {
     }
     const id = String(entry.id).padStart(3, "0");
     const rows = renderedLines.flatMap((line, at) =>
-      tableCells(line)[1]?.trim() === id ? [at] : []
+      bodyRows.has(at) && tableCells(line)[1]?.trim() === id ? [at] : []
     );
     if (rows.length !== 1) fail("README requires exactly one row for ID " + id);
     const cells = tableCells(indexLines[rows[0]] ?? "");

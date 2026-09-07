@@ -2314,10 +2314,28 @@ test("README links are bound to their row IDs", () => {
   }, /README row file does not match ID/);
 });
 test("README rejects duplicate row IDs", () => {
+  // Bản sao phải nằm trong chính thân bảng thì mới là hàng thứ hai. Chép ra
+  // cuối tài liệu, sau một dòng trống, là chép ra ngoài bảng: renderer của
+  // GitHub trả về "<p>| 005 | ... |</p>" chứ không thêm hàng nào.
   invalid({
-    "plans/README.md": (text) =>
-      text + "\n" + text.split("\n").find((line) => line.startsWith("| 005 ")),
+    "plans/README.md": (text) => {
+      const lines = text.split("\n");
+      const at = lines.findIndex((line) => line.startsWith("| 005 "));
+      return [...lines.slice(0, at + 1), lines[at], ...lines.slice(at + 1)]
+        .join("\n");
+    },
   }, /README requires exactly one row for ID 005/);
+});
+test("a README row copied outside the table is not a row", () => {
+  // Cùng bản sao ấy đặt sau bảng thì danh mục vẫn là một-một, nên cổng không
+  // được báo gì. Đây là chỗ duy nhất bản sửa vòng này nới lỏng kỳ vọng cũ.
+  const result = run({
+    "plans/README.md": (text) =>
+      text + "\n" + text.split("\n").find((line) => line.startsWith("| 005 ")) +
+      "\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
 });
 function scopePath(path, fresh = false) {
   const first = manifest.find((entry) => entry.id === 15).scope[0];
@@ -6271,4 +6289,306 @@ test("the same broken id outside a raw block builds no anchor", () => {
     "plans/evidence/backlog-review.md": (text) =>
       text + "\nText <a id==r42m>x</a> done.\n\n[y](#=r42m)\n",
   }, /anchor hỏng #=r42m/);
+});
+
+// Vòng 43. Sáu phát hiện, mỗi phát hiện đi kèm control giữ đúng hành vi cũ.
+const review = "plans/evidence/backlog-review.md";
+// Sửa thân một kế hoạch luôn làm hỏng ảnh chụp định nghĩa và bằng chứng duyệt;
+// đó là nhiễu cố hữu của fixture, nên phía hợp lệ đo bằng "không có thông báo
+// nào ngoài đúng hai dòng ấy".
+const assertOnlyDefinitionNoise = (result, id) => {
+  assert.equal(result.thrown, undefined);
+  assert.deepEqual(
+    [...result.messages].sort(),
+    [...definitionFailures(id)].sort(),
+  );
+};
+const completionSection = (body) => (text) =>
+  text.replace(/- \[[ xX]\]/g, "-").replace(
+    "## Tiêu chí hoàn tất\n",
+    "## Tiêu chí hoàn tất\n\n" + body + "\n",
+  );
+
+test("an ordered completion item cannot interrupt a paragraph", () => {
+  // Chỉ marker số 1 mở được list ngay dưới một đoạn văn đang chạy. Renderer của
+  // GitHub giữ "2. [x] ..." trong chính đoạn văn ấy, nên không có checklist nào.
+  invalid(
+    { [fileFor(24)]: completionSection("Mo dau doan van.\n2. [x] tieu chi") },
+    /024.*completion checklist/,
+  );
+});
+
+test("an ordered completion item numbered one interrupts a paragraph", () => {
+  const result = run({
+    [fileFor(24)]: completionSection("Mo dau doan van.\n1. [x] tieu chi"),
+  });
+  assertOnlyDefinitionNoise(result, 24);
+});
+
+test("a bullet completion item interrupts a paragraph", () => {
+  const result = run({
+    [fileFor(24)]: completionSection("Mo dau doan van.\n- [x] tieu chi"),
+  });
+  assertOnlyDefinitionNoise(result, 24);
+});
+
+test("the second item of an open list is still a completion item", () => {
+  // Item thứ hai không ngắt gì cả vì list đã mở, nên "2. [ ]" vẫn phải bị đếm
+  // và làm cổng báo tiêu chí chưa đạt.
+  invalid(
+    {
+      [fileFor(24)]: completionSection(
+        "Mo dau doan van.\n1. [x] dat\n2. [ ] chua dat",
+      ),
+    },
+    /024.*unchecked completion/,
+  );
+});
+
+test("README rows need a table delimiter row", () => {
+  // Bỏ dòng dấu là bỏ cả bảng: GitHub render mọi dòng ống thành một đoạn văn,
+  // nên danh mục một-một không còn tồn tại trước mắt người đọc.
+  invalid({
+    "plans/README.md": (text) => {
+      const lines = text.split("\n");
+      const at = lines.findIndex((line) => /^\| -+ \|/.test(line));
+      return [...lines.slice(0, at), ...lines.slice(at + 1)].join("\n");
+    },
+  }, /README requires exactly one row for ID 001/);
+});
+
+test("a lazy continuation stays inside its blockquote", () => {
+  // GitHub giữ dòng hai trong blockquote và dựng "---" thành <hr>, nên không có
+  // heading nào và "#lazy-continuation" là anchor chết.
+  invalid({
+    [review]: (text) =>
+      text +
+      "\n> Quoted first line\nlazy continuation\n---\n\n[x](#lazy-continuation)\n",
+  }, /anchor hỏng #lazy-continuation/);
+});
+
+test("a setext heading outside any container still builds an anchor", () => {
+  const result = run({
+    [review]: (text) =>
+      text + "\nplain continuation r43\n---\n\n[x](#plain-continuation-r43)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an ATX heading after a quoted paragraph is not a lazy continuation", () => {
+  // Dòng tự mở khối mới thì không lười được, nên heading này vẫn ở mức ngoài và
+  // vẫn sinh anchor.
+  const result = run({
+    [review]: (text) =>
+      text + "\n> Quoted line r43\n## Atx after quote r43\n\n" +
+      "[x](#atx-after-quote-r43)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a reference label ending in U+00A0 is not the defined label", () => {
+  // U+00A0 không thuộc tập khoảng trắng của CommonMark, nên nhãn này chưa được
+  // định nghĩa và GitHub render nguyên văn cả cụm thay vì một link.
+  invalid({
+    [review]: (text) =>
+      text + "\n## [Ghost][label\u00a0]\n\n[label]: https://example.com\n\n" +
+      "[x](#ghost)\n",
+  }, /anchor hỏng #ghost/);
+});
+
+test("a reference label ending in a plain space is the defined label", () => {
+  const result = run({
+    [review]: (text) =>
+      text + "\n## [Ghost2][label2 ]\n\n[label2]: https://example.com\n\n" +
+      "[x](#ghost2)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a label carrying U+00A0 on both sides still resolves", () => {
+  // Hai nhãn giống nhau từng ký tự vẫn là một nhãn; phép thu gọn hẹp lại không
+  // được làm mất một reference thật.
+  const result = run({
+    [review]: (text) =>
+      text +
+      "\n## [Ghost3][lab\u00a0el]\n\n[lab\u00a0el]: https://example.com" +
+      "\n\n[x](#ghost3)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("href on an HTML script element is not a target", () => {
+  // Đo trong Chrome: <script href> ngoài SVG không phát ra yêu cầu mạng nào.
+  const result = run({
+    [review]: (text) => text + '\n<script href="missing-r43a.js"></script>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("src on an HTML script element is still a target", () => {
+  invalid({
+    [review]: (text) => text + '\n<script src="missing-r43b.js"></script>\n',
+  }, /link hỏng missing-r43b\.js/);
+});
+
+for (
+  const [name, attribute] of [["href", "href"], ["xlink", "xlink:href"]]
+) {
+  test("href on an SVG script element is a target: " + name, () => {
+    invalid({
+      [review]: (text) =>
+        text + "\n<svg><script " + attribute + '="missing-r43c-' + name +
+        '.js"></script></svg>\n',
+    }, new RegExp("link hỏng missing-r43c-" + name + "\\.js"));
+  });
+}
+
+test("an HTML script after a closed svg is inert again", () => {
+  const result = run({
+    [review]: (text) =>
+      text + '\n<svg><circle r="1"></circle></svg>\n\n' +
+      '<script href="missing-r43d.js"></script>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("href on an anchor is unaffected by the script rule", () => {
+  invalid({
+    [review]: (text) => text + '\n<a href="missing-r43e.md">x</a>\n',
+  }, /link hỏng missing-r43e\.md/);
+});
+
+test("brackets break an email autolink and free the inner link", () => {
+  // GitHub render cụm này thành văn bản literal bọc một thẻ <a href> sống, nên
+  // đích bên trong phải vào cổng.
+  invalid({
+    [review]: (text) => text + "\n<foo[bar](missing-r43f.md)@example.com>\n",
+  }, /link hỏng missing-r43f\.md/);
+});
+
+test("a valid email autolink stays atomic", () => {
+  const result = run({
+    [review]: (text) => text + "\n<foo.bar+baz@example.com>\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("the full CommonMark local part is still an autolink", () => {
+  const result = run({
+    [review]: (text) =>
+      text + "\n<a!#$%&'*+/=?^_" + tick + "{|}~-.b@example.com>\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a code span inside the catalog ends no table body", () => {
+  // Đo trên renderer thật: ba dòng ấy trả về một bảng liên tục, hàng 001 mất
+  // link còn 002 trở đi vẫn là hàng. Nếu khung bảng đọc trên khung nhìn đã xóa
+  // code span thì dòng trống giả cắt thân bảng và mọi hàng sau đó bị báo mất.
+  const first = manifest.find((entry) => entry.id === 1).file;
+  const result = run({
+    "plans/README.md": (text) => {
+      const lines = text.split("\n");
+      const at = lines.findIndex((line) => line.startsWith("| 001 |"));
+      return [
+        ...lines.slice(0, at),
+        tick,
+        lines[at],
+        tick,
+        ...lines.slice(at + 1),
+      ].join("\n");
+    },
+  });
+  assert.equal(result.thrown, undefined);
+  assert.deepEqual(
+    [...result.messages].sort(),
+    [
+      "README requires exactly one row for ID 001",
+      "README row file does not match ID 001",
+      "README thiếu " + first,
+      first + ": index and manifest dependencies differ",
+      first + ": index and plan status differ",
+    ].sort(),
+  );
+});
+
+// Tự soi vòng 42, ghim lại ở vòng 43: vùng <picture> chỉ được mở bởi thẻ thật,
+// và thẻ hỏng trong block vẫn để lộ đích.
+test("an uppercase picture element still opens the range", () => {
+  // HTML không phân biệt hoa thường: <PICTURE> vẫn là picture, nên src của
+  // source bên trong vẫn bị trình duyệt bỏ qua.
+  const result = run({
+    [review]: (text) =>
+      text +
+      '\n<PICTURE><source src="missing-k1.png" srcset="../../README.md">' +
+      "</PICTURE>\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an escaped picture opens no range", () => {
+  invalid({
+    [review]: (text) =>
+      text + '\n\\<picture><video><source src="missing-k2.mp4"></video>\n',
+  }, /link hỏng missing-k2\.mp4/);
+});
+
+test("a picture named inside a script opens no range", () => {
+  invalid({
+    [review]: (text) =>
+      text + '\n<script>\nvar tag = "<picture>";\n</script>\n\n' +
+      '<video><source src="missing-k3.mp4"></video>\n',
+  }, /link hỏng missing-k3\.mp4/);
+});
+
+test("a picture named inside a comment opens no range", () => {
+  invalid({
+    [review]: (text) =>
+      text + "\n<!-- <picture> -->\n\n" +
+      '<video><source src="missing-k4.mp4"></video>\n',
+  }, /link hỏng missing-k4\.mp4/);
+});
+
+test("a command block nested two blockquotes deep still counts", () => {
+  const result = run(blocked(22), [], {
+    "plans/evidence/022.md": {
+      kind: "file",
+      content: "# Bằng chứng 022\n\nTrạng thái: BLOCKED\n\n" +
+        "> > " + tick.repeat(3) + "bash\n> > deno test\n> > " +
+        tick.repeat(3) + "\n",
+    },
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an unquoted attribute value keeps a less-than sign", () => {
+  invalid({
+    [review]: (text) => text + "\n<div><a href=missing<k8.md>x</a></div>\n",
+  }, /link hỏng missing<k8\.md/);
+});
+
+test("a broken tag split across lines inside a block still leaks", () => {
+  invalid({
+    [review]: (text) =>
+      text + "\n<div>\n<a\n  href==missing-k9.md>x</a>\n</div>\n",
+  }, /link hỏng =missing-k9\.md/);
+});
+
+test("escaping a broken tag inside an HTML block changes nothing", () => {
+  // Trong khối HTML thì dấu gạch chéo ngược không còn là ký tự thoát, nên thẻ
+  // hỏng vẫn sống và đích của nó vẫn phải vào cổng.
+  invalid({
+    [review]: (text) =>
+      text + "\n<div>\n\\<a href==missing-k10.md>x</a>\n</div>\n",
+  }, /link hỏng =missing-k10\.md/);
 });
