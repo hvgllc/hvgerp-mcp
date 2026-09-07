@@ -3131,3 +3131,60 @@ chỗ cũ thì cổng chết bằng `ReferenceError` thay vì báo lỗi kế ho
 | `node --test plans/test-validator.mjs` | 840 pass          |
 | `git diff --check`                     | sạch              |
 | `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+## Codex vòng tiếp: review 5130837473
+
+Hai finding trên `d10d60a`. Cả hai đều tái hiện không ra, nên vòng này không sửa
+mã; phần dưới ghi số đo để vòng sau không phải dựng lại.
+
+- J1 (P1, `evidence/001.md:10`): báo cáo nói `reviewed_commit` cùng nhiều commit
+  definition/approval vắng mặt vì không phải tổ tiên của `8ff64a3`. Commit
+  `8ff64a3` không tồn tại trong repository: `git cat-file -t` trả
+  `fatal: Not a valid object name`. Dựng clone một nhánh đầy đủ history bằng
+  `--single-branch --branch advisor/goal-backlog --no-tags` tại `d10d60a`, được
+  507 commit; trong clone đó `node plans/validate-plans.mjs` trả `Đạt` và
+  `node --test plans/test-history.mjs` trả 5 pass, 0 fail. Quét toàn bộ 375
+  chuỗi 40 hex trong `plans/**/*.md` ngay trong clone ấy: 362 object có mặt (204
+  commit, 94 blob, 64 tree) và không commit nào ngoài ancestry của HEAD. Mọi ref
+  trong front matter của `evidence/001.md`, gồm `completed_commit` `013a1cfd`,
+  đều có mặt và là tổ tiên HEAD.
+
+- J1 kèm số đo giáp ranh, ghi lại cho minh bạch: 13 chuỗi 40 hex vắng mặt trong
+  clone sạch. Hai chuỗi là commit upstream `frappe/erpnext` được trỏ bằng URL
+  GitHub, không thuộc repository này. Ba chuỗi là SHA của repository khác hoặc
+  một tree được nêu làm ví dụ trong chính tập tin review. Tám chuỗi còn lại là
+  mốc cây executor local ghi trong văn xuôi evidence, dạng
+  `cây da01bee4:
+  server/UI check`. Chúng không phải `sourceRef` của record
+  nào, không có trích đoạn nào neo vào chúng, và không cổng nào đọc chúng; quy
+  tắc 1 của `plans/AGENTS.md` ràng buộc `sourceRef` đọc được bằng Git, không
+  ràng buộc mốc chạy suite. Clone sạch mà `test-history.mjs` tự dựng vẫn xanh
+  đúng vì vậy.
+
+- J2 (P2, `014-sales-chart-draft-filter.md:186`): báo cáo nói dòng kết luận vẫn
+  bảo chưa triển khai draft policy trong khi kế hoạch đã DONE. Dòng ấy nằm trong
+  mục `Bảo trì`, là nhật ký đối chiếu theo mốc, và đoạn chứa nó tự neo bằng câu
+  mở đầu `Đối chiếu sau 013 tại main bce7d251`. Commit `bce7d251` là merge PR
+  #39 lúc 2026-09-05T17:41:06+07:00; phần thực thi 014 merge tại `b409cbb7` lúc
+  2026-09-05T18:35:16+07:00, 54 phút sau, và `bce7d251` là tổ tiên của
+  `b409cbb7`. Tại mốc mà đoạn văn tự neo, câu đó đúng. Trạng thái sống nằm ở
+  dòng 12 `Trạng thái thực thi: DONE` và ở `evidence/014.md`, không nằm ở nhật
+  ký.
+
+- J2 còn vướng cấu trúc nếu muốn sửa chữ: `definitionApproved` ghim nguyên blob
+  của tập tin kế hoạch. Đo bằng cách sửa đúng dòng 186, và riêng bằng cách thêm
+  một dòng trắng cuối tập tin: cả hai đều cho
+  `DONE requires approved definition snapshot` cùng
+  `DONE requires reviewer approval evidence`. Ca đối chứng thêm một dòng vào
+  `evidence/005.md` thì cổng vẫn `Đạt`, nên vùng bất biến đúng là thân kế hoạch
+  DONE chứ không phải cả `plans/`. Sửa dòng 186 rồi ghim lại blob là tự duyệt
+  chỉnh sửa của chính mình, đúng thứ mà cổng dựng ra để chặn.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 840 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
