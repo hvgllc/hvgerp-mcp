@@ -2509,3 +2509,69 @@ một mẻ dò sáu ca trước khi động vào code, và cả ba đều đúng
 Mười mẻ dò guard của các vòng trước (52 ca) chạy trên cả head cũ lẫn cây đã sửa
 cho output giống nhau từng dòng, nên ba thay đổi này không đổi kết luận của bất
 kỳ ca nào đã chốt trước đó.
+
+## Codex vòng tiếp: review 5127127926
+
+Review đọc đúng head `1a0307b1`, nêu năm P2 và không P1 nào. Cả năm tái hiện
+bằng một mẻ dò mười ca trước khi động vào code. Bốn cái đúng và đã sửa, một cái
+bị bác có lý do.
+
+- `type` của input là enumerated attribute: giá trị khớp keyword bằng so sánh
+  ASCII không phân biệt hoa thường, và chuẩn không cắt khoảng trắng ở hai đầu.
+  Chrome trả `input.type === "text"` cho `type=" image "` và `"image"` cho cả
+  `type="image"` lẫn `type="IMAGE"`. Lời gọi `.trim()` thêm ở vòng trước là bịa,
+  và một test của chính vòng đó chốt sai hành vi bịa ấy. Nay `enumeratedKeyword`
+  chỉ hạ chữ thường rồi so, dùng chung cho cả `imageInput` lẫn kiểm tra
+  submitter mới; test cũ đổi sang `type="IMAGE"` để giữ đúng ý định ban đầu của
+  nó là phủ tính không phân biệt hoa thường.
+- `action` của form là URL trình duyệt điều hướng tới khi form được submit, và
+  `formaction` trên nút submit ghi đè URL đó, nên cả hai là đích thật y như
+  `href`. Chrome phân giải `form.action` thành
+  `http://localhost:8731/missing-r2-target` và `button.formAction` thành
+  `.../missing-r2b`. Renderer GitHub xóa hẳn `<form>` nên không trả lời được câu
+  hỏi này, và gate cố ý không mô phỏng sanitizer: ngữ nghĩa HTML quyết định, y
+  như tiền lệ `<input src>` đã chốt ở vòng trước. Phạm vi submitter bám chuẩn:
+  `button` submit khi không có `type` hoặc `type=submit`; `input` submit khi
+  `type` là `submit` hoặc `image`. `button type=button` và `input type=text`
+  không đóng góp đích nào.
+- `<base href>` thì bác. Chrome xác nhận `<base>` đặt trong body vẫn có hiệu lực
+  trong HTML thuần, nhưng renderer GitHub xóa sạch thẻ đó và trả link nguyên văn
+  `<a href="README.md">`. Gate tồn tại để trả lời một câu hỏi duy nhất: người
+  đọc bấm link này trên GitHub có tới nơi thật không. Trên bề mặt đó `<base>`
+  không có tác dụng, nên tôn trọng nó sẽ khiến gate im lặng trước một link hỏng
+  thật. Đó là chiều ngược với mọi thay đổi khác của loạt review này: các thay
+  đổi kia làm gate chặt hơn nên xấu nhất là báo động thừa mà người đọc gạt được,
+  còn cái này làm gate lỏng hơn và bỏ sót thì lọt lên nhánh. Thêm nữa, không
+  file nào trong `plans/` dùng `<base>`, và phân giải đích ở đây là
+  `resolve(dirname(filePath), clean)` cộng ràng buộc đích phải nằm trong repo:
+  một `<base href>` tuyệt đối sẽ đẩy đích ra ngoài repo nơi gate không còn gì để
+  đối chiếu, còn một cái tương đối sẽ cho từng file tự chọn thoát khỏi ràng buộc
+  ấy. Quyết định được khóa lại bằng test
+  `a base element does not change how a target resolves` thay vì để ngầm.
+- Content indent của item đo bằng cột chứ không bằng số ký tự của dấu. GitHub
+  trả `<pre><code></code></pre>` rỗng rồi
+  `<p><a href="missing-r4.md">r4</a></p>` cho một dấu list có tab, tức link sống
+  ngoài list; đối chứng thay tab bằng khoảng trắng thì link nằm trong `<code>`.
+  Tab trong dấu đẩy nội dung tới mốc bốn cột kế tiếp, nên `-` cộng tab đặt nội
+  dung ở cột bốn chứ không phải hai; đo thiếu thì một dòng thụt hai vẫn bị coi
+  là nội dung của item và fence chưa đóng. Nay `columnsOf` nhận thêm cột bắt đầu
+  và `listIndentTracker` đẩy `columnsOf(marker[0], width)`.
+- Trong ngoặc nhọn, chuẩn cấm `<` và `>` chưa escape chứ không cấm chính hai ký
+  tự đó. GitHub trả `<a href="https://example.com/a%3Eb" rel="nofollow">` cho
+  `[r5](<https://example.com/a\>b>)`, tức một dấu lớn hơn literal nằm trong
+  destination của một link ngoài thật. Nay `bracketedDestination` cho phép một
+  chuỗi escape nuốt ký tự kế tiếp, dùng chung cho `linkDestination` và
+  `inlineDestination`; đối chứng `<` và `>` trần vẫn bị bác.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 686 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+Mười một mẻ dò guard của các vòng trước (58 ca) chạy trên cả head cũ lẫn cây đã
+sửa cho output giống nhau từng dòng, nên bốn thay đổi này không đổi kết luận của
+bất kỳ ca nào đã chốt trước đó.

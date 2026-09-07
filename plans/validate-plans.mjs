@@ -73,7 +73,12 @@ function listIndentTracker() {
     const marker = width <= innermost() + 3
       ? relative.match(/^(?:[-+*]|\d{1,9}[.)])[ \t]+/)
       : undefined;
-    if (marker) stack.push(width + marker[0].length);
+    // Content indent của item đo bằng cột chứ không bằng số ký tự của dấu: tab
+    // trong dấu đẩy nội dung tới mốc bốn cột kế tiếp, nên "-\t~~~" đặt nội dung
+    // ở cột bốn chứ không phải hai. Đếm ký tự thì container đóng muộn hơn ranh
+    // giới thật, và những dòng đã ra khỏi list vẫn bị tính là nằm trong fence
+    // của nó, tức là bị ẩn khỏi mọi gate.
+    if (marker) stack.push(columnsOf(marker[0], width));
     return { indent: innermost(), marker: marker?.[0] };
   };
 }
@@ -681,8 +686,15 @@ function structuralSection(body, heading) {
 const linkTitle =
   "(?:\"(?:\\\\[\\s\\S]|[^\"\\\\])*\"|'(?:\\\\[\\s\\S]|[^'\\\\])*'|\\((?:\\\\[\\s\\S]|[^()\\\\])*\\))";
 const linkSeparator = "(?:[ \\t]+|[ \\t]*\\r?\\n[ \\t]*)";
+// Trong ngoặc nhọn, chuẩn cấm "<" và ">" chưa escape chứ không cấm chính hai ký
+// tự đó: "[x](<https://example.com/a\\>b>)" mang một dấu lớn hơn literal và
+// render thành link ngoài thật. Lớp ký tự thẳng bác cả cụm, và vì đường quét đã
+// bỏ qua đúng dấu escape khi tìm ngoặc đóng, phần bác bỏ đó rơi xuống nhánh báo
+// hỏng: một link đúng chuẩn bị cổng bắt buộc từ chối.
+const bracketedDestination = "<((?:\\\\[^\\r\\n]|[^<>\\\\\\r\\n])*)>";
 const linkDestination = new RegExp(
-  "^(?:<([^<>\\r\\n]*)>|([^\\s<>]+))(?:" + linkSeparator + linkTitle + ")?$",
+  "^(?:" + bracketedDestination + "|([^\\s<>]+))(?:" + linkSeparator +
+    linkTitle + ")?$",
 );
 // Inline link được phép rỗng hoàn toàn giữa hai ngoặc: "[home]()" render thành
 // một link tới chính trang. Reference definition thì ngược lại, chuẩn đòi có
@@ -691,8 +703,8 @@ const linkDestination = new RegExp(
 // nháy làm destination, nên cho title đứng một mình là bịa ra một link tới
 // trang hiện tại mà không renderer nào dựng.
 const inlineDestination = new RegExp(
-  "^(?:(?:<([^<>\\r\\n]*)>|([^\\s<>]+))(?:" + linkSeparator + linkTitle +
-    ")?)?$",
+  "^(?:(?:" + bracketedDestination + "|([^\\s<>]+))(?:" + linkSeparator +
+    linkTitle + ")?)?$",
 );
 // Destination trần chỉ chứa ngoặc lồng tới 32 lớp; qua đó thì renderer bỏ cả cụm
 // về văn bản literal thay vì dựng link.
@@ -747,13 +759,29 @@ const srcElements = new Set([
   "video",
   "frame",
 ]);
+// "type" là enumerated attribute: giá trị khớp keyword bằng so sánh ASCII không
+// phân biệt hoa thường, và chuẩn không cắt khoảng trắng ở hai đầu. Cắt thêm thì
+// <input type=" image "> bị xếp vào trạng thái image, trong khi Chrome trả
+// input.type === "text" cho đúng thẻ đó, tức nó không tải "src" và một tài liệu
+// đúng bị cổng bắt buộc từ chối.
+const enumeratedKeyword = (attributes, name) =>
+  decodeAttribute(attributes.get(name) ?? "").toLowerCase();
 // <input src> chỉ tải ảnh khi type là "image"; ở mọi type khác, kể cả khi thẻ
 // không viết type và mặc định về "text", thuộc tính đó không trỏ tới tài nguyên
 // nào. Nhận nó vô điều kiện thì <input type="text" src="missing.png"> bị báo
 // link hỏng trong khi trình duyệt không tải gì cả.
 const imageInput = (attributes) =>
-  decodeAttribute(attributes.get("type") ?? "").trim().toLowerCase() ===
-    "image";
+  enumeratedKeyword(attributes, "type") === "image";
+// "action" của form là URL trình duyệt điều hướng tới khi form được submit, nên
+// nó là một đích thật và hỏng được y như "href". "formaction" trên nút submit
+// đè lên đích đó, và chỉ nút submit mới có quyền đè: <button> mặc định là
+// submit, còn <input> phải mang type "submit" hoặc "image". Bỏ qua cả hai tên
+// là để một form trỏ vào đường dẫn không tồn tại đi qua cổng.
+const submitter = (element, attributes) => {
+  const type = enumeratedKeyword(attributes, "type");
+  if (element === "button") return type === "" || type === "submit";
+  return element === "input" && (type === "submit" || type === "image");
+};
 // SVG vẫn hỗ trợ dạng cũ "xlink:href" và trình duyệt phân giải nó y như "href",
 // nên bỏ qua tên đó là để một tài nguyên SVG hỏng thật đi qua cổng.
 const linkAttribute = (element, name, attributes) =>
@@ -845,7 +873,9 @@ const attributeTarget = (value) => {
 const attributeTargets = (element, name, value, attributes) =>
   (linkAttribute(element, name, attributes) ||
       (name === "poster" && posterElements.has(element)) ||
-      (name === "data" && dataElements.has(element))
+      (name === "data" && dataElements.has(element)) ||
+      (name === "action" && element === "form") ||
+      (name === "formaction" && submitter(element, attributes))
     ? [decodeAttribute(value)]
     : name === "srcset" && srcsetElements.has(element)
     ? srcsetTargets(decodeAttribute(value))
@@ -2799,8 +2829,10 @@ const containerPrefix =
 // bằng số ký tự: "1.\ttab item" đặt nội dung ở cột bốn và một dòng nối thụt
 // đúng một tab vẫn nằm trong item. Đếm ký tự thì dòng nối đó chỉ được một cột,
 // bị đẩy ra khỏi item, và một heading thật trong item vắng mặt khỏi tập anchor.
-function columnsOf(text) {
-  let column = 0;
+// "start" là cột mà đoạn text bắt đầu, cần cho các đoạn không đứng đầu dòng:
+// một tab đo đúng chỉ khi biết con trỏ đang ở cột nào trước nó.
+function columnsOf(text, start = 0) {
+  let column = start;
   for (const character of text) {
     column += character === "\t" ? 4 - column % 4 : 1;
   }

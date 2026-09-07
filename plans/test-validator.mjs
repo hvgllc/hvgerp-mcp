@@ -5555,7 +5555,7 @@ test("src on an input without a type is not a resource", () => {
 test("src on an image input is still a resource", () => {
   invalid({
     "plans/evidence/backlog-review.md": (text) =>
-      text + '\n<input type=" IMAGE " src="missing-p3b.png">\n',
+      text + '\n<input type="IMAGE" src="missing-p3b.png">\n',
   }, /link hỏng missing-p3b\.png/);
 });
 
@@ -5628,4 +5628,80 @@ test("a blockquote interrupts a paragraph before indented code", () => {
   });
   assert.equal(result.thrown, undefined);
   assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a padded input type is not an image control", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<input type=" image " src="missing-r1.png">\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a broken form action is a broken link", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<form action="missing-r2-target">x</form>\n',
+  }, /link hỏng missing-r2-target/);
+});
+
+test("a broken submit formaction is a broken link", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      '\n<form action="../../README.md"><button formaction="missing-r2b">go</button></form>\n',
+  }, /link hỏng missing-r2b/);
+});
+
+test("formaction on a control that cannot submit is not a target", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<input type="text" formaction="missing-r2c">\n' +
+      '\n<form action="../../README.md"><button type="button" formaction="missing-r2d">x</button></form>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a base element does not change how a target resolves", () => {
+  // GitHub xóa hẳn thẻ base khi render và giữ nguyên đích tương đối, nên đích
+  // vẫn phân giải theo thư mục của chính file. Tôn trọng base ở đây là để gate
+  // bỏ sót đúng những link mà renderer thật vẫn phân giải thành đường dẫn hỏng.
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<base href="../../">\n\n[root](README.md)\n',
+  }, /link hỏng README\.md/);
+});
+
+test("a tabbed list marker measures its content indent in columns", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n-\t```\n  [r4](missing-r4.md)\n",
+  }, /link hỏng missing-r4\.md/);
+});
+
+test("a spaced list marker keeps the following line inside the fence", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n- ```\n  [r4b](missing-r4b.md)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an escaped angle bracket is allowed in a bracketed destination", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[r5](<https://example.com/a\\>b>)\n" +
+      "\n[r5b](<../../README\\.md>)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an unescaped angle bracket still breaks a bracketed destination", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) => text + "\n[r5c](<a<b>)\n",
+  }, /link hỏng <a<b>/);
 });
