@@ -1,0 +1,3460 @@
+# Xử lý Codex finding của PR 25
+
+## Phạm vi
+
+- Review `5119802375`, HEAD trước sửa
+  `53029141072a7772d6ce5299b57b710a7a21536b`.
+- Chỉ sửa kế hoạch, manifest, validator, test validator và evidence dưới plans.
+  Không sửa source ứng dụng, nâng dependency, gọi ERP hoặc tác động production.
+- PR: https://github.com/hvgllc/hvgerp-mcp/pull/25
+
+## Regression trước sửa
+
+Chạy `node --test plans/test-validator.mjs` trên validator và kế hoạch chưa sửa:
+exit 1, 27 ca, 3 đạt và 24 assertion thất bại. Phần lớn thất bại vì validator
+nhận hiện vật không hợp lệ hoặc thiếu nội dung kế hoạch. Hai ca kiểm
+drift/source sai đã bị validator cũ từ chối nhưng không khớp diagnostic mới;
+không tính hai ca đó là phát hiện hành vi mới. Không có lỗi import hay thiếu
+Git.
+
+## Kết quả từng finding
+
+| Finding ID | Ca đỏ đã xác minh                                                                            | Cách xử lý và ca xanh                                                                                                                                                       |
+| ---------- | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 3939464494 | 007 không có glob include/exclude đúng trong backtick                                        | Sửa thành `src/**/*.ts`, `src/**/*.tsx`, `**/*_test.ts`; assertion contract kế hoạch đạt                                                                                    |
+| 3939464495 | DONE 024 còn checkbox trống hoặc bỏ toàn bộ checklist vẫn exit 0                             | DONE bắt buộc checklist trong đúng mục Tiêu chí hoàn tất và mọi ô checked; checklist ngoài mục không bị tính; tick 024 theo review/merge có thật, 001/004 đã checked        |
+| 3939464496 | NOT APPROVED, do not APPROVE, REVISE, BLOCK hoặc lời kể APPROVE vẫn được nhận                | Dùng field review_verdict duy nhất trong frontmatter đầu file, giá trị phải đúng APPROVE; mọi negative/absence/duplicate đều bị từ chối                                     |
+| 3939464498 | 006 IN_PROGRESS khi 005 TODO không bị chặn; DONE không có diagnostic prerequisite            | IN_PROGRESS/DONE yêu cầu mọi dependency DONE, giữ gate DAG độc lập                                                                                                          |
+| 3939464499 | Thiếu sourceRef hoặc Git object sai bị bỏ qua; fixture baseline mới bị ép mốc cũ             | sourceRef riêng từng record luôn được đọc bằng Git, độc lập trạng thái; fixture refresh 001 sang 013a1cf rồi TODO và DONE đều giữ baseline mới, ref không đọc được fail     |
+| 3939464500 | Kế hoạch 021 chỉ chọn một runtime và mặc định Node hiện tại                                  | Bắt buộc hai path --node20/--node22, kiểm đúng major riêng, bốn smoke cho hai bundle x hai runtime, không tự tải binary                                                     |
+| 3939464502 | Sales Invoice/SalesInvoice, hai space, ranh giới token và template literal thay đổi vẫn pass | So đúng các dòng source và fenced excerpt, không strip whitespace; migrate snippet sang source nguyên văn với marker bảo toàn format; mọi mutation literal/token bị từ chối |
+| 3939464503 | Ẩn bản lưu executor mà nested evidence còn link tới vẫn pass                                 | Duyệt Markdown đệ quy, resolve link theo thư mục chứa file; nested missing link fail và link hợp lệ pass                                                                    |
+| 3939464506 | 011 không yêu cầu build Dockerfile.shim, provenance hoặc container smoke thật                | Thêm bước build gắn VCS_REF, kiểm label/image ID và fixture trong container dùng network namespace cô lập; thiếu Docker là BLOCKED                                          |
+
+Frontmatter mới ở evidence 001/004/024 chỉ biểu diễn lại kết luận review thật đã
+ghi trong chính các file đó, không tạo approval mới bằng fixture. Bản lưu
+executor 001 không bị sửa và vẫn khớp blob gốc. Các fixture negative chỉ thay
+nội dung đọc trong bộ nhớ, không ghi dữ liệu review giả vào backlog.
+
+## Kiến trúc và bảo toàn source
+
+Mỗi record manifest có `sourceRef`, `path`, `line`, `code`. Baseline ban đầu
+được lấy từ commit audit d2c5305; mỗi record được kiểm với Git source thật.
+TODO/IN_PROGRESS còn kiểm source hiện tại cùng vị trí dòng. Mốc soạn không còn
+quyết định nguồn đọc hoặc buộc mọi kế hoạch chứa chuỗi d2c5305.
+
+Migration chỉ chép nguyên dòng Git đã kiểm, không dùng parser tự viết để xóa
+whitespace. Khi Deno fmt tự bỏ indentation đầu fenced text, validator đã báo
+excerpt mismatch. Đã thêm deno-fmt-ignore chỉ trước các snippet; formatter không
+thay chúng nhưng validator vẫn kiểm exact text. Không nới điều kiện so.
+
+007/011/021 chỉ được cập nhật cách kiểm chứng trong kế hoạch. Chưa chạy browser
+typecheck thay cho executor 007, chưa triển khai fixture Docker 011 và chưa chạy
+build/runtime 021 trong đợt này. Test contract của tài liệu không phải bằng
+chứng implementation hoặc môi trường thật đã đạt.
+
+## Gate cuối
+
+Toàn bộ chín finding trong bảng được sửa tại commit
+`3fdf65abad747ae0facdccb41b1e5118ba76e640`. Sau đó tích hợp main
+`c1e74851077a1aff262c13116ce1d8f448302234` qua merge
+`f2459126fc5a4b1ebead23a8eee0cd64154114f5`, không sửa source ngoài merge.
+
+Đã chạy lại trên nền mới sau khi cập nhật 003 DONE từ review/CI/merge thật:
+
+- `node plans/validate-plans.mjs`: exit 0, đủ 25 kế hoạch.
+- `node --test plans/test-validator.mjs`: exit 0, 29 passed, 0 failed; gồm 27 ca
+  của vòng đỏ cùng hai control giữ lại từ validator trước.
+- `deno fmt --check plans/`: exit 0, 40 file.
+- `deno lint plans/validate-plans.mjs plans/test-validator.mjs`: exit 0, 2
+  script.
+- `git diff --check`: exit 0.
+- Diff source nhánh backlog so với main c1e7485 rỗng. Test ứng dụng trên nền
+  tích hợp cuối sẽ do parent chạy lại, không suy ra từ 29 test validator.
+
+PR vẫn cần Codex review sạch trên HEAD mới và CI đúng HEAD, không lấy gate tài
+liệu local thay CI ứng dụng. Chưa push hoặc trả lời review trong lượt executor.
+
+## Review bổ sung: nguồn build đã stage
+
+Reviewer xác nhận `git diff --exit-code -- <paths>` không bắt thay đổi đã stage.
+Bổ sung assertion contract yêu cầu chính lệnh
+`git diff --exit-code HEAD -- shim.ts src/compat/legacy-shim.ts Dockerfile.shim`:
+trước sửa kế hoạch, test riêng exit 1 vì thiếu HEAD; sau sửa phải exit 0. Lệnh
+mới so working tree với commit, bao gồm staged và unstaged. Đây là kiểm contract
+kế hoạch, không phải tuyên bố đã chạy image shim hoặc fixture Git staging.
+
+Sau sửa: test validator 30/30, validator 25/25, format 40 file, lint hai script
+với config local và diff check đều exit 0. SHA lock vẫn nguyên sau các gate này.
+
+## Workaround local của nhánh backlog
+
+Parent đã chạy lại trên source tích hợp c1e7485: server check, lint 193 file,
+format 249 file, UI build đủ 7 viewer, Node build với framework 0.25.0, node
+--check và full suite 847 passed, 0 failed, 4 ignored đều exit 0. Source không
+đổi bởi bản sửa provenance 3099afd. Reviewer độc lập APPROVE 3099afd sau khi tự
+chạy validator 25/25 và regression 30/30. CI/Codex của HEAD mới vẫn chờ.
+
+Parent chạy Deno gate nhưng thiếu `deno.nojsr.json`, nên lần đó dừng trước khi
+kiểm source. Đã đọc lại hướng dẫn workaround được duyệt và tạo artifact ignored
+trong đúng worktree backlog, không tải hoặc nâng dependency:
+
+- `deno.nojsr.json`: lấy config hiện tại, chỉ thay imports; Node deepEqual sau
+  bỏ imports đạt.
+- Vendor 58 file từ npm cache @casys/mcp-server 0.25.0, nằm ngoài node_modules;
+  chép text bằng apply_patch, `diff -qr` với cache không có khác biệt.
+- Lockfile từ donor worktree trước, SHA-256 đúng
+  `f32268af50c10ba06223c9a0b7f2d7092555ffa90172cd573ecf8d3feb2d882a`.
+- `git check-ignore -v` xác nhận cả config, vendor và lock được ignore; không
+  thay manifest hoặc dependency tracked.
+- Không chạy build/test ứng dụng trong lúc parent build UI. Parent tiếp tục gate
+  Deno bằng config local và --sloppy-imports --frozen; CI JSR thật vẫn bắt buộc
+  trên HEAD cuối.
+
+## Tích hợp 007 đã merge
+
+Nhận source main `0cf6a69463fef96f95512d36dda92ec2ad286f22` bằng merge
+`dfedde02cc4f12f52cb53e5b15482298566d02e5`. Không sửa source ứng dụng ngoài
+merge hoặc đồng bộ source sang workspace root. Review/CI/merge proof của 007
+được bổ sung tại [007.md](007.md), giữ nguyên toàn bộ bằng chứng browser.
+
+Validator ngay sau merge exit 1 với đúng hai diagnostic: 007 tsconfig không còn
+ở baseline TODO, và 022 CONTRIBUTING không còn đúng dòng 78. Sau khi 007 DONE từ
+bằng chứng thật, record lịch sử của 007 vẫn giữ ref d2c5305. Đọc lại
+CONTRIBUTING xác nhận nội dung lỗi release không đổi, chỉ chuyển sang dòng 81;
+record 022 cập nhật riêng sourceRef thành 0cf6a69, line 81 và citation tương
+ứng. Không thay hoặc thu hẹp tiêu chí 022.
+
+Sau reconcile: validator 25/25, test validator 30/30, format 43 file, lint hai
+script với --no-config và diff check đều exit 0. Diff ngoài plans so với main
+0cf6a69 rỗng. Gate ứng dụng tích hợp cuối do parent điều phối tiếp; không dùng
+test validator thay browser, Deno hoặc CI.
+
+005 không được đánh DONE. Không ghi đè trạng thái IN_PROGRESS hoặc ghi chú
+002/005 của parent ở root. Nhánh backlog chưa được push trong lượt này.
+
+## Codex vòng tiếp: review 5119892746
+
+Review trên HEAD `10cb145` của
+[PR 25](https://github.com/hvgllc/hvgerp-mcp/pull/25) phát hiện hai lỗi kế
+hoạch/validator. Không áp dụng verdict APPROVE của `d00356d` cho delta mới này.
+
+- Finding `3939553020`: glob phải tương đối với `src/ui/tsconfig.json`.
+  Assertion đọc include/exclude thực của config đã merge; trước sửa kế hoạch, đỏ
+  đúng lỗi thiếu `*-viewer/src/**/*.ts`. Sau sửa, cả năm include và bốn exclude
+  xuất hiện nguyên văn trong kế hoạch, kiểm tra xanh. Giữ Deno test excludes và
+  giải thích registry thuần được import gián tiếp. Không sửa production
+  tsconfig.
+- Finding `3939553022`: ba regression riêng kiểm filename trùng, prefix không
+  khớp ID và file vật lý bị bỏ khỏi manifest. Fixture chọn hai plan cùng trạng
+  thái, thay đồng thời file/evidence để không fail vì status hoặc snippet. Trước
+  sửa, cả ba fixture đều được validator chấp nhận sai (exit 0). Sau sửa, từng
+  fixture exit 1 với diagnostic đúng guard tương ứng. Validator kiểm uniqueness,
+  prefix và đối chiếu tập file theo cả hai chiều; đủ 25 ID không còn thay thế
+  cho coverage 25 file.
+
+Kết quả đỏ: 33 test, 29 pass, 4 fail đúng các assertion trên. Kết quả xanh:
+33/33 test, validator 25/25. Đây là fixture trong bộ nhớ, không sửa Git history
+hoặc dữ liệu thực để tạo phản chứng.
+
+Parent đã xác nhận gate ứng dụng trên `d00356d`, source bằng main `0cf6a69`:
+browser tsc và server check exit 0; lint 195 file; format 257 file; UI đủ 7
+viewer; Node bundle framework 0.25.0 và node check exit 0; full suite 847
+passed, 0 failed, 4 ignored, session 94737 exit 0. Hai sửa đổi mới chỉ nằm trong
+plans, không dùng kết quả này thay review/CI đúng HEAD cuối. Root chỉ nhận delta
+của 007 và validator/test/báo cáo; giữ trạng thái và ghi chú mới 002, 005, 008,
+manifest 022 và nhật ký parent. Chưa push, chưa reply finding trong lượt này.
+
+Gate tài liệu sau sửa: backlog format 43 file, lint hai script, diff check và
+đối chiếu source ngoài plans với main 0cf6a69 đều exit 0. Root validator 25/25,
+format bốn file chạm và diff check plans exit 0. Full format root còn một dòng
+chưa wrap trong ghi chú 005 của parent, nằm ngoài delta này; không tự sửa file
+đó. Root source vẫn d2c5305; không chạy regression phụ thuộc source mới ở root.
+
+## Codex vòng tiếp: review 5119983762
+
+Đọc đủ ba comment trên HEAD `9fd274a` bằng GitHub API. Trước sửa, backlog nhận
+source main `e09537b25e133c21b2c1915b15937d78c6dd0bbc` bằng merge `7275cb9`.
+Validator ngay sau merge chỉ đỏ hai trích đoạn của 008 đã sửa; đối chiếu
+evidence APPROVE, CSV/browser, CI và merge proof thật rồi chuyển 008 DONE.
+Record lịch sử 008 vẫn giữ d2c5305. Các kế hoạch TODO khác không có drift cần
+refresh vì 008.
+
+- Finding
+  [3939631487](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3939631487):
+  sáu ca thêm/bỏ dependency ở plan, README hoặc manifest được chấp nhận sai
+  trước sửa. Ca bỏ manifest prerequisite đồng thời cho 006 IN_PROGRESS không còn
+  lách được tài liệu vẫn yêu cầu 005. Sau sửa, parser so cả ba tập ID, không phụ
+  thuộc thứ tự, whitespace hoặc backtick. Hai ca thêm/bỏ scope cũng đỏ trước
+  sửa, xanh sau guard đồng bộ scope; đây là kiểm thêm invariant cùng lớp, không
+  mở rộng source implementation.
+- Finding
+  [3939631491](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3939631491):
+  thay đúng dòng execute trong source hiện tại của BLOCKED 002 trước sửa vẫn
+  exit 0. Sau sửa, exit 1 diagnostic current source drift. STALE tường minh cho
+  phép current drift nhưng vẫn đọc sourceRef; code lịch sử sai hoặc ref Git
+  không đọc được đều bị từ chối riêng. Không dùng lỗi unrelated làm ca đỏ.
+- Finding
+  [3939631490](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3939631490):
+  contract 015 đỏ vì chưa có tool ledger thuộc inventory. Đọc stock_entry_list,
+  category filter client và host thật: inventory-only có balance nhưng không có
+  doc_list. Kế hoạch mới thêm tool đọc hẹp, item/kho required, fields/filter/
+  sort cố định, kiểm client category thật, fixture typed và lỗi rõ. Scope thêm
+  inventory/test, client_test, host và CHANGELOG; bỏ operations_test. Không sửa
+  schema/nghĩa tool cũ, category filter, version hoặc triển khai source 015.
+
+Đọc schema upstream ERPNext version-15 tại commit
+`1a0bf0bf6c4aeaae5acde90c74b186312f49b95c`; link và field thực ghi trong 015.
+Sort thời gian/name là lựa chọn request được chốt từ field thực, không nhầm với
+sort mặc định modified của DocType. Chưa kiểm schema/permission site người dùng;
+executor phải đối chiếu phiên bản mục tiêu, không để fixture định nghĩa ERP.
+
+Kết quả đỏ: 49 test, 39 pass, 10 fail đúng các assertion nêu trên. Sau sửa:
+49/49 test và validator 25/25 xanh. Ca thay tool ledger bằng operations bị
+contract test từ chối. Các fixture chỉ đổi dữ liệu đọc trong bộ nhớ, không ghi
+source hoặc giả review. Chưa dùng verdict cũ làm APPROVE cho delta này.
+
+Theo mục Repeat findings của skill codex-pr-review-loop, thêm đúng hai rule hẹp
+tại plans/AGENTS.md, không sửa AGENTS.md gốc của người dùng. Quy tắc được kiểm
+local theo ba nhóm: vi phạm source/dep/scope bị từ chối; ngoại lệ STALE với
+historical hợp lệ và dependency khác whitespace/order được chấp nhận; ghi chú
+trình bày không liên quan vẫn qua. Đây là bằng chứng regression cho invariant,
+chưa phải bằng chứng Codex vòng sau đã áp rule đúng. Parent phải đánh giá lại
+khi review mới đến, không dùng rule miễn finding hoặc giảm gate.
+
+Gate cuối: backlog validator 25/25, regression 49/49, format 47 file, lint hai
+script và diff check đều exit 0; diff source ngoài plans so với main e09537b
+rỗng. Root validator 25/25, format toàn plans 48 file và diff check plans exit
+0. Không chạy application build/test cùng parent trong lượt này; review/CI fresh
+của HEAD mới vẫn cần parent điều phối.
+
+Đồng bộ root chỉ thay record 015 trong manifest, các record khác so sâu giữ
+nguyên, gồm 005/009 scope mới và 022 sourceRef d2c5305. Hash tám file bảo vệ
+(002, hồ sơ quyền 002, 005, 009, 022 và ba file cá nhân/quy tắc gốc) không đổi;
+journal giữ nguyên prefix và chỉ append kết quả. Ghi chú trước execute 008 được
+giữ và đưa vào snapshot backlog. Plan/evidence 007 giữ nguyên; CSV/PNG 008 được
+copy và cmp byte-identical. Root 6 DONE, 1 BLOCKED, 2 IN_PROGRESS (005, 009), 16
+TODO; backlog giữ TODO cho 005/009 vì chưa tích hợp implementation.
+
+Review độc lập mới APPROVE commit `64e1116797c0b049445a85c995d41f6fec663f33`: đã
+đọc hai rule mới, toàn delta và ba finding; tự kiểm thêm bảy ca trong bộ nhớ.
+Dependency trùng, scope thừa và historical sai bị chặn; file quản trị, đổi thứ
+tự scope và ghi chú không liên quan được chấp nhận. Reviewer chạy lại validator
+25/25, regression 49/49, format/lint/diff; source ngoài plans bằng main e09537b.
+Parent cũng đọc toàn delta và tự chạy các gate tài liệu đạt. Hiệu quả kiểm local
+của rule được xác nhận, chưa suy ra Codex vòng tới sẽ áp dụng đúng; cần CI và
+review mới trên HEAD được push.
+
+## Review 5120105157: sáu khoảng trống còn lại
+
+Đọc nguyên văn sáu finding trên HEAD `1535fe8`. Codex viện dẫn đúng hai rule
+trong plans/AGENTS.md cho năm finding validator; đây là bằng chứng rule đã giúp
+chỉ ra gap còn sót, không phải lý do miễn finding. Giữ nguyên rule hẹp, không
+thêm rule rộng hoặc tuyên bố mọi khoảng trống đã hết trước review tiếp.
+
+- `3939716577`: bổ sung README.md, docs/coverage.md, docs/architecture.md vào
+  scope/manifest/diff commands/checklist 015. Catalog phải đếm registry thực lúc
+  execute và tăng đúng một tool inventory, không chép số cũ 134/9.
+- `3939716583`: bare/copied APPROVE, reviewed_commit sai/trùng/không đọc được bị
+  từ chối. Parent duyệt binding plan_id + reviewed_commit + completed_commit
+  thật; report blobs lấy đúng path NNN ở Git lịch sử. Sáu cặp final HEAD/merge
+  đã đo trước code: toàn scope 001/003/004/007/008/024 lần lượt 3/5/2/20/6/1
+  object khớp, kể cả CSV/PNG/trace. Không miễn plans. Mốc review độc lập gốc vẫn
+  giữ trong narrative; metadata reviewed_commit chỉ HEAD cuối đã được Codex xác
+  nhận sạch và CI thật được báo cáo. Không tạo revision hoặc verdict mới.
+  Source/doc/artifact cùng object giữa reviewed/completed; artifact hiện tại
+  trong scope plans còn so Git blob byte thật. Gate không xác thực danh tính
+  reviewer hoặc CI offline.
+- `3939716588`: chỉ đọc status từ dòng metadata Mốc soạn trong mục quy định;
+  toàn plan có đúng một khai báo. Duplicate hợp lệ/malformed hoặc prose ngoài
+  metadata không thể thay status điều khiển gate.
+- `3939716594`: scope existing phải có Git tree membership trong HEAD, đúng
+  blob/tree, mode và path boundary; kiểm loại file/dir trong working tree.
+  Placeholder untracked hay thư mục mang tên file bị chặn. newFiles hoặc
+  prerequisite-created vẫn được miễn đúng khai báo, kể cả root chưa nhận source
+  của dependency. Lỗi đọc Git là failure, không fallback existsSync.
+- `3939716598`: mỗi row ID README có đúng một link đúng manifest file, không chỉ
+  tìm link toàn trang; hoán đổi 005/006 hoặc duplicate row bị chặn.
+- `3939716604`: STALE chỉ miễn current drift khi có đúng một stale_reason là
+  JSON string không rỗng trong metadata. Thiếu/rỗng/trùng/sai kiểu/sai vị trí bị
+  chặn; historical source vẫn kiểm kể cả khi lý do hợp lệ.
+
+Red đầu: 72 test, 52 pass, 20 fail đúng assertion của sáu lớp. Sau sửa 72/72
+xanh. Bổ sung chín regression về object type, provenance report, source object
+khác giữa revision, byte CSV/PNG, lỗi Git tree, prerequisite thiếu ở Git HEAD và
+reason sai kiểu/vị trí: tổng 81/81 xanh. Fixture chỉ đổi dữ liệu đọc trong bộ
+nhớ, không sửa artifact, source hoặc Git history. Các ca chủ ý hợp lệ gồm STALE
+có lý do, docs-only/squash với blob khớp, newFiles/dependency-created; ghi chú
+unrelated vẫn qua. Các mốc này chưa thay review fresh của delta mới.
+
+Delta sáu finding đã commit local `6929657`, sau đó tích hợp main 009 bằng merge
+`856784f` từ `99b1fa319590e60730faabdb033a5b48a44e1862`. Validator ngay sau
+merge đỏ bốn snippet: hai của 009 đã được sửa và hai vị trí trong 016. Đọc toàn
+evidence 009, so Git object scope 10 path giữa final HEAD 306a8ae và merge:
+khớp, tree cùng d731bed. 009 DONE theo PR30/CI/Codex thật ghi tại
+[009.md](009.md); binding dùng đúng report snapshot lịch sử. Scope host.ts và
+ghi chú trước execute từ root được đưa vào plan/manifest backlog, không ghi
+root.
+
+Đọc requestBoardRefresh/processQueue xác nhận lỗi 016 vẫn nguyên byte, chỉ
+chuyển dòng 1127/1224 sang 1131/1228. Refresh hai sourceRef thành 99b1fa3 và
+citation tương ứng, không miễn drift hoặc đổi tiêu chí. 017 không drift nên giữ
+baseline cũ. 005 và 011 không được đánh DONE trong lượt này.
+
+Gate bản tích hợp: validator 25/25, regression 81/81, format 51 file, lint hai
+script và diff check exit 0; source ngoài plans bằng main 99b1fa3. Không chạy
+app build, ERPNext, push hoặc reply. Root chưa nhận delta sáu
+finding/integration vì parent yêu cầu chờ fresh review; khi sync phải giữ
+005/011 IN_PROGRESS, 002 permission và journal mới, cùng baseline 016/022 của
+source local d2c5305.
+
+## Đồng bộ chọn lọc sau review 0af23a9
+
+Reviewer độc lập APPROVE commit `0af23a9263ae12b9465b7b5263176eadac545439`.
+Parent đã đọc toàn delta và tự chạy validator 25/25, regression 81/81, format 51
+file, lint hai script, diff check và so source ngoài plans với main
+`99b1fa319590e60730faabdb033a5b48a44e1862`: đều đạt. Approval này áp dụng
+revision đó, không tự chấp thuận delta quản trị tiến độ tiếp theo.
+
+Đồng bộ root chỉ các hiện vật đã review: validator/test, binding evidence
+001/003/004/007/008/024, kế hoạch/evidence 009 cùng 7 PNG, 2 JSON và script kiểm
+host, catalog scope của 015 và hướng dẫn index. Source root vẫn d2c5305; 016/022
+giữ sourceRef, line và fenced excerpt riêng của root, không chép baseline mới
+của backlog. Giữ nguyên quyền/thiết kế 002 và mọi ghi chú có sẵn trong journal.
+Không sửa ba file người dùng ngoài plans hoặc nhận source các nhánh chưa merge.
+
+005, 010, 011 và 017 đang IN_PROGRESS, không phải DONE. Sao chép ghi chú
+preflight/chính sách 005/010/011 từ root và ghi chú 017 đã được parent duyệt từ
+worktree executor. Scope 005 giữ fixture src/client_test.ts; 011 dùng thư mục
+plans/evidence/011/ chứa container-smoke.ts; 017 thêm host.ts chỉ dispatch
+malformed-payload. Không giảm tiêu chí hoặc dùng fixture để che lỗi viewer.
+
+Đã đọc evidence executor 005 và 011 làm nguồn tiến độ. 011 có image thật,
+revision label đã đối chiếu source, smoke 32 ca/452 assertion và review độc lập
+local; các hiện vật implementation chưa được nhập vào backlog. Parent xác nhận
+CI [33950610743](https://github.com/hvgllc/hvgerp-mcp/actions/runs/33950610743)
+thành công đúng HEAD `0eced8c`: 960 passed, 0 failed, 4 ignored, release-check
+OK và JSR 0.25.0. [PR29](https://github.com/hvgllc/hvgerp-mcp/pull/29) đã reply
+hai finding tại 3939765479/3939765516, đang chờ review mới, không dùng review
+b896576 cũ. CI
+[33950670879](https://github.com/hvgllc/hvgerp-mcp/actions/runs/33950670879)
+thành công đúng HEAD `620d925`: 942 passed, 0 failed, 4 ignored, release-check
+OK và JSR 0.25.0. [PR31](https://github.com/hvgllc/hvgerp-mcp/pull/31) có
+trigger 5550065503 lúc 06:46:00Z. Review 5120223946 lúc 06:52:46Z đúng HEAD
+620d925 còn hai finding hợp lệ: 3939783865 về response 304 của local auth probe
+không được mang body, và 3939783866 về envelope thiếu id/jsonrpc không phải
+notification hợp lệ, cần giữ Invalid Request. Parent đã đối chiếu code; đang chờ
+executor sửa, chưa merge. Lượt quản trị plans này không sửa source 011.
+
+009 DONE theo [PR30](https://github.com/hvgllc/hvgerp-mcp/pull/30), merge lúc
+2026-09-05T06:31:28Z tại `99b1fa319590e60730faabdb033a5b48a44e1862`. HEAD
+`306a8aea336dad45697d9c670b784ed201468687` có
+[CI 33949707596](https://github.com/hvgllc/hvgerp-mcp/actions/runs/33949707596)
+thành công: 899 passed, 0 failed, 4 ignored, release preflight OK và JSR 0.25.0.
+Codex clean comment 5549973097 đúng HEAD, findings_error false, findings rỗng,
+review threads 0; tree HEAD bằng tree merge
+`d731bed844f689d2bb3a429e2cebf877f82b49c3`. Chi tiết binding và giới hạn ở
+[evidence/009.md](009.md).
+
+Tổng trạng thái sau đồng bộ: 7 DONE, 1 BLOCKED (002), 4 IN_PROGRESS (005, 010,
+011, 017), 13 TODO. Việc IN_PROGRESS phản ánh executor đã bắt đầu trong worktree
+riêng, không tuyên bố implementation đã có ở source root/backlog.
+
+Scope 010 được parent mở hẹp thêm `src/tools/kanban_test.ts`: full suite 944
+passed, 3 failed, 4 ignored do ba happy-path fixture Task/Opportunity/Issue
+thiếu modified. Chỉ sửa ba fixture và assertion skipCache/PUT modified, không
+đổi handler hoặc mock chung. Kế hoạch, manifest và diff commands root/backlog đã
+ghi cùng phạm vi; chưa nhập source executor hoặc đánh DONE.
+
+Gate sau đồng bộ: backlog validator 25/25, regression 81/81, format 51 file,
+lint hai script và diff check đều đạt; source ngoài plans vẫn bằng main 99b1fa3.
+Root validator 25/25, format 52 file và lint hai script đạt. Root không chạy
+regression cần source mới, không chạy app build/test hoặc install. Đã kiểm hash
+các file bảo vệ không đổi; journal và report root giữ nguyên prefix nội dung
+trước lượt này. So sâu manifest root chỉ đổi record 010/011/015/017; 005/009 và
+baseline 016/022 giữ nguyên. Mười artifact 009, kể cả bảy PNG, khớp byte giữa
+backlog và root. Delta quản trị này chỉ ở plans, commit local do agent quản trị
+tạo; push/review tiếp do parent quyết định.
+
+Reviewer độc lập APPROVE delta quản trị tại
+`dbbf2c28aa5c811171436c81877fcae41eeb2e17`, xác nhận tám file plans không giảm
+tiêu chí, scope mở đúng phần đã duyệt, trạng thái/phụ thuộc và baseline riêng
+root/backlog được giữ. Reviewer tự chạy validator 25/25, format 51 file và diff
+check đạt. Parent đọc toàn delta và tự chạy lại validator 25/25, regression
+81/81, format 51 file, lint hai script, diff check và so source ngoài plans với
+main 99b1fa3: đều exit 0. Root validator cũng đạt, source vẫn d2c5305. Phần thêm
+này chỉ lưu review/gate; CI và Codex review tiếp theo phải kiểm HEAD được push.
+
+## Review 5120263910: giữ provenance trong clone sạch
+
+Finding
+[3939821509](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3939821509)
+trên HEAD `24425057594124b5b8485c900e555c66834c342a` hợp lệ. Agent và parent độc
+lập tái hiện bằng clone local một nhánh `--no-local --no-tags`: validator exit
+1, thiếu sáu reviewed HEAD và từ chối đủ bảy DONE 001/003/004/007/008/009/024.
+SourceRef và completed_commit đều reachable; lỗi không nằm ở snippet hoặc
+verdict. Không sửa validator để bỏ lỗi Git.
+
+Trước sửa, tự so từng scope cùng report snapshot: không mismatch ở bảy kế hoạch.
+Toàn tree reviewed/completed cũng khớp ở cả sáu cặp revision khác nhau. Không
+tạo object giả, đổi metadata approval hoặc tự gắn review cho merge chưa được
+review. Các SHA thật được giữ bằng sáu merge `-s ours`, mỗi lần assert tree
+không đổi và `git merge-base --is-ancestor reviewed HEAD` exit 0:
+
+| Reviewed HEAD                            | Provenance merge                         |
+| ---------------------------------------- | ---------------------------------------- |
+| bb78ace761b7ae9b26900c8c80faad699a9adfa6 | 11c4e5555e4483948821640de9c4d2f017beafca |
+| ecc1b69d7d0f3c7a3310a5696097e2497b482a29 | 72a3a9a2d05a66ecaa9f2e8e4e27df952126c3cf |
+| 0c0d93c380220e36da53fafdc55841b568a277ef | 99ceadf2894b022b3b4bc2ebbda8401e95ec8df4 |
+| 1aae3db9532ab6af2d332849e20c374d75984c6b | bb1d3cb9a6d1fbc5ef0cb721d10b49273508e288 |
+| 9fb89c707dc7b2478cfa98e40ba6fbd678907b4a | 82d3bb32c15701c398991200e20bdf7b6d175c0e |
+| 306a8aea336dad45697d9c670b784ed201468687 | 3d5b4997a3c46e8590c8df350eb66406395ac487 |
+
+Main `341cba437dba69348b6e11e2c6f599480d5fc212` được nhận trước đó bằng merge
+`728dc8dd614a0ad6b730ae4f640acd821bc3ac09`. Cả sáu provenance merge giữ tree
+`3690708817a2fe1d0558b28d73de8e93c9a4c3ca` của lượt tích hợp này. Source ngoài
+plans bằng main 341cba4; không nhận source các nhánh chưa merge.
+
+010 DONE theo [PR32](https://github.com/hvgllc/hvgerp-mcp/pull/32). Reviewed
+HEAD fa8df34046878143c2ea71d0c52392adb8885879 đã là parent của merge 341cba4,
+nên reachable sẵn, không cần provenance merge bổ sung. Scope chín path cùng
+report blob ca93ebc228f4358849ecadc10a71526d70be5efc khớp ở HEAD/merge; tree
+cùng 38de6eaf493bfa52311927eb79f64f5301b5c532. CI
+[33951342340](https://github.com/hvgllc/hvgerp-mcp/actions/runs/33951342340) 947
+passed, 0 failed, 4 ignored; release-check gốc OK, JSR 0.25.0. Clean comment
+5550181076 lúc 07:08:24Z đúng HEAD, findings_error false, findings rỗng,
+threads 0. Merge lúc 07:13:47Z. Giữ mốc independent APPROVE source c261592 trong
+[010.md](010.md), bổ sung binding từ evidence thật.
+
+Validator ngay sau nhận source main đỏ đúng hai snippet 010 còn IN_PROGRESS;
+chuyển DONE theo chứng cứ thật, giữ baseline lịch sử, không bỏ drift. Regression
+current-source cũ gắn 010 cần đổi tiền đề: chọn kế hoạch TODO thật rồi chỉ sửa
+đúng dòng current source trong bộ nhớ, không dùng DONE để kỳ vọng drift.
+
+Thêm plans/test-history.mjs kiểm Git thực, không chỉ VM fixture: clean clone của
+HEAD đã commit phải qua validator và mọi ref cần thiết phải là ancestor. Ca âm
+fetch riêng revision 2442505 thật vào repository tạm, rồi clone một nhánh: đúng
+sáu object thiếu, 13 diagnostic gồm sáu lỗi Git và bảy lỗi approval. Chạy riêng
+ca âm đã đạt đúng nguyên nhân. Gate dọn repository tạm, không sửa source
+worktree. Gate xanh của HEAD mới cần chạy sau commit local.
+
+Cập nhật rule provenance hiện có trong plans/AGENTS.md, không thêm rule trùng
+hoặc nới validator. README nêu PR25 phải merge commit, checkout shallow cần đầy
+đủ history. GitHub API read-only xác nhận allow_merge_commit true.
+
+## Gate sau sửa provenance
+
+Commit local `7f6b1ddc4e3a8707d3fc3b3effafd63e731ce325` đã chạy
+`node --test plans/test-history.mjs`: 2 passed, 0 failed, 0 skipped. Ca xanh
+clone HEAD một nhánh bằng Git transport local, validator 25/25 và ancestry mọi
+sourceRef/reviewed/completed đều đạt; ca âm clone revision thật 2442505 vẫn
+thiếu đúng sáu reviewed HEAD và từ chối đủ bảy DONE. Không dùng objects chia sẻ
+hoặc nhánh executor để tạo kết quả xanh. Repository tạm của hai test đã được
+dọn; source/worktree gốc không bị sửa.
+
+Regression validator 81/81, validator 25/25, format 53 file, lint ba script,
+diff check và so source ngoài plans với main 341cba4: đều đạt. Root validator
+25/25, format 54 file, lint ba script đạt. Không chạy history gate hoặc
+regression phụ thuộc source mới ở root d2c5305. Manifest root giữ nguyên byte;
+hash 002/quyền, 005/011/017, 016/022 và ba file người dùng không đổi. Journal
+root giữ nguyên prefix nội dung, chỉ append tiến độ/gate. Không có app build,
+dependency install, push/reply hoặc merge PR. Delta mới vẫn cần fresh review và
+CI do parent quản lý; không dùng APPROVE cũ của 0af23a9 thay thế.
+
+## Sửa REVISE độc lập: fixture drift không phụ thuộc TODO còn lại
+
+Reviewer độc lập phát hiện P2 trong plans/test-validator.mjs trên HEAD
+`a5fe5d24f98b173ac3a7064aabeab596a1f65588`: test chọn một TODO từ backlog thật,
+nên khi mọi TODO chuyển BLOCKED hợp lệ thì test tự thất bại. Đây là lỗi tiền đề
+fixture, không phải lỗi validator hoặc lý do bỏ current-source gate.
+
+Thêm regression trước sửa: trong bộ nhớ, đổi toàn bộ metadata TODO thành BLOCKED
+cùng hàng README; assert không còn plan TODO và validator vẫn 25/25. Sau đó gọi
+đúng regression current-source cũ. Lệnh
+`node --test --test-name-pattern='TODO detects|without TODO' plans/test-validator.mjs`
+đỏ đúng nguyên nhân: 1 passed, 1 failed tại assertion
+`The fixture requires a TODO plan with current evidence`. Không dùng lỗi Git,
+scope hoặc checklist để làm ca đỏ.
+
+Sửa fixture tự đặt kế hoạch 001 thành TODO trong bộ nhớ, đồng bộ index,
+checklist và mọi record evidence/fenced excerpt/citation bằng exact text từ Git
+HEAD thật. Không đổi trạng thái hoặc report approval thực trên đĩa. Ghép fixture
+lên backlog nền sau khi đã đổi hết TODO thành BLOCKED, không tìm TODO sẵn có.
+Fixture hợp lệ phải qua validator trước; sau đó chỉ thay một dòng current
+source, yêu cầu đúng một diagnostic current source drift của 001. Historical
+source vẫn được đọc từ cùng ref Git thật; không skip hoặc giảm assertion.
+
+Lần soạn fixture đầu chỉ thay một record trong khi 001 có hai fenced excerpt,
+nên baseline bị từ chối vì count mismatch. Đã sửa đồng bộ toàn bộ
+record/excerpt, không coi lỗi soạn này là bằng chứng đỏ của finding. Hai ca
+trọng tâm sau sửa đều xanh. Ca nền không TODO, ca TODO tự dựng hợp lệ và ca
+current-source sai được kiểm riêng; regression unrelated prose và provenance cũ
+vẫn giữ nguyên.
+
+Commit test riêng: `467c74c4fadb92970ae1290f3552289bc6bd39fa`. Sau commit, chạy
+`node --test plans/test-validator.mjs plans/test-history.mjs`: 84 passed, 0
+failed, 0 skipped, gồm 82 validator regression và hai phép kiểm Git clone thật.
+Validator 25/25, format 53 file, lint ba script, diff check đều đạt; source
+ngoài plans bằng main 341cba4. Không đổi validator, metadata thật hoặc
+history/provenance merge. Root chưa đồng bộ theo chỉ thị chờ review lại; không
+sửa source ứng dụng, push, reply hoặc merge PR. Evidence được commit riêng sau
+test; delta mới vẫn cần fresh review.
+
+## Fresh review sau sửa fixture
+
+Reviewer độc lập APPROVE HEAD `a1b18e18a8fcca85c62067597b9491fa86b2cd92`, test
+source `467c74c4fadb92970ae1290f3552289bc6bd39fa`. Reviewer tự xác minh
+validator 25/25, 84 test đạt không bỏ qua, fmt 53 file, lint 3 file, diff sạch
+và không có delta ngoài plans so với main 341cba4. Fixture không còn phụ thuộc
+TODO thật; không có kế hoạch phụ thuộc 001 nên TODO tổng hợp không tạo lỗi
+prerequisite.
+
+Parent đọc đầy đủ delta test/evidence và tự chạy cùng các gate: đều exit 0. Sáu
+provenance merge và test clean clone vẫn được giữ; không đổi validator
+production hoặc tự bỏ gate. PR25 bắt buộc merge commit để giữ các reviewed
+commit trong lịch sử truy cập được từ clean clone, không squash hoặc rebase.
+
+## Review 5120400034: đối chiếu audit và phân loại file mới
+
+Đã đọc nguyên văn hai comment GitHub trên đúng HEAD
+`51f8476fabf6139645aad94c161d30175fcbbad0` và truy luồng validator. Cả hai là
+FIX. Baseline thực trước sửa: validator 25/25 và 84 test helper/history đạt.
+
+### Finding 3939947561: newFiles phải khớp khai báo trong kế hoạch
+
+Ca đỏ tái hiện đúng ví dụ: chỉ thêm docs/concepts.md của 005 vào newFiles trong
+manifest fixture và ẩn file khỏi existsSync. Validator cũ trả exit 0, làm
+assertion yêu cầu từ chối thất bại. Không xóa file thật trên đĩa. Bổ sung ca
+newFiles ngoài scope, hai chiều phân loại và dependency-created không được vượt
+qua phân loại. Kiểm chiều ngược cuối dùng host.ts của 007 đã tracked: bỏ khỏi
+newFiles trong manifest nhưng giữ marker trong plan, validator cũ vẫn trả exit
+0; validator mới chỉ báo đúng một lỗi classification.
+
+Validator mới yêu cầu newFiles là tập con của scope và bằng tập đường dẫn được
+đánh dấu tạo mới trong danh sách Phạm vi và Git. Đọc cả continuation line của
+list item; chấp nhận `(tạo mới)` hoặc `(tạo mới; giải thích)`, kể cả line wrap.
+Marker trong prose ngoài scope không được coi là khai báo. Kiểm classification
+chạy trước các ngoại lệ kiểm file. Không đổi nguyên tắc historical newFiles:
+file tạo bởi kế hoạch đã DONE có thể hiện diện trong Git hiện tại; không buộc
+file đó phải vắng mặt và không nới provenance của DONE.
+
+Positive controls giữ file mới chưa tồn tại, host.ts lịch sử đã tracked,
+prerequisite-created vắng trong Git/current source, marker có giải thích và
+prose không liên quan. Helper scopePath trong test cập nhật marker khi tự tạo
+fixture newFiles hợp lệ, không sửa metadata thật để làm xanh.
+
+### Finding 3939947563: audit phải khớp giữa plan và manifest
+
+Ca đỏ cuối dùng plan 005 đổi Mục audit từ 5 thành 6, giữ mọi phần khác:
+validator cũ vẫn exit 0. Ma trận xanh sau sửa thay lần lượt nhãn của cả 25 plan,
+gồm numeric audit 1-22 và Hướng phát triển 1-3 ở ID 023-025, yêu cầu mỗi ca chỉ
+có đúng một diagnostic audit mismatch. Thiếu khai báo, khai báo trùng hợp lệ
+hoặc malformed, sai dấu phân cách, nằm ngoài metadata, numeric/direction ngoài
+miền đều phải bị từ chối. Prose nhắc audit khác không phải declaration vẫn qua.
+
+auditOf chỉ nhận duy nhất dòng Mục audit trong Trạng thái và mục tiêu, theo
+format metadata hiện có, rồi so với entry.audit. Giữ kiểm entry.id/audit cũ để
+không cho sửa đồng thời hai nhãn thành ánh xạ sai. Không sửa các file plan,
+manifest hoặc trạng thái thực thi trên đĩa.
+
+### Red/green và gate
+
+- Trước sửa:
+  `node --test --test-name-pattern='newFiles cannot|audit metadata must match' plans/test-validator.mjs`
+  có 0 passed, 2 failed vì validator sai pass. Nhóm mở rộng có 12 failed; một
+  fixture chiều ngược ban đầu còn bị lỗi existing-file nên chưa cô lập đủ. Đã
+  đổi sang host.ts lịch sử của 007 như trên, không coi lỗi existence đó là red
+  riêng của classification.
+- Sau chốt fixture, nạp validator nguyên bản từ
+  `git show 51f8476:plans/validate-plans.mjs` vào test module trong bộ nhớ, chạy
+  riêng chiều ngược và audit 005: 0 passed, 2 failed, đều do validator trả 0
+  thay vì 1. Không rollback file làm việc, thay Git object hoặc tạo review
+  artifact giả.
+- Sau sửa, 17 regression mới đạt. Source helper commit:
+  `886e68a09eaa15712f2b1d0070e07ba98a7dc127`.
+- Trên commit sạch, `node plans/validate-plans.mjs` đạt 25/25;
+  `node --test plans/test-validator.mjs plans/test-history.mjs` đạt **101
+  passed, 0 failed, 0 skipped**, gồm 99 validator test và hai ca Git clone thật.
+  Clean single-branch clone giữ đầy đủ ancestry và validator xanh; historical
+  clone trước provenance fix vẫn đỏ đúng sáu object thiếu/bảy DONE.
+- `deno fmt --check plans/` đạt 53 file;
+  `deno lint --no-config plans/validate-plans.mjs plans/test-validator.mjs plans/test-history.mjs`
+  đạt ba script; `git diff --check` đạt. Source ngoài plans vẫn bằng main
+  `341cba437dba69348b6e11e2c6f599480d5fc212`.
+
+Giữ sáu provenance merges và regression mọi TODO chuyển BLOCKED. Codex đã viện
+dẫn rule scope hiện có đúng vào finding newFiles; đây là bằng chứng rule phát
+hiện gap, không phải lý do miễn review. Không thêm rule trùng, không thay
+AGENTS, dependency, source ứng dụng, workspace root hoặc source 017. Chỉ hai
+helper và evidence này thay đổi. Chưa push/reply; delta cần fresh review của
+parent và vòng Codex/CI tiếp theo, không dùng APPROVE trước đó cho commit mới.
+
+### Fresh review và kiểm chứng parent trên bản sửa metadata
+
+Reviewer độc lập APPROVE HEAD399f0a65c6489608f020b5d2a2a21bb1f59ae067,
+source886e68a09eaa15712f2b1d0070e07ba98a7dc127, không có finding. Reviewer đọc
+nguyên văn comment Codex và toàn delta, tự chạy validator25/25, 101 helper/
+history test, format53 file, lint3 script và diff check: đều đạt.
+
+Parent tự đọc toàn diff và evidence, chạy lại các gate tương tự: validator
+25/25, 101 test đạt không bỏ qua, format53/lint3/diff đều exit0. Giữ nguyên sáu
+provenance merges và regression không còn TODO; source ngoài plans không đổi.
+PR25 vẫn cần Codex sạch cùng CI trên HEAD mới và bắt buộc merge commit.
+
+## Lượt A: đường dẫn, full sourceRef và Git fixture cache
+
+Phạm vi được parent giao trên base `dd993b765473f0e72ef5056b03fbba8c2be4f35c`,
+source ứng dụng bằng main `67a7bc4d777cccced5255b0a43ae648752241f21`. Chỉ chỉnh
+hai helper và báo cáo này. Bảo toàn 19 file metadata parent đã sửa và file mới
+`002-contract-extension.md`; snapshot sẽ commit chung theo quyền rõ ràng của
+parent. Không nhận main mới trong lúc metadata đang freeze, không sửa trạng thái
+thật 005/006, AGENTS, root hoặc GitHub.
+
+### Baseline và prerequisite fixture
+
+`node plans/validate-plans.mjs` đạt 25 kế hoạch. Selftest gốc có **97 passed, 2
+failed** trong 99 test, thời gian quan sát 42,945 giây. Cả hai ca tại fixture
+prerequisite giả định 005 chưa DONE: IN_PROGRESS 006 thực tế hợp lệ và trả 0;
+DONE 006 chỉ còn lỗi checklist/approval, không có diagnostic prerequisite. Đây
+là lỗi tiền đề test, không phải lý do nới validator.
+
+Fixture mới tự đặt 005 STALE với lý do tường minh trong bộ nhớ, giữ sourceRef và
+historical source thật, đồng bộ hàng README rồi đặt 006 IN_PROGRESS/DONE. Mỗi ca
+bắt riêng đúng diagnostic `006 prerequisite 005 must be DONE`, xác nhận
+historical read vẫn diễn ra; control khôi phục 005 DONE phải bỏ diagnostic đó.
+Hai ca bổ sung chạy cùng phép kiểm khi toàn bộ trạng thái được đặt DONE trong bộ
+nhớ, rồi đổi riêng trạng thái 021. Fixture không tạo approval cho các mục tương
+lai: các diagnostic checklist/approval hợp lệ khác vẫn được giữ, không dùng
+chúng thay cho assertion prerequisite. Không có metadata giả ghi xuống đĩa hoặc
+Git.
+
+### Các finding helper đã xử lý
+
+Lượt này xử lý ba finding helper `3940080329`, `3940080332`, `3940080342` theo
+ba nhóm dưới đây.
+
+- Đường dẫn: kiểm repo-relative canonical cho từng scope và newFiles trước mọi
+  exemption tạo mới hoặc prerequisite-created. Từ chối absolute POSIX, Windows
+  drive, backslash, thành phần `.`/`..`, slash lặp và giá trị rỗng/sai kiểu;
+  không normalize traversal rồi chấp nhận. `scopedObject` dùng cùng guard. File
+  mới hợp lệ, thư mục artifact có một trailing slash và exemption lịch sử tiếp
+  tục đạt. Giá trị lỗi trả diagnostic, không gây exception không liên quan.
+- SourceRef: evidence sourceRef cần đúng 40 ký tự hex. Hai prefix 7 và 39 ký tự
+  được Git resolve về đúng commit thật vẫn bị từ chối. Giữ các ca 41 ký tự,
+  nonhex, full SHA không tồn tại và full SHA hợp lệ. Hai fixture Git thiếu trước
+  đây dùng `deadbee` chuyển thành full SHA không tồn tại để tiếp tục kiểm lỗi
+  đọc Git thực, không chết sớm chỉ vì regex. Mốc soạn short label không đổi.
+- Git fixture cache: test harness chia sẻ cache output Git bất biến giữa các
+  run, khóa theo command, args, cwd và encoding. Chỉ cache show/cat-file/ls-tree
+  dùng full object ID; HEAD/ref động, command ngoài allowlist và filesystem hiện
+  tại luôn đọc lại. Chỉ lưu output đọc thành công; Buffer được copy cả khi lưu
+  và khi trả. Run có gitOutput bỏ qua cache hoàn toàn, callback vẫn đọc Git thật
+  và có thể ném lỗi/đổi output để bắt regression. Không sửa validator production
+  để bỏ historicalReads hoặc thay Git bằng kết quả giả.
+
+### Red/green và phép đo
+
+Sau thêm regression nhưng trước sửa validator/cache, chạy nhóm trọng tâm:
+
+```sh
+node --test --test-name-pattern='completed prerequisites|prerequisite fixture|noncanonical|newFiles validates|sourceRef rejects|immutable Git fixtures' plans/test-validator.mjs
+```
+
+Kết quả **6 passed, 16 failed**. Mười đường dẫn không chuẩn đồng bộ ở plan và
+manifest được validator cũ nhận sai, gồm `../outside-plan.ts`; prefix 7/39 ký tự
+cũng sai pass, cache không giảm subprocess. Ba ca rỗng/null/newFiles ngoài scope
+vốn đã bị guard khác từ chối, chỉ thiếu diagnostic canonical mới, không tính là
+ba hành vi sai pass. Các fixture prerequisite đã sửa đạt ngay với validator cũ,
+xác nhận không cần nới gate.
+
+Green cuối: **124 passed, 0 failed, 0 skipped**. Bao gồm Buffer alias, khác
+path/ref/cwd/encoding/command, đọc Git lỗi không được cache, mutable HEAD không
+cache, callback ném lỗi và trả malformed output không làm nhiễm run sau, cùng
+dependency-created traversal. Một cặp run validator thật đo được **81 Git
+subprocess khi cold, 2 khi warm**, nhưng vẫn ghi đủ **81 historicalReads** ở cả
+hai run. Không có threshold thời gian trong assertion. Lượt green quan sát 6,163
+giây với 124 test, không coi đây là benchmark tương đương bộ 99 test cũ hoặc lời
+hứa latency trên máy khác.
+
+### Gate local trước snapshot
+
+- Validator: 25 kế hoạch đạt; `node --test plans/test-validator.mjs`: 124 đạt.
+- `deno fmt --check plans/`: 60 file đạt; lint ba helper bằng `--no-config` đạt;
+  `git diff --check` đạt.
+- Server check, UI typecheck, lint toàn repo 206 file và format 282 file đạt.
+- UI cài đúng lock offline và build đủ 7 viewer; Node build offline và syntax
+  check đạt. Pack dry-run từ `dist-node/bin` có đúng 10 file, gồm 7 HTML.
+- Full Deno trên source main 67a7bc4: **1202 passed, 0 failed, 4 ignored**; chạy
+  sau UI/Node build, không gọi ERPNext thật.
+- Deno dùng `--config deno.nojsr.json --sloppy-imports --frozen`; đã so mọi
+  trường ngoài imports với deno.json, vendor với npm 0.25.0 pristine và lock
+  SHA-256 `f32268af50c10ba06223c9a0b7f2d7092555ffa90172cd573ecf8d3feb2d882a`:
+  khớp. Không nâng dependency/runtime hoặc pin npm trong lượt này.
+
+Chưa triển khai finding definition binding `3940080334`. Snapshot metadata cần
+review độc lập trước lượt B; không dùng test helper xanh làm approval cho
+definition. Yêu cầu pin npm của `3940080337` do parent ghi trong kế hoạch 021,
+chưa phải implementation hoặc quyền cài package manager. Clean-history gate phải
+chạy sau commit snapshot; kết quả được bàn giao riêng, không suy ra từ validator
+chạy trong worktree có metadata chưa commit.
+
+## Lượt B: binding định nghĩa DONE
+
+Finding `3940080334` yêu cầu bảo vệ chính định nghĩa kế hoạch, không chỉ source
+và artifact implementation. Reviewer độc lập `/root/goal_execute_006` đã APPROVE
+supplemental definition snapshot `b9d6d02a9692c3efff11836b97d8cfbc69da1ec7`,
+manifest blob `2ff4089ea1fef9ae82699d021bc51be346747952`, cho đúng 13 DONE:
+001/003/004/005/007/008/009/010/011/012/018/019/024. Parent chuyển kết luận này
+cho executor trước khi triển khai binding. Không cấp approval cho 006/015/017
+hoặc definition khác; không đổi các file kế hoạch hay manifest snapshot.
+
+Mỗi evidence của 13 mục trên thêm riêng `definition_review_verdict: APPROVE`,
+`definition_commit`, `definition_plan_blob`, `definition_manifest_blob`. Blob
+đọc từ đúng path tại snapshot Git đã được duyệt, không lấy hash mutable plan để
+tự duyệt. Sáu field implementation giữ nguyên từng byte. Các source PR cũ không
+được tuyên bố hồi tố là đã chứa hoặc được review cùng định nghĩa này.
+
+Validator kiểm commit thật qua cat-file và tree; so đúng path/type/blob của plan
+và manifest. Toàn bộ byte kế hoạch hiện tại phải bằng approved plan blob, kể cả
+prose, prerequisite, scope và checklist. Historical manifest được đọc bằng Git
+và kiểm blob, rồi so duy nhất record đúng ID với current record: canonical
+object key order, không đổi array content/order. Record khác tiến độ không
+invalidate mọi DONE. Binding nằm ngoài manifest để tránh self-reference. Git
+thiếu/sai type/sai path/sai blob fail closed. Đây là kiểm nhất quán offline,
+không xác thực danh tính reviewer, CI hoặc chứng minh implementation production.
+
+Red thực trước sửa validator, sau khi thêm metadata từ approval có thật:
+`node --test --test-name-pattern='DONE definition' plans/test-validator.mjs` có
+**1 passed, 28 failed** trong 29 test. Validator cũ nhận sai việc xóa đồng thời
+scope khỏi plan/manifest, xóa đồng thời prerequisite khỏi ba biểu diễn, bỏ một
+acceptance đã checked, thêm prose, bỏ/trùng/sai metadata và dùng Git blob hoặc
+commit không chứa kế hoạch. Không có lỗi import hoặc Git giả làm red. Control
+thay record khác đạt ngay; test canonical object còn đỏ vì array đảo thứ tự chưa
+bị definition gate chặn.
+
+Sau implementation, 29 test mới đạt. Một lượt full suite còn tám assertion cũ
+không phù hợp chính sách full-plan binding: prose/checklist ngoài acceptance,
+refresh definition DONE, hoặc diagnostic mới đi kèm classification/audit. Đã giữ
+invariant gốc và cập nhật expectation chính xác: DONE edit chỉ báo hai
+diagnostic definition/approval nếu không vi phạm invariant khác; kiểm semantic
+whitespace/marker/prose hợp lệ chạy trên non-DONE. Audit vẫn kiểm từng mục đủ 25
+ID; classification vẫn yêu cầu đúng lỗi cũ, thêm lỗi definition khi phù hợp.
+Không sửa plan thật hoặc nới source, prerequisite, checklist, artifact gates.
+
+Gate trước commit: validator 25/25 và **153 passed, 0 failed, 0 skipped** gồm
+124 regression cũ cùng 29 mới. Cache Git vẫn ghi đủ historicalReads; quan sát 84
+subprocess khi cold và 2 khi warm, 84 historicalReads ở cả hai lượt. Callback
+Git error/output vẫn bypass cache và không làm nhiễm lượt sau. Clean-history
+gate sẽ chạy trên commit thật; không dùng kết quả local này thay phép kiểm đó.
+
+### Gate Git thật sau commit
+
+Implementation binding được lưu tại `db2f31fa0b332a7919e02b48f227ae1a6adf9b9e`.
+Test history bổ sung tại `930f0b6b49b59c0de02a222e7c5140ef191b6b2a`. Trên commit
+sạch này, `node --test plans/test-validator.mjs plans/test-history.mjs` đạt
+**156 passed, 0 failed, 0 skipped**: 153 validator và ba Git history test.
+Positive clone một nhánh kiểm thêm ancestry của mọi definition_commit; ca âm sáu
+reviewed HEAD lịch sử thiếu vẫn được giữ nguyên.
+
+Ca âm definition dùng clone sạch của parent trước b9d6d02 và xác nhận cat-file
+không đọc được b9d6d02. Sau đó chép nguyên cây plans từ db2f31f thật vào working
+tree biệt lập, không tạo commit/blob Git hoặc metadata approval giả. Validator
+trước guard từ b9d6d02 trả exit 0 sai; validator hiện tại trả exit 1 với đúng 27
+diagnostic: một lỗi Git ref và hai lỗi definition/approval cho từng 13 DONE.
+Fetch riêng ref b9d6d02 bằng transport local, không đổi HEAD/source/metadata,
+làm validator đạt 25/25. Repository tạm được dọn sau test. Phần overlay được ghi
+rõ, không gọi working tree sau overlay là clean checkout đã commit.
+
+Format toàn plans 60 file, lint ba helper, validator 25/25 và diff check đạt.
+Đối chiếu Git xác nhận 13 plan cùng manifest giữ nguyên byte so với b9d6d02; 13
+evidence chỉ thêm bốn field definition, tất cả byte còn lại giữ nguyên. Source
+ngoài plans vẫn bằng main 67a7bc4, không chạy lại app build trong lượt B và
+không suy từ helper gate ra CI JSR thật. Không sửa workspace root, AGENTS,
+dependency, version, publish hoặc GitHub; parent tiếp tục fresh review và CI.
+
+## Sửa P2 độc lập: tiền đề non-DONE của positive fixture
+
+Reviewer trên `d37b6d43556c5688b2ce0bd8cebe3220bbc0b63f` phát hiện ba positive
+fixture prose/marker/audit vẫn dùng trực tiếp trạng thái hiện tại của 015. Khi
+015 DONE, definition binding đúng sẽ từ chối chỉnh kế hoạch và làm test báo đỏ
+giả. Rà thêm các ca manifest record 021, dependency 013/021, new artifact
+directory, file mới chưa tracked và thư mục tracked: cùng lỗi tiền đề.
+
+Đã gom tám loại edit hiện có vào fixture dùng chung. Regression mới đặt cả 25 kế
+hoạch DONE trong VM, xác nhận từng trạng thái được đổi và yêu cầu helper tự
+thiết lập non-DONE trước khi edit. Trước sửa setup, chạy
+`node --test --test-name-pattern='positive semantic fixture survives' plans/test-validator.mjs`
+cho **0 passed, 8 failed**, đều đúng assertion thiếu tiền đề non-DONE ở 015, 013
+hoặc 021. Đây là red của test harness, không gọi validator đang từ chối đúng là
+bug, không dùng lỗi Git/approval chưa có làm red của source ứng dụng.
+
+Helper mới đặt riêng các target thành STALE có lý do rõ trong bộ nhớ, đồng bộ
+README và loại stale_reason cũ trước khi thêm một lý do duy nhất. Không sửa
+metadata trên đĩa. Nó kiểm trạng thái được dựng, target không có diagnostic từ
+baseline và edit thật sự thay đổi nội dung. Sau edit, toàn bộ diagnostic và exit
+code phải bằng baseline; mọi historical sourceRef của target vẫn được đọc. Các
+lỗi hợp lệ của DONE giả lập khác được giữ nguyên trong phép so, không chế
+approval để ép toàn bộ nền giả lập xanh. Tám test positive cũ dùng chính helper
+này, nên control không kiểm một đường code tách rời.
+
+Sau sửa, **161 validator tests passed, 0 failed, 0 skipped**: giữ 153 test và
+thêm tám control mọi kế hoạch DONE. Validator production, history helper,
+manifest, 25 plan và 13 approval không đổi. Full helper/history và clean clone
+được chạy trên commit local tiếp theo; không push hoặc sửa ứng dụng.
+
+Commit fixture `231fc3472c7492b0ece2480e2b3dbf230322065e` đã được kiểm khi
+worktree sạch: `node --test plans/test-validator.mjs plans/test-history.mjs` đạt
+**164 passed, 0 failed, 0 skipped**, gồm 161 validator và ba Git clone test.
+Validator 25/25, format 60 file, lint ba helper và diff check đạt. Git diff xác
+nhận validator production, history helper, toàn bộ plan/manifest và 13 approval
+giữ nguyên so với d37b6d4. Không dùng trạng thái giả lập để sửa tiến độ thật.
+
+## Review bổ sung và đồng bộ sau khi 006/017 merge
+
+Reviewer `/root/goal_execute_006` APPROVE sửa fixture P2 tại
+`ca55a96fd4ed50de06e98f7d2acf05f117d8bdc9`, tree
+`2da9ac0784457deaf359022b07ba90549e0d2775`. Tự chạy 164 test, validator 25/25,
+format 60 file, lint ba helper, history và diff check đều đạt. Bỏ riêng bước
+thiết lập non-DONE trong VM làm cả tám control thất bại đúng premise; giữ bước
+này thì cả tám đạt. Không tạo approval giả, không nới production validator.
+
+Merge main `67896f3208caee923659f1900c399d87e99c403c` sạch vào backlog tại
+`2ce89ffb719a32ee3501d44a11d03fea0a0b2690`. Source ngoài plans bằng main này.
+Đồng bộ trạng thái DONE và proof thật của 006/017, 38 artifact 017 có sẵn từ
+merge; cập nhật quote 013/014/020 theo dòng mới của 006, không thay literal hoặc
+thu hẹp scope. 013 và 025 bắt đầu IN_PROGRESS, phụ thuộc 005/006 đã DONE.
+Snapshot tiến độ `ed1bd95affd1b09bf45d35c16e4279073fd7d004` chưa được tự cấp
+approval cho hai định nghĩa mới; validator báo đúng bốn diagnostic thiếu
+binding.
+
+Reviewer `/root/execute_integration_015_017` tìm qualifier host017 cũ chỉ nhắc
+malformed-payload, chưa phản ánh fixture ngày SO/QTN và held refresh của R2.
+Parent đọc diff source R2 và cập nhật qualifier cùng maintenance, giữ nguyên
+acceptance. Reviewer đọc lại và APPROVE riêng definition 006/017 tại snapshot
+`a6a80dfcd88094ecd6e2475f9cde6cba0af72b5d`:
+
+- Manifest blob: `db1f4a97d6de9e73608191b781537f8aa7f6c25b`.
+- Plan 006 blob: `4c006989f10e7e8ed9b687cca2da02a5dfd92b2f`.
+- Plan 017 blob: `7a75bd2b93a07aade32d08416d859ec84d4a51da`.
+
+Review xác nhận sáu implementation field, source scope và artifact của hai mục
+khớp Git thật; 13 DONE cũ giữ nguyên plan blob, manifest record và binding tại
+b9d6d02. Đây là supplemental definition/proof-ledger review, không xác thực danh
+tính reviewer bằng offline, không hồi tố rằng PR implementation chứa plan và
+không thay review source/CI đã có.
+
+Sau khi nhận APPROVE mới thêm bốn field của 006/017, commit
+`c2154bc59893bec940654bba459ddadacb5a456f`, tree
+`7ce0faa45e4f9f746f813d1e1928046200437cc8`. Parent tự chạy validator 25/25 và
+164 helper/history test: 0 failed, 0 skipped. Build lại trên source main mới:
+server check, lint 208 file, format 288 file với vendor ignored, UI typecheck,
+UI build 7 viewer, Node build/syntax, pack dry-run 10 file/7 HTML và full Deno
+1314 passed, 0 failed, 4 ignored đều đạt. Node bundle SHA-256
+`da72878ff0b321a5e5e0477425d28f2e70dc2d85f96178fa2b82cd21b84cca35` khớp build
+tích hợp 006 đã kiểm trước đó. Các gate local dùng workaround frozen, không thay
+JSR thật; cần CI và Codex mới sau push PR25. Giữ merge history, không
+squash/rebase các commit provenance được clean-clone test bảo vệ.
+
+## Review 5120906080: khóa implementation binding và tập artifact
+
+Parent giao ba finding `3940332280`, `3940332282`, `3940332286` trên PR25.
+Executor bắt đầu tại `7fcfc9da79bfd5344e1b5e75de0d08e96bf83c3e`, chỉ sửa
+validator, hai test helper có tên thực `test-validator.mjs`/`test-history.mjs`
+và báo cáo này. Không sửa định nghĩa kế hoạch, manifest, README, source ứng dụng
+hoặc metadata approval.
+
+Baseline ban đầu có đúng bốn diagnostic: mỗi 013/025 thiếu definition snapshot
+và reviewer approval evidence. Trong lúc executor viết regression, parent nhận
+supplemental APPROVE thật cho snapshot trên và bổ sung metadata riêng tại
+`184c0ba2a8162aabf956c2662736c2378fb9bf46`. Validator gốc sau metadata đạt
+25/25. Executor không tự tạo approval để làm xanh; regression mới đối chiếu
+diagnostic trước/sau cùng fixture nên không lấy lỗi thiếu metadata làm red.
+
+### Ba thay đổi
+
+- `3940332280`: sáu field implementation hiện tại phải bằng frontmatter trong
+  `definition_commit:plans/evidence/NNN.md`. Snapshot này được đọc từ Git thật,
+  đúng path/blob; field phải duy nhất và không thiếu. Không yêu cầu report của
+  PR implementation cũ chứa metadata bổ sung về sau, không viết lại history.
+  Commit/tree/report blob của implementation và scope equality cũ vẫn được kiểm.
+  Đây là kiểm nhất quán offline, không xác thực danh tính người review.
+- `3940332282`: artifact trong scope plans được so đủ tập path, Git object và
+  mode với completed snapshot, dùng Git index thực gồm cả staged changes. Sau đó
+  duyệt filesystem và kiểm byte/mode từng file. File thừa trong thư mục approval
+  bị từ chối kể cả untracked hoặc ignored; symlink cũng không được chấp nhận.
+  Thư mục rỗng không phải Git artifact nên không tính; file nằm ngoài đúng
+  boundary thư mục không bị bắt nhầm. Không áp freeze artifact cho source ứng
+  dụng đã tiến triển sau implementation.
+- `3940332286`: kiểm mọi bullet trong danh sách scope trước `Ngoài phạm vi:`;
+  bullet file phải theo dạng backtick hiện có, qualifier nằm trong ngoặc và có
+  thể wrap. Plain bullet, marker khác, numbered/indented bullet, thiếu backtick
+  hoặc qualifier malformed không được im lặng bỏ qua. Giữ ngoại lệ hai file quản
+  trị và phân loại tạo mới; positive fixture vẫn tự dựng non-DONE.
+
+### Red và green thực
+
+- Trước sửa validator, năm regression ban đầu chạy bằng
+  `node --test --test-name-pattern='PR25' plans/test-validator.mjs`: **0 passed,
+  5 failed**. Đổi đồng thời reviewed/completed cùng report blob sang definition
+  commit thật, thêm entry index artifact và ba kiểu plain scope bullet đều không
+  tạo diagnostic cần thiết. Các phép đọc Git còn nguyên, không tạo approval
+  object giả hoặc dùng exception không liên quan làm red.
+- Ca artifact được kiểm thêm bằng clone một nhánh thật của HEAD `184c0ba`: tạo
+  file mới trong `plans/evidence/007/` rồi `git add`; validator cũ vẫn trả
+  exit 0. Test riêng **0 passed, 1 failed**, đúng assertion `0 !== 1`. Sau sửa
+  và commit, cùng test đạt, gồm staged, untracked, staged nhưng bị xóa khỏi
+  working tree, executable-mode drift, symlink và ignored file. Control ngoài
+  boundary đạt; clone cuối sạch và thư mục tạm được dọn.
+- Source helper commit: `5f9527db1ccc9a46fc9319ed91d4619bd8cdccf8`, tree
+  `8f6ffc52be97b53d57d7691934bd7b1a580fb5c9`.
+- Trên source commit sạch,
+  `node --test plans/test-validator.mjs plans/test-history.mjs`: **187 passed, 0
+  failed, 0 skipped**. Giữ 161 validator test và ba history test cũ; thêm 22
+  validator test và một history test thực. Clean clone/provenance ancestry và
+  hai historical negative vẫn đạt, không giảm gate.
+- Cache vẫn chỉ giữ Git output bất biến. Run đo cold 126 subprocess, warm 3, cả
+  hai ghi 126 historicalReads; index đọc lại giữa các run, callback lỗi hoặc
+  biến đổi Git output vẫn bypass cache và không nhiễm lượt sau.
+- Validator đạt 25/25; format toàn plans 66 file, lint ba helper với
+  `--no-config` và `git diff --check` đều exit 0. Không chạy application/UI
+  build trong lượt helper-only này; không dùng 187 test thay CI JSR thật.
+
+Không sửa workspace root, definition/manifest/README hoặc 17 report approval.
+Không push, trả lời GitHub, Browser, release hoặc publish. Delta helper mới cần
+review độc lập và vòng Codex/CI tiếp do parent điều phối.
+
+# Kiểm chứng bổ sung sau khi main nhận 015
+
+Parent xác nhận reviewer độc lập APPROVE helper tại
+`f4618e5cb7d87407b5e38cd472d1029c3de75e57`. Các definition 013/025 được review
+tại `7fcfc9da79bfd5344e1b5e75de0d08e96bf83c3e`; definition 015 được review tại
+`a4b41f160170289759a2f9022d3ec22ff2645242`. Đây là approval bổ sung sau
+implementation, không viết lại lịch sử approval. Reviewer kiểm scope, tiêu chí,
+sáu trường provenance và artifact 015 đúng byte; các binding cũ không thay đổi.
+Metadata hiện ghi 18 DONE, 3 IN_PROGRESS, 1 BLOCKED và 3 TODO; không coi các
+quyền framework/dependency chưa trả lời là đã duyệt.
+
+Gate tại HEAD `35b91d98cef5047cbc86a99d5a8a24b50347df87`, tree
+`63f14c7a96e22a1f7109d3ca09a9490f83d39743`: 187 helper/history tests pass, 0
+failed/skip; validator 25/25; format 71 file, lint 3 helper; full Deno frozen
+1363 passed, 0 failed, 4 ignored; server check, UI typecheck, UI build 7 viewer,
+Node build/syntax và pack dry-run đúng 10 file/7 HTML đạt. Build hoàn tất trước
+full tests. Worktree sạch. Executor gate là tác giả helper, nên kết quả gate này
+không thay thế review độc lập đã nêu trên. Probe tên lock ban đầu bị ENOENT;
+kiểm lại đúng `deno.lock` có SHA-256
+`f32268af50c10ba06223c9a0b7f2d7092555ffa90172cd573ecf8d3feb2d882a`. Không
+publish hoặc nâng dependency.
+
+## Review 5121099562: namespace Git và citation liền kề
+
+Parent giao finding `3940494459` và `3940494465` trên remote HEAD `ca793fa`.
+Executor bắt đầu tại `b65979a67f97dddf03445f4c817be566db6ab939`, chỉ sửa
+`validate-plans.mjs`, `test-validator.mjs` và báo cáo này. History helper giữ
+nguyên. Finding thứ ba về kế hoạch 021 do parent xử lý riêng, không nằm trong
+delta helper của executor.
+
+Baseline ban đầu có đúng bốn diagnostic thiếu definition/approval của 014/023.
+Sau reviewer độc lập APPROVE snapshot b65979a, parent tự thêm bốn trường vào hai
+report và validator gốc đạt 25/25. Các regression mới tự dựng target non-DONE
+trong VM và so diagnostic trước/sau, không tạo approval giả hoặc lấy diagnostic
+metadata đang thiếu làm bằng chứng đỏ.
+
+- `3940494459`: canonical scope guard từ chối thành phần `.git` ở mọi cấp, không
+  phân biệt hoa/thường, trước exemption file mới hoặc dependency-created. Áp
+  dụng cùng guard cho scope, newFiles và tra Git object. `.github`,
+  `.gitignore`, `src/git/` và tên có prefix `.git-` vẫn hợp lệ. Đây là ranh giới
+  namespace metadata Git, không phải bộ chuẩn hóa mọi alias filesystem.
+- Đã kiểm Git thật trong repository tạm với protectNTFS/protectHFS bật:
+  update-index từ chối `.git/config`, hooks, `.GIT`, `.GiT` và nested
+  `src/.git`/`src/.GIT` bằng `Invalid path`; bốn control tương ứng trên đạt. Chỉ
+  tạo blob fixture và index trong repository tạm, không tạo commit hoặc
+  approval; thư mục tạm được dọn sau phép kiểm.
+- `3940494465`: citation phải là dòng không rỗng liền trước marker của đúng
+  block evidence theo index manifest, có chính xác path và line. Blank lines và
+  deno-fmt-ignore hiện hữu vẫn được giữ. Citation đúng nằm ở prose nơi khác
+  không thể thay citation bị thiếu, stale, bị đổi chỗ hoặc bị ngăn bởi đoạn giải
+  thích khác. Historical/current source và fenced excerpt vẫn kiểm như cũ.
+
+Red trước sửa validator:
+
+```sh
+node --test --test-name-pattern='Git metadata namespace|Git namespace guard|evidence citation must|adjacent citations retain' plans/test-validator.mjs
+```
+
+Kết quả **5 passed, 16 failed**. Tám biến thể namespace được nhận sai do
+newFiles exemption; tám ca citation tại 001/003 giữ citation đúng ở nơi khác
+hoặc tráo hai nhãn mà validator cũ không có diagnostic. Ca 003 cùng một file
+source nhưng khác số dòng, ca 001 khác cả path; cả hai đều cần binding từng
+block. Bốn control tên file hợp lệ và control formatting/prose đúng đều đạt
+trước sửa. Không dùng exception, import hoặc lỗi Git làm red.
+
+Sau sửa: `node plans/validate-plans.mjs` đạt 25/25;
+`node --test plans/test-validator.mjs` đạt **204 passed, 0 failed, 0 skipped**,
+giữ 183 selftests cũ và thêm 21 ca mới. Format toàn plans đạt 73 file, lint ba
+helper với `--no-config` và `git diff --check` đều exit 0. Parent còn ba file
+metadata/kế hoạch chưa commit trong worktree; clean-history gate chỉ chạy sau
+khi các thay đổi đã review của parent và helper được commit, không bỏ assertion
+worktree sạch để lấy kết quả xanh.
+
+Không sửa source ứng dụng, plan/manifest/README hoặc approval; không chạy
+application build, network, Browser, push hay trả lời GitHub trong lượt này.
+Review độc lập helper mới do parent điều phối, không lấy verdict cũ làm approval
+cho delta này.
+
+## Parent xác nhận review helper và các snapshot sau 020
+
+Reviewer độc lập `/root/goal_execute_006` APPROVE helper tại
+`bcb57ccea3bcdab129c84d14bec3842c1c3b315a`, tree
+`1efa539c2480a03f97bc919684f4adb2d625add0`, report blob
+`e5b1939ffcc97886fba1da9b3d964726e068ba2d`. Reviewer tự chạy toàn bộ208
+self/history tests, validator25/25, fmt73, lint3; red trên validator trước sửa
+đạt5control và thất bại16ca đúng nguyên nhân, HEAD đạt21/21ca mới. Các183
+selftests cũ nguyên byte, history helper không đổi. Probe VM đầu có lỗi thay
+chuỗi đã sửa trong bộ nhớ, không tính là behavioral red.
+
+Gate application độc lập ở cùng bcb57cc đạt full1385/0/4, server check, lint213,
+fmt303, UI typecheck, UI7, Node build/syntax và pack10file/7HTML. Build xong
+trước full suite, worktree sạch, frozen lock giữ SHA-256
+`f32268af50c10ba06223c9a0b7f2d7092555ffa90172cd573ecf8d3feb2d882a`. Bundle là
+`ba5a6e147950660ca408b27b3db00972aef2d5072448e9015761de147cb04bd1`. Gate này
+trước khi merge source020; không dùng số1385 thay kiểm tích hợp mới.
+
+Finding3940494468 được xử lý trong plan021 tại bcb57cc, plan blob
+`7ff97786d71cba206a0d42d3e15628d9d828257d`, reviewer độc lập APPROVE delta. Kế
+hoạch nay buộc so toàn bộ path/mode/size/SHA-256 của từng file trong package, kể
+cả7HTML, và negative control chỉ đổi byte HTML trong khi bundle/list không đổi.
+Có control thiếu/thừa file, mode và hai package giống nhau. Đây là tiêu chí
+triển khai021 còn TODO, không phải tuyên bố đã thực hiện hai build tái lập.
+
+Sau PR43 merge, parent merge main7d4546b vào backlog tại
+`e36592bad028e442203b055ed8c2911c0311f1a8`, giữ application đúng main mới.
+Definition020 snapshot `55bb74697d3d731bda0c3cb297fcdce29f8e9045` được reviewer
+độc lập `/root/goal_execute_011` APPROVE: plan
+`115b585038233f71f1faffd93369776e253bc546`, manifest
+`72559f33368a0624fe8e569a44cb528126c08708`, report
+`1df02f77b294c32d484407951ce79497fc585402`. Sáu provenance fields khớp Git,
+scope/tiêu chí không giảm,20definition cũ nguyên byte. Snapshot lúc chưa có bốn
+definition fields thất bại đúng hai diagnostic020; parent chỉ thêm binding sau
+review, chưa push snapshot thiếu approval. Tổng metadata nay21DONE.
+
+## Sửa finding 3940650166: ranh giới link Markdown
+
+Executor bắt đầu ở `8436a48f687a5e119bfff164bc6ffeaf591db922`, source sửa tại
+`42d1b51057c669994217bb7743797c6c6ce41945`. Chỉ sửa hai helper
+`plans/validate-plans.mjs`, `plans/test-validator.mjs` và bổ sung mục báo cáo
+này. P1 ancestry là nhiệm vụ riêng của parent, không nằm trong bản sửa này.
+
+Validator cũ resolve link rồi hỏi `existsSync`, do đó đường dẫn tuyệt đối hoặc
+`../` thoát repository có thể được nhận khi file ngoài checkout tồn tại. Test
+mới chèn link vào báo cáo nested trong VM và khai báo file đích tồn tại trong
+fixture filesystem. Không đọc nội dung file hệ thống, không phụ thuộc máy chạy
+có thật file đích, không tạo source hoặc approval giả.
+
+Red thực chạy trước sửa validator:
+
+```sh
+node --test --test-name-pattern='Markdown repository boundary' plans/test-validator.mjs
+```
+
+Kết quả exit 1, **6 passed, 10 failed**. Cả mười ca sai đều thất bại ở assertion
+validator đã nhận link không an toàn với exit 0; không dùng lỗi import, Git,
+exception hoặc thiếu file làm bằng chứng đỏ. Sáu control hợp lệ đã qua trước
+sửa.
+
+Guard mới từ chối đường dẫn tuyệt đối, dạng drive Windows kể cả `C:relative`,
+UNC và backslash trước resolve. Với đường dẫn tương đối, resolve từ thư mục chứa
+Markdown rồi kiểm kết quả `relative(repoRoot, resolved)` không ra ngoài repo
+trước `existsSync`. Không dùng so prefix chuỗi có thể nhận nhầm thư mục anh em.
+Relative `../` hoặc `./` vẫn được nhận nếu kết quả nằm trong repo; HTTP/HTTPS và
+anchor giữ semantics cũ. Đường dẫn hợp lệ nhưng thiếu file vẫn bị guard link
+hỏng hiện hữu từ chối.
+
+Mười negative control bao gồm POSIX absolute, traversal trực tiếp và qua segment
+trung gian, thư mục anh em, Windows drive/drive-relative/UNC và backslash. Mỗi
+ca phải có đúng một diagnostic `unsafe Markdown link`, không exception, và danh
+sách lookup ghi nhận trong VM không chứa đích bị chặn. Sáu positive control bao
+gồm relative về README repo, normalization `src/..`, fragment nội bộ, HTTP,
+HTTPS và anchor. Đây là ranh giới lexical của link mà parser hiện tại nhận được,
+không tuyên bố đã viết lại parser CommonMark hoặc kiểm mọi alias/symlink
+filesystem.
+
+Gate sau sửa:
+
+- Focused 16 passed, 0 failed; `node plans/validate-plans.mjs` đạt 25/25.
+- `node --test plans/test-validator.mjs`: 220 passed, 0 failed, 0 skipped, giữ
+  204 selftests cũ và thêm 16 ca.
+- `deno fmt --check plans/`: 74 file; lint ba helper với `--no-config` và
+  `git diff --check` đều exit 0.
+- Sau commit source sạch, `node --test plans/test-history.mjs`: 4 passed, 0
+  failed, 0 skipped. Giữ nguyên helper history và toàn bộ provenance merges;
+  clone một nhánh dùng Git transport local, không cần mạng. Tổng self/history là
+  224 ca, giữ toàn bộ 208 ca trước sửa.
+
+Không sửa plan/manifest/README, approval metadata, source ứng dụng hoặc
+dependency. Không chạy application build, Browser, Publish, push hoặc thao tác
+GitHub. Đây là evidence executor; review độc lập delta mới do parent điều phối.
+
+Reviewer độc lập APPROVE HEAD `76dc06d07d801f50e38e7919f631bb3d151136d6`, tree
+`29a47ee8363f81748208fd04ba98fb6c6ffa4d10`, report blob
+`cf2124ca7650e4c06f61621f368d65941974b25e`. Reviewer tự tái hiện red trên
+validator8436: 6 control đạt, 10 assertion thất bại; bản mới đạt 16/16 và toàn
+bộ 224 self/history. Kiểm 204 selftests cũ nguyên assertions, history helper và
+manifest/README không đổi. Parent đọc toàn diff và tự chạy lại validator25, 220
+selftests, 4 history, fmt74/lint3/diff đều đạt. Giới hạn lexical được giữ, không
+dùng APPROVE này cho những thay đổi metadata sau đó.
+
+## Đối chiếu finding 3940650163 về ancestry
+
+Parent clone mới trực tiếp từ GitHub bằng
+`--single-branch --no-tags --branch
+advisor/goal-backlog`, không dùng object
+cache hoặc worktree local. HEAD clone là
+`8436a48f687a5e119bfff164bc6ffeaf591db922`, không phải 8818303 trong finding.
+Hai lệnh `git merge-base --is-ancestor` với
+b9d6d02a9692c3efff11836b97d8cfbc69da1ec7 và
+bb78ace761b7ae9b26900c8c80faad699a9adfa6 đều exit 0. Validator đạt 25 kế hoạch;
+history suite đạt 4/4, gồm positive clone một nhánh và negative lịch sử squash
+thật. Finding không tái hiện trên HEAD remote hiện tại, parent trả lời bác bỏ
+tại discussion3940678021. Không sửa các approval hợp lệ hoặc bỏ gate history.
+PR25 vẫn phải merge commit, không squash/rebase, rồi kiểm ancestry trên main
+mới.
+
+## Sửa finding 3940727090 và 3940727091
+
+Executor bắt đầu tại `5a3631946c188eace908ea252ea80581603f7f62`, source sửa
+`d97f092cf3b9f553a002adfeccaad159070ec9fe`. Chỉ sửa validator, selftests và mục
+báo cáo này; không sửa rule ancestry, `plans/AGENTS.md`, history helper,
+metadata approval, kế hoạch hoặc source ứng dụng. P1 ancestry lần hai do parent
+xử lý riêng.
+
+`3940727090`: bộ kiểm cũ chỉ lấy destination trong inline link, bỏ qua các
+reference definitions. Bản sửa thu destination từ definition rồi đưa qua chính
+guard HTTP/anchor, absolute/Windows/backslash, traversal và tồn tại file hiện
+hữu. Path được resolve từ thư mục chứa Markdown, không từ repo root. Test unsafe
+khai báo file đích tồn tại trong VM, kiểm đúng một diagnostic và xác nhận không
+có filesystem lookup đích bị chặn; không đọc nội dung file hệ thống.
+
+Phạm vi cú pháp được hỗ trợ là definition một dòng dạng `[label]: destination`,
+destination bare không whitespace hoặc bọc angle brackets, có thể có title được
+bọc bằng nháy đơn, nháy kép hoặc ngoặc tròn trên cùng dòng. Kiểm mọi definition,
+kể cả chưa được dùng hoặc trùng label, nên full/collapsed/shortcut reference đều
+không thể bỏ kiểm destination. Definition nhiều dòng, angle bị thiếu hoặc phần
+đuôi không parse được bị từ chối bằng diagnostic
+`unsupported Markdown reference definition`, không bỏ qua âm thầm.
+
+Đây là cú pháp giới hạn phục vụ tài liệu kế hoạch, không phải triển khai đầy đủ
+CommonMark: không thêm dependency parser, không tuyên bố phân tích toàn bộ
+escape/HTML/entity/code-block grammar. Bộ quét definition có tính bảo thủ, kể cả
+declaration chưa dùng cũng phải có đích hợp lệ. Các giới hạn lexical/symlink của
+guard đường dẫn trước vẫn giữ nguyên.
+
+`3940727091`: checklist DONE nay nhận cả unordered `-`, `*`, `+` lẫn ordered
+number-dot/number-parenthesis, kể cả indentation. Bất kỳ `[ ]` nào được nhận
+trong mục Tiêu chí hoàn tất làm DONE thất bại; `[x]` và `[X]` đều được nhận.
+Checklist ở section khác không trở thành completion gate. Definition binding vẫn
+hoạt động độc lập: sửa checklist của DONE đã review vẫn phải review lại
+definition, không tạo approval giả để lấy control xanh.
+
+Red thực chạy trước sửa production:
+
+```sh
+node --test --test-name-pattern='Markdown reference|DONE ordered completion' plans/test-validator.mjs
+```
+
+Exit 1, **7 passed, 18 failed**. Bốn ordered unchecked không tạo diagnostic
+unchecked; bốn ordered checked bị báo sai là thiếu checklist. Mười reference
+negative/unsupported được validator cũ nhận sai: ba missing destination theo
+full/collapsed/shortcut, bốn absolute/traversal/Windows/backslash và ba
+definition không được hỗ trợ. Bảy control hợp lệ đã đạt trước sửa. Red không dựa
+lỗi import, Git hoặc exception; với DONE, assertion tìm diagnostic checklist
+riêng, không lấy lỗi definition binding sẵn có làm bằng chứng.
+
+Sau sửa, focused 25/25 và `node plans/validate-plans.mjs` đạt 25 kế hoạch.
+`node --test plans/test-validator.mjs` đạt 245 passed, 0 failed, 0 skipped, giữ
+đủ 220 selftests trước đó và thêm 25 ca. `deno fmt --check plans/` đạt 75 file;
+lint ba helper `--no-config` và `git diff --check` đều exit 0. Sau commit source
+với worktree sạch, `node --test plans/test-history.mjs` đạt 4/4, giữ nguyên
+clean single-branch clone và các negative provenance. Tổng 249 self/history, giữ
+toàn bộ 224 ca cũ. Chỉ dùng Git transport local, không cần mạng.
+
+Không push, trả lời GitHub, chạy application build, Browser, Publish hoặc thay
+dependency. Đây là evidence executor, không phải approval độc lập của delta mới.
+
+## Sửa REVISE: label reference ăn sang title
+
+Reviewer độc lập phát hiện lỗi mới được đưa vào ở helper
+`4f83fff8847f93da34db3af7a5bc6b5980ca2dec`: phần regex label greedy đi tới chuỗi
+`]:` trong title, biến fragment của title thành destination. Destination thực là
+absolute, traversal hoặc file thiếu vì vậy có thể bị bỏ kiểm như anchor. Không
+dùng kết quả green hoặc review trước đó để phủ nhận finding này.
+
+Source sửa: `3f8c9c8dd217c3fb9a855c1850151cde237179fb`. Regex label nay chỉ nhận
+ký tự thuộc label và cặp escape, kết thúc ở dấu `]` không escape. Destination và
+title được tách sau delimiter đó bằng bộ kiểm hiện hữu. Title chứa `]:` không
+thể trở thành label hoặc thay đích link; label chứa `\]` vẫn được nhận. Không
+đổi guard path/lookup, checklist, approval, ancestry hoặc cú pháp giới hạn đã
+nêu ở mục trước.
+
+Red thực chạy khi production helper còn nguyên 4f83fff:
+
+```sh
+node --test --test-name-pattern='Markdown reference title boundary' plans/test-validator.mjs
+```
+
+Kết quả 6 passed, 18 failed. Mười tám negative có destination unsafe/missing đều
+bị helper cũ nhận sai với exit 0, không phải lỗi import/exception hoặc thiếu
+Git. Sáu control destination tồn tại hợp lệ vẫn qua. Ma trận 24 ca gồm bốn đích
+(absolute, traversal, missing, valid), ba kiểu delimiter title (nháy kép, nháy
+đơn, ngoặc tròn) và hai label (thường, có escaped closing bracket). Title trong
+mọi ca chứa `]:` trước fragment anchor.
+
+Sau sửa: 24/24 focused và 269/269 selftests; giữ nguyên 245 ca trước sửa.
+Negative yêu cầu đúng diagnostic của destination thực; unsafe phải bị chặn trước
+lookup, missing phải được lookup rồi báo thiếu. File unsafe được khai báo tồn
+tại trong VM để test không lệ thuộc filesystem máy; không đọc file hệ thống.
+Validator đạt 25/25, format toàn plans 75 file, lint ba helper và diff check
+đạt. Sau commit source sạch, bốn clean-history tests đạt, giữ nguyên helper
+history và provenance merges. Tổng self/history là 273 ca, giữ đủ 249 ca trước
+sửa.
+
+Chỉ thay validator, selftests và mục evidence này. Không sửa AGENTS, journal,
+plan/manifest/approval hoặc source ứng dụng; không mạng ngoài Git transport
+local của history gate, không push/GitHub/Browser/build. Delta sửa REVISE cần
+review độc lập mới, không tự tạo APPROVE.
+
+Reviewer độc lập APPROVE toàn delta d97f092 + 3f8c9c8 so với 5a36319 tại HEAD
+`d96148906c0299b953b051714a848642c145b6c9`, tree
+`93ee282e2cb0e8397a0d83c0f111b34024ba8d3d`, report blob
+`6c2d6c5871f2ffb3c785f12d9af2614df2cf06d9`. Reviewer tự tái hiện red 6/18 trên
+4f83fff, green focused 24 và full 273; kiểm 245 selftests cũ nguyên byte,
+history helper và metadata không đổi. Validator 25, fmt 75, lint 3, diff check
+đạt. Parent đọc toàn diff helper/tests và chạy lại 273 self/history cùng các
+gate đó đều đạt. Approval áp cho cú pháp giới hạn đã nêu, không mở rộng thành
+cam kết phân tích toàn bộ CommonMark hoặc approval metadata chưa review.
+
+## Đối chiếu finding 3940727088 về đúng SHA remote
+
+Review 5121375631 ghi Reviewed commit 5a3631946c nhưng mô tả ancestry của
+051daf1d296c9b4b835c44088dfd935397d30176. API commit của HEAD remote thật
+`5a3631946c188eace908ea252ea80581603f7f62` cho parent
+`76dc06d07d801f50e38e7919f631bb3d151136d6`, không phải main 7d4546b làm parent
+duy nhất. Parent fetch rồi fast-forward clone trực tiếp một nhánh từ GitHub tới
+5a36319: validator 25 và history 4 đạt; b9d6d02 và bb78ace đều còn là ancestor.
+Đã trả lời tại discussion3940743803, không sửa các approval hợp lệ.
+
+Quy tắc `plans/AGENTS.md` blob `7c24cfc6cb953064097151c4b60fa7684674ac38` được
+reviewer độc lập APPROVE riêng. Phải đối chiếu SHA remote và parent chính SHA
+đó; không lấy checkout khác SHA để kết luận nhánh thật mất history. Nếu actual
+HEAD hoặc merge main mất pinned refs, vẫn báo lỗi và chặn DONE. Negative history
+tests vẫn bắt buộc; PR 25 giữ merge commit, không squash/rebase. Reviewer kiểm
+rule, format và parent Git local; chứng cứ GitHub/remote clone là của parent,
+không gán cho reviewer.
+
+## Đối chiếu finding 3940823895 trên HEAD 72fb6a7
+
+Review 5121477739 ghi Reviewed commit 72fb6a728c nhưng finding lại kiểm
+d3990b6c544b3e40d5cf862f26cfb93639bc1bfb. API HEAD remote thật
+`72fb6a728c4eec38b24b15c69d51dbac9b66e92a` trả parent
+`d96148906c0299b953b051714a848642c145b6c9`. Parent fetch và fast-forward clone
+trực tiếp một nhánh từ GitHub tới 72fb6a7: hai pinned refs b9d6d02/bb78ace là
+ancestor, validator 25 và history 4 đạt. Reply discussion3940853839 yêu cầu kiểm
+đúng SHA, giữ rule hiện có và không rebind approval sang checkout khác. Không
+suy đoán ai tạo d399 hoặc bỏ kiểm ancestry thật sau merge.
+
+## Sửa findings 3940924244 và 3940924246: code không phải cấu trúc Markdown
+
+Ngày 2026-09-06. Base đúng HEAD PR25 `7d20671284bbaadbadcd7fbf297635ee116a68b1`,
+review `5121591635`. Executor đọc đủ validator, toàn bộ selftests/history và
+plans/AGENTS trước khi sửa. Source commit
+`b4ef4ba2f6b6f93130efa4c3df9a88b425acd81c`, tree
+`15a60b710ee5b80126a4ef2cce5a28e40e0be284`. Chỉ sửa validator, selftests và mục
+report này; không thay AGENTS, journal, plan/manifest/approval, history helper
+hoặc source ứng dụng.
+
+Helper cũ dùng raw substring cho required heading và quét link/definition trên
+toàn bộ Markdown. Vì vậy ví dụ link hỏng/unsafe trong code vẫn báo lỗi, còn
+heading chỉ nằm trong fenced example có thể làm tiêu chí cấu trúc qua sai.
+
+### Red thực và giới hạn parser đã chọn
+
+Trước sửa production helper, chạy trên 7d206:
+
+```sh
+node --test --test-name-pattern='Markdown (code fence|inline code|require)' plans/test-validator.mjs
+```
+
+Kết quả **1 passed, 16 failed, 0 cancelled**, exit 1, đủ 17 ca. Các failure là
+assertion quan sát được: validator cũ báo diagnostic cho link/reference ví dụ
+trong code, hoặc nhận heading thiếu với exit 0. Một control heading được bọc
+inline tick đã bị từ chối đúng từ trước. Không lấy exception/import/Git thiếu
+làm red, không đổi trạng thái hoặc approval thật để tạo kết quả xanh. Fixture
+heading đặt plan021 ở STALE trong bộ nhớ với lý do rõ, giữ các kiểm lịch sử.
+
+Bản sửa thêm lớp bỏ nội dung fenced code trước kiểm heading và link, rồi bỏ
+inline code trước thu thập link/definition. Quy tắc hẹp:
+
+- Fence top-level bắt đầu sau 0 đến 3 dấu cách, dùng ít nhất ba backtick hoặc
+  tilde. Backtick info không được chứa backtick. Closing fence phải cùng marker,
+  dài bằng hoặc hơn opener và chỉ có whitespace theo sau. Fence ngắn, khác loại
+  hoặc có text sau marker không đóng block. Không cắt bỏ snippet nguồn trong
+  phần kiểm evidence exact text; phần đó vẫn đọc body nguyên bản.
+- Fence chưa đóng được coi kéo dài tới EOF, không tự phát sinh lỗi syntax riêng.
+  Ví dụ link trong vùng đó không thành live target; required heading bị che
+  trong vùng đó vẫn bị báo thiếu. Không tự kết thúc fence để làm tài liệu qua
+  gate.
+- Inline code dùng cặp run backtick có cùng độ dài, giữ các backtick lẻ bên
+  trong. Opener đã escape hoặc không có closer không che link; không ghép span
+  qua đoạn trống LF/CRLF. Link và reference definition bên ngoài span vẫn kiểm
+  như cũ.
+- Required heading phải là dòng ATX cấp 2 ngoài fence, không phải substring
+  trong prose hoặc heading cấp 3. Cho phép indentation 0 đến 3 space và closing
+  hashes có whitespace đúng dạng. Không thay contract metadata/scope section
+  hiện hữu.
+
+Đây không phải parser CommonMark đầy đủ: không mở phạm vi sang indented code,
+fence lồng list/blockquote, HTML block hoặc toàn bộ grammar link. Các giới hạn
+destination/reference title đã được duyệt trước vẫn giữ nguyên. Validator vẫn
+kiểm mọi reference definition thật, kể cả chưa dùng; definition chỉ nằm trong
+fence không sinh target ngay cả khi có usage ngoài fence.
+
+### Green và bảo toàn regression
+
+Thêm 38 selftests: backtick/tilde, indentation, delimiter length/type, info sai,
+fence chưa đóng, inline run/escape/unmatched/blank paragraph, required heading
+trong code/prose/cấp sai và controls heading/link/definition thật sau code.
+Focused Markdown ban đầu đạt 93/93; ba control bổ sung sau đó được bao phủ trong
+full selftest cuối. So sánh bằng Node assertion, sau khi bỏ duy nhất đoạn test
+mới, toàn bộ selftest cũ khớp byte với 7d206.
+
+| Lệnh                                                                                             | Kết quả                                   |
+| ------------------------------------------------------------------------------------------------ | ----------------------------------------- |
+| `node --test plans/test-validator.mjs`                                                           | 307 passed, 0 failed, gồm 269 cũ + 38 mới |
+| `node plans/validate-plans.mjs`                                                                  | exit 0, đủ 25 kế hoạch                    |
+| `deno fmt --no-config --check plans/`                                                            | exit 0, 75 file                           |
+| `deno lint --no-config plans/validate-plans.mjs plans/test-validator.mjs plans/test-history.mjs` | exit 0, 3 file                            |
+| `git diff --check`                                                                               | exit 0                                    |
+| `node --test plans/test-history.mjs` sau commit source sạch                                      | 4 passed, 0 failed                        |
+
+Tổng 311 self/history tests, giữ đủ 273 ca cũ. History gate dùng Git transport
+local và disposable clone, không gọi mạng; giữ ca thiếu reviewed refs và thiếu
+definition ref bị từ chối rồi phục hồi đúng khi fetch local ref thật. Không
+build ứng dụng, Browser, GitHub, push hoặc publish. Kết quả này chỉ là kiểm
+consistency offline, không chứng thực danh tính reviewer. Source và evidence mới
+còn chờ review độc lập, không tự ghi APPROVE.
+
+### Bổ sung theo review: không nối inline span qua block mới
+
+Reviewer phát hiện thiếu sót trong source b4ef4ba: chỉ tách đoạn trống chưa đủ.
+Backtick mở ở paragraph trước có thể ghép với backtick sau heading/list mới, làm
+che link thật trong block đó. Executor tái hiện trên HEAD5cb87fb bằng lệnh:
+
+```sh
+node --test --test-name-pattern='Markdown inline code (cannot cross a structural|retains multiline)' plans/test-validator.mjs
+```
+
+Red **1 passed, 2 failed, 0 cancelled**, exit 1: heading chứa link thiếu và list
+chứa link unsafe đều bị helper nhận sai với exit 0. Control inline code nhiều
+dòng trong cùng paragraph đã qua. Sau sửa focused ba ca đều xanh.
+
+Source mới `a9a5e738bb22889ca70cdbd6ff2a8a4a27d2474c`, tree
+`7cf60e4ddc45335e43c42326d24acd54752c9fda`. Bộ chia paragraph nay dừng span tại
+heading ATX, dòng setext/thematic break, list marker, quote marker và đoạn
+trống. Heading được xử lý riêng để opener trong heading cũng không che paragraph
+sau. Ordered list nhận marker số bất kỳ theo `[0-9]+[.)]`; có controls `2.` và
+`42)` bên cạnh `1.`/`1)`. Đây là nhận diện boundary bảo thủ, không bổ sung
+parser CommonMark đầy đủ hoặc đổi grammar metadata/evidence. Multiline inline
+code không gặp boundary vẫn hoạt động. Giới hạn fence top-level và HTML ở trên
+vẫn giữ, không dùng chúng để phủ nhận lỗi block boundary vừa sửa.
+
+Thêm 14 tests, giữ 307 tests trước vòng bổ sung. Full
+`node --test plans/test-validator.mjs` đạt **321 passed, 0 failed**. Validator
+25, `deno fmt --no-config --check plans/` 75 file, lint ba helper và
+`git diff --check` đều đạt. Sau source commit sạch,
+`node --test plans/test-history.mjs` đạt **4 passed, 0 failed**, tổng **325**
+self/history, giữ đủ 273 tests trước hai findings Codex. Lệnh và phạm vi không
+mạng/build/metadata giống bảng trước. Report này ghi kết quả thực thi, chưa phải
+verdict review độc lập cho source a9a5e73 và không cho phép push/merge.
+
+### Review độc lập validator cuối
+
+Reviewer độc lập APPROVE snapshot `a444fb464798ee64cb486064a39b50de710b2e18`,
+tree `f1f6220b3480ac5a87c3bc7428a68034bf9872a9`, report
+`f91aee15da6c83c12aa68938e781a8cdd5a8e47a`. Review xác nhận năm nhóm fix mới:
+indented code, reference definition trong block quote, steps structural ngoài
+code, dependency chỉ trong metadata và fence language theo manifest. Binding
+definition 007 hợp lệ, execution/completion không đổi; 021/022 chỉ đồng bộ nhãn.
+
+Gate độc lập: validator 25, selftests/history 365/365, format 75 file, lint ba
+helper và diff check đạt. 321 selftests trước vòng này được giữ nguyên byte.
+Review không chứng thực CI/GitHub và không mở phạm vi thành CommonMark đầy đủ.
+
+## Thực thi năm P2 tại ce94ec9: đang bị chặn bởi ngôn ngữ fence có sẵn
+
+Ngày 2026-09-06. Base review đúng PR25
+`ce94ec9b0fb768ad68708f22d13f3b2b4a59cab9`. Source mới
+`f83acbad04b3ea7495301d9179a03ba774dd5a4b`, tree
+`19a017bb8c46f5bc2f1d906a17cad19d558c13bb`. Chỉ sửa validator, selftests và
+report này. Không sửa plan definition, manifest, metadata approval, AGENTS,
+history helper hoặc source ứng dụng. Trạng thái: source đã triển khai, gate chưa
+đạt; không có verdict review độc lập hoặc quyền push/merge.
+
+### Hành vi đã triển khai
+
+- Bỏ indented code bắt đầu tại ranh giới paragraph, indentation ít nhất bốn cột;
+  tab tiến tới tab stop bốn cột. Không để indentation ngắt paragraph sống hoặc
+  che dòng tiếp của list. Sau code, link sống vẫn được kiểm.
+- Bóc prefix blockquote, kể cả quote lồng nhau và indentation 0 đến 3 space,
+  trước khi kiểm reference definition. Mỗi container có ranh giới riêng; fence
+  chưa đóng không che link sau khi thoát container. Marker quote nằm trong code
+  vẫn là nội dung ví dụ, không tạo container mới. Target unsafe vẫn bị từ chối
+  trước filesystem lookup. Reference destination xuống dòng chưa được hỗ trợ,
+  báo lỗi rõ thay vì im lặng bỏ kiểm.
+- Đếm bước và gate từ nội dung cấu trúc ngoài fenced/indented/inline code. Bước
+  phải là heading cấp 3; nhãn kiểm tra phải đứng đầu dòng. Các snippet evidence
+  tiếp tục được so exact text trên body gốc, không qua lớp lọc code.
+- Chỉ nhận đúng một dòng `- Phụ thuộc:` sống trong section metadata. Dòng ở
+  prose ngoài section không thể thay trường bị thiếu và không tạo duplicate.
+  Không cho whitespace regex ăn sang giá trị ở dòng sau.
+- Khi manifest có own property `lang`, yêu cầu string và fence language khớp
+  nguyên giá trị; chuỗi rỗng yêu cầu fence không nhãn. Khi không có property,
+  không suy ra language mặc định mới. Không bỏ kiểm code/path/ref/line vì có
+  language mismatch.
+
+Đây vẫn là parser giới hạn, không phải toàn bộ CommonMark: chưa diễn giải HTML
+block, toàn bộ grammar reference nhiều dòng hoặc code lồng list. Dòng tiếp list
+được giữ để kiểm target theo hướng bảo thủ. Không quảng cáo các giới hạn đó là
+đã được hỗ trợ đầy đủ.
+
+### Red thực, controls và gate không đạt
+
+Trước khi sửa production helper, chạy:
+
+```sh
+node --test --test-name-pattern='^PR25 (indented|live target after|indentation|quoted|execution steps|example checks|inline check|dependency|evidence language|absent evidence|explicit matching)' plans/test-validator.mjs
+```
+
+Kết quả **34 ca: 6 pass, 28 fail, 0 cancelled, 0 skipped**, exit 1. Failure là
+assertion diagnostic/exit code ở đủ năm nhóm, không phải import/Git hoặc
+exception ngoài ý nghĩa test. Sau đó thêm sáu controls về quote trong fence,
+inline nhiều dòng, code trong quote, language rỗng và kiểu language sai; tổng 40
+test mới. Node assertion xác nhận sau khi bỏ duy nhất đoạn test mới, toàn bộ 321
+selftests cũ khớp byte với ce94ec9.
+
+Lượt chạy helper mới chưa thể ghi green vì rule language phát hiện năm mismatch
+thật có sẵn. Parent đã yêu cầu giữ rule và không sửa definition/approval để lách
+gate. Bảng đối chiếu đọc từ manifest và fence tại snapshot:
+
+| Plan | Trích đoạn                         | Manifest lang | Fence thực tế |
+| ---- | ---------------------------------- | ------------- | ------------- |
+| 007  | `src/ui/tsconfig.json:19`          | `json`        | `text`        |
+| 007  | `deno.json:16`                     | `json`        | `text`        |
+| 021  | `scripts/build-node.sh:65`         | `json`        | `text`        |
+| 021  | `scripts/build-node.sh:80`         | `bash`        | `text`        |
+| 022  | `.github/workflows/publish.yml:15` | `yaml`        | `text`        |
+
+Không thay các assertion cũ để dung thứ năm diagnostic này. Probe thuần trong VM
+trên các helper mới đạt 12 controls về indented/fenced/quoted code, quote
+reference sống, list continuation và container exit; probe không đổi plan hoặc
+approval trong bộ nhớ. Lần đầu gõ probe gặp SyntaxError do escape chuỗi trong
+script tạm, đã sửa script và chạy lại; không tính lỗi đó là red nghiệp vụ.
+
+| Lệnh                                                                                             | Kết quả thực tế                                                                              |
+| ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| `node plans/validate-plans.mjs`                                                                  | exit 1, đúng năm language mismatch trong bảng                                                |
+| `node --test plans/test-validator.mjs`                                                           | exit 1: 361 ca, 242 pass, 119 fail, 0 cancelled, 0 skipped                                   |
+| `node --test plans/test-history.mjs` sau source commit sạch                                      | exit 1: 1 pass, 3 fail; baseline clone và expected diagnostics bị chặn bởi cùng năm mismatch |
+| `deno fmt --no-config --check plans/`                                                            | exit 0, 75 file trước report                                                                 |
+| `deno lint --no-config plans/validate-plans.mjs plans/test-validator.mjs plans/test-history.mjs` | exit 0, 3 file                                                                               |
+| `git diff --check`                                                                               | exit 0                                                                                       |
+
+History negative về missing/squashed reviewed refs vẫn chạy, nhưng không lấy một
+ca đạt làm bằng chứng full history xanh. Chưa có full green sau khi xử lý
+definition, chưa gọi source này đã được duyệt. Cần parent xử lý mismatch bằng
+workflow review definition hợp lệ, sau đó chạy lại full validator/self/history.
+Không network, Browser, build, push, publish hoặc sửa approval trong lượt này.
+
+### Gate sau khi parent đồng bộ definition và fence
+
+Parent cung cấp snapshot `ce0899d7cbeeeebd72cedf5cb56926c432fae52d`, gồm commit
+đồng bộ fence `3533d18e4cd58273b940e22d7aab2c69edc246ca` và binding definition
+007 mới. Executor chỉ đọc những thay đổi này, không tự tạo hoặc thay approval.
+Trên snapshot đó, validator 25 đã qua; full self/history đạt 364/365. Ca đỏ duy
+nhất là expected diagnostics của clone lịch sử, không còn là lỗi dữ liệu của
+snapshot hiện tại. Cả 361 selftests đều qua, không cần sửa fixture selftest.
+
+Fixture history cố ý archive nguyên `db2f31fa0b332a7919e02b48f227ae1a6adf9b9e`:
+năm nhãn fence cũ trong snapshot ấy vẫn không khớp manifest. Fetch definition
+ref không sửa nội dung Markdown. Vì vậy test nay yêu cầu chính xác 32 diagnostic
+trước fetch: 27 lỗi provenance cũ và năm lỗi language đã liệt kê; sau fetch chỉ
+được còn đúng năm lỗi language. Không bỏ assertion missing ref, không thay
+archived bytes, không đổi Git object hoặc tạo approval giả. Current clean clone
+vẫn phải qua validator với exit 0 trong test history riêng.
+
+Source fixture mới `ab4b966eb5730a90fe9e4a1613194b0c063ce8c7`, tree
+`37c46b38d2f74b50f1bbea23ee531a59d6b72558`, chỉ sửa `plans/test-history.mjs`.
+Production validator, toàn bộ selftests, manifest và AGENTS giữ nguyên byte so
+với ce0899d. Lượt history trước commit đạt 3/4, ca còn lại bị dirty-check chặn
+đúng vì test đang sửa; không lấy lượt đó làm green. Sau commit và worktree sạch:
+
+| Lệnh                                                                                             | Kết quả                                                                    |
+| ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| `node --test plans/test-validator.mjs plans/test-history.mjs`                                    | 365 pass, 0 fail, 0 cancelled, 0 skipped: 361 selftests và 4 history tests |
+| `node plans/validate-plans.mjs`                                                                  | exit 0, đủ 25 kế hoạch                                                     |
+| `deno fmt --no-config --check plans/`                                                            | exit 0, 75 file                                                            |
+| `deno lint --no-config plans/validate-plans.mjs plans/test-validator.mjs plans/test-history.mjs` | exit 0, 3 file                                                             |
+| `git diff --check ce94ec9b0fb768ad68708f22d13f3b2b4a59cab9..HEAD`                                | exit 0                                                                     |
+
+Kết quả green này thay trạng thái gate bị chặn ở mục trước cho snapshot mới,
+không hồi tố snapshot f83acba hoặc cb120bd thành green. Phạm vi vẫn là kiểm
+consistency offline, không chứng thực danh tính reviewer. Source và report chờ
+review độc lập; executor không push, network, build hoặc ghi APPROVE.
+
+### Review độc lập sau correction
+
+Reviewer độc lập đã đọc snapshot cuối
+`e22aa790e3c440b9db309d383b5f9cde8dbb73fe`, tree
+`049df1932df9b86f8df1926b7848fc7aa54cdc2c` và report
+`bc9c6456d0ea53156496b700325e79d089e5514b`. Reviewer tái hiện source cũ che sai
+hai link thật qua heading/list, xác nhận source mới chặn cả hai ca và vẫn cho
+phép inline code nhiều dòng trong cùng paragraph. Toàn bộ 307 test trước
+correction được so sánh byte-preserved.
+
+Verdict: **APPROVE**, không có finding trong phạm vi parser đã công bố. Gate độc
+lập đạt 321 selftests cộng 4 history tests, validator 25 kế hoạch, format 75
+file, lint 3 helper và `git diff --check`. Review này chỉ xác nhận consistency
+source/report offline; không thay thế xác minh CI, GitHub hay danh tính
+reviewer, và không tự cho phép merge.
+
+## Sửa P2 3942538497 và 3942538499: không lấy evidence hoặc scope từ fenced example
+
+Ngày 2026-09-06, base đúng HEAD PR25 `c897f0fbce5008059f0c5832be274b87a2cbeefa`.
+Source mới `1d21220cfd30d175502a0d0f8be4acc7683549eb`, tree
+`4fa162f99cd4422582e1689f4aced941853a8621`. Chỉ sửa validator, selftests và
+report này; không thay scope/definition/manifest/approval, AGENTS, history
+helper hoặc source ứng dụng.
+
+Parser trước quét evidence bằng regex trên body gốc, nên annotation và snippet
+chỉ nằm trong outer fenced example vẫn có thể thay evidence thật hoặc tạo
+duplicate. Scope cũng được tách từ body gốc: heading, bullet và chuỗi kết thúc
+trong fenced example có thể bị hiểu là scope sống.
+
+Bản sửa cho lớp lọc fence giữ offset khi cần: thay các ký tự trong vùng code
+bằng khoảng trắng cùng độ dài, giữ newline. Chỉ annotation ngoài fence mới được
+dùng để mở evidence block. Sau khi chọn annotation, regex snippet vẫn đọc body
+gốc tại đúng offset; path/code/lang và citation liền trước vẫn được kiểm nguyên
+văn. Không làm sạch snippet để che drift. Mỗi annotation được xét riêng, không
+để một annotation giả trong code kéo regex qua evidence thật phía sau.
+
+Scope dùng cùng structural body đã loại fenced/indented code như kiểm heading.
+Heading giả, bullet giả và `Ngoài phạm vi:` trong code không còn thay đổi scope
+sống. Ngữ nghĩa marker fence, closing length/type và fence chưa đóng tới EOF giữ
+nguyên; không mở phạm vi thành parser CommonMark đầy đủ.
+
+### Red/green và bảo toàn kiểm thử
+
+Trước sửa production helper, chạy:
+
+```sh
+node --test --test-name-pattern='^PR25 (outer fence|outer fenced|live evidence after|unclosed outer|fenced scope)' plans/test-validator.mjs
+```
+
+Kết quả **1 pass, 16 fail, 0 cancelled, 0 skipped**, exit 1. Có cả lỗi nhận
+evidence/scope giả và lỗi báo duplicate/scope mismatch cho example hợp lệ. Ca
+đối chứng scope thật thiếu vẫn bị từ chối. Đây là assertion nghiệp vụ, không
+phải exception hoặc lỗi Git. Sau sửa cùng 17 ca đạt 17/17.
+
+Các fixture gồm outer backtick dài 4/5, tilde và indentation 3 space, fence chưa
+đóng, annotation giả trước evidence thật, sửa snippet thật sau example, scope
+list chỉ có trong fence, heading giả trước section thật, terminator giả trong
+code và scope mismatch thật. Node assertion xác nhận toàn bộ 361 selftests trước
+lượt này còn nguyên byte sau khi bỏ duy nhất đoạn test mới.
+
+| Lệnh                                                                                             | Kết quả                                  |
+| ------------------------------------------------------------------------------------------------ | ---------------------------------------- |
+| `node --test plans/test-validator.mjs`                                                           | 378 pass, 0 fail, 0 cancelled, 0 skipped |
+| `node --test plans/test-history.mjs` sau source commit sạch                                      | 4 pass, 0 fail, 0 cancelled, 0 skipped   |
+| `node plans/validate-plans.mjs`                                                                  | exit 0, đủ 25 kế hoạch                   |
+| `deno fmt --no-config --check plans/`                                                            | exit 0, 75 file                          |
+| `deno lint --no-config plans/validate-plans.mjs plans/test-validator.mjs plans/test-history.mjs` | exit 0, 3 file                           |
+| `git diff --check`                                                                               | exit 0                                   |
+
+Tổng 382 self/history tests. Kiểm `fc39` chỉ là chẩn đoán Git local riêng:
+`git rev-parse --verify fc39^{commit}` exit 128 vì object là tree;
+`git rev-parse --disambiguate=fc39` trả duy nhất
+`fc3999c2ee85b667adbed01db7393063c5548dd2`, `git cat-file -t fc39` trả `tree`.
+Chưa có full reviewed SHA của P1 để kiểm ancestry đúng đối tượng; không dùng
+prefix này làm bằng chứng nhánh remote mất ref và không nới guard lịch sử.
+
+Không network, Browser, build, push hoặc sửa approval. Gate là consistency
+offline, không chứng thực danh tính reviewer. Source/report còn chờ review độc
+lập; executor không ghi APPROVE.
+
+## Codex vòng tiếp: review 5125519048
+
+Sáu finding P2 trên reviewed commit `c751e98`, tái hiện đúng bằng chính
+validator trước khi sửa. Năm cái được sửa, một cái từ chối kèm số đo.
+
+- Finding
+  [3944147990](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944147990):
+  block HTML dạng 7 trước sửa chỉ mở khi dòng trước trống, nên một ví dụ nhúng
+  viết ngay dưới heading ATX không được ẩn và link trong thân nó bị quét như
+  Markdown sống. Thay điều kiện bằng "dòng trước không phải đoạn văn đang mở":
+  heading ATX và thematic break kết thúc ngay tại dòng của chúng. Ca sau heading
+  và sau thematic break xanh sau sửa; ca thẻ lẻ tiếp ngay sau một đoạn văn vẫn
+  đỏ, tức hướng fail-closed không bị nới.
+- Finding
+  [3944147994](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944147994):
+  ranh giới fragment và query trước sửa đọc trên chuỗi thô, nên
+  `README.md&num;overview` bị đem cả cụm đi mở như một tên file và `a&#35;b.md`
+  bị cắt giữa chính reference. Giải mã character reference trước mọi câu hỏi
+  khác về destination, rồi mới tìm ranh giới, kiểm scheme và gỡ backslash.
+  Backslash escape vẫn đi đường riêng: `a\#b.md` giữ dấu `#` làm ký tự thật
+  trong tên file, còn `a&#35;b.md` giải mã thành `#` viết thẳng vào href nên là
+  ranh giới fragment; hai test cạnh nhau giữ hai đường này.
+- Finding
+  [3944147996](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944147996):
+  không sửa, kèm số đo. Đo cả 21 kế hoạch DONE: không cái nào có thân report
+  hiện tại khớp `reviewed_evidence_blob` hay `completed_evidence_blob`, ở mọi
+  quan hệ đã thử. Bằng nhau nguyên file 0/21, bằng nhau sau khi bỏ frontmatter
+  0/21, prefix 0/21; nới nhất là prefix sau khi bỏ frontmatter cả hai phía thì
+  cũng chỉ 1/21. Lý do là thiết kế: blob đã duyệt là ảnh chụp tại thời điểm
+  reviewer APPROVE, khi frontmatter còn nhỏ và các mục sau chưa được ghi, còn
+  report thì tiếp tục được ghi thêm sau approval. Ràng buộc thân hiện tại vào
+  blob đó làm gate đỏ ngay 20 tới 21 kế hoạch và chỉ xanh lại được bằng cách tự
+  hash report mới như thể reviewer đã duyệt nó, đúng điều `plans/README.md` cấm.
+- Finding
+  [3944147999](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944147999):
+  `existsSync` trên macOS và Windows không phân biệt hoa thường, nên
+  `../readme.md` xanh trên máy dev còn hỏng ở bản clone Linux và trên trình
+  duyệt repo. Đã đo `realpathSync` không cứu được: trên macOS nó trả lại đúng
+  chuỗi hoa thường được đưa vào chứ không chuẩn hóa theo tên thật. Thêm
+  `existsCaseExact` so từng thành phần đường dẫn với tên trong thư mục cha, nhớ
+  lại kết quả `readdirSync` theo thư mục. Ca sai hoa thường ở tên file và ở tên
+  thư mục đều đỏ sau sửa.
+- Finding
+  [3944148002](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944148002):
+  vòng đếm ngoặc của nhãn trước sửa coi mọi dấu `]` là ranh giới, nên
+  `[<span title="]">x</span>](y.md)` bị cắt nhãn ngay trong giá trị thuộc tính
+  và cả link biến mất khỏi gate. Thêm mẫu neo đầu cho thẻ HTML thô và autolink
+  rồi nhảy qua nguyên khối. Code span và comment đã bị `outsideInlineCode` và
+  `outsideHtmlComments` xóa trước khi hàm chạy, nên chỉ còn hai dạng này cần
+  nguyên khối. Ca thuộc tính và ca autolink chứa `]` đều đỏ sau sửa.
+- Finding
+  [3944148006](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944148006):
+  destination chỉ có fragment trước sửa được bỏ qua hoàn toàn, và fragment của
+  link liên file cũng không ai hỏi tới. Thêm `documentAnchors` dựng anchor từ
+  heading ATX và setext theo cách GitHub tính slug, cộng mọi `id` và `name` khai
+  tay trong HTML thô; heading trùng slug nhận hậu tố `-1`, `-2`. Chỉ hỏi anchor
+  khi đích là `.md`, vì fragment trên file nguồn là chuyện của trình duyệt repo.
+  Ca `#definitely-not-a-heading` và ca `README.md#` không có thật đỏ sau sửa; ca
+  trỏ đúng heading, ca heading lặp và ca `id` tường minh xanh. Hai fixture cũ
+  dùng anchor hư cấu `#local-anchor` và `#overview` được đổi sang anchor có
+  thật, giữ nguyên ý định kiểm ranh giới destination của chúng.
+
+Harness test đổi theo một chỗ: `readdirSync` một tham số giờ hợp nhất mục ảo của
+fixture, vì kiểm hoa thường đọc tên thật trong thư mục cha và một file chỉ có
+trong fixture sẽ không bao giờ xuất hiện nếu chỉ đọc đĩa. Nhánh `withFileTypes`
+giữ nguyên đường đọc đĩa, để mục ảo không trở thành một kế hoạch mới.
+
+| Lệnh                                   | Kết quả                |
+| -------------------------------------- | ---------------------- |
+| `node plans/validate-plans.mjs`        | exit 0, đủ 25 kế hoạch |
+| `deno fmt --check`                     | exit 0, 315 file       |
+| `deno lint`                            | exit 0, 160 file       |
+| `node --test plans/test-validator.mjs` | 473 pass, 0 fail       |
+| `git diff --check`                     | exit 0                 |
+
+Chạy lại các mẻ probe guard của vòng 14, 15, 16, 17, 18 và 19: không mẻ nào đổi
+kết quả, nên năm sửa lần này không nới guard cũ.
+
+## Codex vòng tiếp: review 5125641639
+
+Reviewed commit `90c3bc31ca`, năm finding P2, tất cả trên
+`plans/validate-plans.mjs`. Ba trong số đó là hệ quả trực tiếp của chính hai sửa
+vòng trước, nên lần này tái hiện từng ca bằng chính validator trước khi chạm vào
+code.
+
+- Finding
+  [3944262980](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944262980):
+  `htmlInlineAtomic` mới chỉ nguyên khối trong vòng cân bằng nhãn đang mở, còn
+  vòng quét ngoài vẫn dừng ở mọi dấu `[`, kể cả dấu nằm trong thuộc tính thẻ. Ca
+  `<span title="[sample](missing-attribute.md)">` báo `link hỏng` trước sửa,
+  xanh sau sửa; ca `<span>nhãn</span> [gone](missing-after-tag.md)` vẫn đỏ, nên
+  sửa không nới guard link thật.
+- Finding
+  [3944262982](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944262982):
+  `documentAnchors` quét `id` và `name` trên body thô, nên một ví dụ trong fence
+  cũng đứng ra làm anchor. Dựng lại đúng khung nhìn HTML render như đường quét
+  `href`/`src`, rồi chỉ đọc thuộc tính nằm trong thẻ mở thật. Ca `#ghost-anchor`
+  trong fence đỏ sau sửa; ca comment và ca `id=` viết trong văn xuôi cũng đỏ; ca
+  `<a name="...">` thật vẫn xanh.
+- Finding
+  [3944262984](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944262984):
+  split theo chuỗi literal `Ngoài phạm vi:` cắt cả ở câu văn xuôi mở đầu, làm
+  danh sách scope biến mất và manifest khai `scope: []` vẫn khớp. Cắt tại đúng
+  một khai báo đứng đầu dòng, đòi số khai báo bằng một, cùng cách
+  `declarations()` đòi đúng một lần khai trường metadata. Đo trên cây: cả 25 kế
+  hoạch đều có đúng một khai báo đầu dòng.
+- Finding
+  [3944262987](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944262987):
+  phép so số lượng trích đoạn thoả mãn được bằng `0 === 0`, đồng thời mất luôn
+  kiểm drift với source hiện tại. Đòi ít nhất một evidence record. Đo trước khi
+  thêm: cả 25 kế hoạch đã có tối thiểu 1 và tối đa 4 record.
+- Finding
+  [3944262988](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944262988):
+  đổi hai chữ trong plan và hàng README là đủ để vào BLOCKED. `staleReason` được
+  tổng quát thành `metadataReason(body, field)`; BLOCKED đòi đúng một
+  `blocked_reason` không rỗng cộng `plans/evidence/NNN.md` đã tồn tại. Hai kế
+  hoạch BLOCKED là 002 và 021, cả hai đã có sẵn báo cáo, nên chỉ thêm dòng lý do
+  lấy từ chính báo cáo đó chứ không dựng vật liệu mới.
+
+Hai test có sẵn phải đổi theo hợp đồng mới, không phải đổi để né. Test
+`current source drift regression works without TODO plans in the backlog` chuyển
+mọi TODO sang BLOCKED nên giờ phải dựng đủ lý do và báo cáo; báo cáo chỉ tồn tại
+trong fixture, không ghi ra đĩa. Test provenance dùng snapshot `5b7d00e` chụp
+trước hợp đồng này, nên chỉ chèn đúng dòng metadata mới vào hai kế hoạch BLOCKED
+của snapshot, thay vì chép nguyên bản plan hiện tại và kéo theo độ trôi tài
+liệu.
+
+| Lệnh                                   | Kết quả                |
+| -------------------------------------- | ---------------------- |
+| `node plans/validate-plans.mjs`        | exit 0, đủ 25 kế hoạch |
+| `deno fmt --check`                     | exit 0, 315 file       |
+| `deno lint`                            | exit 0, 160 file       |
+| `node --test plans/test-validator.mjs` | 486 pass, 0 fail       |
+| `git diff --check`                     | exit 0                 |
+| `node --test plans/test-history.mjs`   | 5 pass, 0 fail         |
+
+Chạy lại các mẻ probe guard của vòng 14, 15, 16, 17, 18, 19 và 21: không mẻ nào
+đổi kết quả.
+
+## Codex vòng tiếp: review 5125774509
+
+Reviewed commit `9d3c0371f8`, sáu finding P2, tất cả trên
+`plans/validate-plans.mjs`. Tái hiện đủ sáu ca bằng chính validator trước khi
+chạm vào code, cộng một ca đối chứng cho finding về heading slug.
+
+- Finding
+  [3944392985](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944392985):
+  comment và raw text element bị xử lý bằng hai hàm nối tiếp, nên hàm chạy trước
+  luôn thắng bất kể vị trí. Một chuỗi `"<!--"` viết trong `<script>` mở được
+  comment giả nuốt tới hết tài liệu. Gộp thành một lượt quét bằng alternation để
+  thứ tự trong tài liệu quyết định; ca ngược lại, `<script>` viết trong comment,
+  cũng được kiểm và vẫn phải ở trạng thái đã bị comment hóa.
+- Finding
+  [3944392989](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944392989):
+  numeric reference dải C1 phải đổi theo bảng windows-1252 của chuẩn HTML. Bảng
+  ánh xạ viết theo số chứ không theo ký tự, vì `&#x97;` giải mã ra U+2014, thứ
+  mà chính gate của repo cấm xuất hiện trong file.
+- Finding
+  [3944392995](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944392995):
+  `headingText` giữ nguyên tên entity nên slug ghi nhận một id không tồn tại,
+  trong khi id thật bị coi là anchor hỏng. Giải mã đặt giữa bước gỡ thẻ và bước
+  gỡ backslash escape, vì `decodeReferences` dựa vào dấu escape còn nguyên để
+  biết một `&` đã bị vô hiệu.
+- Finding
+  [3944392996](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944392996):
+  đổi độ sâu marker luôn cắt section, nên một code span vắt qua lazy
+  continuation của blockquote bị tách làm đôi và destination bên trong nó thành
+  link sống. Nhận lazy continuation, giới hạn bằng bốn điều kiện để không nới
+  quá: không trong fence, dòng này không trống, dòng trước không trống, và dòng
+  này không tự mở một block mới.
+- Finding
+  [3944392999](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944392999):
+  vòng cân bằng nhãn quét xuyên dòng trống, dựng ra một link từ hai chuỗi
+  literal ở hai đoạn khác nhau. Dừng đúng tại ranh giới đoạn, thoát với `depth`
+  còn dương để nhánh sẵn có bỏ qua cả cụm. Chỉ dừng ở dòng trống chứ không dừng
+  ở mọi ranh giới block: nhãn được phép xuống dòng trong cùng một đoạn.
+- Finding
+  [3944393001](https://github.com/hvgllc/hvgerp-mcp/pull/25#discussion_r3944393001):
+  bộ đếm theo từng slug gốc cấp lại một id đã có chủ. Chọn hậu tố theo tập id đã
+  phát sinh, giữ bộ đếm cũ làm điểm bắt đầu để trường hợp thường vẫn một lần tra
+  và vẫn đánh số theo thứ tự tài liệu.
+
+| Lệnh                                   | Kết quả                |
+| -------------------------------------- | ---------------------- |
+| `node plans/validate-plans.mjs`        | exit 0, đủ 25 kế hoạch |
+| `deno fmt --check`                     | exit 0, 315 file       |
+| `deno lint`                            | exit 0, 160 file       |
+| `node --test plans/test-validator.mjs` | 500 pass, 0 fail       |
+| `git diff --check`                     | exit 0                 |
+| `node --test plans/test-history.mjs`   | 5 pass, 0 fail         |
+
+Chạy lại các mẻ probe guard của vòng 14, 15, 16, 17, 18, 19, 21 và 22, cộng mẻ
+đối kháng 13 ca dựng sau vòng 22: không mẻ nào đổi kết quả.
+
+## Codex vòng tiếp: review 5125832394
+
+Review đọc đúng head `fa7fe14f1a`, nêu ba finding P2, tất cả trên
+`plans/validate-plans.mjs`. Mẻ dò đối kháng chạy sau khi vá xong ba finding đó
+lộ thêm hai lỗi cùng họ, nên vòng này khép năm sửa.
+
+Cả năm đều tái hiện bằng chính validator trước khi động vào code, và sau khi sửa
+đều đảo chiều. Hai ca đối chứng phải giữ xanh (`<a name>` và `<div id>`) vẫn
+xanh ở cả probe lẫn suite.
+
+- **Heading trong container không vào tập anchor.** `> ## Quoted anchor probe`
+  và `- ## Listed anchor probe` đều render ra heading thật và đều sinh id trên
+  GitHub, nhưng `documentAnchors` đọc nguyên dòng nên link đúng bị báo
+  `anchor hỏng`. Thêm `outsideContainers` gỡ lặp tiền tố blockquote và list
+  marker trước khi khớp heading. Gỡ lặp an toàn với nhánh setext vì một thematic
+  break kiểu `- - -` gỡ hết thành dòng rỗng chứ không thành `-`.
+- **`name` trên phần tử thường bị nhận là anchor.** `name` chỉ dựng fragment
+  trên chính thẻ `<a>`; trên `<div>` hay `<input>` nó là tên trường. Cho
+  `htmlTagAttributes` bắt luôn tên thẻ, rồi dựng mẫu thuộc tính theo thẻ:
+  `id|name` cho `<a>`, chỉ `id` cho phần còn lại.
+- **Đích link chỉ có trong cây làm việc vẫn qua cổng.** `existsSync` trả lời cho
+  đúng máy người viết, còn một bản clone sạch thì không có file đó. Thêm
+  `trackedTargets()` dựng sẵn tập file và tập thư mục hàm ý từ
+  `git ls-files --stage -z`; đích cục bộ phải là file được theo dõi hoặc thư mục
+  có ít nhất một file được theo dõi bên dưới. Chỉ mục không đọc được thì
+  `trackedArtifacts()` đã báo một lần, nên chỗ này im lặng.
+- **`<!--` viết trong backtick nuốt mọi heading phía sau** (tự phát hiện).
+  `structuralMarkdown` cố ý không xóa inline code, nên một chuỗi `<!--` trong
+  backtick ở giữa tài liệu mở comment giả chạy tới hết file: chính section vòng
+  23 của báo cáo này làm mọi heading sau nó biến mất khỏi tập anchor. Đây là
+  cùng một sai lầm thứ tự đã vá ở vòng 23 cho raw text element, chỉ khác đường:
+  code span và comment là hai token cùng cấp nên phải so ai mở trước.
+  `outsideInlineCode` được tách thành `inlineCodeSpans` trả vị trí tuyệt đối, và
+  `outsideHtmlComments` bỏ qua dấu mở nằm trong một span mở trước nó. Đảo thứ tự
+  hai hàm không giải được, vì hướng ngược lại (một backtick lẻ trong comment
+  thật che mất `-->`) hỏng y hệt; test giữ cả hai chiều.
+- **Entity trong code span của heading bị giải mã** (tự phát hiện). Nội dung
+  code span render nguyên văn, nên ``## Probe `&amp;` code`` có id
+  `probe-amp-code`; giải mã nó ra `&` cho slug `probe--code` và link đúng bị báo
+  hỏng. `headingText` giờ tách theo code span, chỉ đưa phần ngoài span qua
+  decode, gỡ nhãn link, gỡ thẻ và gỡ backslash escape.
+
+| Cổng                                   | Kết quả            |
+| -------------------------------------- | ------------------ |
+| `node plans/validate-plans.mjs`        | Đạt: 25 kế hoạch   |
+| `deno fmt --check`                     | 315 file           |
+| `deno lint`                            | 160 file           |
+| `node --test plans/test-validator.mjs` | 513 pass           |
+| `git diff --check`                     | exit 0             |
+| `node --test plans/test-history.mjs`   | 5 pass, sau commit |
+
+Suite thêm 13 test, lên 513. Harness đổi một chỗ đi kèm sửa thứ ba: filesystem
+ảo của fixture đại diện cho artifact có thật trong repo nên `run()` nối nó vào
+output `ls-files --stage`; mục khai `{ kind: "file", tracked: false }` là ca chỉ
+có trong cây làm việc.
+
+Chạy lại toàn bộ mẻ dò guard của các vòng 14, 14b, 14c, 15, 15b, 16, 17, 18,
+18f, 18g, 19, 21, 22 và 23, lần này so từng dòng với chính chúng chạy trên một
+worktree tách ở `fa7fe14`. Mọi ca giữ nguyên kết quả trừ đúng một chỗ: ca `v2`
+của vòng 19 đổi từ `Đạt` sang `link chưa được Git theo dõi`. Đó là gate mới hoạt
+động đúng chứ không phải hồi quy, vì ca ấy dựng fixture `link©target.md` ngay
+trên đĩa mà không thêm vào chỉ mục. Thông báo mới vẫn chứng minh đúng điều ca đó
+đo: đường dẫn phải giải mã ra `©` mới đi qua được kiểm tồn tại và kiểm hoa
+thường, rồi mới vướng kiểm chỉ mục; giải mã sai thì lỗi đã là `link hỏng`.
+
+## Codex vòng tiếp: review 5125941162
+
+Review đọc đúng head `e1ddf95596`, nêu tám finding: một P1 về cách đưa nhánh vào
+main và bảy P2 trên `plans/validate-plans.mjs`. Mẻ dò đối kháng chạy trước khi
+review về lộ thêm một lỗi cùng họ, nên vòng này khép tám sửa code.
+
+Cả tám đều tái hiện bằng chính validator trước khi động vào code, và sau khi sửa
+đều đảo chiều. Bốn ca đối chứng phải giữ xanh vẫn xanh: thẻ thật trong heading
+vẫn bị gỡ, setext trong blockquote vẫn là heading, comment thật trong khối HTML
+vẫn che link, và ngoài khối HTML thì backslash vẫn vô hiệu hóa dấu mở comment.
+
+- **Provenance phải còn trong ancestry của commit được đưa vào main** (P1).
+  Finding đo đúng thứ đã ghi: một commit chỉ mang cây kết quả làm mất mọi
+  revision đã ghim, và validator không đọc nổi `definition_commit` lẫn
+  `reviewed_commit` trong một clone sạch. Không có gì để sửa trong code; ràng
+  buộc nằm ở `plans/AGENTS.md` dòng 30-35 và `plans/README.md` dòng 137, và
+  nhánh phải vào main bằng merge commit chứ không squash hay rebase.
+- **Nội dung thụt năm khoảng trắng sau list marker bị nhận là heading** (tự phát
+  hiện). `outsideContainers` gỡ sạch khoảng trắng sau marker, nên
+  `-     ## Indented probe` hóa thành ATX heading trong khi CommonMark render nó
+  là indented code. Anchor tưởng tượng đó cho một link hỏng đi qua cổng. Nhánh
+  khoảng trắng của `containerPrefix` giờ chép đúng luật thụt: một tới bốn khoảng
+  trắng thì nội dung bắt đầu ngay sau chúng, từ năm trở lên thì chỉ một khoảng
+  trắng thuộc về marker và phần dư là code.
+- **Autolink trong heading bị gỡ như thẻ.** `## See <https://example.com>`
+  render ra link mà văn bản hiển thị chính là URL, nên id là
+  `see-httpsexamplecom`; gỡ cả cụm để lại `see-`. `headingText` giờ trả autolink
+  URI và thư điện tử về văn bản hiển thị trước khi gỡ thẻ thật.
+- **Character reference trong `id` và `name` không được giải mã.** Trình duyệt
+  đọc id của `<a id="probe&amp;anchor">` là `probe&anchor`, và phía link đã
+  percent-decode fragment từ trước. Ghi nguyên văn cách viết thì id thật vắng
+  mặt còn một chuỗi không tồn tại lại có mặt; giá trị giờ đi qua
+  `decodeReferences`.
+- **Thuộc tính được dò bằng chuỗi con thay vì tách token.**
+  `<span title="href='missing.md'">` làm gate báo link hỏng vì mẫu `href|src`
+  khớp vào bên trong giá trị của thuộc tính khác. `tagAttributes()` quét cặp tên
+  và giá trị từ trái sang phải, nên giá trị trong nháy bị nuốt cùng thuộc tính
+  sở hữu nó. Cùng hàm này thay luôn đường dò `id`/`name` vốn mắc y hệt.
+- **Title của link không nhận dấu bao quanh đã escape.**
+  `[readme](../../README.md "a \"quoted\" title")` bị đem cả destination lẫn
+  title đi phân giải như một đường dẫn. Ba dạng title trong `linkDestination`
+  giờ nuốt cặp backslash trước khi xét dấu đóng.
+- **Scheme được phân loại trước khi gỡ backslash.**
+  `[external](https\://example.com/path)` render ra địa chỉ ngoài đủ scheme
+  nhưng rơi xuống nhánh đường dẫn cục bộ. Phân loại giờ chạy trên bản đã gỡ
+  escape, còn ranh giới fragment và query vẫn đọc bản còn escape, vì ở đó chính
+  dấu escape phân biệt ký tự thật với vách ngăn.
+- **Setext được suy ra qua ranh giới container.** `- Ghost list item` theo sau
+  bởi `---` render ra một list rồi một thematic break, nhưng tiền tố container
+  bị xóa trước phép kiểm kề nhau nên hai dòng trông như một đoạn và underline
+  của nó. `documentAnchors` giữ lại tiền tố từng dòng và chỉ nhận setext khi hai
+  dòng cùng tiền tố. Một underline thụt sâu hơn trong cùng list item bị bỏ qua
+  thay vì nhận nhầm, tức lệch về phía báo hỏng chứ không phía bỏ lọt.
+- **Backslash được coi là escape cả bên trong khối HTML thô.** Trong một khối
+  HTML, backslash là ký tự thường nên `\<!--` vẫn mở comment thật và thân
+  comment không render. Hỏi luật Markdown ở mọi vị trí thì một href đã bị chú
+  thích ở lại trước mắt đường thu link. `outsideRawTextAndComments` giờ tra một
+  mặt nạ khối HTML giữ nguyên offset, và chỉ dựng mặt nạ khi thật sự gặp dấu mở
+  có backslash đứng trước.
+
+| Cổng                                   | Kết quả            |
+| -------------------------------------- | ------------------ |
+| `node plans/validate-plans.mjs`        | Đạt: 25 kế hoạch   |
+| `deno fmt --check`                     | 315 file           |
+| `deno lint`                            | 160 file           |
+| `node --test plans/test-validator.mjs` | 529 pass           |
+| `git diff --check`                     | exit 0             |
+| `node --test plans/test-history.mjs`   | 5 pass, sau commit |
+
+Suite thêm 16 test, lên 529.
+
+Chạy lại toàn bộ mẻ dò guard của các vòng 14, 14b, 14c, 15, 15b, 16, 17, 18,
+18f, 18g, 19, 21, 22, 23 và 24 trên một worktree tách ở `e1ddf95` rồi so từng
+dòng với chính chúng chạy trên cây đã sửa. Mọi ca giữ nguyên kết quả; khác biệt
+duy nhất là thời gian chạy in kèm một test của mẻ 18f.
+
+Hai phía phải chạy tuần tự chứ không song song, và chín mẻ dò cũ vốn ghim cứng
+đường dẫn cây làm việc đã được sửa để nhận tham số. Chạy chồng thì hai tiến
+trình cùng ghi rồi cùng khôi phục một tập tin, và bảng so ra hàng loạt khác biệt
+giả không thuộc về sửa nào cả.
+
+## Codex vòng tiếp: review 5126018121
+
+Review đọc đúng head `ca744cde2c`, nêu bốn finding P2, tất cả trên
+`plans/validate-plans.mjs`. Cả bốn tái hiện bằng chính validator trước khi động
+vào code, và sau khi sửa đều đảo chiều. Mẻ dò đối kháng mười bốn ca chạy trước
+review không lộ thêm lỗi nào, và chạy lại sau khi sửa vẫn giữ nguyên kết quả.
+
+- **Nhãn reference chết bị thu gọn trong slug heading.**
+  `## [Ghost][undefined-ref]` không có định nghĩa nào thì CommonMark render
+  nguyên văn cả cụm và id GitHub sinh ra là `ghostundefined-ref`; thu gọn vô
+  điều kiện ghi `ghost`, tức vừa nhận link tới anchor không tồn tại vừa báo hỏng
+  link tới anchor thật. `documentAnchors` giờ dựng tập nhãn có định nghĩa từ
+  Markdown cấu trúc, chuẩn hóa nhãn theo cách CommonMark so khớp, và
+  `headingText` chỉ thu gọn khi nhãn sống. Dạng collapsed nhãn rỗng vẫn thu gọn
+  vô điều kiện vì hai lối đọc cùng ra một slug.
+- **Heading setext nhiều dòng chỉ lấy dòng cuối.** `Multiline setext` rồi
+  `heading probe` rồi `---` là một heading với id
+  `multiline-setext-heading-probe`; ghi mỗi `heading-probe` thì link tới id thật
+  bị báo hỏng còn link tới id tưởng tượng lại qua cổng. Nhánh setext giờ lùi hết
+  đoạn văn ngay trước hàng gạch rồi nối bằng một khoảng trắng, dừng ở dòng
+  trống, ở heading ATX, ở một hàng gạch khác, ở thematic break, và ở dòng tự mở
+  container.
+- **Nhãn link bắc qua ranh giới khối.** Một đoạn kết thúc bằng `[` rồi ngay dòng
+  sau là `# Boundary heading probe` rồi `](missing.md)` không render ra link
+  nào, nhưng vòng cân bằng nhãn chỉ dừng ở dòng trống nên gate đem destination
+  đó đi phân giải và báo hỏng một tài liệu đúng. Phép kiểm dòng trống giờ là một
+  mục trong danh sách dòng chen được vào giữa đoạn: dòng trống, heading ATX,
+  thematic break, hàng gạch setext, và list item có nội dung. Blockquote cố ý
+  vắng mặt, vì `>` đầu dòng nối thuộc về chính khối đang mở và cắt ở đó sẽ thả
+  một destination hỏng qua cổng.
+- **Dòng nối của list item không được gỡ thụt kế thừa.** `123. list item` rồi
+  một dòng thụt năm khoảng trắng mang `## Continued list heading` là heading
+  thật bên trong item, nhưng phép gỡ container chạy rời rạc từng dòng để lại
+  nguyên thụt và đọc nó thành indented code. `outsideContainers` được thay bằng
+  `scanContainers`, một lượt quét giữ ngăn xếp container đang mở: blockquote đòi
+  marker trên mọi dòng, list item chỉ đòi đủ thụt, và dòng trống không đóng
+  container nào. Nhánh setext giờ so độ sâu container cùng cờ tự mở container
+  thay vì so chuỗi tiền tố, nên vừa giữ được guard của vòng trước vừa nhận đúng
+  `- Setext in item` theo sau bởi một hàng gạch thụt.
+
+| Cổng                                   | Kết quả            |
+| -------------------------------------- | ------------------ |
+| `node plans/validate-plans.mjs`        | Đạt: 25 kế hoạch   |
+| `deno fmt --check`                     | 315 file           |
+| `deno lint`                            | 160 file           |
+| `node --test plans/test-validator.mjs` | 542 pass           |
+| `git diff --check`                     | exit 0             |
+| `node --test plans/test-history.mjs`   | 5 pass, sau commit |
+
+Suite thêm 13 test, lên 542.
+
+## Codex vòng tiếp: review 5126092642
+
+Review đọc đúng head `9064486852`, nêu một P1 provenance và bốn P2, tất cả trên
+`plans/validate-plans.mjs`. P1 lặp lại điểm của vòng trước và vẫn được trả lời
+như cũ: phép kiểm ancestry là chủ ý, nhánh vào `main` bằng merge commit chứ
+không squash, điều đã ghi ở `plans/AGENTS.md` và `plans/README.md`. Bốn P2 tái
+hiện bằng chính validator trước khi động vào code; ba trong số đó đã đảo chiều
+sau khi sửa, còn P2 về scheme một ký tự được giữ nguyên có chủ ý vì bản sửa làm
+hỏng một phép chặn drive path đã có test. Một lỗi tự phát hiện cùng họ, dòng nối
+thụt bằng tab, được sửa trong cùng đợt.
+
+- **Thẻ mở bị escape vẫn bị thu href.** `\<a href="missing.md">` là văn bản chứ
+  không phải thẻ, CommonMark không render link nào, nhưng gate vẫn đem
+  destination đó đi phân giải và báo hỏng một tài liệu đúng. Vòng quét HTML thô
+  giờ đi qua `renderedTags`, hỏi `markdownEscaped` ở đúng phần văn bản ngoài
+  HTML block: bên trong block thì backslash không escape gì nên thẻ vẫn sống.
+  Vòng quét anchor trên `renderedHtml` fail-open theo cùng cách với `id`/`name`,
+  nên dùng chung helper.
+- **Scheme một ký tự bị coi là đường dẫn cục bộ: giữ nguyên có chủ ý.** RFC 3986
+  cho phép scheme dài đúng một ký tự, nên `x:opaque` đúng là địa chỉ ngoài. Bản
+  sửa thử, nhận scheme một ký tự trừ khi sau `:` là `\` hoặc `/`, làm đỏ một
+  test đã có: `C:outside-plan.md` là đường dẫn ổ đĩa Windows tương đối, không có
+  dấu phân cách sau dấu hai chấm, và trùng hình dạng với `x:opaque`. Hai dạng
+  không phân biệt được bằng cú pháp, nên cổng chọn phía an toàn: từ chối một
+  scheme một ký tự giả định chỉ buộc tác giả viết khác đi, còn nhận nhầm một
+  drive path thành địa chỉ ngoài là thả nó vào filesystem của người đọc. Lý do
+  đó được ghi vào comment ngay trên phép kiểm, và phía drive path có thêm hai
+  test cho dạng `c:\temp\file.md` và `c:/temp/file.md`. Một khối comment bị dán
+  lặp hai lần ngay trên phép kiểm này cũng được gỡ.
+- **Dấu nhấn gạch dưới lọt vào slug heading.** `## _Emphasized_ probe` render ra
+  `Emphasized probe` và id GitHub là `emphasized-probe`; dấu sao tự biến mất vì
+  `headingSlug` xóa nó, còn gạch dưới thì được giữ nên slug thành
+  `_emphasized_-probe` và mọi link tới heading có nhấn bị báo hỏng.
+  `headingText` gỡ cặp nhấn trước khi slug, lặp cho tới khi ổn định để cặp lồng
+  rụng hết, và chỉ gỡ cặp mở đóng ở ranh giới từ nên `snake_case` nguyên vẹn.
+  Gạch dưới không phải delimiter được che bằng một dấu NUL mà cả hai đầu của
+  pattern từ chối: ký tự sinh từ backslash escape, ký tự sinh từ character
+  reference, và nội dung code span.
+- **Link lồng link không vô hiệu opener ngoài.** CommonMark cấm link trong link,
+  nên `[outer [inner](a.md)](b.md)` render ra link tới `a.md` rồi `](b.md)`
+  nguyên văn; đẩy `b.md` vào gate là báo hỏng một tài liệu đúng.
+  `inlineLinkTargets` giờ là lớp mỏng bọc `scanInline`, hàm trả về cả cờ đã nhận
+  một link. Label được quét trước khi ghi destination ngoài; label đã chứa link
+  thì destination ngoài bị bỏ còn đích bên trong vẫn giữ. Image được miễn vì
+  label của image không vô hiệu link bao ngoài, nhưng cờ vẫn đi ngược lên qua
+  image vì link nằm sâu trong đó vẫn là link thật với opener bao ngoài.
+- **Thụt bằng tab không được quy đổi thành cột.** Lỗi tự phát hiện bằng mẻ dò
+  đối kháng chạy sau vòng trước, cùng họ với lỗi dòng nối của list item. `1.`
+  rồi một tab đặt nội dung ở cột bốn, nên dòng nối thụt đúng một tab vẫn nằm
+  trong item; đếm ký tự thì nó chỉ được một cột, bị đẩy ra khỏi item và một
+  heading thật trong item vắng mặt khỏi tập anchor. `scanContainers` đo thụt
+  bằng cột với mốc bốn, và phần dư của một tab bắc qua mốc ở lại dưới dạng
+  khoảng trắng.
+
+| Cổng                                   | Kết quả            |
+| -------------------------------------- | ------------------ |
+| `node plans/validate-plans.mjs`        | Đạt: 25 kế hoạch   |
+| `deno fmt --check`                     | 315 file           |
+| `deno lint`                            | 160 file           |
+| `node --test plans/test-validator.mjs` | 557 pass           |
+| `git diff --check`                     | exit 0             |
+| `node --test plans/test-history.mjs`   | 5 pass, sau commit |
+
+Suite thêm 15 test, lên 557. Mười lăm mẻ dò guard của các vòng trước chạy lại
+trên cây mới cho kết quả trùng ảnh chụp ở vòng trước.
+
+## Codex vòng tiếp: review 5126196497
+
+Review đọc đúng head `f9e33adc7f9bba4b54def95c1f5900fb80c2d09d` và nêu bảy P2,
+tất cả trên `plans/validate-plans.mjs`. Cả bảy tái hiện hai chiều bằng mẻ dò
+mười bảy ca (gồm đối chứng) trước khi động vào code.
+
+- **`href` và `src` bị đọc trên mọi thẻ.** `<div href="x.md">` không tải gì cả
+  nên không có link để hỏng, mà cổng vẫn đem thuộc tính chết đó đi phân giải và
+  báo hỏng một tài liệu đúng. Hai thuộc tính giờ chỉ đọc trên phần tử thật sự
+  định nghĩa chúng; danh sách vẫn giữ nhóm SVG (`use`, `image`, `mpath`,
+  `textPath`, `feImage`) để một đích hỏng ở đó không đi qua.
+- **Code span ghép từ hai run backtick lệch độ dài.** Một run chỉ đóng bằng run
+  dài đúng bằng nó, nên phép cắt cũ dựng ra một span không tồn tại, giữ nguyên
+  văn phần lẽ ra được giải mã, và sinh slug khác slug thật của GitHub.
+  `splitCodeSpans` quét run, bỏ qua backtick bị escape, và để run lẻ đôi ở lại
+  làm văn bản.
+- **Nhãn link lồng ngoặc vuông trong heading.** Mẫu phẳng dừng ở dấu `]` đầu
+  tiên nên cả cụm kể cả destination rơi vào slug. `stripHeadingLinks` quét cân
+  bằng độ sâu, nhảy qua thẻ HTML nguyên khối, đọc đuôi `(...)` hoặc `[label]`,
+  rồi đệ quy vào chính nhãn vì image lồng trong link được.
+- **Definition trong container không được thu.** Cả hai đường quét definition
+  giờ đi qua một hàm chung đọc dòng đã gỡ container, cùng khung nhìn với vòng
+  quét heading, nên một nhãn định nghĩa trong blockquote vẫn sống.
+- **Thẻ inline bị cắt ở dấu `>` trong giá trị thuộc tính.** Gỡ bằng chính mẫu
+  nguyên khối đã dùng ở đường quét inline, nên phần đuôi của thẻ không còn rớt
+  vào slug.
+- **Destination bắc qua ranh giới đoạn.** Vòng cân bằng ngoặc dừng ở dòng ngắt
+  đoạn, cùng phép kiểm mà vòng quét nhãn đang dùng, nên một dấu `(` cuối đoạn
+  không còn cặp với một dấu `)` tận đâu và nuốt cả đoạn văn ở giữa làm đường
+  dẫn.
+- **Definition ngắt được đoạn đang chạy.** Hàm chung giữ cờ đoạn: dòng trống,
+  dòng tự mở container và dòng đổi độ sâu container đều đóng đoạn, còn một dòng
+  trông như definition viết nối ngay dưới văn xuôi là văn bản literal.
+
+| Cổng                                   | Kết quả            |
+| -------------------------------------- | ------------------ |
+| `node plans/validate-plans.mjs`        | Đạt: 25 kế hoạch   |
+| `deno fmt --check`                     | 315 file           |
+| `deno lint`                            | 160 file           |
+| `node --test plans/test-validator.mjs` | 575 pass           |
+| `git diff --check`                     | exit 0             |
+| `node --test plans/test-history.mjs`   | 5 pass, sau commit |
+
+Suite thêm 18 test, lên 575. Mười lăm mẻ dò guard chạy lại trên cây mới: mười
+bốn mẻ trùng ảnh chụp vòng trước, mẻ còn lại lệch đúng một ca có chủ ý. Ca đó
+viết một title sau dòng trống; chuẩn không cho destination hay title chứa dòng
+trống nên cả cụm là văn bản literal, cổng cũ báo hai lỗi cho một link không tồn
+tại còn cổng mới im lặng đúng. Ca đó đã thành một test riêng.
+
+## Codex vòng tiếp: review 5126308309
+
+Review đọc đúng head `20d51a206a4a6bea94809c98db66a17af3637fc0` và nêu mười ba
+P2, tất cả trên `plans/validate-plans.mjs`. Cả mười ba tái hiện hai chiều bằng
+một mẻ dò mười tám ca trước khi động vào code, và mười hai ca đúng. Ca còn lại
+được bác bỏ bằng chính cmark 0.31.2, xem mục cuối.
+
+- **Destination trong nhãn image bị đem đi phân giải.** Nội dung giữa `![` và
+  `]` là văn bản thay thế, không renderer nào tải link lồng trong đó, nên cổng
+  báo hỏng một đường dẫn không tồn tại trong tài liệu dựng ra. `scanInline` chốt
+  cờ `image` trước khi đẩy đích của nhãn; chiều ngược lại, ảnh lồng trong nhãn
+  của một link, vẫn tải nguồn như cũ.
+- **Code span không gỡ một khoảng trắng đệm.** Chuẩn bỏ đúng một dấu cách ở mỗi
+  đầu khi cả hai đầu đều có và phần còn lại không rỗng, để một span chứa được
+  dấu backtick. Thiếu phép gỡ đó, slug của heading lệch khỏi slug GitHub đúc và
+  một link đúng bị báo `anchor hỏng`. `codeSpanContent` làm phép gỡ đó, sau khi
+  quy mọi ký tự xuống dòng về dấu cách.
+- **Bảng named reference chỉ có Latin-1.** `&alpha;` không giải mã nên slug
+  thiếu ký tự thật của heading. Fail-closed sai chiều ở đây: một tên chưa giải
+  mã không làm cổng chặt hơn, nó làm cổng mô tả một heading không tồn tại. Bảng
+  thay bằng toàn bộ 2125 tên HTML5 có dấu chấm phẩy, mã hoá dạng `name=hex` nên
+  không ký tự vô hình nào lọt vào mã nguồn.
+- **Dấu chéo ngược trong giá trị thuộc tính bị coi là escape.** Trong HTML thô
+  đó là dữ liệu thường, nên `<a id="\&amp;">` đúc ra id `\&`. Cổng áp
+  `markdownEscaped` ở đó và từ chối một fragment đúng. `decodeReferences` thêm
+  cờ `escapes`, mặc định bật cho văn bản Markdown và tắt ở đường thuộc tính.
+- **Fence không mở trên dòng có marker container.** `> ~~~` và `- ~~~` đều mở
+  một khối mã, nhưng cổng đọc nguyên dòng nên không thấy. Hậu quả hai chiều: một
+  heading trong ví dụ lọt vào tập anchor, và một link chết viết trong ví dụ bị
+  báo hỏng. `outsideFencedCode` gỡ marker blockquote bằng `stripQuoteMarkers`
+  dùng chung, thử mở fence trên phần sau marker danh sách, và đóng fence khi
+  blockquote chứa nó kết thúc.
+- **Fence đóng đo thụt lề sai gốc.** Dòng đóng được thụt tối đa ba cột tính từ
+  lề container, không phải từ dòng mở. Cả hai đường quét giờ so với
+  `listIndent + 3`, nên một dòng thụt sâu không còn đóng sớm khối mã và kéo theo
+  cả phần nội dung phía dưới.
+- **Destination trong ngoặc nhọn bắc qua dòng.** Chuẩn cấm ký tự xuống dòng
+  trong dạng `<...>`, nên cụm bắc hai dòng là văn bản literal. `linkDestination`
+  và `inlineDestination` dựng từ một nguồn chung có nhánh nhọn `[^<>\r\n]*`, và
+  `scanInline` bỏ qua cụm nhiều dòng không parse được. Cụm một dòng vẫn
+  fail-closed, vì ở đó cú pháp sai gần như luôn là link gõ hụt.
+- **`xlink:href` không được đọc.** Cách viết cũ của SVG trỏ đích thật, nên một
+  đích hỏng ở đó đi qua cổng. `linkAttribute` nhận thêm tên này trên đúng nhóm
+  phần tử đang nhận `href`.
+- **Thuộc tính trùng tên đăng ký cả hai giá trị.** HTML giữ lần xuất hiện đầu và
+  bỏ mọi lần sau, kể cả khi lần đầu không có giá trị. `tagAttributes` theo dõi
+  tên đã gặp, nên một id ma không còn làm fragment chết đi qua cổng.
+- **Chuỗi `<!--` trong giá trị thuộc tính mở một comment.** Comment giả đó chạy
+  tới cuối tài liệu và nuốt mọi link phía sau, một lỗ hổng im lặng chứ không
+  phải cách đọc chặt. `rawTextOrComment` thêm nhánh đầu khớp thẻ mở thường và
+  scanner bước qua nguyên vẹn; `script`, `style`, `textarea` giữ cách xử lý raw
+  text như cũ.
+- **HTML block trong blockquote không được nhận.** `> <div>` không mở khối nào
+  nên heading bên trong lọt vào tập anchor. `outsideHtmlBlocks` gỡ marker
+  blockquote trước khi thử dòng mở, dòng đóng và dòng trống, và đóng khối khi
+  blockquote chứa nó kết thúc, dùng chung `stripQuoteMarkers` với đường fence.
+- **Dòng nối của definition vượt ranh giới khối.** Một dòng mở container ngay
+  dưới nhãn không phải phần tiếp của definition. `referenceDefinitions` chỉ nhận
+  dòng nối khi nó không mở container, giữ nguyên độ sâu và là văn xuôi; một nhãn
+  không có destination nào trả về nguyên đoạn văn.
+- **Bác bỏ: `[home]( "tooltip")` không phải destination rỗng kèm title.** cmark
+  0.31.2 dựng cụm đó thành `<a href="%22tooltip%22">`: bộ phân giải đọc
+  destination trước, và một chuỗi trong dấu nháy là destination hợp lệ. Dạng cho
+  `href` rỗng kèm title là `[home](<> "tooltip")`, và dạng đó vốn đã đúng.
+  `inlineDestination` chỉ nới thêm dạng rỗng hoàn toàn `[home]()`.
+
+| Cổng                                   | Kết quả            |
+| -------------------------------------- | ------------------ |
+| `node plans/validate-plans.mjs`        | Đạt: 25 kế hoạch   |
+| `deno fmt --check`                     | 315 file           |
+| `deno lint`                            | 160 file           |
+| `node --test plans/test-validator.mjs` | 597 pass           |
+| `git diff --check`                     | exit 0             |
+| `node --test plans/test-history.mjs`   | 5 pass, sau commit |
+
+Suite thêm 22 test, lên 597. Mười lăm mẻ dò guard của các vòng trước chạy lại
+trên cây mới cho kết quả trùng ảnh chụp vòng trước, và mẻ mười tám ca của vòng
+này cho mười bảy ca đổi chiều đúng như mong đợi, ca thứ mười tám giữ nguyên vì
+đó là ca bị bác bỏ.
+
+## Codex vòng tiếp: review 5126488095
+
+Review đọc đúng head `669c6638`, nêu năm P2 và không P1 nào. Cả năm tái hiện
+bằng một mẻ dò mười tám ca trước khi động vào code, và cmark 0.31.2
+(`npm:commonmark`, chạy qua `deno run -A`) làm trọng tài cho từng ca. Cả năm
+đúng.
+
+- **`srcset` không vào tập đích.** Trình duyệt chọn và tải đúng một ứng viên
+  trong danh sách theo mật độ điểm ảnh hay khổ màn hình, nên mọi URL ở đó là tài
+  nguyên thật. `attributeTargets` tách `srcset` trên `img` và `source` theo đúng
+  thuật toán của HTML: dấu phẩy chỉ kết thúc ứng viên khi đứng cuối URL hoặc
+  cuối descriptor, nên `a.png 1x, b.png 2x` cho hai URL còn `a.png 1x` cho một,
+  và không descriptor nào bị đem đi phân giải như tên file.
+- **List ngắt đoạn văn vô điều kiện.** Chuẩn chỉ cho một list ngắt đoạn đang
+  chạy khi item đầu có nội dung và, với list đánh số, khi số bắt đầu là 1;
+  `Paragraph` rồi `2. ## Ghost` vì thế vẫn là một đoạn văn. `scanContainers`
+  mang theo trạng thái đoạn và từ chối mở container list không đủ điều kiện.
+  Luật khoanh hẹp: blockquote vẫn ngắt được mọi lúc, thoát khỏi container là đã
+  đóng đoạn bên trong nên `1. item` rồi `2. item` vẫn mở hai item, và container
+  ngoài vừa mở trên cùng dòng cũng đóng đoạn cũ.
+- **Title của definition bị đọc như văn bản render.** Title là metadata, đi ra
+  HTML nguyên văn trong thuộc tính `title`, nên nhãn trông giống link nằm trong
+  đó không phải link của ai cả. Definition được phân giải trước vòng quét inline
+  và những dòng chúng chiếm bị che khỏi văn bản đưa cho `inlineLinkTargets`;
+  đích thật vẫn vào gate ở vòng definition ngay dưới, nên che dòng không mở lỗ
+  nào. Một cụm có title hỏng vẫn bị bác như cũ.
+- **Đuôi link trong heading chỉ cần ngoặc cân bằng.** Đích trần chứa khoảng
+  trắng làm cả đuôi thành văn bản literal, nên một heading viết
+  `## [Ghost](https://example.com bad)` không mang id `ghost`. `linkTail` đòi
+  phần trong ngoặc khớp grammar destination trước khi báo có đuôi; đuôi đúng
+  grammar vẫn cho slug lấy từ nhãn.
+- **Setext gộp cả reference definition vào slug.** Definition là khối riêng và
+  không góp gì vào heading. `referenceDefinitions` trả thêm phạm vi dòng của
+  từng definition, và vòng quét ngược của setext dừng ở những dòng đó, cả với
+  dòng ngay trên hàng gạch lẫn mọi dòng nó lùi qua.
+
+| Cổng                                   | Kết quả            |
+| -------------------------------------- | ------------------ |
+| `node plans/validate-plans.mjs`        | Đạt: 25 kế hoạch   |
+| `deno fmt --check`                     | 315 file           |
+| `deno lint`                            | 160 file           |
+| `node --test plans/test-validator.mjs` | 614 pass           |
+| `git diff --check`                     | exit 0             |
+| `node --test plans/test-history.mjs`   | 5 pass, sau commit |
+
+Suite thêm 17 test, lên 614. Mẻ dò mười hai ca của vòng này cho cả mười hai đổi
+chiều đúng như mong đợi, và mẻ sáu ca biên kèm theo giữ đúng chiều cả sáu.
+
+## Codex vòng tiếp: review 5126566649
+
+Review đọc đúng head `a1ac4898`, nêu bốn P2 và không P1 nào. Cả bốn tái hiện
+bằng một mẻ dò tám ca trước khi động vào code, và cmark 0.31.2
+(`npm:commonmark`, chạy qua `deno run -A`) làm trọng tài cho ca tranh chấp. Cả
+bốn đúng.
+
+- **Nhãn definition không bắc được qua dòng.** Chuẩn cho nhãn trải nhiều dòng:
+  `[multi` rồi `line]: missing.md` định nghĩa nhãn `multi line`, và cmark render
+  `[visible][multi line]` phía dưới thành một link thật. Lớp ký tự của nhãn cấm
+  ký tự xuống dòng nên cả definition lẫn đích của nó vắng mặt khỏi cổng, và một
+  đích chết đi qua. `definitionAt` nối các dòng kế chừng nào chúng còn là văn
+  bản của cùng khối (`!opened`, cùng `depth`, `paragraphText`) và dừng ở giới
+  hạn 999 ký tự của chuẩn; con trỏ nhảy tới dòng mang dấu hai chấm nên phạm vi
+  che dòng vẫn phủ trọn cụm. Dòng trống vẫn cắt đứt nhãn vì nó kết thúc đoạn,
+  đúng cmark.
+- **Báo cáo BLOCKED chỉ cần tồn tại.** README đòi báo cáo giữ lệnh thất bại và
+  quyết định còn thiếu, nhưng cổng chỉ hỏi file có mặt hay không, nên một báo
+  cáo bị xóa ruột vẫn giữ nguyên trạng thái. Cổng giờ đọc nội dung và đòi ba dấu
+  hiệu đo được: báo cáo nói đúng mã kế hoạch nó thuộc về, tự khai `BLOCKED`, và
+  giữ ít nhất một khối lệnh. Văn xuôi vẫn là việc của review, không phải của
+  cổng.
+- **Link tới gốc repo bị bác oan.** `relative` mô tả gốc repo bằng chuỗi rỗng,
+  thứ không nằm trong tập file lẫn tập thư mục theo dõi, nên `[root](../../)` bị
+  báo là chưa được Git theo dõi dù gốc chứa đầy file theo dõi. Nhánh báo lỗi bỏ
+  qua đúng chuỗi rỗng; thư mục con và đường dẫn ngoài chỉ mục vẫn xử như cũ.
+- **Ô ID README bị ghim ba chữ số.** Manifest chỉ sinh ID ba chữ số, nên mọi ô
+  toàn số khác ba chữ số cũng là ID lạ; ghim độ dài thì một hàng mang `1000`
+  không bị ai hỏi tới và danh mục quảng cáo thêm kế hoạch ngoài bộ đã duyệt. Bộ
+  lọc đổi sang mọi ô toàn số.
+
+| Cổng                                   | Kết quả            |
+| -------------------------------------- | ------------------ |
+| `node plans/validate-plans.mjs`        | Đạt: 25 kế hoạch   |
+| `deno fmt --check`                     | 315 file           |
+| `deno lint`                            | 160 file           |
+| `node --test plans/test-validator.mjs` | 624 pass           |
+| `git diff --check`                     | exit 0             |
+| `node --test plans/test-history.mjs`   | 5 pass, sau commit |
+
+Suite thêm 10 test, lên 624. Harness đọc thêm khoá `content` của filesystem ảo,
+để một gate đọc nội dung file ảo không còn vấp ENOENT. Mẻ dò tám ca của vòng này
+cho cả tám đúng chiều: bốn ca lỗi đổi sang đỏ, bốn ca đối chứng giữ nguyên chiều
+cũ.
+
+## Codex vòng tiếp: review 5126647497
+
+Review đọc đúng head `e7e11cfa`, nêu năm P2 và không P1 nào. Cả năm tái hiện
+bằng một mẻ dò mười một ca trước khi động vào code, và cmark 0.31.2
+(`npm:commonmark`, chạy qua `deno run -A`) làm trọng tài cho từng ca tranh chấp.
+Cả năm đúng. Hai trong số đó là hồi quy của chính vòng trước, và một ca đối
+chứng còn lộ thêm một lỗi thứ sáu không ai nêu.
+
+- **Title ở dòng nối không được nuốt.** Chuẩn cho title nằm hẳn ở dòng dưới
+  destination, và cả cụm vẫn là một khối metadata không render chữ nào. Cổng chỉ
+  nuốt dòng nối khi destination còn trống, nên dòng title ở lại trong văn bản
+  đưa cho vòng quét inline và một chuỗi trông giống link nằm trong title bị đem
+  đi phân giải. Điều kiện nhận giờ là chính grammar: chỉ gộp khi cả cụm hai dòng
+  khớp destination kèm title, nên một dòng văn xuôi thường vẫn ở lại ngoài.
+- **`poster` của video không vào tập đích.** Trình duyệt vẽ khung hình đó trước
+  khi ai bấm play, nên nó là tài nguyên thật và hỏng được y như `src`.
+  `attributeTargets` nhận `poster` trên `video`, khoanh phạm vi đúng cách
+  `srcset` được khoanh cho `img` và `source`.
+- **Giới hạn nhãn 999 ký tự bị kiểm sau khi đã nhận.** Hồi quy của vòng trước:
+  `definitionAt` trả kết quả khớp trước khi hỏi độ dài, nên một nhãn 1000 ký tự
+  vẫn thành definition trong khi cmark trả nó về văn bản literal, và một đích
+  không ai render bị đem đi phân giải. Giờ đo chính nhãn đã bắt được, trước khi
+  trả.
+- **Marker đánh số không bị chặn ở chín chữ số.** Chuẩn ghim đúng chín, nên
+  `1234567890. ~~~` là một đoạn văn thường. Nhận nó là list thì phần sau dấu
+  chấm mở được cả fence lẫn block HTML và những dòng sống nằm dưới bị ẩn khỏi
+  mọi cổng. `listIndentTracker` dùng cùng giới hạn với `containerPrefix`.
+- **Nhãn tham chiếu chỉ được hạ chữ thường.** `[Σ]` và `[ς]` là một nhãn sau
+  case folding của Unicode, nên chỉ hạ chữ thường thì một reference link thật bị
+  đọc thành văn bản literal và slug của heading chứa nó sai theo.
+  `referenceLabel` dùng đúng công thức `normalizeReference` của commonmark.js,
+  thứ đang làm trọng tài cho mọi tranh chấp CommonMark ở đây.
+- **Lỗi thứ sáu, từ ca đối chứng.** Đối chứng cho ca marker chín chữ số cho thấy
+  cmark vẫn render link nằm dưới thành link sống: một fence mở trong list item
+  đóng lại khi văn bản thoát khỏi item. Cổng ghi độ sâu blockquote của fence
+  nhưng không ghi lề list của nó, nên `- ~~~` rồi một dòng không thụt ẩn trọn
+  phần còn lại của tài liệu. `outsideFencedCode` ghi thêm lề đó và đóng fence
+  khi một dòng không trống thụt ít hơn, đúng cách luật blockquote đã làm. Fence
+  không đóng ở cấp ngoài cùng vẫn ẩn phần còn lại, đúng chuẩn.
+
+| Cổng                                   | Kết quả            |
+| -------------------------------------- | ------------------ |
+| `node plans/validate-plans.mjs`        | Đạt: 25 kế hoạch   |
+| `deno fmt --check`                     | 315 file           |
+| `deno lint`                            | 160 file           |
+| `node --test plans/test-validator.mjs` | 636 pass           |
+| `git diff --check`                     | exit 0             |
+| `node --test plans/test-history.mjs`   | 5 pass, sau commit |
+
+Suite thêm 12 test, lên 636. Mẻ dò mười một ca của vòng này cho cả mười một đúng
+chiều, và ba mẻ dò guard của hai vòng trước (26 ca) giữ nguyên chiều cũ.
+
+## Codex vòng tiếp: review 5126723710
+
+Review đọc đúng head `dab3081a`, nêu sáu P2 và không P1 nào. Cả sáu tái hiện
+bằng một mẻ dò mười ba ca trước khi động vào code. Bốn ca đúng và đã sửa; hai ca
+sai và bị bác bằng chính renderer mà các tài liệu này được đọc trong đó, mỗi ca
+khóa lại bằng một test.
+
+Vòng này trọng tài đổi vai. Với ngoặc lồng và với anchor,
+`npm:commonmark@0.31.2` không đủ: nó không có trần ngoặc, còn anchor thì không
+phải chuyện của CommonMark. Nên hai câu hỏi đó hỏi thẳng GitHub Markdown API, và
+câu hỏi anchor hỏi thêm hai bản cài đặt slugger.
+
+- **Dấu phẩy trong srcset không cần khoảng trắng đi kèm.** Máy tách của HTML đọc
+  URL tới khoảng trắng đầu tiên rồi đọc phần descriptor tới dấu phẩy kết thúc
+  ứng viên, nên `a.png 1x,b.png 2x` là hai ứng viên. Đọc dấu phẩy chỉ khi nó
+  đứng cuối một token thì URL thứ hai dính vào descriptor thứ nhất và một ảnh 2x
+  thiếu file đi qua cổng. `srcsetTargets` giờ chạy theo từng ký tự đúng máy tách
+  đó, ngoặc trong descriptor che dấu phẩy bên trong nó. Hai ca đối chứng ghim
+  chiều ngược lại: `a.png,b.png` vẫn là một URL vì URL chỉ dừng ở khoảng trắng.
+- **`data` của `object` là tài nguyên thật.** Đó chính là URL của object nhúng,
+  đúng vai trò `src` của một embed, nên một PDF thiếu file sau tên đó là
+  artifact hỏng. Khoanh phạm vi đúng cách `poster` được khoanh cho `video`.
+- **Thuộc tính URL trong HTML phải chuẩn hóa trước khi phân giải.** Trình duyệt
+  bỏ mọi tab và xuống dòng rồi cắt khoảng trắng hai đầu, nên
+  `href=" ../../README.md "` là một link đúng. Đẩy nguyên văn xuống bước tìm
+  file thì đường dẫn mang dấu cách ở hai đầu và một tài liệu đúng bị báo hỏng.
+  Giá trị rỗng sau chuẩn hóa không còn là đích, nên `href=""` im lặng thay vì
+  phân giải một đường dẫn rỗng.
+- **Ngoặc lồng trong destination có trần 32 lớp.** Đẩy 31, 32, 33 và 34 lớp qua
+  GitHub Markdown API cho hai ca đầu ra link và hai ca sau ra đoạn văn thường,
+  đúng như trần của cmark-gfm. Đếm không trần thì gate đem một chuỗi không ai
+  render đi phân giải và báo hỏng một tài liệu đúng.
+- **Bác: thân `iframe` không phải văn bản thô ở đây.** Việc che thân là luật
+  CommonMark chứ không phải luật của bộ phân tích HTML: HTML block type 1 chỉ
+  định nghĩa cho `pre`, `script`, `style` và `textarea`, đúng bốn tên đang được
+  che. GitHub trả
+  `&lt;iframe&gt;<a href="missing.md">fallback</a>&lt;/iframe&gt;`, tức anchor
+  bên trong sống thật. Che thêm là tự tạo một điểm mù cho đích hỏng thật.
+- **Bác: tab trong heading bị xóa khỏi slug, không thành gạch nối.** GitHub giữ
+  nguyên tab trong văn bản heading, rồi bước dựng slug xóa mọi ký tự không phải
+  chữ, số, dấu phụ, gạch dưới, khoảng trắng hay gạch nối trước khi đổi khoảng
+  trắng thành gạch nối. Cả `html-pipeline` lẫn `github-slugger` 2.0.0 đều cho
+  `tabheading-probe`, đúng thứ cổng đang dựng.
+
+| Cổng                                   | Kết quả            |
+| -------------------------------------- | ------------------ |
+| `node plans/validate-plans.mjs`        | Đạt: 25 kế hoạch   |
+| `deno fmt --check`                     | 315 file           |
+| `deno lint`                            | 160 file           |
+| `node --test plans/test-validator.mjs` | 648 pass           |
+| `git diff --check`                     | exit 0             |
+| `node --test plans/test-history.mjs`   | 5 pass, sau commit |
+
+Suite thêm 12 test, lên 648, trong đó hai test khóa lại chiều của hai finding bị
+bác. Mẻ dò mười ba ca của vòng này cộng năm ca đối chứng thêm cho vùng vừa sửa
+đều đúng chiều, và bốn mẻ dò guard của ba vòng trước (32 ca) giữ nguyên chiều
+cũ.
+
+## Codex vòng tiếp: review 5126795122
+
+Review đọc đúng head `9a2c3aa3`, nêu ba P2 và không P1 nào. Cả ba tái hiện bằng
+một mẻ dò trước khi động vào code, và cả ba đều đúng. Trọng tài của vòng này là
+GitHub Markdown API, vì cả ba câu hỏi đều là "renderer thật dựng ra phần tử
+nào", chứ không phải "cây cú pháp trông ra sao".
+
+- **Backslash trong thuộc tính của thẻ HTML thô là ký tự dữ liệu.** Bên trong
+  một thẻ thô, luật escape của Markdown không còn hiệu lực: id của
+  `<a id="\&amp;">` đúng là `\&` và fragment tới nó viết thẳng là `#\&amp;`. Id
+  đã đi đường giải mã riêng từ vòng trước, còn đích đến thì chưa, nên cùng một
+  chuỗi bị đọc thành hai thứ khác nhau và một link đúng bị báo hỏng. Đích đến
+  của thuộc tính HTML giờ gom vào danh sách riêng, và mọi bước áp luật escape
+  (giải mã reference, gỡ backslash, tìm ranh giới `#` và `?`) chỉ chạy khi đích
+  đến đến từ cú pháp Markdown. Hai ca đối chứng ghim hai chiều: href thô giữ
+  backslash nên không khớp slug thường, còn destination Markdown vẫn gỡ escape
+  như cũ.
+- **HTML thô trong mô tả của ảnh không dựng ra phần tử nào.** Mô tả của một
+  image render thành văn bản alt, nên `![<img src="missing.png">](target.md)`
+  chỉ tải `target.md`; GitHub trả đúng một thẻ img với `alt` là chuỗi đã escape.
+  Quét cả mô tả thì cổng đem một `src` không ai tải đi phân giải và báo hỏng một
+  tài liệu đúng. `outsideImageDescriptions` che phần mô tả của dạng inline và
+  dạng tham chiếu đầy đủ, đứng cùng chỗ với các lớp che khối mã và văn bản thô.
+  Dạng rút gọn `![nhãn]` cố ý không che: nó chỉ là ảnh khi nhãn có definition,
+  và khi không có thì chính HTML trong đó lại render thật, nên để nguyên là chọn
+  phía fail-closed. Một test ghim đúng ca đó.
+- **Backslash cuối dòng là hard break, không phải escape của ký tự xuống dòng.**
+  Nhảy hai bước qua nó là nhảy qua chính ranh giới khối, nên một `[literal\`
+  đứng cuối đoạn văn và một `](x.md)` bên kia một heading bị nối thành link
+  không renderer nào dựng. GitHub trả đoạn văn rồi heading, không có link nào.
+  Cả hai vòng quét trong `scanInline` mắc cùng lỗi này, nên cả hai giờ dừng lại
+  ở ký tự xuống dòng để nhánh ranh giới khối ngay dưới được hỏi. Đối chứng giữ
+  chiều ngược lại: cùng hình dạng ấy nằm gọn trong một đoạn văn vẫn là link.
+
+| Cổng                                   | Kết quả            |
+| -------------------------------------- | ------------------ |
+| `node plans/validate-plans.mjs`        | Đạt: 25 kế hoạch   |
+| `deno fmt --check`                     | 315 file           |
+| `deno lint`                            | 160 file           |
+| `node --test plans/test-validator.mjs` | 657 pass           |
+| `git diff --check`                     | exit 0             |
+| `node --test plans/test-history.mjs`   | 5 pass, sau commit |
+
+Suite thêm 9 test, lên 657. Mẻ dò sáu ca của vòng này cộng năm ca đối chứng thêm
+cho vùng vừa sửa đều đúng chiều. Bảy mẻ dò guard của bốn vòng trước (41 ca) chạy
+lại trên cả head cũ lẫn cây đã sửa cho output giống nhau từng dòng, nên không có
+chiều nào cũ bị đổi.
+
+## Codex vòng tiếp: review 5126869647
+
+Review đọc đúng head `f19a0160`, nêu bốn P2 và không P1 nào. Cả bốn tái hiện
+bằng một mẻ dò tám ca trước khi động vào code, và cả bốn đều đúng.
+
+- Giá trị thuộc tính HTML được giải mã ngay lúc đọc thẻ, trước máy tách `srcset`
+  và trước bước bỏ tab, xuống dòng rồi cắt khoảng trắng. GitHub trả
+  `href="../../\nREADME.md"` cho `href="../../&NewLine;README.md"`, tức link đó
+  đúng; gate cũ giữ nguyên tên reference và báo hỏng. Đích đến từ HTML vì thế
+  không giải mã lần thứ hai ở vòng kiểm target.
+- Bên trong giá trị thuộc tính, reference thiếu dấu chấm phẩy vẫn giải mã. Đo
+  bằng GitHub (`id="user-content-legacy&amp;"` cho `id="legacy&amp"`, còn
+  `&ampX` giữ nguyên) và bằng `npm:entities@6.0.1` ở chế độ thuộc tính: `&amp`
+  giải mã, `&amp=` và `&ampX` và `&notin` và `&zwj` thì không, `&not.` có,
+  `&#38` và `&#38=` đều có. Luật rút ra: named thiếu chấm phẩy chỉ giải mã khi
+  cả tên khớp một trong 106 tên legacy và ký tự kế không phải `=`; numeric thiếu
+  chấm phẩy thì luôn giải mã. Markdown không đổi, vẫn đòi dấu chấm phẩy.
+- `src` của `<input>` chỉ tải ảnh khi `type` là `image`; thiếu `type` thì mặc
+  định `text` và không tải gì. GitHub xóa hẳn thẻ `input` nên không tự trả lời
+  được câu này, mà gate cố ý không mô phỏng sanitizer, nên luật HTML là trọng
+  tài: khoanh `src` của `input` theo `type`, giống cách `poster` khoanh cho
+  `video` và `data` cho `object`.
+- Thẻ HTML inline không để lại ký tự nào nhưng vẫn là ranh giới của cặp nhấn.
+  GitHub trả `<h2>a<span></span><em>b</em></h2>` cho `## a<span></span>_b_`, tức
+  id thật là `ab`. Xóa thẳng thẻ khiến `_` dính vào chữ và slug thành `a_b_`;
+  giờ thẻ để lại một dấu sentinel, được gỡ cùng lúc với dấu NUL sẵn có.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 670 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+Chín mẻ dò guard của các vòng trước (46 ca) chạy trên cả head cũ lẫn cây đã sửa
+cho output giống nhau từng dòng, nên bốn thay đổi này không đổi kết luận của bất
+kỳ ca nào đã chốt trước đó.
+
+## Codex vòng tiếp: review 5127033724
+
+Review đọc đúng head `cd3831ef`, nêu ba P2 và không P1 nào. Cả ba tái hiện bằng
+một mẻ dò sáu ca trước khi động vào code, và cả ba đều đúng.
+
+- Tập ký tự trình duyệt cắt ở hai đầu URL là "C0 control or space" của URL
+  Standard, không phải whitespace theo nghĩa Unicode của `String.trim()`. Đo
+  bằng `new URL(href, base)`: khoảng trắng không ngắt ở hai đầu cho
+  `https://example.com/a/b/README.md%C2%A0`, tức nó được giữ và phần trăm hóa
+  chứ không đưa đường dẫn về gốc; khoảng trắng ASCII, ký tự điều khiển C0, form
+  feed và vertical tab thì bị cắt; khoảng trắng ideographic và zero-width thì
+  không. Hai tập lệch nhau ở cả hai chiều, và chiều cắt thừa mới là chiều nguy
+  hiểm: gate đo một đường dẫn sạch hơn đường dẫn trình duyệt phân giải rồi bảo
+  một link hỏng là đúng. Nay cắt theo mã ký tự `<= 0x20`, viết bằng vòng lặp để
+  không vướng `no-control-regex`.
+- Dấu ordered chỉ mở list khi số của nó dài tối đa chín chữ số. GitHub trả
+  `<p>1234567890. [x] criterion</p>` cho dấu mười chữ số và
+  `<ol start="123456789" class="contains-task-list">` cho dấu chín chữ số. File
+  này đã áp đúng giới hạn đó ở `listIndentTracker` và `containerPrefix`, chỉ
+  regex checklist DONE còn `\d+[.)]`, nên một danh sách GitHub không dựng vẫn
+  được tính là bằng chứng hoàn tất.
+- Blockquote chỉ đặt tiền tố lên đầu dòng, còn bên trong nó thụt bốn vẫn mở một
+  indented code block thật. GitHub trả `<blockquote><pre><code>` cho
+  `>     Trạng thái thực thi: DONE`, trong khi gate cũ đo cột trên dòng thô nên
+  dấu `>` và khoảng trắng sau nó ăn mất bốn cột, khối code không được nhận, và
+  một dòng trạng thái viết trong ví dụ nhúng thành khai báo thứ hai làm hỏng cả
+  ba gate trạng thái. Nay `outsideBlockCode` gỡ tiền tố bằng `stripQuoteMarkers`
+  rồi mới đo, đúng dáng `outsideFencedCode` vẫn dùng, cộng hai chuyển tiếp
+  container: mở sâu thêm một lớp thì đóng đoạn đang chạy, ra khỏi blockquote thì
+  đóng khối code mở bên trong nó.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 677 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+Mười mẻ dò guard của các vòng trước (52 ca) chạy trên cả head cũ lẫn cây đã sửa
+cho output giống nhau từng dòng, nên ba thay đổi này không đổi kết luận của bất
+kỳ ca nào đã chốt trước đó.
+
+## Codex vòng tiếp: review 5127127926
+
+Review đọc đúng head `1a0307b1`, nêu năm P2 và không P1 nào. Cả năm tái hiện
+bằng một mẻ dò mười ca trước khi động vào code. Bốn cái đúng và đã sửa, một cái
+bị bác có lý do.
+
+- `type` của input là enumerated attribute: giá trị khớp keyword bằng so sánh
+  ASCII không phân biệt hoa thường, và chuẩn không cắt khoảng trắng ở hai đầu.
+  Chrome trả `input.type === "text"` cho `type=" image "` và `"image"` cho cả
+  `type="image"` lẫn `type="IMAGE"`. Lời gọi `.trim()` thêm ở vòng trước là bịa,
+  và một test của chính vòng đó chốt sai hành vi bịa ấy. Nay `enumeratedKeyword`
+  chỉ hạ chữ thường rồi so, dùng chung cho cả `imageInput` lẫn kiểm tra
+  submitter mới; test cũ đổi sang `type="IMAGE"` để giữ đúng ý định ban đầu của
+  nó là phủ tính không phân biệt hoa thường.
+- `action` của form là URL trình duyệt điều hướng tới khi form được submit, và
+  `formaction` trên nút submit ghi đè URL đó, nên cả hai là đích thật y như
+  `href`. Chrome phân giải `form.action` thành
+  `http://localhost:8731/missing-r2-target` và `button.formAction` thành
+  `.../missing-r2b`. Renderer GitHub xóa hẳn `<form>` nên không trả lời được câu
+  hỏi này, và gate cố ý không mô phỏng sanitizer: ngữ nghĩa HTML quyết định, y
+  như tiền lệ `<input src>` đã chốt ở vòng trước. Phạm vi submitter bám chuẩn:
+  `button` submit khi không có `type` hoặc `type=submit`; `input` submit khi
+  `type` là `submit` hoặc `image`. `button type=button` và `input type=text`
+  không đóng góp đích nào.
+- `<base href>` thì bác. Chrome xác nhận `<base>` đặt trong body vẫn có hiệu lực
+  trong HTML thuần, nhưng renderer GitHub xóa sạch thẻ đó và trả link nguyên văn
+  `<a href="README.md">`. Gate tồn tại để trả lời một câu hỏi duy nhất: người
+  đọc bấm link này trên GitHub có tới nơi thật không. Trên bề mặt đó `<base>`
+  không có tác dụng, nên tôn trọng nó sẽ khiến gate im lặng trước một link hỏng
+  thật. Đó là chiều ngược với mọi thay đổi khác của loạt review này: các thay
+  đổi kia làm gate chặt hơn nên xấu nhất là báo động thừa mà người đọc gạt được,
+  còn cái này làm gate lỏng hơn và bỏ sót thì lọt lên nhánh. Thêm nữa, không
+  file nào trong `plans/` dùng `<base>`, và phân giải đích ở đây là
+  `resolve(dirname(filePath), clean)` cộng ràng buộc đích phải nằm trong repo:
+  một `<base href>` tuyệt đối sẽ đẩy đích ra ngoài repo nơi gate không còn gì để
+  đối chiếu, còn một cái tương đối sẽ cho từng file tự chọn thoát khỏi ràng buộc
+  ấy. Quyết định được khóa lại bằng test
+  `a base element does not change how a target resolves` thay vì để ngầm.
+- Content indent của item đo bằng cột chứ không bằng số ký tự của dấu. GitHub
+  trả `<pre><code></code></pre>` rỗng rồi
+  `<p><a href="missing-r4.md">r4</a></p>` cho một dấu list có tab, tức link sống
+  ngoài list; đối chứng thay tab bằng khoảng trắng thì link nằm trong `<code>`.
+  Tab trong dấu đẩy nội dung tới mốc bốn cột kế tiếp, nên `-` cộng tab đặt nội
+  dung ở cột bốn chứ không phải hai; đo thiếu thì một dòng thụt hai vẫn bị coi
+  là nội dung của item và fence chưa đóng. Nay `columnsOf` nhận thêm cột bắt đầu
+  và `listIndentTracker` đẩy `columnsOf(marker[0], width)`.
+- Trong ngoặc nhọn, chuẩn cấm `<` và `>` chưa escape chứ không cấm chính hai ký
+  tự đó. GitHub trả `<a href="https://example.com/a%3Eb" rel="nofollow">` cho
+  `[r5](<https://example.com/a\>b>)`, tức một dấu lớn hơn literal nằm trong
+  destination của một link ngoài thật. Nay `bracketedDestination` cho phép một
+  chuỗi escape nuốt ký tự kế tiếp, dùng chung cho `linkDestination` và
+  `inlineDestination`; đối chứng `<` và `>` trần vẫn bị bác.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 686 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+Mười một mẻ dò guard của các vòng trước (58 ca) chạy trên cả head cũ lẫn cây đã
+sửa cho output giống nhau từng dòng, nên bốn thay đổi này không đổi kết luận của
+bất kỳ ca nào đã chốt trước đó.
+
+## Codex vòng tiếp: review 5127216623
+
+Review đọc đúng head `be2a00aab1`, nêu bốn P2 và không P1 nào. Cả bốn tái hiện
+bằng một mẻ dò tám ca trước khi động vào code, và cả bốn đều đúng.
+
+- Dấu ordered mười chữ số không mở list ở bất kỳ ngữ cảnh nào, nên dòng mang nó
+  vẫn nằm trong đoạn và code span viết vắt qua dòng đó vẫn đóng được. Đường quét
+  đoạn của `inlineCodeSpans` còn nhận `[0-9]+[.)]`, nên nó cắt đoạn ở một dòng
+  mà chuẩn giữ nguyên, code span bị tách làm đôi và một link nằm trong backtick
+  thành link sống. Mốc chín chữ số là mốc đúng, và tôi đã đo cả hướng siết chặt
+  hơn trước khi dừng ở đó: dấu ordered chỉ ngắt được một đoạn khi số của nó là
+  1, GitHub xác nhận `1.`, `1)`, `01.` và `000000001.` đều ngắt còn `2.`, `0.`,
+  `123456789.` và `0000000001.` thì không; nhưng dưới một item đang mở thì `2.`
+  và `123456789.` vẫn đóng đoạn của item đó, nên áp luật "chỉ số 1 mới ngắt" sẽ
+  bỏ sót link hỏng. Chín chữ số là mốc duy nhất đúng cả hai chiều.
+- Một dòng mở bằng `<` chỉ ngắt lazy continuation khi nó thật sự mở một HTML
+  block. `blockStart` cũ kết thúc bằng một dấu `<` trần nên `<not-a-real-tag`
+  cắt blockquote thành hai section, nhãn link viết vắt qua dòng lười không được
+  ghép lại và một đích hỏng đi qua gate; GitHub trả đúng một thẻ `<a>` sống cho
+  cụm đó. Chuẩn nói dạng 7 không ngắt được đoạn, nhưng phép đo cho thấy ở vị trí
+  này renderer vẫn mở block cho `<a href="...">`, cho `<!-- c -->` và cho
+  `<pre>`, vì container đang mở là blockquote chứ không phải đoạn văn. Nay
+  `blockStart` khớp dạng 1 tới 6 cộng dạng thẻ đứng một mình, dựng lại từ chính
+  `htmlBlockOpeners` và `htmlLoneTag` để không có bản sao grammar thứ hai.
+- Nhãn của reference definition phải có ít nhất một ký tự không phải khoảng
+  trắng. GitHub trả `<p>[   ]: missing.md</p>` cho nhãn toàn khoảng trắng và cho
+  cả nhãn toàn tab, còn `[ x ]: dest` thì được nuốt làm definition thật. Guard
+  đặt cạnh guard giới hạn độ dài nhãn, cùng một lớp "đây là văn bản literal".
+  Không dùng `String.trim()`: tập khoảng trắng của chuẩn hẹp hơn, một nhãn chỉ
+  gồm U+00A0 là nhãn thật, cắt nó đi là xóa một definition thật khỏi gate, đúng
+  cái bẫy đã gặp ở vòng 36 với đích link.
+- Trong giá trị thuộc tính của HTML thô, tokenizer nuốt trọn dãy chữ số của một
+  numeric reference. Chrome đọc `<a id="longnumeric&#000000065;">` ra đúng
+  `longnumericA` và `&#x000000041;` ra `longhexA`. Mốc bảy chữ số thập phân và
+  sáu chữ số hex là luật của Markdown, giữ nó trong thuộc tính là chỉ nuốt
+  `&#0000000`, bỏ lại `65;`, dựng ra một id không ai có và báo hỏng một fragment
+  đúng. Đây là điểm lệch thứ ba giữa hai luật giải mã, cạnh hai điểm đã ghi sẵn
+  trong file, nên mẫu tách làm hai và `decodeReferences` chọn theo cờ
+  `attribute` vốn đã có.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 694 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+Mười hai mẻ dò guard của các vòng trước (88 ca) chạy trên cả head cũ lẫn cây đã
+sửa cho output giống nhau từng dòng, nên bốn thay đổi này không đổi kết luận của
+bất kỳ ca nào đã chốt trước đó.
+
+## Codex vòng tiếp: review 5127312070
+
+Review đọc đúng head `5092e4d578`, nêu năm P2 và không P1 nào. Cả năm tái hiện
+bằng một mẻ dò mười ca trước khi động vào code. Bốn đúng, một sai chiều.
+
+- `type` của `<button>` có cả missing value default lẫn invalid value default là
+  trạng thái submit, nên `<button type="bogus">` vẫn là nút submit và
+  `formaction` của nó vẫn là đích điều hướng thật. Chrome trả `button.type` ra
+  `submit` cho `bogus`, `submit`, `SUBMIT` và cho nút không viết `type`, chỉ trả
+  `button` và `reset` cho đúng hai keyword đó. Guard cũ đòi đúng chữ `submit`
+  nên bỏ sót mọi giá trị lạ. Nay `<button>` là submitter trừ đúng hai keyword
+  ấy. `<input>` giữ nguyên luật cũ vì chiều của nó ngược lại: Chrome trả
+  `input.type` ra `text` cho `<input type="bogus">`, tức invalid value default
+  của input là trạng thái text và nó không submit gì cả.
+- Nhiều dấu container đứng chung một dòng vật lý mở nhiều list lồng nhau, và nội
+  dung của item chỉ bắt đầu sau dấu trong cùng. GitHub trả `- - ~~~text` ra hai
+  `<ul>` lồng nhau rồi một `<pre><code>` chứa nguyên văn dòng sau, tức link
+  trong đó là ví dụ chết; ba lớp `- - - ~~~text` cũng vậy. `listIndentTracker`
+  ăn đúng một dấu nên dấu trong còn chắn trước dấu mở, fence không được nhận, và
+  gate bắt buộc báo hỏng một link chỉ có trong ví dụ. Nay bộ đếm ăn liên tiếp
+  các dấu trên cùng dòng và đẩy đúng một mức stack cho từng dấu. Ca đối chứng
+  `- - text` không có fence thì GitHub vẫn trả link sống, và gate vẫn báo hỏng.
+- Ba dấu hiệu của báo cáo BLOCKED đo trên văn bản thô, nên một fence viết trong
+  HTML comment vẫn thỏa gate. GitHub trả đúng chuỗi rỗng cho cụm comment đó:
+  người đọc không thấy khối lệnh nào mà kế hoạch vẫn giữ được trạng thái
+  BLOCKED. `structuralMarkdown` không dùng được ở đây vì nó xóa cả dòng fence
+  cùng với thân khối, nên câu hỏi "có khối lệnh không" luôn ra không. Thêm
+  `visibleMarkdown`: bỏ comment và block HTML thô, giữ nguyên khối code. Cùng lỗ
+  hổng ấy áp cho cả id lẫn chữ BLOCKED, viết trong comment cũng thỏa được, nên
+  cả ba dấu hiệu chuyển sang khung nhìn này.
+- Code span vắt được qua nhiều dòng, nên một hàng danh mục kẹp giữa hai dòng chỉ
+  có một backtick được GitHub render thành đúng một thẻ `<code>`: không hàng
+  bảng nào, không link nào. Rút hàng 001 khỏi bảng và để lại nó ở cuối README
+  dưới dạng đó thì người đọc không còn thấy kế hoạch 001 ở đâu, mà cổng bắt buộc
+  vẫn xanh. Nay việc chọn hàng và câu hỏi "README có link tới file này không" đo
+  trên khung nhìn đã bỏ inline code, còn giá trị trong ô vẫn đọc trên khung nhìn
+  đầy đủ, vì chính các ô trạng thái và phụ thuộc được phép viết trong backtick;
+  xóa backtick ở cả hai chỗ là bác bỏ một README đúng, và đó là lý do bản sửa
+  rộng đầu tiên làm đỏ regression về cách trình bày phụ thuộc. Một điểm siết dôi
+  ra và tôi giữ nguyên có chủ ý: khi hai dòng backtick nằm giữa một bảng đang
+  mở, GitHub coi chúng là hai hàng rác và hàng 001 vẫn render sống, còn gate thì
+  tính cả cụm là code span và báo thiếu. Đó là báo động thừa trên một cách viết
+  không ai dùng, người đọc gạt được; sửa cho khớp phải dạy `inlineCodeSpans`
+  biết ranh giới bảng, mà hàm đó dùng chung cho mọi gate nên đổi nó là mở đúng
+  chiều bỏ sót ở chỗ khác.
+- Đề nghị che thân `<title>` thì tôi bác, và đo được cả hai renderer trước khi
+  bác. Chrome đúng như finding nói: một thẻ ảnh viết trong thân `<title>` không
+  sinh phần tử ảnh nào, `document.images.length` là 1 chứ không phải 2, và cả
+  chuỗi thẻ đi vào `document.title` như văn bản, vì `title` là phần tử RCDATA
+  của tokenizer. Nhưng GitHub chỉ xóa cặp thẻ `title` khi sanitize và giữ nguyên
+  thẻ `img` bên trong: cụm đó render ra đúng một thẻ ảnh sống bọc trong một thẻ
+  neo, giữ nguyên đích của thuộc tính `src`, còn hai thẻ `title` thì bị escape
+  thành chữ hai bên; ở cả vị trí block lẫn vị trí inline đều vậy. Tài liệu trong
+  thư mục kế hoạch được đọc trên GitHub, nên che thân title là để một tài nguyên
+  hỏng thật đi qua cổng. Cùng chiều lệch với thẻ `base` ở vòng 37, và cũng khóa
+  lại bằng một test.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 703 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+Mười ba mẻ dò guard của các vòng trước (96 ca) chạy trên cả head cũ lẫn cây đã
+sửa cho output giống nhau từng dòng, nên bốn thay đổi này không đổi kết luận của
+bất kỳ ca nào đã chốt trước đó.
+
+## Codex vòng tiếp: review 5127497691
+
+Bảy finding P2 trên head `35af5de`. Dò lại từng cái bằng một mẻ mười bốn ca ghi
+thẳng vào file thật rồi khôi phục, và hỏi trọng tài độc lập trước khi sửa:
+renderer thật của GitHub qua `gh api /markdown` và Chrome thật qua MCP. Cả bảy
+đều tái hiện được, nên nhận cả bảy. Bốn cái là cổng lỏng hơn tài liệu người đọc
+thấy, ba cái là cổng siết nhầm vào thứ không renderer nào tải.
+
+- Khối lệnh rỗng vẫn thỏa bằng chứng BLOCKED. Cổng chỉ hỏi có dấu mở fence hay
+  không, nên hai dòng fence liền nhau, thứ GitHub render ra một khung trống, đủ
+  để một báo cáo không ghi lệnh nào giữ nguyên trạng thái BLOCKED mà không ai
+  trả giá. Nay phải có ít nhất một dòng có chữ trong khối. Fence chưa đóng vẫn
+  tính, vì chuẩn kéo khối tới hết tài liệu và người đọc vẫn thấy nội dung đó.
+- Khoảng trắng không ngắt trong destination. Khoảng trắng của CommonMark chỉ gồm
+  space, tab, xuống dòng, form feed và carriage return; mọi khoảng trắng Unicode
+  khác là ký tự dữ liệu của URL. Lớp `\s` và `trim()` của JavaScript gộp cả hai
+  nhóm, nên một destination kẹp giữa hai ký tự không ngắt bị cắt thành một đích
+  có thật và đi qua cổng. GitHub trả về `href="%C2%A0../../README.md%C2%A0"`:
+  đích thật là một đường dẫn không tồn tại. Nay cắt và tách destination theo
+  đúng năm ký tự ASCII, còn dạng bọc ngoặc nhọn giữ nguyên đường cũ.
+- Ba ca siết nhầm, mỗi ca đo trên một renderer rồi mới nới, và chỉ nới đúng phần
+  đã đo. Thuộc tính `src` của `<source>` dưới `<picture>`: Chrome chỉ phát ra
+  một yêu cầu mạng cho `srcset`, GitHub xóa hẳn thuộc tính đó khi sanitize, nên
+  hỏi nó là bắt cổng từ chối một cụm ảnh đáp ứng hợp lệ vì một thuộc tính không
+  ai đọc; dưới `<audio>` và `<video>` thì giữ nguyên độ siết vì chưa đo được
+  hành vi ở đó. Title của link và của definition: GitHub escape cả chuỗi vào
+  thuộc tính `title`, không dựng phần tử nào, nên nay che phần trong ngoặc của
+  mọi inline link đã nhận và che trọn dòng definition trước khi quét HTML thô.
+  Mô tả của một ảnh dạng rút gọn có definition: GitHub render đúng một thẻ ảnh
+  với chuỗi thẻ nằm trong thuộc tính `alt` dưới dạng chữ, nên nhãn ấy được che
+  như dạng inline; không có definition thì cả cụm là văn bản và thẻ trong đó
+  render thật, nên vẫn để nguyên cho fail closed.
+- Comment nằm giữa một heading. Cổng thay comment bằng khoảng trắng rồi mới cắt
+  slug, nên `## Alpha<!--x-->Beta` ra `alpha-beta`, còn GitHub render nó thành
+  đúng `AlphaBeta` và id là `alphabeta`: mọi link tới id thật bị báo hỏng. Nay
+  đường quét anchor dựng hai khung nhìn cùng độ dài, một khung đánh dấu chỗ
+  comment bằng một ký tự sẽ bị xóa hẳn khi cắt slug, nên comment không góp ký tự
+  nào và cũng không sinh thêm dấu gạch nối.
+- Dấu list số khác 1 trong code span nhiều dòng. Chuẩn chỉ cho một list ngắt
+  đoạn đang mở khi số bắt đầu là 1, còn cổng nhận mọi dấu hợp lệ. GitHub render
+  "Text
+  `start" rồi "2. [x](y.md)" rồi backtick đóng thành đúng một thẻ`code`vắt qua ba dòng, không list và không link nào. Nới thẳng thì lệch chiều, nên
+  bản sửa có điều kiện: trong một list item, dòng ấy rời container đang mở và
+  đoạn bên trong đóng theo, GitHub phát ra một list bắt đầu từ 2 với link sống,
+  nên ở đó vẫn ngắt. Ba ca đã chốt ở vòng trước phải đổi kết luận theo, và cả ba
+  đều được hỏi lại renderer thật trước khi đổi: dấu chín chữ số ở vòng 39 cùng
+  hai ranh giới`2.
+  Item`và`42) Item`trong bộ ca ban đầu đều cho ra một thẻ`code` duy nhất, nên
+  kết luận cũ của chúng là báo động thừa.
+
+Mười bốn mẻ dò guard của các vòng trước (104 ca) chạy trên cả head cũ lẫn cây đã
+sửa cho output giống nhau từng dòng, trừ đúng một dòng: ca dấu chín chữ số của
+vòng 39, đã đổi có chủ ý và đã xác minh lại bằng renderer thật ở trên.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 720 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+## Codex vòng tiếp: review 5127751757
+
+Một finding P1 trên head `6839267`, nói rằng các commit review đã ghim không
+phải tổ tiên của head nên không được chuyển sang một clone một nhánh, và
+validator ở đó hỏng 55 lỗi provenance. Bác, sau ba phép đo.
+
+- Mọi commit được ghim đều là tổ tiên thật của head đang review.
+  `git merge-base --is-ancestor` trả đúng cho `definition_commit` `b9d6d02`,
+  `definition_approval_commit` `db2f31f`, `reviewed_commit` `bb78ace`,
+  `completed_commit` `013a1cf`, và commit review độc lập gốc `495cd98`. Tiền đề
+  "không phải tổ tiên nên không được chuyển" sai ngay ở vế đầu.
+- Chạy đúng lệnh mà finding nói đã chạy thì không tái hiện được. Clone
+  `--no-local --single-branch --no-tags` tại đúng commit đang review, làm hai
+  lần, một lần từ cây local và một lần từ GitHub, đều cho validator thoát 0 và
+  `node --test plans/test-history.mjs` 5 pass. Bản thân `test-history.mjs` chính
+  là phép kiểm ấy đã được viết thành gate, nên nó chạy ở mọi vòng.
+- SHA mà lập luận dựa vào không tồn tại. `git cat-file -t f2809d4` báo "Not a
+  valid object name" trong cây thật, và GitHub trả 422 "No commit found for SHA"
+  cho cùng chuỗi đó.
+
+Có đúng một cách dựng ra được triệu chứng ấy: clone kèm `--depth`. Ở đó lịch sử
+bị cắt theo định nghĩa nên mọi gate provenance đều hỏng, và số lỗi là 89 chứ
+không phải 55. Đó cũng là điều kiện mà `plans/AGENTS.md` đã ghi sẵn ngay ở chính
+đoạn finding trích dẫn: checkout shallow phải fetch đầy đủ history trước. Không
+sửa gì cho vòng này; đây là lần thứ hai một finding dừng ở lập luận provenance
+trên một SHA không tồn tại, lần trước là vòng 20.
+
+| Cổng                                   | Kết quả  |
+| -------------------------------------- | -------- |
+| `node plans/validate-plans.mjs`        | Đạt      |
+| `deno fmt --check`                     | 315 file |
+| `deno lint`                            | 160 file |
+| `node --test plans/test-validator.mjs` | 720 pass |
+| `git diff --check`                     | sạch     |
+| `node --test plans/test-history.mjs`   | 5 pass   |
+
+## Codex vòng tiếp: review 5127851782
+
+Bốn finding P2 trên head `300ef66`. Tái hiện đủ bốn bằng probe, trọng tài bằng
+Chrome thật và `gh api /markdown`, nhận cả bốn.
+
+- G1: `pictureRanges` quét chuỗi thô nên `<div title="<picture>">` mở một vùng
+  picture giả và `src` của `<source>` dưới một `<video>` thật đứng sau đó biến
+  mất khỏi cổng. Đo trong Chrome: trang ấy có 0 phần tử `picture`, `title` đúng
+  chữ `<picture>`, và `source.parentElement.tagName` là `VIDEO`; GitHub cũng
+  escape thành `title="&lt;picture&gt;"`. Ranh giới cụm ảnh nay đọc từ chính
+  luồng thẻ đã được công nhận, còn dấu đóng chỉ tính khi nằm ngoài mọi thẻ ấy.
+- G2: khối lệnh bọc trong blockquote bị báo thiếu khối lệnh. GitHub render đúng
+  một khung code thật cho nó. `commandBlockBody` không còn tự dò fence bằng mẫu
+  ghim cột nữa mà hỏi `outsideFencedCode` qua một tham số ra mới, nên nó thừa
+  hưởng nguyên phần nhận biết blockquote và list item.
+- G3: ứng viên `srcset` có descriptor sai bị trình duyệt bỏ hẳn, nhưng cổng vẫn
+  đem URL của nó đi phân giải. Đo trong Chrome trên 27 dạng descriptor: `2q`,
+  `2X`, `100W`, `1e2w`, `0w`, `100h`, `-1x`, `1.x`, `+1x`, `1.5.5x`, `1x 2x`,
+  `1x 100w`, `1x 100h`, `100w 100w`, `100w 0h`, `1x (2x)`, `(1,5)x` và
+  `1x extra` đều cho `currentSrc` rỗng và không phát ra yêu cầu mạng nào; `2x`,
+  `1e2x`, `1E2x`, `.5x`, `01x`, `1.0e2x`, `0x`, `-0x`, `100w`, `100w 200h`,
+  `200h 100w` thì sống. Một ứng viên hỏng không kéo theo ứng viên khác:
+  `a 2q, b 1x` vẫn chọn `b`. Cổng nay kiểm ngữ pháp descriptor trước khi thu
+  URL, và nghi ngờ thì nhận để chỉ nghiêm thừa chứ không bỏ sót.
+- G4: trong một HTML block, `<a href==missing.md>` dựng ra `href="=missing.md"`
+  sống thật, đo được cả ở Chrome lẫn `gh api /markdown`; cùng chuỗi ấy viết
+  trong một đoạn văn thì GitHub escape thành văn bản. Thẻ nằm trong block nay
+  đọc bằng luật thuộc tính của HTML, thẻ ngoài block vẫn giữ ngữ pháp chặt của
+  CommonMark.
+
+Một dòng của bộ probe guard đổi kỳ vọng có chủ ý: `M4` của vòng 34 đo
+`srcset="missing-m4.png (1,5)x"` và trước đây chờ một link hỏng. Chrome bỏ hẳn
+ứng viên ấy, nên kỳ vọng cũ là báo động giả. Tính chất mà `M4` thật sự canh,
+rằng ngoặc che dấu phẩy nên chuỗi là một ứng viên chứ không phải hai, vẫn được
+canh bằng chính test đó: nếu dấu phẩy tách thì `5)x` thành ứng viên hợp lệ và
+cổng phải báo hỏng đúng chuỗi ấy.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 756 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+## Codex vòng tiếp: review 5128124635
+
+Sáu finding P2 trên head `b40cceb`. Tái hiện đủ sáu bằng probe, trọng tài bằng
+`gh api /markdown` cho năm cái và bằng Chrome thật cho cái còn lại, nhận cả sáu.
+
+- F1: một mục checklist sau đoạn văn đang mở vẫn được đếm là tiêu chí hoàn tất.
+  GitHub render `2. [x] tiêu chí` đứng ngay dưới một dòng văn xuôi thành
+  `<p>...<br>2. [x] tiêu chí</p>`, tức nó vẫn là văn xuôi chứ không phải mục.
+  Luật cắt đoạn văn của CommonMark nay được áp cho chính bộ đếm tiêu chí, nên
+  một kế hoạch DONE chỉ có văn xuôi không còn qua cổng bằng một mục giả.
+- F2: hàng danh mục được đếm dù bảng không có dòng dấu phân cách. Bỏ dòng ấy đi
+  thì GitHub render toàn bộ danh mục thành một đoạn văn, không hàng bảng nào,
+  nhưng cổng vẫn thấy đủ hàng. Cổng nay dựng thân bảng trước rồi mới chọn hàng
+  trong thân đó.
+- F3: dòng nối lười bị coi là dòng thoát khỏi blockquote, nên `---` ngay sau nó
+  hóa thành heading setext và sinh một anchor không có thật. GitHub render cụm
+  ấy thành `<blockquote>...</blockquote><hr>`. Bộ quét container nay giữ dòng
+  thiếu tiền tố ở lại trong container khi đoạn văn của container còn mở và bản
+  thân dòng ấy không mở khối nào.
+- F4: nhãn reference chuẩn hóa bằng `trim()` và `\s+`, mà hai thứ đó nuốt cả
+  U+00A0. GitHub để `[Ghost][label\u00a0]` nguyên văn còn `[Ghost2][label2 ]`
+  thành link, tức khoảng trắng của CommonMark không gồm U+00A0. Nhãn nay chuẩn
+  hóa đúng năm ký tự khoảng trắng mà đặc tả liệt kê.
+- F5: `href` trên `<script>` được đưa vào cổng, nhưng đó là thuộc tính chết của
+  HTML. Vì đây là hướng nới lỏng nên đo bằng Chrome thật trước: trong bốn thẻ
+  dựng sẵn chỉ `h-src.js`, `s-src.js`, `s-href.js` và `s-xlink.js` phát ra yêu
+  cầu mạng, `h-href.js` thì không. `href` và `xlink:href` trên `script` nay chỉ
+  vào cổng khi thẻ nằm trong một `<svg>`.
+- F6: dấu ngoặc vuông không thuộc tập ký tự local part của autolink email, nên
+  `<foo[bar](missing.md)@example.com>` không phải autolink và link bên trong nó
+  sống thật: GitHub trả về
+  `<p>&lt;foo<a href="missing-f6.md">bar</a>@example.com&gt;</p>`. Cổng nay dùng
+  đúng tập ký tự của đặc tả, và `<a_b!c@example.com>` vẫn là autolink hợp lệ.
+
+Một test đổi kỳ vọng có chủ ý: `README rejects duplicate row IDs` trước đây nhân
+đôi hàng `| 005` bằng cách nối thêm vào cuối tài liệu sau một dòng trống. Với
+thân bảng của F2 thì dòng ấy không còn là hàng, và `gh api /markdown` xác nhận
+GitHub cũng render nó thành `<p>| 005 | a |</p>`. Test nay nhân đôi hàng ngay
+tại chỗ trong thân bảng, và có thêm một test đối chứng khẳng định bản sao đặt
+ngoài bảng không phải hàng.
+
+Bản sửa F2 từng gây một hồi quy nới rộng: khung bảng đọc trên khung nhìn đã xóa
+code span, nên một hàng kẹp giữa hai dòng chỉ có một backtick tạo ra dòng trống
+giả cắt thân bảng và mọi hàng sau đó bị báo mất. `gh api /markdown` trả về đúng
+một bảng liên tục cho cụm ấy, chỉ ô bị kẹp mới mất link. Khung bảng nay đọc trên
+Markdown cấu trúc vì cấu trúc khối được quyết định trước phần inline; bộ probe
+guard 20 batch sau đó trùng khít baseline.
+
+Vòng này cũng ghim luôn mười dạng tự soi còn nợ từ vòng 42: `<PICTURE>` viết hoa
+vẫn mở vùng, còn `<picture>` bị escape, nằm trong `<script>` hoặc trong comment
+thì không; khối lệnh lồng hai lớp blockquote vẫn được đếm; và ba dạng thẻ hỏng
+trong HTML block vẫn để lộ đích.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 786 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+## Codex vòng tiếp: review 5128532858
+
+Năm finding P2 trên head `b3f0cef`. Tái hiện đủ năm bằng probe, trọng tài bằng
+Chrome thật cho hai cái và bằng `gh api /markdown` cho ba cái, nhận cả năm.
+
+- H1: ngoài SVG, bộ phân tích HTML đổi thẳng thẻ mở `image` thành `img`, nên
+  `<image src="x.png">` tải tài nguyên y như `<img>` trong khi cổng chỉ nhận
+  cách viết `img`. Đo trong Chrome: cây DOM trả về `IMG` cho thẻ ấy, `image` cho
+  thẻ nằm trong `<svg>`, và trang phát ra yêu cầu tới `image-alias.png`. Tên thẻ
+  nay được chuẩn hóa trước khi phân loại thuộc tính, chỉ khi nó nằm ngoài
+  `<svg>`.
+- H2: chiều ngược của ánh xạ một-một quét mọi dòng của README thay vì chỉ thân
+  bảng, nên một dòng văn xuôi như `Ghi chú | 999 | ...` bị bác là quảng cáo kế
+  hoạch lạ. GitHub render đúng cụm ấy thành một bảng chỉ gồm hàng danh mục cộng
+  một thẻ `<p>`. Chiều ngược nay dùng cùng tập `bodyRows` với chiều xuôi.
+- H3: dấu list đứng cuối dòng vẫn mở một item, chỉ là item ấy bắt đầu bằng dòng
+  trống. Bộ đếm thụt lề đòi khoảng trắng sau mọi dấu nên cặp `-` rồi một dòng
+  thụt bốn không được nhận là list, dòng ấy bị đọc thành indented code và một
+  link sống biến mất khỏi cổng. GitHub trả về
+  `<ul><li><a href=...>live</a></li></ul>`. Nhánh dấu cuối dòng nay có mặt ở cả
+  `listIndentTracker`, đúng nhánh mà `containerPrefix` đã có, và content indent
+  của item ấy là bề rộng dấu cộng một.
+- H4: finding nói regex nuốt mất dấu gạch chéo của giá trị không nháy. Đo lại
+  thì không phải: ngữ pháp thuộc tính của block đã trả về đúng
+  `../../README.md/`. Chỗ hỏng nằm sau đó, ở `resolve()`, vì hàm ấy xóa dấu gạch
+  chéo cuối nên đích khớp một file có thật. Kết luận của finding vẫn đúng:
+  Chrome xin `slashval.png/` và nhận 404 trong khi `<img src=spaceval.png />`
+  xin `spaceval.png`. Đích kết thúc bằng `/` nay phải thật sự là thư mục.
+- H5: hai dấu hiệu của báo cáo BLOCKED kiểm bằng chứa chuỗi con, mà `1002` chứa
+  `002` và `UNBLOCKED` chứa `BLOCKED`. Một báo cáo đổi tên như vậy vẫn giữ
+  nguyên trạng thái BLOCKED của kế hoạch 002. Cả hai nay đo bằng token đứng
+  riêng.
+
+Một dòng của bộ probe guard đổi cách dựng có chủ ý: `H4` và `H4b` của vòng 32
+trước đây nối hàng danh mục vào cuối README, mà chỗ đó nằm ngay sau đoạn văn
+kết. `gh api /markdown` trả về `<p>...<br>| 1000 | ... |</p>`, tức dòng ấy là
+dòng nối lười chứ không phải hàng bảng. Hai ca nay chèn hàng vào đúng trong thân
+bảng, và tính chất mà chúng canh, rằng ID không đúng ba chữ số vẫn bị đối chiếu
+với manifest, vẫn đỏ như cũ. Hai test tương ứng trong suite được sửa cùng cách,
+kèm một test đối chứng cho dòng văn xuôi có dấu ống.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 799 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+## Codex vòng tiếp: review 5128863382
+
+Sáu finding P2 trên head `e3dec0d`. Tái hiện đủ sáu, nhận năm, từ chối một.
+
+- G1: vòng tìm đuôi link trong heading đếm ngoặc mà không biết title có nháy,
+  nên `## [Ghost](../../README.md "title (")` không bao giờ tìm ra dấu đóng.
+  Slug ghi cả destination lẫn title, một link tới cái slug bịa ấy đi qua cổng,
+  còn `#ghost` thì bị báo hỏng. GitHub render cụm ấy thành
+  `<h2><a href="../../README.md" title="title (">Ghost</a></h2>`. Vòng quét nay
+  theo dõi nháy và ngoặc nhọn đúng như `scanInline` đã làm.
+- G2: `<source src>` đọc theo tổ tiên `picture` nên sai cả hai chiều. Đo trong
+  Chrome bằng `currentSrc`:
+  `<picture><video><source src="v.mp4"></video></picture>` cho `currentSrc` đúng
+  bằng `v.mp4`, tức đích ấy hỏng được mà cổng im; còn một `<source>` không nằm
+  trong media nào thì không phần tử nào chọn, và GitHub xóa hẳn `src` của mọi
+  `<source>` khi sanitize, nên hỏi ở đó là báo hỏng một chuỗi không renderer nào
+  tải. Vai trò nay đọc từ phần tử bao gần nhất.
+- G3: dấu mở comment giữa dòng không mở HTML block, nên chuẩn đòi đủ ngữ pháp
+  comment. GitHub trả về `<p>prefix &lt;!-- unclosed <a href="x">live</a></p>`.
+  Chỉ dấu mở đứng đầu dòng, sau tối đa ba khoảng trắng và các dấu trích dẫn đang
+  mở, mới còn được nuốt tới hết tài liệu.
+- G4 bị từ chối. Finding nói `<a name>` viết trong `<svg>` không tạo fragment.
+  Đúng với HTML thô: đo trong Chrome, `getElementsByName("ghost-svg")` trả về 0
+  còn `ghost-html` trả về 1, và thẻ ấy mang namespace SVG. Nhưng kênh đọc của kế
+  hoạch là GitHub, mà GitHub sanitize bỏ hẳn thẻ `<svg>` và giữ nguyên
+  `<a name="user-content-ghost-svg">`, tức fragment ấy sống. Siết theo đề xuất
+  là báo hỏng một link chạy được trên chính nơi tài liệu được đọc. Giữ nguyên,
+  kèm một test chốt chiều này.
+- G5: kết luận đúng, ví dụ và cơ chế thì không. Ví dụ của finding là ba dòng
+  trích dẫn, trong đó dòng giữa chỉ có dấu mở comment:
+
+```text
+> `code
+> <!--
+> end`
+```
+
+GitHub chỉ trả về một blockquote chứa đúng dòng đầu, nghĩa là dấu mở đứng đầu
+dòng mở một HTML block và nuốt cả heading phía sau, nên báo fragment ấy hỏng là
+đúng chứ không phải sai. Chỗ hỏng thật là dấu mở viết giữa dòng:
+
+```text
+> `code
+> text <!-- more
+> end`
+```
+
+Cụm này cho đúng một code span và heading sau đó vẫn còn, trong khi cổng cắt
+đoạn ở mỗi dấu trích dẫn nên span vỡ, dấu mở thành comment thật và một fragment
+sống bị báo hỏng. Nay chỉ dòng làm sâu thêm trích dẫn mới ngắt đoạn, các luật
+container khác đọc trên phần sau dấu trích dẫn, và dấu mở comment đứng đầu dòng
+được tính là ranh giới khối.
+
+- G6: thẻ đóng của phần tử raw text vẫn đóng phần tử khi mang thuộc tính. Đo
+  trong Chrome: `<script></script foo><img src=x.png>` phát ra đúng một yêu cầu
+  tới `x.png`. Ngữ pháp dấu đóng nay nhận thuộc tính.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 811 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+## Codex vòng tiếp: review 5129588976
+
+Bốn finding P2 trên head `5537cfb`. Tái hiện đủ bốn và nhận cả bốn, nhưng hai
+finding phải sửa lại phần mô tả trước khi sửa mã.
+
+- H1: dòng mở một HTML block cắt được đoạn văn đang chạy, nên một backtick lẻ ở
+  trên nó không bắt được cặp. Ví dụ trong finding có dòng trống trước `<div>`
+  nên cổng đã báo hỏng sẵn; chỗ hỏng thật là dấu mở đứng ngay dòng kế tiếp.
+  GitHub trả về `<p>prefix` + backtick trong văn bản + `code</p>` rồi tới một
+  thẻ `<img>` sống. Nay `inlineCodeSpans` ngắt đoạn ở cả năm mẫu của
+  `htmlBlockOpeners`. Dạng 7 nằm ngoài danh sách, và chiều ấy cũng được đo: một
+  `<img>` đứng lẻ trên dòng vẫn nằm trong code span dưới dạng chữ, cắt ở đó là
+  báo hỏng một đường dẫn không renderer nào tải.
+- H2: lần khai trạng thái thứ hai viết dấu hai chấm bằng character reference thì
+  phép đếm trên chuỗi thô không thấy. GitHub render `Trạng thái thực thi&#58;`
+  thành đúng nhãn trường có dấu hai chấm thật, nên trang quảng cáo một trạng
+  thái trái với metadata canonical mà cổng vẫn xanh. `declarations` nay giải mã
+  reference trước khi đếm; bộ giải mã ấy đã tôn trọng dấu escape của Markdown
+  nên `\&#58;` vẫn là chữ literal.
+- H3: danh mục một-một chỉ đọc con trực tiếp của `plans/`, nên
+  `plans/archive/026-hidden.md` được quét nội dung mà không cần ID, dòng
+  manifest hay hàng README. Hai cách sửa mà finding đề nghị đều không dùng được.
+  Đưa file lồng vào danh mục là bất khả vì trường `file` của manifest đã cấm dấu
+  phân cách đường dẫn. Cấm tên đánh số ngoài thư mục gốc thì từ chối chính nội
+  dung repo đang có: chứng cứ đặt tên theo số kế hoạch nó phục vụ, và luật ấy
+  làm cổng đỏ ngay trên `plans/evidence/001-executor-local.md` và
+  `plans/evidence/002-contract-extension.md`. Bất biến đúng hẹp hơn: một
+  artifact mang số kế hoạch phải trỏ tới một ID có thật.
+- H4: `srcdoc` của `<iframe>` là cả một tài liệu HTML lồng, và tài nguyên tương
+  đối trong đó phân giải theo địa chỉ của trang bao ngoài. Đo bằng access log
+  của một server cục bộ: trang chỉ có `<iframe srcdoc>` phát ra đúng một yêu cầu
+  tới ảnh viết bên trong. `src` của chính `<iframe>` đã nằm trong danh sách tài
+  nguyên từ đầu, nên bỏ qua `srcdoc` là lệch với chính lời hứa của cổng. Vòng
+  quét thẻ thô nay là một hàm, và `<iframe srcdoc>` giải mã giá trị rồi chạy lại
+  đúng hàm ấy trên tài liệu lồng. Đệ quy dừng chắc chắn vì giá trị `srcdoc` luôn
+  ngắn hơn tài liệu chứa nó; `srcdoc` trên phần tử khác không phải browsing
+  context nên bị bỏ qua.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 820 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+## Codex vòng tiếp: review 5130386548
+
+Bảy finding P2 trên head `77904ef`. Tái hiện đủ bảy và nhận cả bảy, nhưng bốn
+finding phải sửa lại phần mô tả trước khi sửa mã: hai chỗ phép thử là thuộc tính
+có mặt chứ không phải giá trị khác rỗng, một chỗ phạm vi rộng hơn báo cáo, và
+một chỗ ranh giới ký tự hẹp hơn báo cáo.
+
+- I1: `<base href>` viết bên trong `srcdoc` đổi gốc phân giải của tài liệu lồng.
+  Đo trong Chrome: `baseURI` của tài liệu ấy và `currentSrc` của thẻ ảnh đều
+  chuyển sang thư mục mà base trỏ tới. Phép đo thêm một chiều mà finding không
+  nói: một `<base>` viết sau thẻ ảnh không đổi thẻ ảnh đó, `currentSrc` vẫn ở
+  thư mục cũ, nên base chỉ có hiệu lực với thẻ đứng sau nó. Đích tuyệt đối và
+  đích bắt đầu bằng dấu gạch chéo không đổi gốc. Thẻ `base` ở tài liệu ngoài thì
+  GitHub xóa hẳn, nên luật này chỉ áp cho tài liệu lồng.
+- I2: `<iframe>` có `srcdoc` thì không bao giờ tải `src`. Đo trong Chrome:
+  `contentDocument.location.href` là `about:srcdoc` và access log của server
+  không có dòng nào xin đường dẫn ở `src`. Finding nói "có srcdoc", và phép đo
+  chốt đúng chỗ đó: `srcdoc=""` cũng cho ra `about:srcdoc`, nên phép thử là
+  thuộc tính có mặt, không phải giá trị khác rỗng.
+- I3: media có `src` của chính nó thì bỏ qua mọi `<source>` con. Đo bằng
+  `currentSrc`: `<video src=A><source src=B>` chọn A. Chiều rỗng cũng được đo và
+  nó sửa lời của finding: `<video src="">` trả về `currentSrc` rỗng chứ không
+  rơi xuống `<source>`, nên ở đây cũng là phép thử thuộc tính có mặt.
+- I4: `<link rel=preload as=image>` chọn ứng viên từ `imagesrcset`. Đo bằng
+  access log ở dpr 1: chỉ ứng viên trong `imagesrcset` được xin, `href` không.
+  Dù vậy cổng vẫn giữ `href` trong tập đích, vì client không hiểu `imagesrcset`
+  còn dùng `href` làm dự phòng; bỏ `href` là chiều lỏng. Hai token `rel` và `as`
+  so khớp không phân biệt hoa thường, đúng như chuẩn định nghĩa chúng.
+- I5: footnote definition không phải văn bản đoạn, nên dòng `---` ngay sau nó
+  không dựng setext heading. Đo trên renderer của GitHub: kết quả là một `<hr>`,
+  không có heading và cũng không có id nào. Hai phép đo thêm ghim ranh giới:
+  nhãn footnote chứa dấu cách thì không phải definition, `[^my note]: Body` rồi
+  `---` vẫn ra `<h2>`; và footnote definition ngắt được một đoạn đang mở, khác
+  reference definition, nên không cần theo dõi trạng thái đoạn.
+- I6: title của một link là thuộc tính `title=` chứ không phải chữ người đọc
+  thấy, nên nó không phải một lần khai trường. Đo trên renderer của GitHub:
+  `[valid](../README.md "Trạng thái thực thi: example")` trả về thẻ `<a>` mang
+  `title=`. Phạm vi rộng hơn báo cáo và cả phần rộng thêm đều được tái hiện:
+  title của một reference definition và cả nhãn của nó cũng bị đếm nhầm, trong
+  khi GitHub không render khối definition ra gì. Cách sửa vì vậy che cả nhịp
+  `(...)` của inline link lẫn trọn dòng của mọi reference definition. Văn xuôi
+  lặp lại nhãn trường thì vẫn là lần khai thứ hai và vẫn bị từ chối.
+- I7: form feed là khoảng trắng của bộ tokenize HTML. Đo trên renderer của
+  GitHub: `<img` + U+000C + `src="x.png">` render ra một thẻ ảnh sống, và U+000C
+  cũng kết thúc một giá trị không đóng ngoặc kép. Ranh giới hẹp hơn báo cáo:
+  U+000B không được thêm vào, nó không ngăn được thuộc tính và cũng không kết
+  thúc giá trị, nên nhận nó là dựng ra đích mà không renderer nào tải.
+
+Chuyển `containerPrefix`, `definitionHead`, `definitionLabelLimit`,
+`commonmarkSpaceClass`, `labelBlank` và `labelIsBlank` lên trước `declarations`.
+Lượt quét kế hoạch ở thân module gọi `statusOf` ngay khi module nạp, mà sau I6
+`statusOf` đi qua bộ quét container và bộ đọc reference definition; để chúng ở
+chỗ cũ thì cổng chết bằng `ReferenceError` thay vì báo lỗi kế hoạch.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 840 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+## Codex vòng tiếp: review 5130837473
+
+Hai finding trên `d10d60a`. Cả hai đều tái hiện không ra, nên vòng này không sửa
+mã; phần dưới ghi số đo để vòng sau không phải dựng lại.
+
+- J1 (P1, `evidence/001.md:10`): báo cáo nói `reviewed_commit` cùng nhiều commit
+  definition/approval vắng mặt vì không phải tổ tiên của `8ff64a3`. Commit
+  `8ff64a3` không tồn tại trong repository: `git cat-file -t` trả
+  `fatal: Not a valid object name`. Dựng clone một nhánh đầy đủ history bằng
+  `--single-branch --branch advisor/goal-backlog --no-tags` tại `d10d60a`, được
+  507 commit; trong clone đó `node plans/validate-plans.mjs` trả `Đạt` và
+  `node --test plans/test-history.mjs` trả 5 pass, 0 fail. Quét toàn bộ 375
+  chuỗi 40 hex trong `plans/**/*.md` ngay trong clone ấy: 362 object có mặt (204
+  commit, 94 blob, 64 tree) và không commit nào ngoài ancestry của HEAD. Mọi ref
+  trong front matter của `evidence/001.md`, gồm `completed_commit` `013a1cfd`,
+  đều có mặt và là tổ tiên HEAD.
+
+- J1 kèm số đo giáp ranh, ghi lại cho minh bạch: 13 chuỗi 40 hex vắng mặt trong
+  clone sạch. Hai chuỗi là commit upstream `frappe/erpnext` được trỏ bằng URL
+  GitHub, không thuộc repository này. Ba chuỗi là SHA của repository khác hoặc
+  một tree được nêu làm ví dụ trong chính tập tin review. Tám chuỗi còn lại là
+  mốc cây executor local ghi trong văn xuôi evidence, dạng
+  `cây da01bee4:
+  server/UI check`. Chúng không phải `sourceRef` của record
+  nào, không có trích đoạn nào neo vào chúng, và không cổng nào đọc chúng; quy
+  tắc 1 của `plans/AGENTS.md` ràng buộc `sourceRef` đọc được bằng Git, không
+  ràng buộc mốc chạy suite. Clone sạch mà `test-history.mjs` tự dựng vẫn xanh
+  đúng vì vậy.
+
+- J2 (P2, `014-sales-chart-draft-filter.md:186`): báo cáo nói dòng kết luận vẫn
+  bảo chưa triển khai draft policy trong khi kế hoạch đã DONE. Dòng ấy nằm trong
+  mục `Bảo trì`, là nhật ký đối chiếu theo mốc, và đoạn chứa nó tự neo bằng câu
+  mở đầu `Đối chiếu sau 013 tại main bce7d251`. Commit `bce7d251` là merge PR
+  #39 lúc 2026-09-05T17:41:06+07:00; phần thực thi 014 merge tại `b409cbb7` lúc
+  2026-09-05T18:35:16+07:00, 54 phút sau, và `bce7d251` là tổ tiên của
+  `b409cbb7`. Tại mốc mà đoạn văn tự neo, câu đó đúng. Trạng thái sống nằm ở
+  dòng 12 `Trạng thái thực thi: DONE` và ở `evidence/014.md`, không nằm ở nhật
+  ký.
+
+- J2 còn vướng cấu trúc nếu muốn sửa chữ: `definitionApproved` ghim nguyên blob
+  của tập tin kế hoạch. Đo bằng cách sửa đúng dòng 186, và riêng bằng cách thêm
+  một dòng trắng cuối tập tin: cả hai đều cho
+  `DONE requires approved definition snapshot` cùng
+  `DONE requires reviewer approval evidence`. Ca đối chứng thêm một dòng vào
+  `evidence/005.md` thì cổng vẫn `Đạt`, nên vùng bất biến đúng là thân kế hoạch
+  DONE chứ không phải cả `plans/`. Sửa dòng 186 rồi ghim lại blob là tự duyệt
+  chỉnh sửa của chính mình, đúng thứ mà cổng dựng ra để chặn.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 840 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+## Codex vòng tiếp: review 5131171692
+
+Hai finding trên `e85f4d9`. K1 tái hiện được nhưng chỉ đúng trên một checkout
+squash, không đúng trên nhánh; K2 là lỗ thật, đã sửa.
+
+- K1 (P1, `evidence/001.md:10`) nêu SHA `f873797`. SHA ấy không có trong
+  repository, và cũng không phải merge ref của PR: `refs/pull/25/merge` là
+  `848ccdf5`, merge của head `e85f4d98` vào `main` `164be320`. Dựng lại đúng
+  hình dạng báo cáo mô tả bằng cách squash nhánh lên `main` trong một clone
+  `--no-local --no-tags` sạch, được `c60e5ff5`: `b9d6d02a`, `db2f31fa` và
+  `bb78ace7` đều không còn là tổ tiên, validator vẫn exit 0, còn
+  `test-history.mjs` ra 3 pass 2 fail. Trùng khít báo cáo. Trên merge ref thật
+  thì cả bốn ref là tổ tiên và `test-history.mjs` ra 5 pass 0 fail.
+- K1 có một chỗ chẩn đoán sai cần ghi lại: validator không đi qua nhờ object còn
+  nằm trong cache của repository nguồn. Clone squash ở trên là clone sạch và
+  `--no-local`, validator vẫn exit 0. Hai cổng đo hai thứ khác nhau: validator
+  đo record, `test-history.mjs` đo ancestry, chỉ cổng sau nhạy với squash.
+  `plans/AGENTS.md:34` đã viết sẵn luật này, nên squash là ca bị chặn có chủ ý.
+- K2 (P2, `validate-plans.mjs:3856`) nhận. `baseDirectory` lấy dấu gạch chéo
+  cuối của nguyên giá trị `href`, nên một dấu gạch chéo nằm trong query hay
+  fragment cũng dựng thành thư mục gốc. Đo bằng access log của Chrome trong
+  srcdoc: `<base href='evidence/001.md?x=/foo/'>`,
+  `<base href='evidence/001.md#a/b/'>` và `<base href='evidence/001.md#a?z/w/'>`
+  đều cho ảnh tương đối đi tới `/evidence/<tên>`, giống hệt
+  `<base href='evidence/'>`. Query và fragment không thuộc đường dẫn.
+- Chiều lỗi của K2 là chiều lỏng, nên phải sửa: gốc dài hơn thật khiến đích
+  thành `../evidence/001.md?x=/foo/definitely-missing.png`, rồi bộ tách query
+  cắt lại thành `../evidence/001.md` là tập tin có thật, và một ảnh hỏng đi qua
+  cổng. Sửa bằng cách cắt `#` trước rồi cắt `?`, thứ tự ấy bắt buộc vì dấu hỏi
+  nằm trong fragment không mở query.
+- Năm ca hồi quy: ba ca đòi bắt `link hỏng ../evidence/definitely-missing.png`
+  cho query, cho fragment và cho dấu hỏi trong fragment; hai ca đối chứng giữ
+  chiều ngược lại, một đích có thật trong thư mục đã phân giải vẫn qua cổng, và
+  một base không có dấu gạch chéo ngoài query vẫn không đổi đích. Cất
+  `validate-plans.mjs` đi thì ba ca đầu đỏ, hai ca đối chứng xanh cả hai chiều.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 845 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+## Codex vòng tiếp: review 5131548504
+
+Bốn finding trên head `4860c8e`: nhận một, từ chối ba. Mỗi từ chối kèm một phép
+đo dựng lại đúng ca mà báo cáo mô tả.
+
+- L1 (P1, `evidence/001.md:5`) nêu SHA `e429470`. Đây là lần thứ ba liên tiếp
+  một P1 cùng dạng nêu một SHA không có trong repository: `git cat-file -t` trả
+  `Not a valid object name`. Head của nhánh và của remote đều là `4860c8e`, còn
+  `refs/pull/25/merge` là `ce8a5297`, merge của `4860c8e` vào `main` `164be320`.
+  Dựng lại hình dạng ấy bằng cách squash nhánh lên `main` trong một clone
+  `--no-local --no-tags` sạch, được `468701c1`: `b9d6d02a`, `db2f31fa` và
+  `bb78ace7` mất tư cách tổ tiên, validator vẫn exit 0, `test-history.mjs` ra 3
+  pass 2 fail. Trên `ce8a5297` thì cả bốn ref là tổ tiên và cổng ra 5 pass 0
+  fail. Chính lời của finding, "rather than publishing this tree as a
+  squash-style sibling of that history", mô tả đúng cái checkout tổng hợp ấy,
+  nên nó xác nhận chẩn đoán vòng trước chứ không phải một lỗi mới của cây này.
+  `plans/AGENTS.md:34` đã ghi sẵn luật giữ provenance bằng merge commit.
+- L2 (P2, `validate-plans.mjs:1279`) nhận. `srcsetElements` nhận `source` vô
+  điều kiện, nên `srcset` của một `<source>` nằm dưới `<audio>` hay `<video>`
+  cũng bị hỏi. Máy chọn tài nguyên của media chỉ đọc `src`, `type` và `media`;
+  `srcset` chỉ có nghĩa khi phần tử bao gần nhất là `<picture>`. Đo bằng access
+  log của Chrome: `<video><source src="ok.mp4" srcset="inert.png"></video>` và
+  bản `<audio>` tương ứng không phát ra yêu cầu nào cho ứng viên srcset, còn ca
+  đối chứng `<picture><source srcset="pic.png"><img src="fb.png"></picture>` xin
+  `pic.png` ngay trong cùng một lần tải trang.
+- Chiều lỗi của L2 là chiều chặt quá: cổng bắt buộc từ chối một tài liệu đúng vì
+  một đường dẫn không renderer nào đụng tới. Sửa bằng đúng phép so vị trí đã
+  dùng cho `<source src>`: thêm một biến `picture` đối xứng với `media`, cùng
+  đọc vùng mở muộn nhất, nên phần tử bao gần nhất mới quyết vai trò.
+- L3 (P2, `validate-plans.mjs:3747`) từ chối, và ở đây phép đo lật ngược hẳn giả
+  định của báo cáo. GitHub không sinh id `user-content-fn-1` bao giờ. Render
+  `POST /markdown` với `mode=gfm` cho đúng ba id: `footnote-label`,
+  `user-content-fn-1-<32 hex>` và `user-content-fnref-1-<32 hex>`. Hậu tố ấy
+  ngẫu nhiên theo từng lần render: sáu lần render cùng một chuỗi byte cho sáu
+  hậu tố khác nhau. Vậy `[x](#user-content-fn-1)` hỏng thật trên GitHub, và thêm
+  id chú thích vào cổng chỉ là nới lỏng để nhận một link không bao giờ chạy.
+  Không có hình dạng nào của link chú thích viết tay mà bền, vì đích đổi sau mỗi
+  lần render.
+- L4 (P2, `validate-plans.mjs:3939`) từ chối, đo bằng trình duyệt thật. Trong
+  Chrome, tài liệu `srcdoc` có `baseURI` bằng URL của trang bao,
+  `href='#inside'` phân giải thành `http://localhost:8792/index.html#inside`, và
+  bấm vào nó đưa khung lồng rời hẳn `about:srcdoc` sang chính tài liệu ngoài:
+  sau cú bấm, `contentDocument.location.href` là URL của trang bao và khung chứa
+  HTML của trang bao. Cái `id='inside'` viết trong srcdoc không bao giờ được hỏi
+  tới. Nên làm phẳng srcdoc vào tài liệu chứa là đúng chiều, kể cả ở ca ngược mà
+  báo cáo nêu: nếu tài liệu ngoài có id trùng thì link chạy thật, và cổng nhận
+  nó cũng đúng.
+- Tám ca hồi quy cho vòng này. Bốn ca đòi cổng im: `<source srcset>` dưới
+  `<video>`, dưới `<audio>`, đứng trơ ngoài mọi cụm, và dưới một `<video>` lồng
+  trong `<picture>`. Bốn ca đối chứng đòi cổng vẫn bắt: `<source srcset>` trong
+  `<picture>`, `<img srcset>` ngoài mọi cụm, `<source srcset>` trong một
+  `<picture>` lồng trong `<video>`, và một fragment viết trong srcdoc trỏ vào id
+  chỉ có trong srcdoc. Cất `validate-plans.mjs` đi thì bốn ca đầu đỏ, bốn ca đối
+  chứng xanh cả hai chiều.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 853 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+## Codex vòng tiếp: review 5131950521
+
+Tám finding trên head `ad14bd7`: nhận sáu, từ chối hai. Sáu ca nhận đều đo bằng
+renderer độc lập trước khi sửa, không ca nào sửa theo lời mô tả suông.
+
+- M1 (P1, `evidence/001.md:10`) nêu SHA `605348765cfb...`. Đây là lần thứ tư
+  liên tiếp một P1 cùng dạng nêu một SHA không có trong repository:
+  `git cat-file -e` trả về lỗi. `refs/pull/25/merge` lúc này là `f9ccda4f`, cha
+  là `164be320` và `ad14bd7`. Chạy đúng thủ tục mà báo cáo mô tả, fetch một
+  revision vào một bare repo rồi
+  `git clone --no-local --single-branch
+  --no-tags`: trên head thật, clone có
+  510 commit, validator exit 0, test lịch sử 1 pass. Trên bản squash của cùng
+  nhánh lên `164be32`, clone có 357 commit, validator exit khác 0 với đúng 55
+  dòng lỗi, test lịch sử 1 fail. 55 là đúng con số báo cáo nêu, và các dòng mẫu
+  trùng luôn chữ nghĩa của nó. Vậy finding chỉ dựng lại được trên một squash,
+  không dựng lại được trên chính nhánh này; cách gọi "shallow clone" là triệu
+  chứng của checkout tổng hợp chứ không phải lỗi của cổng.
+- M2 (P2, `validate-plans.mjs:3985`) nhận. Chuẩn đóng băng base ở phần tử
+  `<base>` đầu tiên có thuộc tính `href`, không phải ở cái đầu tiên có `href`
+  khác rỗng. Đo bằng access log của Chrome: tài liệu lồng
+  `<base href=''><base href='../'><img src='m2-probe.png'>` xin đúng
+  `/pages/m2-probe.png`, nghĩa là cái base rỗng đã chốt gốc. Ca đối chứng giữ
+  chiều còn lại: base đầu tiên có giá trị thật vẫn dời gốc, cổng vẫn báo
+  `../missing-c6.png`.
+- M3 (P2, `validate-plans.mjs:1297`) nhận. Ứng viên của một `<source>` chỉ tới
+  được cái `<img>` đứng sau nó trong cùng một `<picture>`. Access log:
+  `<picture><img src="m3-img.png"><source srcset="m3-after.png"></picture>` chỉ
+  xin `m3-img.png`; cụm đảo thứ tự thì xin `m3-before.png`. Phép so vị trí đọc
+  cả vùng đóng của `<picture>` đang bao, nên một `<source>` ở cụm sau không bị
+  ghép nhầm với ảnh của cụm trước.
+- M4 (P2, `validate-plans.mjs:264`) nhận. Đo trên renderer của GitHub bằng
+  `POST /markdown` với `mode=gfm`: đoạn viết sau `<!-->` trả về một thẻ `<img>`
+  sống, y hệt đoạn viết sau một `<!-- c -->` thường. Hai dạng đóng ngay `<!-->`
+  và `<!--->` kết thúc comment tại chỗ, nên mẫu comment thu lại thành
+  `<!--(?:>|->|[\s\S]*?(?:-->|$))`. Ca đối chứng đòi comment thường vẫn che hết
+  thân, để đây là một comment hẹp hơn chứ không phải một comment bị tắt.
+- M5 (P2, `validate-plans.mjs:486`) từ chối, và ở đây phép đo lật ngược hẳn giả
+  định của báo cáo. Renderer của record là GitHub chứ không phải bộ phân tích
+  HTML của trình duyệt, và GitHub không dựng `iframe` bao giờ. Đo bằng
+  `POST /markdown` với `mode=gfm`:
+  `<iframe><a href="p3.html">fallback</a><img src="p3.png"></iframe>` trả về hai
+  thẻ `iframe` đã escape thành văn bản, còn `<a>` và `<img>` bên trong ra thành
+  phần tử sống; viết `iframe` thành block riêng cũng vậy. Nên một đích hỏng viết
+  trong thân `iframe` render thật và hỏng thật, còn che thân ấy là nới lỏng,
+  đúng chiều nguy hiểm. Mô tả tokenizer trong báo cáo chỉ đúng với tài liệu do
+  trình duyệt phân tích, và nó đúng trong `srcdoc`, chỗ có bộ phân tích thật.
+  Trong Chrome, `<iframe src="f.html"><img src="fallback.png"></iframe>` quả
+  thật chỉ xin `f.html`; nhưng chuỗi ấy không bao giờ tới Chrome dưới dạng một
+  `iframe`, vì GitHub đã escape thẻ trước đó.
+- M6 (P2, `validate-plans.mjs:3897`) nhận, và nhận cả hai chiều. Trong foreign
+  content, `<![CDATA[ ... ]]>` là character data: access log không xin tấm nào
+  viết trong đó. Ngoài foreign content, cùng chuỗi ấy chỉ là bogus comment đóng
+  ở dấu `>` đầu tiên, nên phần viết sau dấu ấy là markup sống: probe xin
+  `m6c-after-first-gt.png` và không xin `m6b-inside.png`. Cổng che CDATA chỉ
+  trong thân `svg`, còn ngoài đó cắt `<!...` tại `>` đầu tiên. Thẻ mở `svg` và
+  con sống của nó vẫn nằm trong vùng quét.
+- M7 (P2, `validate-plans.mjs:349`) nhận, giới hạn ở HTML mức block, đúng phạm
+  vi mà phép đo đỡ được. `POST /markdown` dựng `<div><img/src="x.png"></div>`
+  thành một `<img>` sống có `src` thật: tokenizer ghi nhận
+  unexpected-solidus-in-tag rồi đọc lại ký tự kế tiếp như đầu một tên thuộc
+  tính. Cùng chuỗi ấy viết inline, không bọc block, thì GitHub để nguyên văn
+  bản. Nên bộ đọc thuộc tính nhận `/` làm dấu ngăn cạnh khoảng trắng, và không
+  nới sang ca inline vì ở đó cổng sẽ báo nhầm.
+- M8 (P2, `validate-plans.mjs:1284`) nhận, chỉ trong tài liệu lồng. Access log:
+  trong một `iframe srcdoc`, cả ba dạng `content='0;url=file'`,
+  `content='0; URL=file'` và `content='0;file'` đều khiến Chrome tải đúng tệp
+  được nêu. Cổng đọc `content` của `<meta>` khi `http-equiv` là `refresh`, bóc
+  phần số, dấu ngăn, từ khóa `url=` tùy chọn và giá trị có thể đặt trong nháy.
+  Giới hạn ở tài liệu lồng là cố ý: đo bằng `POST /markdown` thì GitHub xóa hẳn
+  `<meta>` và `<base>` khỏi chính bản ghi, nên một meta refresh mức trên cùng
+  không lái được gì và bắt nó là báo nhầm. Một ca đối chứng ghim ranh giới đó.
+- Phép đo của M3 còn sửa hai ca cũ. `<picture><source srcset="x.png"></picture>`
+  không có `<img>` nào thì access log không có dòng nào cho `x.png`, nên hai ca
+  vốn ghim hình dạng ấy được viết lại cho có `<img>` đứng sau `<source>`, đúng
+  cụm mà máy chọn tài nguyên thật sự đọc.
+- Mười bốn ca hồi quy cho vòng này. Sáu ca dựng lại đúng sáu finding đã nhận,
+  một ca ghim chiều của M5 bị từ chối: `<img>` viết trong thân `iframe` vẫn phải
+  bị hỏi. Bảy ca còn lại giữ các chiều đối lập: `<picture>` không có ảnh thì
+  không chọn gì, `<image>` sống ngoài mọi CDATA vẫn bị hỏi, comment thường vẫn
+  che hết thân, phần sau dấu `>` đầu tiên của một CDATA ngoài `svg` vẫn bị hỏi,
+  base đầu tiên có giá trị thật vẫn dời gốc, meta refresh mức trên cùng vẫn được
+  bỏ qua, và `srcset` của `<img>` vẫn bị hỏi ở mọi vị trí. Cất
+  `validate-plans.mjs` đi thì các ca dựng lại finding đỏ, còn ca đối chứng xanh
+  cả hai chiều.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 867 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+## Codex vòng tiếp: review 5132524906
+
+Hai finding, cùng rơi trúng head cũ `ad14bd7` chứ không phải `d946dfa` đang
+đứng: nhận một, từ chối một.
+
+- P1 (`evidence/001.md:10`) từ chối, lần thứ năm liên tiếp cùng một hình dạng.
+  Lần này báo cáo gọi tên `cc32c229` với cha duy nhất `164be320`;
+  `git cat-file -t cc32c229` trong repository trả về "Not a valid object name".
+  Đo trên head thật bằng đúng thao tác mà báo cáo mô tả,
+  `git clone
+  --single-branch --branch advisor/goal-backlog` thẳng từ GitHub
+  vào một thư mục trống: clone ra `d946dfa`, `node plans/validate-plans.mjs`
+  exit 0, và cả 64 reference mà `--print-references` in ra đều tồn tại trong
+  clone ấy và đều là ancestor của HEAD. Không có 20 SHA nào lạc, không có 55
+  dòng lỗi nào. 55 dòng chỉ hiện ra khi dựng lại một bản squash một cha lên
+  `164be320`, đúng như đã đo ở vòng trước. Đáng nói là chính finding đề nghị
+  phát hành qua một merge giữ được lịch sử provenance, tức đúng luật đã ghi
+  trong `plans/AGENTS.md`: nhánh này về `main` bằng merge commit, không squash
+  và không rebase.
+- P2 (`test-validator.mjs:82`) nhận phần khiếu nại, bác phần chẩn đoán. Báo cáo
+  nói mỗi fixture "recompiles the entire 240 KB validator"; đo riêng khâu biên
+  dịch được 0,1ms một lần, nên nó không giải thích nổi thời gian chạy. Phân rã
+  một lượt chạy ấm 312ms bằng đồng hồ đặt quanh từng tầng: 82ms là 19 tiến trình
+  con Git, 9ms là các shim đọc đĩa, phần còn lại là lượt quét thật của
+  validator. Ghi thêm một phép đo hụt để lần sau khỏi lặp: `--cpu-prof` quy 98%
+  thời gian cho `scanInline`, nhưng đặt đồng hồ thẳng vào hàm đó chỉ ra 10ms một
+  lượt. Profiler gộp các callee đã inline vào frame cha, nên self time của nó
+  không dùng để chọn chỗ tối ưu được.
+- Hai thay đổi cho P2, không đụng tới một khẳng định nào của test. Thứ nhất,
+  `runInNewContext` cho từng fixture đổi thành một `new Function` biên dịch một
+  lần lúc nạp module: context V8 mới biến mọi khai báo cấp cao của validator
+  thành thuộc tính của một global đã contextify, nên mỗi lần đọc đi qua
+  interceptor và không có gì JIT học được sống sót qua fixture; trong thân một
+  hàm thì các khai báo ấy là binding cục bộ và bản dịch dùng chung cho cả bộ
+  test. 312ms xuống 245ms. Thứ hai, luật bất biến của cache Git mở từ object ID
+  đủ 40 ký tự sang cả ID viết tắt: ID viết tắt địa chỉ theo nội dung y như bản
+  đủ, chỉ đổi nghĩa khi kho nhận thêm object, mà một lượt chạy test thì không
+  ghi gì vào kho. 16 trong 19 lời gọi Git còn lại của mỗi fixture là `cat-file`
+  và `ls-tree` trên ID viết tắt. 245ms xuống 176ms, và 19 tiến trình con xuống
+  còn 3.
+- Chỗ cố ý không nới: cache hết mọi lời gọi `git` thì xuống 152ms, nhưng
+  `status --short` và mọi ref đổi được như `HEAD` phụ thuộc trạng thái ngoài
+  object database, và đã có một ca ghim rằng chúng luôn được đọc lại. Giữ bất
+  biến ấy đáng hơn 24ms.
+- Hai ca hồi quy cho vòng này. Một ca ghim ID viết tắt được cache còn chuỗi ngắn
+  hơn bảy ký tự thì không; trả luật về `{40}` thì ca này đỏ còn ca đối chứng về
+  ref đổi được vẫn xanh. Một ca ghim rằng validator biên dịch sẵn không thêm tên
+  nào vào global thật và một fixture hỏng không để lại trạng thái cho lượt sau;
+  ca này tự đo sức phát hiện của nó bằng một gán không khai báo trong thân hàm
+  sloppy, phải bắt được đúng tên vừa rò rồi mới xoá đi.
+- Toàn bộ bộ test: 869 pass trong 193,48s, đỉnh RSS 364 MiB, so với 318,92s và
+  313 MiB trước khi sửa. Nhanh hơn 1,65 lần; RSS nhích lên vì bản dịch dùng
+  chung và mã đã tối ưu của nó sống suốt lượt chạy thay vì mất theo từng
+  context. Phần chi phí còn lại của mỗi fixture là lượt quét thật của validator
+  trên repository, tức đúng thứ đang được đo; nhớ đệm nội bộ của nó qua các
+  fixture thì cổng không còn đo cái script mà CI chạy nữa.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 869 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
