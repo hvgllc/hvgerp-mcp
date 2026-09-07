@@ -5330,10 +5330,17 @@ test("a comma inside a srcset URL does not separate candidates", () => {
 });
 
 test("a comma inside srcset descriptor parentheses is hidden", () => {
-  invalid({
+  // Ngoặc che dấu phẩy nên cả chuỗi là đúng một ứng viên. Descriptor "(1,5)x"
+  // sai ngữ pháp nên Chrome bỏ hẳn ứng viên đó, currentSrc rỗng và không có
+  // yêu cầu mạng nào; vì vậy cổng không được báo gì. Nếu dấu phẩy vẫn tách thì
+  // "5)x" thành URL của ứng viên thứ hai với descriptor rỗng, tức hợp lệ, và
+  // cổng phải báo hỏng đúng chuỗi đó. Exit 0 ở đây đo cả hai tính chất.
+  const result = run({
     "plans/evidence/backlog-review.md": (text) =>
       text + '\n<img srcset="missing-h1d.png (1,5)x">\n',
-  }, /link hỏng missing-h1d\.png$/m);
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
 });
 
 test("an object data resource is a real target", () => {
@@ -6070,4 +6077,198 @@ test("an ordered marker of 2 still cuts a code span inside a list item", () => {
       text + "\n- item " + tick + "start\n2. [live](missing-r41o.md)\n" + tick +
       "\n",
   }, /link hỏng missing-r41o\.md/);
+});
+
+test("a command block inside a blockquote satisfies BLOCKED evidence", () => {
+  // GitHub render fence bọc trong blockquote thành đúng một khung code thật,
+  // nên báo cáo này có ghi lệnh. Dò fence bằng mẫu ghim cột thì mọi dòng đều
+  // mở đầu bằng "> " và không dòng nào được nhận là dấu mở.
+  const result = run(blocked(22), [], {
+    "plans/evidence/022.md": {
+      kind: "file",
+      content: "# Bằng chứng 022\n\nTrạng thái: BLOCKED\n\n" +
+        "> " + tick.repeat(3) + "bash\n> deno test\n> " + tick.repeat(3) + "\n",
+    },
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an empty command block inside a blockquote is still empty", () => {
+  invalid(
+    blocked(22),
+    /evidence\/022\.md: BLOCKED evidence report is missing a command block$/m,
+    [],
+    {
+      "plans/evidence/022.md": {
+        kind: "file",
+        content: "# Bằng chứng 022\n\nTrạng thái: BLOCKED\n\n" +
+          "> " + tick.repeat(3) + "bash\n>\n> " + tick.repeat(3) + "\n",
+      },
+    },
+  );
+});
+
+test("a command block inside a list item satisfies BLOCKED evidence", () => {
+  const result = run(blocked(22), [], {
+    "plans/evidence/022.md": {
+      kind: "file",
+      content: "# Bằng chứng 022\n\nTrạng thái: BLOCKED\n\n- Chạy:\n\n  " +
+        tick.repeat(3) + "bash\n  deno test\n  " + tick.repeat(3) + "\n",
+    },
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a tag shaped attribute value opens no picture range", () => {
+  // Chrome dựng <div title="<picture>"> thành một div có title đúng chữ đó và
+  // không có phần tử picture nào trên trang, nên source của video phía sau vẫn
+  // là tài nguyên thật.
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<div title="<picture>"></div>' +
+      '<video><source src="missing-r42a.mp4"></video>\n',
+  }, /link hỏng missing-r42a\.mp4/);
+});
+
+test("a real picture still hides the src of its source", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<picture><source src="missing-r42b.png"' +
+      ' srcset="../../README.md"></picture>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a closing picture tag inside an attribute closes no range", () => {
+  // Chuỗi ấy là dữ liệu của title, không đóng phần tử nào, nên source phía sau
+  // vẫn nằm trong cụm ảnh.
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<picture><source srcset="../../README.md">' +
+      '<div title="</picture>"></div>' +
+      '<source src="missing-r42c.png"></picture>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+for (
+  const descriptor of [
+    "2q",
+    "2X",
+    "100W",
+    "1e2w",
+    "0w",
+    "100h",
+    "-1x",
+    "1.x",
+    "1x 2x",
+    "1x 100w",
+    "100w 0h",
+    "1x extra",
+  ]
+) {
+  test(`an invalid srcset descriptor ${descriptor} drops its candidate`, () => {
+    // Đo trong Chrome: currentSrc rỗng và không có yêu cầu mạng nào cho URL đó,
+    // nên đem nó đi phân giải là báo hỏng một tài liệu đúng.
+    const result = run({
+      "plans/evidence/backlog-review.md": (text) =>
+        text + '\n<img srcset="missing-r42d.png ' + descriptor + '">\n',
+    });
+    assert.equal(result.thrown, undefined);
+    assert.equal(result.exitCode, 0, result.messages.join("\n"));
+  });
+}
+
+for (
+  const descriptor of [
+    "2x",
+    "1e2x",
+    ".5x",
+    "01x",
+    "1.0e2x",
+    "0x",
+    "-0x",
+    "100w",
+    "100w 200h",
+    "200h 100w",
+  ]
+) {
+  test(`a valid srcset descriptor ${descriptor} keeps its candidate`, () => {
+    invalid({
+      "plans/evidence/backlog-review.md": (text) =>
+        text + '\n<img srcset="missing-r42e.png ' + descriptor + '">\n',
+    }, /link hỏng missing-r42e\.png/);
+  });
+}
+
+test("an empty srcset descriptor keeps its candidate", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<img srcset="missing-r42f.png">\n',
+  }, /link hỏng missing-r42f\.png/);
+});
+
+test("a broken descriptor does not drop the next candidate", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<img srcset="missing-r42g.png 2q, ../../README.md 1x">\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a valid candidate after a broken one still reaches the gate", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<img srcset="../../README.md 2q, missing-r42h.png 1x">\n',
+  }, /link hỏng missing-r42h\.png/);
+});
+
+test("a raw block tag keeps an unquoted value that holds an equals sign", () => {
+  // Trong một HTML block, Chrome và GitHub cùng dựng href="=missing-r42i.md",
+  // nên đó là một đích sống và hỏng được.
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n<div><a href==missing-r42i.md>x</a></div>\n",
+  }, /link hỏng =missing-r42i\.md/);
+});
+
+test("the same broken attribute stays text outside a raw block", () => {
+  // GitHub escape nguyên cụm thành văn bản khi nó đứng trong một đoạn văn, nên
+  // ở đó không có đích nào cả.
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nText <a href==missing-r42j.md>x</a> done.\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a quoted value holding an angle bracket survives in a raw block", () => {
+  // Nhánh nháy phải được thử trước lớp ký tự rộng, nếu không thẻ bị cắt ngay
+  // tại ">" nằm trong nháy và href thật biến mất khỏi cổng.
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<div><a title="a>b" href=missing-r42k.md>x</a></div>\n',
+  }, /link hỏng missing-r42k\.md/);
+});
+
+test("a raw block id with an equals sign becomes a real anchor", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n<div><a id==r42l>x</a></div>\n\n[y](#=r42l)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("the same broken id outside a raw block builds no anchor", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nText <a id==r42m>x</a> done.\n\n[y](#=r42m)\n",
+  }, /anchor hỏng #=r42m/);
 });

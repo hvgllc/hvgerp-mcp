@@ -2797,3 +2797,49 @@ trên một SHA không tồn tại, lần trước là vòng 20.
 | `node --test plans/test-validator.mjs` | 720 pass |
 | `git diff --check`                     | sạch     |
 | `node --test plans/test-history.mjs`   | 5 pass   |
+
+## Codex vòng tiếp: review 5127851782
+
+Bốn finding P2 trên head `300ef66`. Tái hiện đủ bốn bằng probe, trọng tài bằng
+Chrome thật và `gh api /markdown`, nhận cả bốn.
+
+- G1: `pictureRanges` quét chuỗi thô nên `<div title="<picture>">` mở một vùng
+  picture giả và `src` của `<source>` dưới một `<video>` thật đứng sau đó biến
+  mất khỏi cổng. Đo trong Chrome: trang ấy có 0 phần tử `picture`, `title` đúng
+  chữ `<picture>`, và `source.parentElement.tagName` là `VIDEO`; GitHub cũng
+  escape thành `title="&lt;picture&gt;"`. Ranh giới cụm ảnh nay đọc từ chính
+  luồng thẻ đã được công nhận, còn dấu đóng chỉ tính khi nằm ngoài mọi thẻ ấy.
+- G2: khối lệnh bọc trong blockquote bị báo thiếu khối lệnh. GitHub render đúng
+  một khung code thật cho nó. `commandBlockBody` không còn tự dò fence bằng mẫu
+  ghim cột nữa mà hỏi `outsideFencedCode` qua một tham số ra mới, nên nó thừa
+  hưởng nguyên phần nhận biết blockquote và list item.
+- G3: ứng viên `srcset` có descriptor sai bị trình duyệt bỏ hẳn, nhưng cổng vẫn
+  đem URL của nó đi phân giải. Đo trong Chrome trên 27 dạng descriptor: `2q`,
+  `2X`, `100W`, `1e2w`, `0w`, `100h`, `-1x`, `1.x`, `+1x`, `1.5.5x`, `1x 2x`,
+  `1x 100w`, `1x 100h`, `100w 100w`, `100w 0h`, `1x (2x)`, `(1,5)x` và
+  `1x extra` đều cho `currentSrc` rỗng và không phát ra yêu cầu mạng nào; `2x`,
+  `1e2x`, `1E2x`, `.5x`, `01x`, `1.0e2x`, `0x`, `-0x`, `100w`, `100w 200h`,
+  `200h 100w` thì sống. Một ứng viên hỏng không kéo theo ứng viên khác:
+  `a 2q, b 1x` vẫn chọn `b`. Cổng nay kiểm ngữ pháp descriptor trước khi thu
+  URL, và nghi ngờ thì nhận để chỉ nghiêm thừa chứ không bỏ sót.
+- G4: trong một HTML block, `<a href==missing.md>` dựng ra `href="=missing.md"`
+  sống thật, đo được cả ở Chrome lẫn `gh api /markdown`; cùng chuỗi ấy viết
+  trong một đoạn văn thì GitHub escape thành văn bản. Thẻ nằm trong block nay
+  đọc bằng luật thuộc tính của HTML, thẻ ngoài block vẫn giữ ngữ pháp chặt của
+  CommonMark.
+
+Một dòng của bộ probe guard đổi kỳ vọng có chủ ý: `M4` của vòng 34 đo
+`srcset="missing-m4.png (1,5)x"` và trước đây chờ một link hỏng. Chrome bỏ hẳn
+ứng viên ấy, nên kỳ vọng cũ là báo động giả. Tính chất mà `M4` thật sự canh,
+rằng ngoặc che dấu phẩy nên chuỗi là một ứng viên chứ không phải hai, vẫn được
+canh bằng chính test đó: nếu dấu phẩy tách thì `5)x` thành ứng viên hợp lệ và
+cổng phải báo hỏng đúng chuỗi ấy.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 756 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |

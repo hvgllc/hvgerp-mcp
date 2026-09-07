@@ -110,11 +110,16 @@ function stripQuoteMarkers(line) {
     depth++;
   }
 }
-function outsideFencedCode(body, preserveOffsets = false) {
+// "bodyLines" là tham số ra tùy chọn: hàm ghi vào đó chỉ số của những dòng nằm
+// trong thân một fence, không tính hai dòng dấu. Gate nào cần hỏi "khối code
+// này có chữ không" thì đọc tập ấy thay vì tự dò lại fence bằng một mẫu riêng;
+// dò lại là mất hết phần nhận biết container ở đây, và một khối lệnh viết trong
+// blockquote hay dưới list item không được nhận là khối nào cả.
+function outsideFencedCode(body, preserveOffsets = false, bodyLines) {
   let fence, fenceQuote = 0, fenceIndent = 0, listIndent = 0;
   const track = listIndentTracker();
   const hidden = (line) => preserveOffsets ? " ".repeat(line.length) : "";
-  return body.split("\n").map((line) => {
+  return body.split("\n").map((line, lineIndex) => {
     const quote = stripQuoteMarkers(line);
     // Ra khỏi blockquote là ra khỏi cả fence mở bên trong nó; giữ fence sống
     // tiếp thì phần còn lại của tài liệu bị ẩn và mọi gate sau đó đọc một tài
@@ -143,6 +148,7 @@ function outsideFencedCode(body, preserveOffsets = false) {
         marker && width <= listIndent + 3 && marker[1][0] === fence[0] &&
         marker[1].length >= fence.length && /^[ \t\r]*$/.test(marker[2])
       ) fence = undefined;
+      else bodyLines?.add(lineIndex);
       return hidden(line);
     }
     // Fence nằm trong list item mở ở content indent của item, không phải ở cột
@@ -295,6 +301,19 @@ const htmlAttributes = "(?:" + htmlSpace +
   "[A-Za-z_:][A-Za-z0-9_.:-]*(?:" + htmlOptionalSpace + "=" +
   htmlOptionalSpace +
   "(?:[^ \\t\\r\\n\"'=<>`]+|'[^']*'|\"[^\"]*\"))?)*";
+// Bên trong một HTML block, nội dung đi thẳng tới bộ phân tích HTML và không
+// qua ngữ pháp thẻ chặt hơn của CommonMark. Máy đọc thuộc tính ở đó nuốt một
+// giá trị không nháy tới khoảng trắng hoặc ">", coi "=", "<", nháy và backtick
+// nằm trong đó chỉ là parse error rồi vẫn giữ nguyên ký tự. Chrome và GitHub
+// cùng dựng <a href==missing.md> viết trong một block thành href="=missing.md";
+// đo bằng ngữ pháp chặt thì thẻ ấy không khớp mẫu nào, một đích sống không bao
+// giờ vào cổng và link hỏng đi qua. Nhánh nháy đứng trước vì lớp ký tự rộng ở
+// đây khớp được cả dấu nháy: để nó trước thì title="a>b" bị cắt ngay tại ">"
+// bên trong nháy.
+const htmlBlockAttributes = "(?:" + htmlSpace +
+  "[A-Za-z_:][A-Za-z0-9_.:-]*(?:" + htmlOptionalSpace + "=" +
+  htmlOptionalSpace +
+  "(?:'[^']*'|\"[^\"]*\"|[^ \\t\\r\\n>]+))?)*";
 // Điều kiện đóng null nghĩa là block chạy tới dòng trống đầu tiên. Không có
 // dạng comment ở đây: "<!--" đã do outsideHtmlComments xử lý theo span, và
 // nhánh <![A-Za-z] bên dưới không khớp dấu gạch nên hai đường không giẫm nhau.
@@ -356,6 +375,12 @@ const htmlTagAttributes = new RegExp(
     "/?>",
   "g",
 );
+// Cùng thẻ mở đó nhưng đọc bằng luật thuộc tính của HTML block.
+const htmlBlockTagAttributes = new RegExp(
+  "<([A-Za-z][A-Za-z0-9-]*)(" + htmlBlockAttributes + ")" + htmlOptionalSpace +
+    "/?>",
+  "g",
+);
 // Một thuộc tính của thẻ mở, quét tuần tự từ trái sang phải. Dò thẳng tên
 // thuộc tính bằng regex thì chuỗi trông như thuộc tính nằm bên trong giá trị
 // của thuộc tính khác cũng trúng, và một <span title="href='missing.md'"> hoàn
@@ -366,16 +391,26 @@ const htmlAttributePair = new RegExp(
     htmlOptionalSpace + "(?:\"([^\"]*)\"|'([^']*)'|([^ \\t\\r\\n\"'=<>`]+)))?",
   "g",
 );
+// Bản đọc theo luật của HTML block: giá trị không nháy chạy tới khoảng trắng
+// hoặc ">". Đọc phần thuộc tính của một thẻ trong block bằng mẫu chặt thì
+// "href==missing.md" cho ra một tên href không giá trị, rồi phần còn lại bị đọc
+// tiếp như một tên thuộc tính khác, và đích sống của thẻ vẫn vắng mặt khỏi cổng.
+const htmlBlockAttributePair = new RegExp(
+  "([A-Za-z_:][A-Za-z0-9_.:-]*)(?:" + htmlOptionalSpace + "=" +
+    htmlOptionalSpace + "(?:\"([^\"]*)\"|'([^']*)'|([^ \\t\\r\\n>]+)))?",
+  "g",
+);
 // HTML giữ lần xuất hiện đầu tiên của một tên thuộc tính và bỏ mọi lần sau, kể
 // cả lần đầu không mang giá trị. Trả về cả hai thì id thứ hai của
 // <a id="real" id="ghost"> thành anchor và một fragment không tới đâu đi qua
 // cổng, còn một href chết lặp lại thì bị đem đi phân giải.
-function tagAttributes(text) {
+function tagAttributes(text, blockRaw = false) {
   const pairs = [];
   const seen = new Set();
-  htmlAttributePair.lastIndex = 0;
+  const pattern = blockRaw ? htmlBlockAttributePair : htmlAttributePair;
+  pattern.lastIndex = 0;
   let match;
-  while ((match = htmlAttributePair.exec(text))) {
+  while ((match = pattern.exec(text))) {
     const name = match[1].toLowerCase();
     if (seen.has(name)) continue;
     seen.add(name);
@@ -578,20 +613,19 @@ const visibleMarkdown = (body) => outsideHtmlComments(outsideHtmlBlocks(body));
 // trạng thái BLOCKED cho một báo cáo không ghi lệnh nào và không ai trả giá.
 // Fence chưa đóng vẫn tính, vì chuẩn kéo khối tới hết tài liệu và người đọc
 // vẫn thấy nội dung đó.
+// Ranh giới fence hỏi lại outsideFencedCode chứ không dò bằng một mẫu riêng ở
+// đây. Mẫu riêng ghim dấu mở vào cột 0..3 tuyệt đối và đọc nguyên dòng, nên nó
+// mù với container: một khối lệnh viết trong blockquote thì mọi dòng đều mở đầu
+// bằng "> ", không dòng nào khớp dấu mở, và một báo cáo BLOCKED có lệnh thật
+// GitHub render ra đúng một khung code vẫn bị cổng nói là thiếu khối lệnh.
+// Cùng lý do với list item. Thân đo sau khi bỏ dấu container, vì "> " tự nó
+// không phải chữ của ai cả.
 function commandBlockBody(report) {
-  let fence;
-  for (const line of report.split("\n")) {
-    const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)\r?$/);
-    if (fence) {
-      if (
-        marker && marker[1][0] === fence[0] &&
-        marker[1].length >= fence.length && /^[ \t\r]*$/.test(marker[2])
-      ) {
-        fence = undefined;
-      } else if (line.trim()) return true;
-    } else if (marker && (marker[1][0] === "~" || !marker[2].includes("`"))) {
-      fence = marker[1];
-    }
+  const bodyLines = new Set();
+  outsideFencedCode(report, true, bodyLines);
+  const lines = report.split("\n");
+  for (const index of bodyLines) {
+    if (stripQuoteMarkers(lines[index]).text.trim()) return true;
   }
   return false;
 }
@@ -812,11 +846,31 @@ function markdownEscaped(text, position) {
 // trong một HTML block thì ngược lại: nội dung là HTML thô, backslash không
 // escape gì, nên thẻ ở đó vẫn sống và vẫn hỏng được. Hỏi escape ở đúng phần
 // văn bản ngoài block, bằng chính bản đồ block giữ nguyên offset.
+// Mỗi thẻ trả về mang thêm cờ blockRaw để bước đọc thuộc tính biết dùng luật
+// nào. Thẻ trong block đọc bằng mẫu rộng, thẻ ngoài block bằng mẫu chặt; một
+// khớp rộng chồng lên khớp chặt đã nhận thì bỏ, để cùng một thẻ không vào cổng
+// hai lần và một link hỏng không bị báo hai lần.
 function renderedTags(text) {
   const outsideBlocks = outsideHtmlBlocks(text, true);
-  return [...text.matchAll(htmlTagAttributes)].filter((tag) =>
-    outsideBlocks[tag.index] !== "<" || !markdownEscaped(text, tag.index)
-  );
+  const inBlock = (index) => outsideBlocks[index] !== "<";
+  const found = [];
+  for (const tag of text.matchAll(htmlTagAttributes)) {
+    if (inBlock(tag.index) || !markdownEscaped(text, tag.index)) {
+      tag.blockRaw = false;
+      found.push(tag);
+    }
+  }
+  const spans = found.map((tag) => [tag.index, tag.index + tag[0].length]);
+  for (const tag of text.matchAll(htmlBlockTagAttributes)) {
+    const end = tag.index + tag[0].length;
+    if (!inBlock(tag.index)) continue;
+    if (spans.some(([start, stop]) => tag.index < stop && start < end)) {
+      continue;
+    }
+    tag.blockRaw = true;
+    found.push(tag);
+  }
+  return found.sort((left, right) => left.index - right.index);
 }
 // "href" và "src" chỉ là địa chỉ trên đúng những phần tử định nghĩa chúng.
 // Trên <div href="missing.md"> thì href là thuộc tính lạ, trình duyệt không tải
@@ -891,14 +945,36 @@ const linkAttribute = (element, name, attributes, picture) =>
 // Chrome chỉ phát ra một yêu cầu cho srcset, còn GitHub xóa hẳn thuộc tính src
 // của <source> khi sanitize. Hỏi nó ở đó là bắt cổng từ chối một cụm ảnh đáp
 // ứng hoàn toàn hợp lệ vì một thuộc tính không renderer nào đọc.
-const pictureBoundary = /<(\/?)picture(?=[ \t\r\n/>])/gi;
-function pictureRanges(text) {
+// Ranh giới của cụm ảnh phải đọc từ chính luồng thẻ đã được công nhận, không
+// phải từ chuỗi thô. Một chuỗi hình dạng thẻ nằm trong giá trị thuộc tính là dữ
+// liệu chứ không mở phần tử nào: Chrome dựng <div title="<picture>"> thành một
+// div có title đúng chữ "<picture>" và không có phần tử picture nào trên trang,
+// GitHub cũng escape thành title="&lt;picture&gt;". Quét thô thì chuỗi đó mở
+// một vùng picture giả, mọi <source src> đứng sau nó, kể cả source thật của một
+// <video>, bị coi là ứng viên của cụm ảnh và biến mất khỏi cổng.
+// Dấu đóng đi đường riêng vì renderedTags chỉ nhận thẻ mở: chỉ tính "</picture>"
+// nằm ngoài mọi thẻ đã nhận, để cùng chuỗi ấy viết trong một thuộc tính không
+// đóng được vùng nào.
+const pictureClose = /<\/picture(?=[ \t\r\n/>])/gi;
+function pictureRanges(text, tags) {
+  const spans = tags.map((tag) => [tag.index, tag.index + tag[0].length]);
+  const events = [];
+  for (const tag of tags) {
+    if (tag[1].toLowerCase() === "picture") events.push([tag.index, 1]);
+  }
+  for (const match of text.matchAll(pictureClose)) {
+    const inside = spans.some(([start, end]) =>
+      match.index >= start && match.index < end
+    );
+    if (!inside) events.push([match.index, -1]);
+  }
+  events.sort((left, right) => left[0] - right[0]);
   const ranges = [];
   let depth = 0, start = 0;
-  for (const match of text.matchAll(pictureBoundary)) {
-    if (match[1]) {
-      if (depth > 0 && --depth === 0) ranges.push([start, match.index]);
-    } else if (depth++ === 0) start = match.index;
+  for (const [at, step] of events) {
+    if (step > 0) {
+      if (depth++ === 0) start = at;
+    } else if (depth > 0 && --depth === 0) ranges.push([start, at]);
   }
   if (depth > 0) ranges.push([start, text.length]);
   return ranges;
@@ -915,6 +991,43 @@ const srcsetWhitespace = /[ \t\r\n\f]/;
 // viên; đọc dấu phẩy chỉ khi nó đứng cuối một token thì URL thứ hai dính vào
 // descriptor thứ nhất và một ảnh 2x thiếu file đi qua cổng. Ngoặc trong
 // descriptor che dấu phẩy bên trong nó, y như trong máy tách của chuẩn.
+// Một ứng viên chỉ vào tập nguồn khi phần descriptor của nó đúng ngữ pháp. Sai
+// một chữ là trình duyệt bỏ hẳn ứng viên đó: đo trong Chrome, "a.png 2q" để
+// currentSrc rỗng và không phát ra yêu cầu mạng nào cho a.png, còn
+// "a.png 2q, b.png 1x" thì chỉ b.png sống. Thu URL của ứng viên hỏng là báo
+// hỏng một tài liệu đúng vì một chuỗi không renderer nào tải.
+// Luật đo được, không suy từ chuẩn: đơn vị chỉ nhận chữ thường ("100W" và "2X"
+// đều hỏng); "w" và "h" đòi số nguyên thập phân nên "1e2w" hỏng; "x" nhận cả
+// dạng dấu chấm và số mũ ("1e2x", ".5x", "01x", "1.0e2x" đều sống) nhưng không
+// nhận phần thập phân cụt ("1.x" hỏng); mỗi loại chỉ được xuất hiện một lần;
+// "x" loại trừ cả "w" lẫn "h"; "h" phải đi cùng "w"; ngưỡng là w > 0, h > 0 và
+// d >= 0.
+// Nghi ngờ thì nhận, vì giữ URL lại chỉ làm cổng nghiêm hơn mức cần còn bỏ nhầm
+// là mở đường cho một ảnh thiếu file đi qua. Vì vậy mẫu mật độ vẫn nhận dấu
+// cộng dẫn đầu, dù Chrome đo được là bỏ "+1x".
+const integerDescriptor = /^([0-9]+)([wh])$/;
+const densityNumber =
+  "[+-]?(?:[0-9]+(?:\\.[0-9]+)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?";
+const densityDescriptor = new RegExp("^(" + densityNumber + ")x$");
+function validDescriptors(text) {
+  const seen = new Set();
+  for (const token of text.split(srcsetWhitespace).filter(Boolean)) {
+    const integer = token.match(integerDescriptor);
+    const density = token.match(densityDescriptor);
+    let unit;
+    if (integer) {
+      if (Number(integer[1]) <= 0) return false;
+      unit = integer[2];
+    } else if (density) {
+      if (Number(density[1]) < 0) return false;
+      unit = "x";
+    } else return false;
+    if (seen.has(unit)) return false;
+    seen.add(unit);
+  }
+  if (seen.has("x") && (seen.has("w") || seen.has("h"))) return false;
+  return !seen.has("h") || seen.has("w");
+}
 function srcsetTargets(value) {
   const found = [];
   let position = 0;
@@ -933,15 +1046,20 @@ function srcsetTargets(value) {
       if (trimmed) found.push(trimmed);
       continue;
     }
-    found.push(url);
+    const descriptorStart = position;
+    let descriptorEnd = value.length;
     for (let parens = 0; position < value.length; position++) {
       const character = value[position];
       if (parens === 0 && character === ",") {
+        descriptorEnd = position;
         position++;
         break;
       }
       if (character === "(") parens++;
       else if (character === ")" && parens > 0) parens--;
+    }
+    if (validDescriptors(value.slice(descriptorStart, descriptorEnd))) {
+      found.push(url);
     }
   }
   return found;
@@ -3362,7 +3480,7 @@ function documentAnchors(path) {
   // trong tập anchor còn một chuỗi không tồn tại lại có mặt.
   for (const tag of renderedTags(renderedHtml)) {
     const anchorTag = tag[1].toLowerCase() === "a";
-    for (const [name, value] of tagAttributes(tag[2])) {
+    for (const [name, value] of tagAttributes(tag[2], tag.blockRaw)) {
       if (name !== "id" && !(anchorTag && name === "name")) continue;
       if (value) anchors.add(decodeAttribute(value));
     }
@@ -3425,15 +3543,16 @@ for (const filePath of planFiles(planRoot)) {
     // href="#\&amp;" bị đọc thành fragment "&amp;" thay vì "\&", khớp nhầm một
     // id không ai có và một link hỏng thật đi qua cổng.
     const htmlTargets = [];
-    const pictures = pictureRanges(rawHtml);
-    for (const tag of renderedTags(rawHtml)) {
+    const rawTags = renderedTags(rawHtml);
+    const pictures = pictureRanges(rawHtml, rawTags);
+    for (const tag of rawTags) {
       const element = tag[1].toLowerCase();
       const picture = pictures.some(([start, end]) =>
         tag.index > start && tag.index < end
       );
       // Cả thẻ đi cùng nhau vì một thuộc tính không tự nói hết vai trò của nó:
       // src của <input> chỉ là tài nguyên khi type của chính thẻ đó là "image".
-      const attributes = new Map(tagAttributes(tag[2]));
+      const attributes = new Map(tagAttributes(tag[2], tag.blockRaw));
       for (const [name, value] of attributes) {
         if (value) {
           htmlTargets.push(
