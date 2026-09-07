@@ -2981,15 +2981,25 @@ test("a reference definition inside a list item is still checked", () => {
   );
 });
 
+// Chèn một hàng vào ngay trong thân bảng danh mục. Nối vào cuối tài liệu thì
+// dòng ấy chỉ là dòng nối lười của đoạn văn kết và GitHub render nó thành một
+// thẻ <p>, nên nó không quảng cáo kế hoạch nào.
+const catalogRow = (row) => (text) => {
+  const lines = text.split("\n");
+  const at = lines.findIndex((line) => line.startsWith("| 001 |"));
+  return [...lines.slice(0, at + 1), row, ...lines.slice(at + 1)].join("\n");
+};
+
 test("README cannot advertise plan IDs outside the manifest", () => {
   const before = run();
   assert.equal(before.thrown, undefined);
   // Ánh xạ một-một chỉ được kiểm theo chiều manifest sang README, nên một dòng
   // danh mục mang ID lạ không bị ai hỏi tới dù nó quảng cáo thêm một kế hoạch.
   const after = run({
-    "plans/README.md": (text) =>
-      text +
-      "| 026 | [Kế hoạch ngoài manifest](README.md) | P3 | S / LOW | không | TODO |\n",
+    "plans/README.md": catalogRow(
+      "| 026 | [Kế hoạch ngoài manifest](README.md) | P3 | S / LOW | không |" +
+        " TODO |",
+    ),
   });
   assert.equal(after.thrown, undefined);
   assert.deepEqual(
@@ -5228,9 +5238,10 @@ test("a link to the repository root is tracked", () => {
 
 test("a README ID outside the three digit shape is still compared", () => {
   invalid({
-    "plans/README.md": (text) =>
-      text +
-      "| 1000 | [Kế hoạch ngoài manifest](README.md) | P3 | S / LOW | không | TODO |\n",
+    "plans/README.md": catalogRow(
+      "| 1000 | [Kế hoạch ngoài manifest](README.md) | P3 | S / LOW | không |" +
+        " TODO |",
+    ),
   }, /README lists plan IDs outside the manifest: 1000/);
 });
 
@@ -6591,4 +6602,126 @@ test("escaping a broken tag inside an HTML block changes nothing", () => {
     [review]: (text) =>
       text + "\n<div>\n\\<a href==missing-k10.md>x</a>\n</div>\n",
   }, /link hỏng =missing-k10\.md/);
+});
+
+// Vòng 44.
+test("an image element outside svg loads like an img", () => {
+  // Ngoài SVG, bộ phân tích HTML đổi thẻ mở "image" thành "img". Đo trong
+  // Chrome: cây DOM trả về IMG và trang xin đúng tài nguyên ấy.
+  invalid({
+    [review]: (text) => text + '\n<image src="missing-r44a.png">\n',
+  }, /link hỏng missing-r44a\.png/);
+});
+
+test("an image element inside svg still reads href", () => {
+  invalid({
+    [review]: (text) => text + '\n<svg><image href="missing-r44b.png"></svg>\n',
+  }, /link hỏng missing-r44b\.png/);
+});
+
+test("src on an image inside svg is not a resource", () => {
+  const result = run({
+    [review]: (text) => text + '\n<svg><image src="missing-r44c.png"></svg>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a pipe shaped prose line advertises no plan", () => {
+  // GitHub render dòng có dấu ống nhưng không thuộc bảng thành một thẻ <p>, nên
+  // nó không quảng cáo kế hoạch nào.
+  const result = run({
+    "plans/README.md": (text) => text + "\nCompatibility note | 999 | prose\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a stray ID inside the catalog table is still rejected", () => {
+  invalid({
+    "plans/README.md": catalogRow(
+      "| 998 | [Ngoài manifest](README.md) | P3 | S / LOW | không | TODO |",
+    ),
+  }, /README lists plan IDs outside the manifest: 998/);
+});
+
+test("a list marker at end of line opens a list", () => {
+  // Dấu list đứng cuối dòng mở một item bắt đầu bằng dòng trống, nên dòng thụt
+  // bốn là nội dung sống của item chứ không phải indented code.
+  invalid({
+    [review]: (text) => text + "\n-\n    [live](missing-r44d.md)\n",
+  }, /link hỏng missing-r44d\.md/);
+});
+
+test("indented content without a list marker is still code", () => {
+  const result = run({
+    [review]: (text) => text + "\nVăn xuôi.\n\n    [dead](missing-r44e.md)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a tab after a list marker still puts content at column four", () => {
+  // Tab trong dấu đẩy nội dung tới cột bốn, nên dòng thụt hai đã ra khỏi item và
+  // fence đã đóng. Nhánh dấu cuối dòng không được nuốt luôn ca này.
+  invalid({
+    [review]: (text) =>
+      text + "\n-\t" + tick.repeat(3) + "\n  [r44f](missing-r44f.md)\n",
+  }, /link hỏng missing-r44f\.md/);
+});
+
+test("a trailing slash makes a file target a broken link", () => {
+  // Trong giá trị không nháy, dấu gạch chéo cuối thuộc về giá trị. Đo trong
+  // Chrome: trang xin "slashval.png/" và nhận 404 dù "slashval.png" có thật.
+  invalid({
+    [review]: (text) => text + "\n<div><img src=../../README.md/></div>\n",
+  }, new RegExp("link hỏng \\.\\./\\.\\./README\\.md/"));
+});
+
+test("a space before the self closing slash keeps the target", () => {
+  const result = run({
+    [review]: (text) => text + "\n<div><img src=../../README.md /></div>\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a trailing slash on a real directory still resolves", () => {
+  const result = run({
+    [review]: (text) => text + "\n[plans](../../plans/)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a BLOCKED report must name the plan id as its own token", () => {
+  // "1002" chứa "002" và "UNBLOCKED" chứa "BLOCKED": kiểm bằng chuỗi con thì một
+  // báo cáo nói về kế hoạch khác vẫn giữ nguyên trạng thái BLOCKED.
+  invalid(
+    blocked(22),
+    /evidence\/022\.md: BLOCKED evidence report is missing the plan id 022$/m,
+    [],
+    {
+      "plans/evidence/022.md": {
+        kind: "file",
+        content: "# Bằng chứng 1022\n\nTrạng thái: BLOCKED\n\n" +
+          tick.repeat(3) + "bash\ndeno test\n" + tick.repeat(3) + "\n",
+      },
+    },
+  );
+});
+
+test("a BLOCKED report must declare the status as its own token", () => {
+  invalid(
+    blocked(22),
+    /evidence\/022\.md: BLOCKED evidence report is missing the BLOCKED status$/m,
+    [],
+    {
+      "plans/evidence/022.md": {
+        kind: "file",
+        content: "# Bằng chứng 022\n\nTrạng thái: UNBLOCKED\n\n" +
+          tick.repeat(3) + "bash\ndeno test\n" + tick.repeat(3) + "\n",
+      },
+    },
+  );
 });

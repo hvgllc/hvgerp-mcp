@@ -2905,3 +2905,53 @@ trong HTML block vẫn để lộ đích.
 | `node --test plans/test-validator.mjs` | 786 pass          |
 | `git diff --check`                     | sạch              |
 | `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+## Codex vòng tiếp: review 5128532858
+
+Năm finding P2 trên head `b3f0cef`. Tái hiện đủ năm bằng probe, trọng tài bằng
+Chrome thật cho hai cái và bằng `gh api /markdown` cho ba cái, nhận cả năm.
+
+- H1: ngoài SVG, bộ phân tích HTML đổi thẳng thẻ mở `image` thành `img`, nên
+  `<image src="x.png">` tải tài nguyên y như `<img>` trong khi cổng chỉ nhận
+  cách viết `img`. Đo trong Chrome: cây DOM trả về `IMG` cho thẻ ấy, `image` cho
+  thẻ nằm trong `<svg>`, và trang phát ra yêu cầu tới `image-alias.png`. Tên thẻ
+  nay được chuẩn hóa trước khi phân loại thuộc tính, chỉ khi nó nằm ngoài
+  `<svg>`.
+- H2: chiều ngược của ánh xạ một-một quét mọi dòng của README thay vì chỉ thân
+  bảng, nên một dòng văn xuôi như `Ghi chú | 999 | ...` bị bác là quảng cáo kế
+  hoạch lạ. GitHub render đúng cụm ấy thành một bảng chỉ gồm hàng danh mục cộng
+  một thẻ `<p>`. Chiều ngược nay dùng cùng tập `bodyRows` với chiều xuôi.
+- H3: dấu list đứng cuối dòng vẫn mở một item, chỉ là item ấy bắt đầu bằng dòng
+  trống. Bộ đếm thụt lề đòi khoảng trắng sau mọi dấu nên cặp `-` rồi một dòng
+  thụt bốn không được nhận là list, dòng ấy bị đọc thành indented code và một
+  link sống biến mất khỏi cổng. GitHub trả về
+  `<ul><li><a href=...>live</a></li></ul>`. Nhánh dấu cuối dòng nay có mặt ở cả
+  `listIndentTracker`, đúng nhánh mà `containerPrefix` đã có, và content indent
+  của item ấy là bề rộng dấu cộng một.
+- H4: finding nói regex nuốt mất dấu gạch chéo của giá trị không nháy. Đo lại
+  thì không phải: ngữ pháp thuộc tính của block đã trả về đúng
+  `../../README.md/`. Chỗ hỏng nằm sau đó, ở `resolve()`, vì hàm ấy xóa dấu gạch
+  chéo cuối nên đích khớp một file có thật. Kết luận của finding vẫn đúng:
+  Chrome xin `slashval.png/` và nhận 404 trong khi `<img src=spaceval.png />`
+  xin `spaceval.png`. Đích kết thúc bằng `/` nay phải thật sự là thư mục.
+- H5: hai dấu hiệu của báo cáo BLOCKED kiểm bằng chứa chuỗi con, mà `1002` chứa
+  `002` và `UNBLOCKED` chứa `BLOCKED`. Một báo cáo đổi tên như vậy vẫn giữ
+  nguyên trạng thái BLOCKED của kế hoạch 002. Cả hai nay đo bằng token đứng
+  riêng.
+
+Một dòng của bộ probe guard đổi cách dựng có chủ ý: `H4` và `H4b` của vòng 32
+trước đây nối hàng danh mục vào cuối README, mà chỗ đó nằm ngay sau đoạn văn
+kết. `gh api /markdown` trả về `<p>...<br>| 1000 | ... |</p>`, tức dòng ấy là
+dòng nối lười chứ không phải hàng bảng. Hai ca nay chèn hàng vào đúng trong thân
+bảng, và tính chất mà chúng canh, rằng ID không đúng ba chữ số vẫn bị đối chiếu
+với manifest, vẫn đỏ như cũ. Hai test tương ứng trong suite được sửa cùng cách,
+kèm một test đối chứng cho dòng văn xuôi có dấu ống.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 799 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |

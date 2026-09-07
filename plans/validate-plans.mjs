@@ -78,15 +78,27 @@ function listIndentTracker() {
       // dưới bị ẩn khỏi mọi gate. Cùng giới hạn với containerPrefix, để hai
       // đường quét không hiểu một tài liệu theo hai kiểu.
       const marker = column <= innermost() + 3
-        ? rest.match(/^(?:[-+*]|\d{1,9}[.)])[ \t]+/)
+        ? rest.match(/^(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|[ \t]*\r?$)/)
         : undefined;
       if (!marker) break;
+      // Dấu đứng cuối dòng vẫn mở một item, chỉ là item ấy bắt đầu bằng dòng
+      // trống. Đòi khoảng trắng sau mọi dấu thì cặp "-" rồi một dòng thụt bốn
+      // không được nhận là list, dòng thụt ấy bị đọc thành indented code, và
+      // một link sống bên trong item biến mất khỏi gate. Cùng nhánh mà
+      // containerPrefix đã có, để hai đường quét không hiểu một tài liệu theo
+      // hai kiểu.
+      const symbol = marker[0].match(/^(?:[-+*]|\d{1,9}[.)])/)[0];
+      const blankStart = /^[ \t]*\r?$/.test(rest.slice(symbol.length));
       // Content indent của item đo bằng cột chứ không bằng số ký tự của dấu:
       // tab trong dấu đẩy nội dung tới mốc bốn cột kế tiếp, nên "-\t~~~" đặt
       // nội dung ở cột bốn chứ không phải hai. Đếm ký tự thì container đóng
       // muộn hơn ranh giới thật, và những dòng đã ra khỏi list vẫn bị tính là
-      // nằm trong fence của nó, tức là bị ẩn khỏi mọi gate.
-      column = columnsOf(marker[0], column);
+      // nằm trong fence của nó, tức là bị ẩn khỏi mọi gate. Item mở đầu bằng
+      // dòng trống thì chuẩn ghim content indent là bề rộng dấu cộng một, bất
+      // kể phía sau dấu còn bao nhiêu khoảng trắng.
+      column = blankStart
+        ? columnsOf(symbol, column) + 1
+        : columnsOf(marker[0], column);
       stack.push(column);
       consumed += marker[0];
       rest = rest.slice(marker[0].length);
@@ -2104,6 +2116,12 @@ function metadataReason(body, field) {
 }
 const staleReason = (body) => metadataReason(body, "stale_reason");
 const blockedReason = (body) => metadataReason(body, "blocked_reason");
+// Token đứng riêng cho hai dấu hiệu của báo cáo BLOCKED. Chữ số kề bên biến
+// "002" thành một ID khác, còn chữ cái, gạch dưới hay gạch nối kề bên biến
+// "BLOCKED" thành một trạng thái khác; cả hai trường hợp đều không phải dấu
+// hiệu mà cổng đang hỏi.
+const standaloneId = (id) => new RegExp("(?<![0-9])" + id + "(?![0-9])");
+const standaloneBlocked = /(?<![0-9A-Za-z_-])BLOCKED(?![0-9A-Za-z_-])/;
 const statusById = new Map(manifest.map((entry) => {
   const path = resolve(planRoot, entry.file);
   return [
@@ -2660,8 +2678,12 @@ for (const entry of manifest) {
       // nguyên trạng thái BLOCKED mà không ai trả giá.
       const report = visibleMarkdown(readFileSync(blockedPath, "utf8"));
       const missing = [];
-      if (!report.includes(id)) missing.push("the plan id " + id);
-      if (!report.includes("BLOCKED")) missing.push("the BLOCKED status");
+      // Hai dấu hiệu đầu đo bằng token đứng riêng chứ không bằng chứa chuỗi
+      // con: "1002" chứa "002" và "UNBLOCKED" chứa "BLOCKED", nên một báo cáo
+      // nói về kế hoạch khác và tự khai trạng thái ngược lại vẫn thỏa cả hai
+      // điều kiện và giữ nguyên trạng thái BLOCKED mà không ai trả giá.
+      if (!standaloneId(id).test(report)) missing.push("the plan id " + id);
+      if (!standaloneBlocked.test(report)) missing.push("the BLOCKED status");
       if (!commandBlockBody(report)) missing.push("a command block");
       if (missing.length) {
         fail(
@@ -3661,11 +3683,18 @@ for (const filePath of planFiles(planRoot)) {
     const pictures = elementRanges(rawHtml, rawTags, "picture");
     const svgs = elementRanges(rawHtml, rawTags, "svg");
     for (const tag of rawTags) {
-      const element = tag[1].toLowerCase();
       const inside = (ranges) =>
         ranges.some(([start, end]) => tag.index > start && tag.index < end);
       const picture = inside(pictures);
       const svg = inside(svgs);
+      // Ngoài SVG, bộ phân tích HTML đổi thẳng thẻ mở "image" thành "img", nên
+      // <image src="x.png"> tải tài nguyên y như <img>. Đo trong Chrome: cây
+      // DOM trả về IMG và trang phát ra đúng một yêu cầu tới "x.png". Chỉ nhận
+      // cách viết "img" thì một đích hỏng đi qua cổng. Trong SVG thì "image"
+      // vẫn là chính nó và dùng href, đúng như hrefElements đang ghi.
+      const element = !svg && tag[1].toLowerCase() === "image"
+        ? "img"
+        : tag[1].toLowerCase();
       // Cả thẻ đi cùng nhau vì một thuộc tính không tự nói hết vai trò của nó:
       // src của <input> chỉ là tài nguyên khi type của chính thẻ đó là "image".
       const attributes = new Map(tagAttributes(tag[2], tag.blockRaw));
@@ -3832,7 +3861,17 @@ for (const filePath of planFiles(planRoot)) {
         fail(file + ": unsafe Markdown link " + target);
         continue;
       }
-      if (!existsSync(resolved) || !existsCaseExact(repoRoot, parts)) {
+      // Đích kết thúc bằng "/" trỏ tới thư mục và trình duyệt xin đúng chuỗi
+      // ấy chứ không tự bỏ dấu. Đo trong Chrome: <img src=x.png/> phát ra yêu
+      // cầu tới "x.png/" và nhận 404 dù "x.png" có thật, còn thẻ viết cách ra
+      // "<img src=x.png />" thì xin "x.png". resolve() lại xóa dấu ở cuối, nên
+      // không hỏi thêm thì một đích chết khớp đúng file bên cạnh và đi qua cổng.
+      const directoryTarget = clean.endsWith("/");
+      if (
+        !existsSync(resolved) || !existsCaseExact(repoRoot, parts) ||
+        (directoryTarget &&
+          !lstatSync(resolved, { throwIfNoEntry: false })?.isDirectory())
+      ) {
         fail(file + ": link hỏng " + target);
         continue;
       }
@@ -3920,7 +3959,14 @@ else {
       // số: ghim độ dài thì một hàng mang "1000" không bị ai hỏi tới và README
       // quảng cáo thêm kế hoạch ngoài bộ đã duyệt. Manifest chỉ sinh ID ba chữ
       // số nên mọi ô toàn số khác ba chữ số đều là ID lạ.
-      renderedLines.map((line) => tableCells(line)[1]?.trim()).filter(
+      // Chỉ hàng thật mới quảng cáo được kế hoạch: một dòng văn xuôi có dấu ống
+      // như "Ghi chú | 999 | ..." được GitHub render thành đoạn văn, không hàng
+      // bảng nào. Quét mọi dòng thì cổng bác bỏ một README đúng vì một con số
+      // trong văn xuôi. Đo trên renderer thật: đúng cụm ấy trả về một bảng chỉ
+      // gồm hàng danh mục, còn dòng kia là thẻ <p>.
+      renderedLines.map((line, at) =>
+        bodyRows.has(at) ? tableCells(line)[1]?.trim() : undefined
+      ).filter(
         (cell) => cell !== undefined && /^\d+$/.test(cell),
       ),
     ),
