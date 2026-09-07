@@ -5574,3 +5574,58 @@ test("an underscore inside a word is still literal in a heading", () => {
       text + "\n## a_b_ p4b\n\n[p4b](#ab-p4b)\n",
   }, /anchor hỏng #ab-p4b/);
 });
+
+test("a non breaking space stays part of a link target", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<a href="\u00a0../../README.md\u00a0">q1</a>\n',
+  }, /link hỏng \u00a0\.\.\/\.\.\/README\.md/);
+});
+
+test("an ASCII control character around a link target is stripped", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<a href="\u0001../../README.md\u0001">q1b</a>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an overlong ordered marker does not open a completion checklist", () => {
+  invalid({
+    [fileFor(24)]: (text) => text.replace(/- \[[xX]\]/g, "1234567890. [X]"),
+  }, /024.*completion checklist/);
+});
+
+test("a nine digit ordered marker still opens a completion checklist", () => {
+  const result = run({
+    [fileFor(24)]: (text) => text.replace(/- \[[xX]\]/g, "123456789. [X]"),
+  });
+  assert.equal(result.thrown, undefined);
+  assert.deepEqual(result.messages, definitionFailures(24));
+});
+
+test("an indented line inside a blockquote is code", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n> Ghi chú q3:\n>\n>     [q3](missing-q3.md)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an unindented line inside a blockquote is still live text", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n> Ghi chú q3b:\n>\n> [q3b](missing-q3b.md)\n",
+  }, /link hỏng missing-q3b\.md/);
+});
+
+test("a blockquote interrupts a paragraph before indented code", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nĐoạn văn q3c.\n>     [q3c](missing-q3c.md)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});

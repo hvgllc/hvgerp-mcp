@@ -2465,3 +2465,47 @@ bằng một mẻ dò tám ca trước khi động vào code, và cả bốn đ�
 Chín mẻ dò guard của các vòng trước (46 ca) chạy trên cả head cũ lẫn cây đã sửa
 cho output giống nhau từng dòng, nên bốn thay đổi này không đổi kết luận của bất
 kỳ ca nào đã chốt trước đó.
+
+## Codex vòng tiếp: review 5127033724
+
+Review đọc đúng head `cd3831ef`, nêu ba P2 và không P1 nào. Cả ba tái hiện bằng
+một mẻ dò sáu ca trước khi động vào code, và cả ba đều đúng.
+
+- Tập ký tự trình duyệt cắt ở hai đầu URL là "C0 control or space" của URL
+  Standard, không phải whitespace theo nghĩa Unicode của `String.trim()`. Đo
+  bằng `new URL(href, base)`: khoảng trắng không ngắt ở hai đầu cho
+  `https://example.com/a/b/README.md%C2%A0`, tức nó được giữ và phần trăm hóa
+  chứ không đưa đường dẫn về gốc; khoảng trắng ASCII, ký tự điều khiển C0, form
+  feed và vertical tab thì bị cắt; khoảng trắng ideographic và zero-width thì
+  không. Hai tập lệch nhau ở cả hai chiều, và chiều cắt thừa mới là chiều nguy
+  hiểm: gate đo một đường dẫn sạch hơn đường dẫn trình duyệt phân giải rồi bảo
+  một link hỏng là đúng. Nay cắt theo mã ký tự `<= 0x20`, viết bằng vòng lặp để
+  không vướng `no-control-regex`.
+- Dấu ordered chỉ mở list khi số của nó dài tối đa chín chữ số. GitHub trả
+  `<p>1234567890. [x] criterion</p>` cho dấu mười chữ số và
+  `<ol start="123456789" class="contains-task-list">` cho dấu chín chữ số. File
+  này đã áp đúng giới hạn đó ở `listIndentTracker` và `containerPrefix`, chỉ
+  regex checklist DONE còn `\d+[.)]`, nên một danh sách GitHub không dựng vẫn
+  được tính là bằng chứng hoàn tất.
+- Blockquote chỉ đặt tiền tố lên đầu dòng, còn bên trong nó thụt bốn vẫn mở một
+  indented code block thật. GitHub trả `<blockquote><pre><code>` cho
+  `>     Trạng thái thực thi: DONE`, trong khi gate cũ đo cột trên dòng thô nên
+  dấu `>` và khoảng trắng sau nó ăn mất bốn cột, khối code không được nhận, và
+  một dòng trạng thái viết trong ví dụ nhúng thành khai báo thứ hai làm hỏng cả
+  ba gate trạng thái. Nay `outsideBlockCode` gỡ tiền tố bằng `stripQuoteMarkers`
+  rồi mới đo, đúng dáng `outsideFencedCode` vẫn dùng, cộng hai chuyển tiếp
+  container: mở sâu thêm một lớp thì đóng đoạn đang chạy, ra khỏi blockquote thì
+  đóng khối code mở bên trong nó.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 677 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+Mười mẻ dò guard của các vòng trước (52 ca) chạy trên cả head cũ lẫn cây đã sửa
+cho output giống nhau từng dòng, nên ba thay đổi này không đổi kết luận của bất
+kỳ ca nào đã chốt trước đó.

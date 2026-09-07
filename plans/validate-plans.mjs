@@ -164,21 +164,35 @@ function outsideFencedCode(body, preserveOffsets = false) {
   }).join("\n");
 }
 function outsideBlockCode(body) {
-  let paragraph = false, code = false;
+  let paragraph = false, code = false, codeQuote = 0, quoteDepth = 0;
   const track = listIndentTracker();
   return outsideFencedCode(body).split("\n").map((line) => {
-    const indentation = line.match(/^[ \t]*/)[0];
+    // Blockquote chỉ đặt tiền tố lên đầu dòng, còn bên trong nó thụt bốn vẫn
+    // mở một indented code block thật. Đo cột trên dòng thô thì dấu ">" và
+    // khoảng trắng sau nó bị tính vào thụt, khối code trong blockquote không
+    // được nhận, và nội dung của nó đi vào các gate cấu trúc như văn bản sống:
+    // một dòng "Trạng thái thực thi" viết trong ví dụ nhúng thành khai báo thứ
+    // hai và một kế hoạch đúng bị từ chối.
+    const quote = stripQuoteMarkers(line);
+    const source = quote.text;
+    // Mở thêm một lớp blockquote là mở một container mới và nó ngắt đoạn đang
+    // chạy; ngược lại, ra khỏi blockquote là đóng luôn khối code mở bên trong
+    // nó, vì khối đó không sống tiếp ở ngoài container chứa nó.
+    if (quote.depth > quoteDepth) paragraph = false;
+    if (code && quote.depth < codeQuote) code = false;
+    quoteDepth = quote.depth;
+    const indentation = source.match(/^[ \t]*/)[0];
     let width = 0;
     for (const character of indentation) {
       width += character === "\t" ? 4 - width % 4 : 1;
     }
-    if (!line.trim()) {
+    if (!source.trim()) {
       paragraph = false;
       return "";
     }
     // Dòng tiếp của list vẫn là nội dung sống, không mặc nhiên thành code.
     const { indent: listIndent } = track(
-      line.slice(indentation.length),
+      source.slice(indentation.length),
       width,
       false,
     );
@@ -188,6 +202,7 @@ function outsideBlockCode(body) {
     // bị gate tài liệu báo hỏng.
     if (width >= listIndent + 4 && (code || !paragraph)) {
       code = true;
+      codeQuote = quote.depth;
       return "";
     }
     code = false;
@@ -195,11 +210,11 @@ function outsideBlockCode(body) {
     // dòng sau, nên dòng đó thuộc cùng block và không được thành code dù thụt
     // bốn; ngược lại thì definition đã trọn vẹn và đóng block như cũ.
     const definitionOpen = /^ {0,3}\[(?:\\[^\r\n]|[^\[\]\\\r\n])+\]:[ \t]*\r?$/
-      .test(line);
+      .test(source);
     paragraph = definitionOpen ||
-      (!/^ {0,3}(?:#{1,6}(?:[ \t]|$)|>|(?:=+|-+)[ \t]*$|(?:\*[ \t]*){3,}$|(?:_[ \t]*){3,}$)/
-        .test(line) &&
-        !/^ {0,3}\[[^\]]+\]:/.test(line));
+      (!/^ {0,3}(?:#{1,6}(?:[ \t]|$)|(?:=+|-+)[ \t]*$|(?:\*[ \t]*){3,}$|(?:_[ \t]*){3,}$)/
+        .test(source) &&
+        !/^ {0,3}\[[^\]]+\]:/.test(source));
     return line;
   }).join("\n");
 }
@@ -798,10 +813,26 @@ const posterElements = new Set(["video"]);
 // một embed, nên một PDF thiếu file sau tên đó cũng là một artifact hỏng.
 const dataElements = new Set(["object"]);
 // Trình duyệt chuẩn hóa giá trị trước khi phân giải URL: bỏ mọi tab và xuống
-// dòng, rồi cắt khoảng trắng hai đầu. Đẩy nguyên văn xuống bước tìm file thì
+// dòng, rồi cắt hai đầu. Đẩy nguyên văn xuống bước tìm file thì
 // href=" ../../README.md " thành một đường dẫn có dấu cách ở hai đầu, không tồn
 // tại, và một link đúng bị báo hỏng.
-const attributeTarget = (value) => value.replace(/[\t\r\n]/g, "").trim();
+// Tập ký tự bị cắt là C0 control cùng dấu cách, đúng "C0 control or space" của
+// URL Standard, chứ không phải whitespace theo nghĩa Unicode của String.trim().
+// Hai tập đó lệch nhau ở cả hai chiều: trim() bỏ sót ký tự điều khiển như U+0001
+// mà trình duyệt vẫn cắt, và cắt thừa khoảng trắng Unicode như U+00A0 mà trình
+// duyệt giữ lại rồi phần trăm hóa. Cắt thừa là chiều nguy hiểm hơn: một href mở
+// đầu bằng U+00A0 rồi "../x.md" phân giải ra một đường dẫn khác hẳn, còn gate
+// thì đo bản đã cắt sạch và bảo là link đúng.
+// Cắt bằng vòng lặp mã ký tự chứ không bằng regex: một lớp ký tự chứa dải điều
+// khiển vướng luật no-control-regex, và cách viết này nói thẳng ngưỡng 0x20.
+const attributeTarget = (value) => {
+  const text = value.replace(/[\t\r\n]/g, "");
+  let start = 0;
+  let end = text.length;
+  while (start < end && text.charCodeAt(start) <= 0x20) start++;
+  while (end > start && text.charCodeAt(end - 1) <= 0x20) end--;
+  return text.slice(start, end);
+};
 // Mọi đích mà một thuộc tính dựng ra, đã tách sẵn: "href", "src", "poster" và
 // "data" cho đúng một đích, "srcset" cho cả danh sách, tên khác cho danh sách
 // rỗng.
@@ -2251,7 +2282,11 @@ for (const entry of manifest) {
     const completion = structuralSection(structuralBody, "Tiêu chí hoàn tất");
     const items = [
       ...completion.matchAll(
-        /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\[([ xX])\][ \t]+\S/gm,
+        // Dấu ordered chỉ mở list khi số của nó dài tối đa chín chữ số, giống
+        // giới hạn đã dùng ở listIndentTracker và containerPrefix. Nhận dấu dài
+        // hơn thì "1234567890. [x] ..." được tính là một tiêu chí, trong khi
+        // trên GitHub dòng đó chỉ là văn xuôi và không có checklist nào cả.
+        /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\[([ xX])\][ \t]+\S/gm,
       ),
     ];
     if (!items.length) {
