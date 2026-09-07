@@ -2575,3 +2575,56 @@ bị bác có lý do.
 Mười một mẻ dò guard của các vòng trước (58 ca) chạy trên cả head cũ lẫn cây đã
 sửa cho output giống nhau từng dòng, nên bốn thay đổi này không đổi kết luận của
 bất kỳ ca nào đã chốt trước đó.
+
+## Codex vòng tiếp: review 5127216623
+
+Review đọc đúng head `be2a00aab1`, nêu bốn P2 và không P1 nào. Cả bốn tái hiện
+bằng một mẻ dò tám ca trước khi động vào code, và cả bốn đều đúng.
+
+- Dấu ordered mười chữ số không mở list ở bất kỳ ngữ cảnh nào, nên dòng mang nó
+  vẫn nằm trong đoạn và code span viết vắt qua dòng đó vẫn đóng được. Đường quét
+  đoạn của `inlineCodeSpans` còn nhận `[0-9]+[.)]`, nên nó cắt đoạn ở một dòng
+  mà chuẩn giữ nguyên, code span bị tách làm đôi và một link nằm trong backtick
+  thành link sống. Mốc chín chữ số là mốc đúng, và tôi đã đo cả hướng siết chặt
+  hơn trước khi dừng ở đó: dấu ordered chỉ ngắt được một đoạn khi số của nó là
+  1, GitHub xác nhận `1.`, `1)`, `01.` và `000000001.` đều ngắt còn `2.`, `0.`,
+  `123456789.` và `0000000001.` thì không; nhưng dưới một item đang mở thì `2.`
+  và `123456789.` vẫn đóng đoạn của item đó, nên áp luật "chỉ số 1 mới ngắt" sẽ
+  bỏ sót link hỏng. Chín chữ số là mốc duy nhất đúng cả hai chiều.
+- Một dòng mở bằng `<` chỉ ngắt lazy continuation khi nó thật sự mở một HTML
+  block. `blockStart` cũ kết thúc bằng một dấu `<` trần nên `<not-a-real-tag`
+  cắt blockquote thành hai section, nhãn link viết vắt qua dòng lười không được
+  ghép lại và một đích hỏng đi qua gate; GitHub trả đúng một thẻ `<a>` sống cho
+  cụm đó. Chuẩn nói dạng 7 không ngắt được đoạn, nhưng phép đo cho thấy ở vị trí
+  này renderer vẫn mở block cho `<a href="...">`, cho `<!-- c -->` và cho
+  `<pre>`, vì container đang mở là blockquote chứ không phải đoạn văn. Nay
+  `blockStart` khớp dạng 1 tới 6 cộng dạng thẻ đứng một mình, dựng lại từ chính
+  `htmlBlockOpeners` và `htmlLoneTag` để không có bản sao grammar thứ hai.
+- Nhãn của reference definition phải có ít nhất một ký tự không phải khoảng
+  trắng. GitHub trả `<p>[   ]: missing.md</p>` cho nhãn toàn khoảng trắng và cho
+  cả nhãn toàn tab, còn `[ x ]: dest` thì được nuốt làm definition thật. Guard
+  đặt cạnh guard giới hạn độ dài nhãn, cùng một lớp "đây là văn bản literal".
+  Không dùng `String.trim()`: tập khoảng trắng của chuẩn hẹp hơn, một nhãn chỉ
+  gồm U+00A0 là nhãn thật, cắt nó đi là xóa một definition thật khỏi gate, đúng
+  cái bẫy đã gặp ở vòng 36 với đích link.
+- Trong giá trị thuộc tính của HTML thô, tokenizer nuốt trọn dãy chữ số của một
+  numeric reference. Chrome đọc `<a id="longnumeric&#000000065;">` ra đúng
+  `longnumericA` và `&#x000000041;` ra `longhexA`. Mốc bảy chữ số thập phân và
+  sáu chữ số hex là luật của Markdown, giữ nó trong thuộc tính là chỉ nuốt
+  `&#0000000`, bỏ lại `65;`, dựng ra một id không ai có và báo hỏng một fragment
+  đúng. Đây là điểm lệch thứ ba giữa hai luật giải mã, cạnh hai điểm đã ghi sẵn
+  trong file, nên mẫu tách làm hai và `decodeReferences` chọn theo cờ
+  `attribute` vốn đã có.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 694 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+Mười hai mẻ dò guard của các vòng trước (88 ca) chạy trên cả head cũ lẫn cây đã
+sửa cho output giống nhau từng dòng, nên bốn thay đổi này không đổi kết luận của
+bất kỳ ca nào đã chốt trước đó.

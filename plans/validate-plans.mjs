@@ -552,8 +552,19 @@ const structuralMarkdown = (body) =>
 // Những dòng tự mở một block mới nên không bao giờ là lazy continuation của
 // đoạn văn phía trên: heading ATX, fence, list marker, thematic break, setext
 // underline và thẻ HTML đầu dòng.
-const blockStart =
-  /^ {0,3}(?:#{1,6}(?:[ \t]|$)|`{3,}|~{3,}|[-*+](?:[ \t]|$)|\d{1,9}[.)](?:[ \t]|$)|=+[ \t]*\r?$|(?:\*[ \t]*){3,}\r?$|(?:_[ \t]*){3,}\r?$|(?:-[ \t]*){3,}\r?$|<)/;
+const blockMarkerStart =
+  /^ {0,3}(?:#{1,6}(?:[ \t]|$)|`{3,}|~{3,}|[-*+](?:[ \t]|$)|\d{1,9}[.)](?:[ \t]|$)|=+[ \t]*\r?$|(?:\*[ \t]*){3,}\r?$|(?:_[ \t]*){3,}\r?$|(?:-[ \t]*){3,}\r?$)/;
+// Một dấu "<" đầu dòng chỉ mở block khi nó khớp đúng một dạng HTML block: năm
+// dạng của htmlBlockOpeners, dạng comment mà outsideHtmlComments xử lý riêng,
+// và dạng thẻ đứng một mình. Nhận mọi dấu "<" thì một dòng như
+// "<not-a-real-tag" cắt blockquote thành hai section, nhãn link viết vắt qua
+// dòng lười không còn được ghép lại, và một đích hỏng đi qua gate; renderer
+// GitHub trả đúng một thẻ <a> sống cho cụm đó.
+const htmlBlockStart = (line) =>
+  htmlBlockOpeners.some(([opener]) => opener.test(line)) ||
+  /^ {0,3}<!--/.test(line) || htmlLoneTag.test(line);
+const blockStart = (line) =>
+  blockMarkerStart.test(line) || htmlBlockStart(line);
 function markdownLinkSections(body) {
   const sections = [];
   let depth, fence, current = [];
@@ -573,7 +584,7 @@ function markdownLinkSections(body) {
     // trước trống, hay khi chính dòng này mở một block mới.
     const lazy = nextDepth < depth && !fence && line.trim() !== "" &&
       (current[current.length - 1] ?? "").trim() !== "" &&
-      !blockStart.test(line);
+      !blockStart(line);
     // Rời container cũng kết thúc fence chưa đóng và inline span của container.
     if (nextDepth !== depth && !lazy) {
       if (current.length) sections.push(current.join("\n"));
@@ -614,9 +625,17 @@ function inlineCodeSpans(body) {
       /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})$/.test(
         content,
       );
+    // Dấu ordered chỉ là dấu list khi số của nó dài tối đa chín chữ số, đúng
+    // giới hạn mà listIndentTracker và containerPrefix đã áp. Nhận số dài hơn
+    // là cắt đoạn ở một dòng mà chuẩn giữ nguyên trong đoạn, code span viết vắt
+    // qua dòng đó bị tách làm đôi, và một link nằm trong backtick thành link
+    // sống làm gate báo hỏng một tài liệu đúng. Chín chữ số là đúng mốc an toàn
+    // cả hai chiều: GitHub giữ "1234567890." trong code span, nhưng "2." hay
+    // "123456789." viết dưới một item đang mở vẫn đóng đoạn của item đó, nên
+    // siết thêm theo luật "chỉ số 1 mới ngắt đoạn" sẽ bỏ sót link hỏng.
     if (
       standalone || /^[ \t]*$/.test(content) ||
-      /^ {0,3}(?:(?:[-+*]|[0-9]+[.)])[ \t]+|>)/.test(content)
+      /^ {0,3}(?:(?:[-+*]|\d{1,9}[.)])[ \t]+|>)/.test(content)
     ) flush();
     current += line;
     if (standalone || /^[ \t]*$/.test(content)) flush();
@@ -1389,9 +1408,18 @@ const c1Replacements = new Map([
 // phẩy vẫn giải mã: numeric thì luôn luôn, còn named chỉ khi tên nằm trong nhóm
 // legacy và ký tự ngay sau nó không phải "=". Vế "=" là luật thật của HTML, để
 // một query string kiểu "?a&amp=b" giữ nguyên tham số của nó.
+// Điểm thứ ba: mốc chữ số của một numeric reference. Markdown dừng ở bảy chữ
+// số thập phân và sáu chữ số hex, còn tokenizer HTML nuốt trọn dãy chữ số dù
+// dài bao nhiêu. Chrome đọc id của <a id="longnumeric&#000000065;"> đúng bằng
+// "longnumericA", nên giữ mốc Markdown trong thuộc tính là chỉ nuốt "&#0000000",
+// bỏ lại "65;", dựng ra một id không ai có và báo hỏng một fragment đúng.
+const markdownReferences =
+  /&(#\d{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]*)(;)?/g;
+const attributeReferences =
+  /&(#\d+|#[xX][0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]*)(;)?/g;
 const decodeReferences = (text, marker = "", attribute = false) =>
   text.replace(
-    /&(#\d{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]*)(;)?/g,
+    attribute ? attributeReferences : markdownReferences,
     (whole, name, semicolon, offset) => {
       // Một "&" bị escape là ký tự literal, không mở được entity.
       if (!attribute && markdownEscaped(text, offset)) return whole;
@@ -2940,6 +2968,16 @@ const definitionHead =
 // Chuẩn giới hạn nhãn ở 999 ký tự, nên một dấu "[" mở ra ở đầu một đoạn văn dài
 // không kéo cả đoạn vào một phép thử vô tận.
 const definitionLabelLimit = 999;
+// Nhãn phải chứa ít nhất một ký tự không phải khoảng trắng. Tập khoảng trắng
+// của chuẩn hẹp hơn String.trim(): chỉ space, tab, newline, line tabulation,
+// form feed và carriage return. Đo bằng trim() thì một nhãn chỉ gồm U+00A0 bị
+// coi là rỗng, definition thật của nó biến mất khỏi gate và đích hỏng của nó
+// đi qua. Viết bằng mã ký tự để không vướng no-control-regex.
+const commonmarkWhitespace = new Set([0x20, 0x09, 0x0a, 0x0b, 0x0c, 0x0d]);
+const labelIsBlank = (label) =>
+  [...label].every((character) =>
+    commonmarkWhitespace.has(character.codePointAt(0))
+  );
 // Cụm definition bắt đầu ở dòng start, nối thêm dòng chừng nào chúng còn là văn
 // bản của cùng khối. Trả về nhãn, destination trên dòng cuối, và chính dòng
 // cuối đó; null khi cụm không phải definition.
@@ -2960,7 +2998,11 @@ function definitionAt(lines, start) {
       // definition: nhận nó là đem một đích không ai render đi phân giải rồi
       // báo hỏng một tài liệu đúng. Đo chính nhãn đã bắt được, chứ không đo cả
       // dòng, vì giới hạn của chuẩn nói về nội dung giữa hai dấu ngoặc.
-      return head[1].length > definitionLabelLimit
+      // Nhãn phải có ít nhất một ký tự không phải khoảng trắng, nên "[   ]:" là
+      // văn bản literal chứ không phải definition: GitHub trả nguyên
+      // "<p>[   ]: dest</p>". Nhận nó là đem một đích không ai render đi phân
+      // giải rồi báo hỏng một tài liệu đúng.
+      return head[1].length > definitionLabelLimit || labelIsBlank(head[1])
         ? null
         : { label: head[1], destination: head[2], line };
     }

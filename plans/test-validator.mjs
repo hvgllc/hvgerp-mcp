@@ -5705,3 +5705,71 @@ test("an unescaped angle bracket still breaks a bracketed destination", () => {
     "plans/evidence/backlog-review.md": (text) => text + "\n[r5c](<a<b>)\n",
   }, /link hỏng <a<b>/);
 });
+
+test("a ten digit ordered marker keeps a code span open", () => {
+  // Dấu mười chữ số không mở list ở bất kỳ ngữ cảnh nào, nên dòng đó vẫn nằm
+  // trong đoạn và code span mở ở dòng trước vẫn đóng được ở dòng sau.
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nText `start\n1234567890. [inert](missing-f1.md)\nend` done.\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a nine digit ordered marker still ends the paragraph", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nText `start\n123456789. [live](missing-f1b.md)\nend` done.\n",
+  }, /link hỏng missing-f1b\.md/);
+});
+
+test("a line that opens no html block stays a lazy continuation", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n> [visible\n<not-a-real-tag\n> ](missing-f2.md)\n",
+  }, /link hỏng missing-f2\.md/);
+});
+
+test("a real html block start ends the blockquote paragraph", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n> [visible\n<div\n> ](missing-f2b.md)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a whitespace only reference label is not a definition", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[   ]: missing-f3.md\n\n[\t]: missing-f3c.md\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a reference label with content is still a definition", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[ x ]: missing-f3b.md\n",
+  }, /link hỏng missing-f3b\.md/);
+});
+
+test("an html attribute decodes a numeric reference of any length", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      '\n<a id="longnumeric&#000000065;"></a><a href="#longnumericA">f4</a>\n' +
+      '\n<a id="longhex&#x000000041;"></a><a href="#longhexA">f4b</a>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("markdown keeps the seven digit cap on numeric references", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[f4c](missing&#000000065;.md)\n",
+  }, /link hỏng missing&#000000065;\.md/);
+});
