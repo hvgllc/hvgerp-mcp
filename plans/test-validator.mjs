@@ -6725,3 +6725,126 @@ test("a BLOCKED report must declare the status as its own token", () => {
     },
   );
 });
+
+// Vòng 45.
+test("a quoted title with a stray paren keeps the heading slug", () => {
+  // Đo trên renderer của GitHub: cụm ấy render thành
+  // <h2><a href="../../README.md" title="title (">Ghost</a></h2>, nên anchor
+  // của heading là "ghost". Đếm ngoặc của title thành nesting thì slug ghi cả
+  // destination lẫn title và một link tới cái slug bịa ấy đi qua cổng.
+  invalid({
+    [review]: (text) =>
+      text + '\n## [Ghost](../../README.md "title (")\n\n' +
+      "[bad](#ghostreadmemd-title-)\n",
+  }, /anchor hỏng #ghostreadmemd-title-/);
+});
+
+test("a heading link with a quoted title still owns its own anchor", () => {
+  const result = run({
+    [review]: (text) =>
+      text + '\n## [Ghost](../../README.md "title (")\n\n[ok](#ghost)\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a source inside a video nested in a picture is a resource", () => {
+  // Đo trong Chrome: <picture><video><source src="v.mp4"></video></picture>
+  // cho currentSrc đúng bằng "v.mp4", nên đích ấy hỏng được.
+  invalid({
+    [review]: (text) =>
+      text +
+      '\n<picture><video><source src="missing-r45a.mp4"></video></picture>\n',
+  }, /link hỏng missing-r45a\.mp4/);
+});
+
+test("a source directly under a picture is not a resource", () => {
+  const result = run({
+    [review]: (text) =>
+      text + '\n<picture><source src="missing-r45b.png"></picture>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a source outside every media element is not a resource", () => {
+  // Không phần tử nào chọn nó, và GitHub xóa hẳn src của mọi <source>.
+  const result = run({
+    [review]: (text) => text + '\n<source src="missing-r45c.mp4">\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an unclosed comment opened mid line masks nothing", () => {
+  // GitHub trả về <p>prefix &lt;!-- unclosed <a href="x">live</a></p>: dấu mở
+  // là chữ literal và link sau nó vẫn sống.
+  invalid({
+    [review]: (text) =>
+      text + "\nprefix <!-- unclosed [live](missing-r45d.md)\n",
+  }, /link hỏng missing-r45d\.md/);
+});
+
+test("an unclosed comment opening a block still masks the rest", () => {
+  const result = run({
+    [review]: (text) => text + "\n<!-- unclosed [live](missing-r45e.md)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a code span spans blockquote continuation lines", () => {
+  // GitHub nối ba dòng ấy thành đúng một code span, nên dấu mở comment bên
+  // trong nó chỉ là chữ literal và heading đứng sau vẫn còn.
+  const result = run({
+    [review]: (text) =>
+      text + "\n> " + tick + "code\n> text <!-- more\n> end" + tick +
+      "\n\n## Heading R45\n\n[ok](#heading-r45)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a comment opening a blockquote line still ends the paragraph", () => {
+  // Cấu trúc khối quyết trước phần inline: "> <!--" mở một HTML block và cắt
+  // đoạn đang mở, nên heading phía sau bị nuốt cùng comment.
+  invalid({
+    [review]: (text) =>
+      text + "\n> " + tick + "code\n> <!--\n> end" + tick +
+      "\n\n## Heading R45b\n\n[bad](#heading-r45b)\n",
+  }, /anchor hỏng #heading-r45b/);
+});
+
+test("a deeper blockquote marker still ends the paragraph", () => {
+  const result = run({
+    [review]: (text) =>
+      text + "\n" + tick + "code\n> [live](missing-r45f.md)\n> end" + tick +
+      "\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.notEqual(result.exitCode, 0);
+  assert.ok(
+    result.messages.some((line) => line.includes("missing-r45f.md")),
+    result.messages.join("\n"),
+  );
+});
+
+test("an end tag carrying attributes closes a raw text element", () => {
+  // Đo trong Chrome: "<script></script foo><img src=x.png>" xin đúng "x.png",
+  // tức ảnh nằm ngoài script.
+  invalid({
+    [review]: (text) =>
+      text + '\n<script></script foo><a href="missing-r45g.md">live</a>\n',
+  }, /link hỏng missing-r45g\.md/);
+});
+
+test("a name anchor written inside svg still defines its fragment", () => {
+  // GitHub sanitize bỏ hẳn thẻ <svg> và giữ nguyên <a name>, nên fragment ấy
+  // sống trên kênh đọc chính của kế hoạch.
+  const result = run({
+    [review]: (text) =>
+      text + '\n<svg><a name="ghost-svg"></a></svg>\n\n[ok](#ghost-svg)\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});

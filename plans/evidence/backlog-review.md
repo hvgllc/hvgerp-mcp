@@ -2955,3 +2955,69 @@ kèm một test đối chứng cho dòng văn xuôi có dấu ống.
 | `node --test plans/test-validator.mjs` | 799 pass          |
 | `git diff --check`                     | sạch              |
 | `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+## Codex vòng tiếp: review 5128863382
+
+Sáu finding P2 trên head `e3dec0d`. Tái hiện đủ sáu, nhận năm, từ chối một.
+
+- G1: vòng tìm đuôi link trong heading đếm ngoặc mà không biết title có nháy,
+  nên `## [Ghost](../../README.md "title (")` không bao giờ tìm ra dấu đóng.
+  Slug ghi cả destination lẫn title, một link tới cái slug bịa ấy đi qua cổng,
+  còn `#ghost` thì bị báo hỏng. GitHub render cụm ấy thành
+  `<h2><a href="../../README.md" title="title (">Ghost</a></h2>`. Vòng quét nay
+  theo dõi nháy và ngoặc nhọn đúng như `scanInline` đã làm.
+- G2: `<source src>` đọc theo tổ tiên `picture` nên sai cả hai chiều. Đo trong
+  Chrome bằng `currentSrc`:
+  `<picture><video><source src="v.mp4"></video></picture>` cho `currentSrc` đúng
+  bằng `v.mp4`, tức đích ấy hỏng được mà cổng im; còn một `<source>` không nằm
+  trong media nào thì không phần tử nào chọn, và GitHub xóa hẳn `src` của mọi
+  `<source>` khi sanitize, nên hỏi ở đó là báo hỏng một chuỗi không renderer nào
+  tải. Vai trò nay đọc từ phần tử bao gần nhất.
+- G3: dấu mở comment giữa dòng không mở HTML block, nên chuẩn đòi đủ ngữ pháp
+  comment. GitHub trả về `<p>prefix &lt;!-- unclosed <a href="x">live</a></p>`.
+  Chỉ dấu mở đứng đầu dòng, sau tối đa ba khoảng trắng và các dấu trích dẫn đang
+  mở, mới còn được nuốt tới hết tài liệu.
+- G4 bị từ chối. Finding nói `<a name>` viết trong `<svg>` không tạo fragment.
+  Đúng với HTML thô: đo trong Chrome, `getElementsByName("ghost-svg")` trả về 0
+  còn `ghost-html` trả về 1, và thẻ ấy mang namespace SVG. Nhưng kênh đọc của kế
+  hoạch là GitHub, mà GitHub sanitize bỏ hẳn thẻ `<svg>` và giữ nguyên
+  `<a name="user-content-ghost-svg">`, tức fragment ấy sống. Siết theo đề xuất
+  là báo hỏng một link chạy được trên chính nơi tài liệu được đọc. Giữ nguyên,
+  kèm một test chốt chiều này.
+- G5: kết luận đúng, ví dụ và cơ chế thì không. Ví dụ của finding là ba dòng
+  trích dẫn, trong đó dòng giữa chỉ có dấu mở comment:
+
+```text
+> `code
+> <!--
+> end`
+```
+
+GitHub chỉ trả về một blockquote chứa đúng dòng đầu, nghĩa là dấu mở đứng đầu
+dòng mở một HTML block và nuốt cả heading phía sau, nên báo fragment ấy hỏng là
+đúng chứ không phải sai. Chỗ hỏng thật là dấu mở viết giữa dòng:
+
+```text
+> `code
+> text <!-- more
+> end`
+```
+
+Cụm này cho đúng một code span và heading sau đó vẫn còn, trong khi cổng cắt
+đoạn ở mỗi dấu trích dẫn nên span vỡ, dấu mở thành comment thật và một fragment
+sống bị báo hỏng. Nay chỉ dòng làm sâu thêm trích dẫn mới ngắt đoạn, các luật
+container khác đọc trên phần sau dấu trích dẫn, và dấu mở comment đứng đầu dòng
+được tính là ranh giới khối.
+
+- G6: thẻ đóng của phần tử raw text vẫn đóng phần tử khi mang thuộc tính. Đo
+  trong Chrome: `<script></script foo><img src=x.png>` phát ra đúng một yêu cầu
+  tới `x.png`. Ngữ pháp dấu đóng nay nhận thuộc tính.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 811 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |

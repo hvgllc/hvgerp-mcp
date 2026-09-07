@@ -283,6 +283,20 @@ function outsideHtmlComments(body, filler = " ") {
       htmlComment.lastIndex = match.index + 1;
       continue;
     }
+    // Dấu mở chỉ nuốt tới hết tài liệu khi nó mở một HTML block, tức đứng đầu
+    // một dòng, tối đa ba khoảng trắng và các dấu blockquote đang mở. Viết giữa
+    // dòng thì chuẩn đòi đủ ngữ pháp của một comment inline: đo trên renderer
+    // của GitHub, "prefix <!-- unclosed [live](x.md)" trả về
+    // <p>prefix &lt;!-- unclosed <a href="x.md">live</a></p>, tức dấu mở chỉ là
+    // chữ literal và link sau nó vẫn sống. Nuốt tới EOF ở đó là để mọi đích
+    // hỏng đứng sau một dấu mở lỡ tay đi qua cổng.
+    if (
+      !match[0].endsWith("-->") &&
+      !/(?:^|\n)[ \t]*(?:>[ \t]*)*$/.test(body.slice(0, match.index))
+    ) {
+      htmlComment.lastIndex = match.index + 1;
+      continue;
+    }
     while (span < spans.length && spans[span][1] <= match.index) span++;
     if (span < spans.length && spans[span][0] <= match.index) {
       htmlComment.lastIndex = spans[span][1];
@@ -462,7 +476,13 @@ const rawTextOrComment = new RegExp(
     htmlAttributes + htmlOptionalSpace + "/?>)" +
     "|<!--[\\s\\S]*?(?:-->|$)" +
     "|(<(script|style|textarea)" + htmlAttributes + htmlOptionalSpace + ">)" +
-    "([\\s\\S]*?)(</\\2" + htmlOptionalSpace + ">|$)",
+    // Thẻ đóng của một phần tử raw text vẫn đóng phần tử khi nó mang thuộc
+    // tính: bộ phân tích ghi nhận parse error rồi bỏ thuộc tính đi chứ không bỏ
+    // thẻ. Đo trong Chrome: "<script></script foo><img src=x.png>" phát ra đúng
+    // một yêu cầu tới "x.png", tức ảnh nằm ngoài script. Chỉ nhận dấu đóng
+    // trống thì thân script chạy tới hết tài liệu và mọi đích hỏng sau đó biến
+    // mất khỏi cổng.
+    "([\\s\\S]*?)(</\\2" + htmlAttributes + htmlOptionalSpace + "/?>|$)",
   "gi",
 );
 function outsideRawTextAndComments(body) {
@@ -755,13 +775,36 @@ function inlineCodeSpans(body) {
     if (current) paragraphs.push(current);
     current = "";
   }
+  // Độ sâu blockquote của dòng liền trước, để biết một dấu ">" là mở một trích
+  // dẫn mới hay chỉ là dấu tiếp tục của trích dẫn đang mở.
+  let quoted = 0;
   for (const line of body.match(/[^\n]*(?:\n|$)/g) ?? []) {
     const content = line.replace(/\r?\n$/, "");
-    const standalone = /^ {0,3}#{1,6}(?:[ \t]|$)/.test(content) ||
-      /^ {0,3}(?:=+|-+)[ \t]*$/.test(content) ||
+    // Dấu blockquote lặp lại ở mỗi dòng của cùng một trích dẫn, nên coi mọi dấu
+    // ">" là một lần ngắt đoạn thì code span viết vắt qua nhiều dòng trong một
+    // trích dẫn bị tách làm đôi. Đo trên renderer của GitHub: "> `code", rồi
+    // "> text <!-- more", rồi "> end`" trả về đúng một code span có cả dấu mở
+    // comment ở dạng chữ literal, và heading đứng sau vẫn còn. Tách ở đó thì
+    // dấu mở ấy thành comment thật, phần còn lại của tài liệu bị che, và một
+    // fragment sống bị báo hỏng. Chỉ dòng làm sâu thêm trích dẫn mới ngắt đoạn.
+    const markers = content.match(/^(?: {0,3}>)+/)?.[0] ?? "";
+    const depth = (markers.match(/>/g) ?? []).length;
+    // Luật của các container khác đọc trên phần sau dấu trích dẫn, để một
+    // heading hay một dấu list viết trong trích dẫn vẫn ngắt đoạn như ở ngoài.
+    const inner = content.slice(markers.length);
+    const standalone = /^ {0,3}#{1,6}(?:[ \t]|$)/.test(inner) ||
+      /^ {0,3}(?:=+|-+)[ \t]*$/.test(inner) ||
       /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})$/.test(
-        content,
-      );
+        inner,
+      ) ||
+      // Dấu mở comment đứng đầu dòng mở một HTML block, và cấu trúc khối được
+      // quyết trước phần inline, nên nó cắt đoạn đang mở kể cả khi một backtick
+      // phía trên còn chờ dấu đóng. Đo trên renderer của GitHub: "> `code",
+      // rồi "> <!--", rồi "> end`" chỉ trả về một đoạn chứa "`code", phần sau
+      // biến mất cùng comment. Coi dòng ấy là phần thân của code span thì dấu
+      // mở thành chữ literal, mọi thứ sau nó ở lại trước mắt cổng, và một
+      // fragment đã bị comment nuốt vẫn được nhận.
+      /^ {0,3}<!--/.test(inner);
     // Dấu ordered chỉ là dấu list khi số của nó dài tối đa chín chữ số, đúng
     // giới hạn mà listIndentTracker và containerPrefix đã áp. Nhận số dài hơn
     // là cắt đoạn ở một dòng mà chuẩn giữ nguyên trong đoạn, code span viết vắt
@@ -770,8 +813,8 @@ function inlineCodeSpans(body) {
     // cả hai chiều: GitHub giữ "1234567890." trong code span, nhưng "2." hay
     // "123456789." viết dưới một item đang mở vẫn đóng đoạn của item đó, nên
     // siết thêm theo luật "chỉ số 1 mới ngắt đoạn" sẽ bỏ sót link hỏng.
-    const container = content.match(
-      /^ {0,3}(?:([-+*]|\d{1,9}[.)])[ \t]+|(>))/,
+    const container = inner.match(
+      /^ {0,3}(?:([-+*]|\d{1,9}[.)])[ \t]+)/,
     );
     const ordered = container?.[1]?.match(/^(\d{1,9})[.)]$/);
     // Một list có số bắt đầu khác 1 không ngắt được đoạn đang mở: GitHub giữ
@@ -781,11 +824,13 @@ function inlineCodeSpans(body) {
     // thì ngược lại, vì dòng ấy rời container đang mở và đoạn bên trong đóng
     // theo: cùng ba dòng đó viết dưới "- item" cho ra một list với link sống,
     // nên bỏ luật ở đây là để một đích hỏng đi qua cổng.
-    const interrupts = container &&
-      (container[2] || !ordered || Number(ordered[1]) === 1 ||
-        /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]/.test(current));
+    const interrupts = depth > quoted ||
+      (container &&
+        (!ordered || Number(ordered[1]) === 1 ||
+          /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]/.test(current)));
     if (standalone || /^[ \t]*$/.test(content) || interrupts) flush();
     current += line;
+    quoted = depth;
     if (standalone || /^[ \t]*$/.test(content)) flush();
   }
   flush();
@@ -999,17 +1044,23 @@ const submitter = (element, attributes) => {
 // đúng vì một đường dẫn không renderer nào tải. Ancestry đọc từ vùng <svg> nên
 // một <script> viết trong foreignObject vẫn bị tính là SVG: đó là hướng chặt,
 // cùng lắm báo thừa chứ không bỏ sót đích hỏng.
-const linkAttribute = (element, name, attributes, picture, svg) =>
+const linkAttribute = (element, name, attributes, media, svg) =>
   name === "href" || name === "xlink:href"
     ? hrefElements.has(element) && (element !== "script" || svg)
     : name === "src" &&
-      ((srcElements.has(element) && !(element === "source" && picture)) ||
+      ((srcElements.has(element) && (element !== "source" || media)) ||
         (element === "input" && imageInput(attributes)));
-// <source src> chỉ trỏ tới tài nguyên khi thẻ nằm trong <audio> hay <video>.
-// Dưới <picture>, trình duyệt chọn ứng viên từ srcset và không đụng tới src:
-// Chrome chỉ phát ra một yêu cầu cho srcset, còn GitHub xóa hẳn thuộc tính src
-// của <source> khi sanitize. Hỏi nó ở đó là bắt cổng từ chối một cụm ảnh đáp
-// ứng hoàn toàn hợp lệ vì một thuộc tính không renderer nào đọc.
+// <source src> chỉ trỏ tới tài nguyên khi phần tử bao nó gần nhất là <audio>
+// hay <video>. Dưới <picture>, trình duyệt chọn ứng viên từ srcset và không
+// đụng tới src: Chrome chỉ phát ra một yêu cầu cho srcset, còn GitHub xóa hẳn
+// thuộc tính src của <source> khi sanitize. Hỏi nó ở đó là bắt cổng từ chối một
+// cụm ảnh đáp ứng hoàn toàn hợp lệ vì một thuộc tính không renderer nào đọc.
+// Hỏi theo tổ tiên thay vì theo phần tử bao gần nhất thì sai cả hai chiều. Một
+// <video> viết bên trong <picture> vẫn chọn source con của nó: đo trong Chrome,
+// <picture><video><source src="v.mp4"></video></picture> cho currentSrc đúng
+// bằng "v.mp4", nên đích ấy hỏng được mà cổng lại im. Ngược lại, một <source>
+// không nằm trong media nào thì không phần tử nào chọn nó, GitHub cũng xóa src
+// của nó, nên hỏi ở đó là báo hỏng một chuỗi không renderer nào tải.
 // Ranh giới của cụm ảnh phải đọc từ chính luồng thẻ đã được công nhận, không
 // phải từ chuỗi thô. Một chuỗi hình dạng thẻ nằm trong giá trị thuộc tính là dữ
 // liệu chứ không mở phần tử nào: Chrome dựng <div title="<picture>"> thành một
@@ -1022,10 +1073,12 @@ const linkAttribute = (element, name, attributes, picture, svg) =>
 // đóng được vùng nào.
 const closingTag = (name) =>
   new RegExp("</" + name + "(?=[ \\t\\r\\n/>])", "gi");
-const elementClose = new Map([["picture", closingTag("picture")], [
-  "svg",
-  closingTag("svg"),
-]]);
+const elementClose = new Map([
+  ["picture", closingTag("picture")],
+  ["svg", closingTag("svg")],
+  ["audio", closingTag("audio")],
+  ["video", closingTag("video")],
+]);
 function elementRanges(text, tags, name) {
   const spans = tags.map((tag) => [tag.index, tag.index + tag[0].length]);
   const events = [];
@@ -1171,8 +1224,8 @@ const attributeTarget = (value) => {
 // reference thay vì thành một xuống dòng bị bỏ đi, dựng ra một đường dẫn không
 // tồn tại và báo hỏng một link đúng; srcset viết "a.png&#44;b.png" thì mất luôn
 // ranh giới giữa hai ứng viên.
-const attributeTargets = (element, name, value, attributes, picture, svg) =>
-  (linkAttribute(element, name, attributes, picture, svg) ||
+const attributeTargets = (element, name, value, attributes, media, svg) =>
+  (linkAttribute(element, name, attributes, media, svg) ||
       (name === "poster" && posterElements.has(element)) ||
       (name === "data" && dataElements.has(element)) ||
       (name === "action" && element === "form") ||
@@ -3106,13 +3159,42 @@ function matchingBracket(text, open) {
 function linkTail(text, position, definitions) {
   if (text[position] === "(") {
     let depth = 1;
+    let quote;
+    // Title có nháy và destination viết trong ngoặc nhọn đều là chuỗi nguyên
+    // khối: ngoặc nằm bên trong chúng không tham gia cân bằng cặp ngoặc của
+    // đuôi. Đếm cả ngoặc đó thì '## [Ghost](../../README.md "title (")' không
+    // bao giờ tìm ra dấu đóng, đuôi không bị gỡ, slug ghi cả destination lẫn
+    // title, và một link tới cái slug bịa ấy đi qua cổng trong khi anchor thật
+    // bị báo hỏng. Đo trên renderer của GitHub: cụm đó render thành
+    // <h2><a href="../../README.md" title="title (">Ghost</a></h2>, tức nhãn là
+    // toàn bộ phần văn bản của heading. Cùng luật mà scanInline đã theo, để hai
+    // đường quét không đọc một đuôi theo hai kiểu.
+    let angle = /^[ \t]*<[^\n]*>/.test(text.slice(position + 1));
     for (let index = position + 1; index < text.length; index++) {
-      if (text[index] === "\\") {
+      const character = text[index];
+      if (character === "\\") {
         index++;
         continue;
       }
-      if (text[index] === "(") depth++;
-      else if (text[index] === ")" && --depth === 0) {
+      if (angle) {
+        if (character === ">" || character === "\n") angle = false;
+        continue;
+      }
+      if (quote) {
+        if (character === quote) quote = undefined;
+        continue;
+      }
+      if (
+        (character === '"' || character === "'") &&
+        // Dấu nháy chỉ mở title khi đứng sau khoảng trắng, để một dấu nháy
+        // trong tên file không nuốt phần còn lại của đuôi.
+        /^[ \t\r\n]$/.test(text[index - 1] ?? "")
+      ) {
+        quote = character;
+        continue;
+      }
+      if (character === "(") depth++;
+      else if (character === ")" && --depth === 0) {
         return inlineDestination.test(text.slice(position + 1, index).trim())
           ? index + 1
           : -1;
@@ -3682,11 +3764,25 @@ for (const filePath of planFiles(planRoot)) {
     const rawTags = renderedTags(rawHtml);
     const pictures = elementRanges(rawHtml, rawTags, "picture");
     const svgs = elementRanges(rawHtml, rawTags, "svg");
+    const audios = elementRanges(rawHtml, rawTags, "audio");
+    const videos = elementRanges(rawHtml, rawTags, "video");
     for (const tag of rawTags) {
       const inside = (ranges) =>
         ranges.some(([start, end]) => tag.index > start && tag.index < end);
-      const picture = inside(pictures);
+      // Vùng bao gần nhất là vùng mở muộn nhất trong số các vùng chứa thẻ. Chỉ
+      // vùng ấy mới nói được vai trò của một <source>: cụm ảnh và cụm media
+      // lồng nhau được, và phần tử chọn tài nguyên luôn là phần tử bên trong.
+      const opensAt = (ranges) =>
+        ranges.reduce(
+          (latest, [start, end]) =>
+            tag.index > start && tag.index < end && start > latest
+              ? start
+              : latest,
+          -1,
+        );
       const svg = inside(svgs);
+      const media = Math.max(opensAt(audios), opensAt(videos)) >
+        opensAt(pictures);
       // Ngoài SVG, bộ phân tích HTML đổi thẳng thẻ mở "image" thành "img", nên
       // <image src="x.png"> tải tài nguyên y như <img>. Đo trong Chrome: cây
       // DOM trả về IMG và trang phát ra đúng một yêu cầu tới "x.png". Chỉ nhận
@@ -3706,7 +3802,7 @@ for (const filePath of planFiles(planRoot)) {
               name,
               value,
               attributes,
-              picture,
+              media,
               svg,
             ),
           );
