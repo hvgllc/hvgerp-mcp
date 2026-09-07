@@ -2761,3 +2761,39 @@ vòng 39, đã đổi có chủ ý và đã xác minh lại bằng renderer th�
 | `node --test plans/test-validator.mjs` | 720 pass          |
 | `git diff --check`                     | sạch              |
 | `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+## Codex vòng tiếp: review 5127751757
+
+Một finding P1 trên head `6839267`, nói rằng các commit review đã ghim không
+phải tổ tiên của head nên không được chuyển sang một clone một nhánh, và
+validator ở đó hỏng 55 lỗi provenance. Bác, sau ba phép đo.
+
+- Mọi commit được ghim đều là tổ tiên thật của head đang review.
+  `git merge-base --is-ancestor` trả đúng cho `definition_commit` `b9d6d02`,
+  `definition_approval_commit` `db2f31f`, `reviewed_commit` `bb78ace`,
+  `completed_commit` `013a1cf`, và commit review độc lập gốc `495cd98`. Tiền đề
+  "không phải tổ tiên nên không được chuyển" sai ngay ở vế đầu.
+- Chạy đúng lệnh mà finding nói đã chạy thì không tái hiện được. Clone
+  `--no-local --single-branch --no-tags` tại đúng commit đang review, làm hai
+  lần, một lần từ cây local và một lần từ GitHub, đều cho validator thoát 0 và
+  `node --test plans/test-history.mjs` 5 pass. Bản thân `test-history.mjs` chính
+  là phép kiểm ấy đã được viết thành gate, nên nó chạy ở mọi vòng.
+- SHA mà lập luận dựa vào không tồn tại. `git cat-file -t f2809d4` báo "Not a
+  valid object name" trong cây thật, và GitHub trả 422 "No commit found for SHA"
+  cho cùng chuỗi đó.
+
+Có đúng một cách dựng ra được triệu chứng ấy: clone kèm `--depth`. Ở đó lịch sử
+bị cắt theo định nghĩa nên mọi gate provenance đều hỏng, và số lỗi là 89 chứ
+không phải 55. Đó cũng là điều kiện mà `plans/AGENTS.md` đã ghi sẵn ngay ở chính
+đoạn finding trích dẫn: checkout shallow phải fetch đầy đủ history trước. Không
+sửa gì cho vòng này; đây là lần thứ hai một finding dừng ở lập luận provenance
+trên một SHA không tồn tại, lần trước là vòng 20.
+
+| Cổng                                   | Kết quả  |
+| -------------------------------------- | -------- |
+| `node plans/validate-plans.mjs`        | Đạt      |
+| `deno fmt --check`                     | 315 file |
+| `deno lint`                            | 160 file |
+| `node --test plans/test-validator.mjs` | 720 pass |
+| `git diff --check`                     | sạch     |
+| `node --test plans/test-history.mjs`   | 5 pass   |
