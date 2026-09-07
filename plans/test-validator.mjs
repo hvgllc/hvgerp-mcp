@@ -5071,9 +5071,13 @@ test("an img srcset candidate is a real target", () => {
 });
 
 test("a source srcset candidate is a real target", () => {
+  // Ứng viên chỉ là tài nguyên khi có một <img> đứng sau nó trong cùng cụm: đo
+  // bằng access log của Chrome, một <picture> không có <img> nào không phát ra
+  // yêu cầu nào cả.
   invalid({
     "plans/evidence/backlog-review.md": (text) =>
-      text + '\n<picture><source srcset="missing-source-set.png"></picture>\n',
+      text + '\n<picture><source srcset="missing-source-set.png">' +
+      '<img src="../../README.md"></picture>\n',
   }, /link hỏng missing-source-set\.png/);
 });
 
@@ -6028,9 +6032,12 @@ test("a source src under picture is not a resource", () => {
 });
 
 test("a source srcset under picture is still a resource", () => {
+  // Cùng lý do: cụm phải có một <img> đứng sau <source> thì ứng viên mới được
+  // máy chọn tài nguyên đọc tới.
   invalid({
     "plans/evidence/backlog-review.md": (text) =>
-      text + '\n<picture><source srcset="missing-r41d.png"></picture>\n',
+      text + '\n<picture><source srcset="missing-r41d.png">' +
+      '<img src="../../README.md"></picture>\n',
   }, /link hỏng missing-r41d\.png/);
 });
 
@@ -7313,4 +7320,160 @@ test("a fragment written inside srcdoc resolves in the outer document", () => {
       "\n<iframe srcdoc=\"&lt;p id='nested-only-l4'&gt;x&lt;/p&gt;" +
       "&lt;a href='#nested-only-l4'&gt;go&lt;/a&gt;\"></iframe>\n",
   }, /anchor hỏng #nested-only-l4/);
+});
+
+test("a nested base with an empty href still freezes the base", () => {
+  // Chuẩn đóng băng base ở phần tử <base> đầu tiên có href, kể cả href rỗng.
+  // Đo bằng access log của Chrome: hai base liên tiếp, cái đầu rỗng, thì ảnh
+  // tương đối vẫn đi theo gốc của trang bao chứ không theo base thứ hai.
+  const result = run({
+    [review]: (text) =>
+      text +
+      "\n<iframe srcdoc=\"&lt;base href=''&gt;&lt;base href='../'&gt;" +
+      "&lt;img src='001.md'&gt;\"></iframe>\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a picture source written after the image is inert", () => {
+  // Ứng viên của một <source> chỉ tới được cái <img> đứng sau nó trong cùng
+  // cụm. Đo bằng access log: cụm đảo thứ tự chỉ xin ảnh của <img>.
+  const result = run({
+    [review]: (text) =>
+      text +
+      '\n<picture><img src="001.md"><source srcset="missing-after-m3.png">' +
+      "</picture>\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a picture holding no image selects nothing", () => {
+  // Không có <img> thì máy chọn tài nguyên không chạy: đo bằng access log,
+  // <picture><source srcset="x.png"></picture> không phát ra yêu cầu nào.
+  const result = run({
+    [review]: (text) =>
+      text + '\n<picture><source srcset="missing-lonely-m3.png"></picture>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an abrupt closing empty comment does not mask what follows", () => {
+  // "<!-->" đóng ngay tại chỗ. Đo trên renderer của GitHub: dòng sau nó vẫn ra
+  // một thẻ <img> sống, nên đích ấy phải bị hỏi.
+  invalid({
+    [review]: (text) => text + '\n\n<!-->\n<img src="missing-abrupt-m4.png">\n',
+  }, /link hỏng missing-abrupt-m4\.png/);
+});
+
+test("an image written in an iframe body is still checked", () => {
+  // Renderer của record là GitHub và nó không dựng iframe: đo bằng
+  // POST /markdown, hai thẻ iframe ra văn bản đã escape còn <img> bên trong ra
+  // phần tử sống. Che thân iframe ở tầng ngoài là bỏ sót một đích hỏng thật.
+  invalid({
+    [review]: (text) =>
+      text +
+      '\n<iframe src="001.md"><img src="missing-body-m5.png"></iframe>\n',
+  }, /link hỏng missing-body-m5\.png/);
+});
+
+test("a CDATA section inside svg is character data", () => {
+  // Trong foreign content, "<![CDATA[" mở một section character data đóng ở
+  // "]]>". Access log không xin tấm nào viết trong đó.
+  const result = run({
+    [review]: (text) =>
+      text +
+      '\n<svg width="10" height="10"><![CDATA[' +
+      '<image href="missing-cdata-m6.png">]]></svg>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a solidus separates attributes inside an html block", () => {
+  // Tokenizer ghi nhận unexpected-solidus-in-tag rồi đọc lại ký tự kế tiếp như
+  // đầu một tên thuộc tính. Renderer của GitHub trả về một thẻ <img> sống.
+  invalid({
+    [review]: (text) =>
+      text + '\n<div><img/src="missing-solidus-m7.png"></div>\n',
+  }, /link hỏng missing-solidus-m7\.png/);
+});
+
+test("a nested meta refresh destination is checked", () => {
+  // Meta refresh tự lái khung tới địa chỉ trong "content". Access log của
+  // Chrome xin đúng tệp ấy, nên nó là một điều hướng thật.
+  invalid({
+    [review]: (text) =>
+      text +
+      "\n<iframe srcdoc=\"&lt;meta http-equiv='refresh' " +
+      "content='0;url=missing-refresh-m8.html'&gt;\"></iframe>\n",
+  }, /link hỏng missing-refresh-m8\.html/);
+});
+
+test("a live svg image outside any CDATA is still checked", () => {
+  // Ca đối chứng của luật CDATA: cùng thẻ ấy viết thẳng thì access log xin
+  // ngay, nên cổng vẫn phải hỏi.
+  invalid({
+    [review]: (text) =>
+      text +
+      '\n<svg width="10" height="10"><image href="missing-c2.png"></image>' +
+      "</svg>\n",
+  }, /link hỏng missing-c2\.png/);
+});
+
+test("a normal comment still masks the tag inside it", () => {
+  // Ca đối chứng của luật comment: nhánh ngắn chỉ nhận đúng dạng đóng ngay,
+  // comment thường vẫn che hết thân.
+  const result = run({
+    [review]: (text) => text + '\n\n<!-- <img src="missing-c4.png"> -->\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a CDATA outside svg masks only through the first close bracket", () => {
+  // Ngoài foreign content, "<![CDATA[" chỉ là một bogus comment đóng ở ">" đầu
+  // tiên. Đo trên renderer của GitHub: tấm viết trước dấu ấy biến mất còn tấm
+  // viết sau ra một thẻ <img> sống, nên cổng phải hỏi nó.
+  const result = invalid({
+    [review]: (text) =>
+      text +
+      '\n<div><![CDATA[<img src="masked-c5.png">' +
+      '<img src="missing-c5b.png">]]></div>\n',
+  }, /link hỏng missing-c5b\.png/);
+  // Nửa còn lại của phép đo: tấm viết trước dấu ">" đầu tiên nằm trong bogus
+  // comment nên không render, và cổng không được báo nó.
+  assert.doesNotMatch(result.messages.join("\n"), /masked-c5\.png/);
+});
+
+test("a first nested base with a real href still moves the root", () => {
+  // Ca đối chứng của luật đóng băng: base đầu tiên có giá trị thật vẫn đổi gốc
+  // của mọi đích đứng sau nó.
+  invalid({
+    [review]: (text) =>
+      text +
+      "\n<iframe srcdoc=\"&lt;base href='../'&gt;" +
+      "&lt;img src='missing-c6.png'&gt;\"></iframe>\n",
+  }, /link hỏng \.\.\/missing-c6\.png/);
+});
+
+test("a meta refresh outside a nested document is ignored", () => {
+  // Renderer của record là GitHub và nó xóa hẳn thẻ <meta>: đo bằng
+  // POST /markdown, một tài liệu chỉ có meta refresh trả về chuỗi rỗng.
+  const result = run({
+    [review]: (text) =>
+      text + '\n<meta http-equiv="refresh" content="0;url=missing-c7.html">\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an img srcset stays checked next to the new picture rule", () => {
+  // Ca đối chứng cho luật thứ tự trong picture: srcset của <img> không phụ
+  // thuộc phần tử bao nên vẫn bị hỏi ở mọi vị trí.
+  invalid({
+    [review]: (text) => text + '\n<img src="001.md" srcset="missing-c9.png">\n',
+  }, /link hỏng missing-c9\.png/);
 });

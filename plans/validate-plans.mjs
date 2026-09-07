@@ -261,7 +261,15 @@ function outsideBlockCode(body) {
 // thiếu "-->" chạy tới hết tài liệu chứ không phải là văn bản sống: đòi delimiter
 // đóng thì mọi section sau một "<!--" bỏ quên vẫn được đọc như nội dung thật và
 // một kế hoạch không còn hiển thị phạm vi, bước hay tiêu chí nào vẫn qua gate.
-const htmlComment = /<!--[\s\S]*?(?:-->|$)/g;
+// "<!-->" và "<!--->" đóng ngay tại chỗ chứ không mở một comment chạy dài: bộ
+// tokenizer gọi đó là abrupt closing của một comment rỗng, và CommonMark cũng
+// kết thúc block ngay trên dòng ấy vì chuỗi "-->" nằm sẵn trong chính dấu mở.
+// Đo trên renderer của GitHub: "<!-->" rồi một dòng <img src="x.png"> trả về
+// đúng một thẻ <img> sống, ngang với ca đối chứng "<!-- c -->". Đòi một "-->"
+// đứng riêng thì dấu mở ấy nuốt tới hết tài liệu, mọi đích sau đó biến mất khỏi
+// cổng và một ảnh hỏng đi qua. Hai nhánh ngắn phải đứng trước vì nhánh dài
+// không tham lam vẫn chạy quá chúng để tìm một "-->" khác.
+const htmlComment = /<!--(?:>|->|[\s\S]*?(?:-->|$))/g;
 // filler cho phép chỗ gọi đánh dấu phần vừa xóa thay vì trả về khoảng trắng.
 // Đường quét anchor cần phân biệt đúng chỗ đó: comment không góp chữ nào vào
 // văn bản render, nên nó cũng không được góp khoảng trắng vào slug.
@@ -343,7 +351,15 @@ const htmlAttributes = "(?:" + htmlSpace +
 // giờ vào cổng và link hỏng đi qua. Nhánh nháy đứng trước vì lớp ký tự rộng ở
 // đây khớp được cả dấu nháy: để nó trước thì title="a>b" bị cắt ngay tại ">"
 // bên trong nháy.
-const htmlBlockAttributes = "(?:" + htmlSpace +
+// Dấu "/" cũng tách được hai thuộc tính bên trong một block: tokenizer ghi nhận
+// unexpected-solidus-in-tag rồi đọc lại ký tự kế tiếp như đầu một tên thuộc
+// tính. Đo trên renderer của GitHub, "<div><img/src=\"x.png\"></div>" trả về
+// một thẻ <img src="x.png"> sống, trong khi cùng cách viết ấy đặt giữa một đoạn
+// văn chỉ ra chữ literal, nên chỉ ngữ pháp block mới nới. Đòi khoảng trắng ở
+// đây thì thẻ ấy không khớp mẫu nào, đích của nó không bao giờ vào cổng và một
+// ảnh hỏng đi qua.
+const htmlBlockAttributeSpace = "(?:" + htmlSpace + "|/)+";
+const htmlBlockAttributes = "(?:" + htmlBlockAttributeSpace +
   "[A-Za-z_:][A-Za-z0-9_.:-]*(?:" + htmlOptionalSpace + "=" +
   htmlOptionalSpace +
   "(?:'[^']*'|\"[^\"]*\"|[^ \\t\\f\\r\\n>]+))?)*";
@@ -479,20 +495,49 @@ function tagAttributes(text, blockRaw = false) {
 // nhánh này thì comment giả nuốt tới hết tài liệu, mọi link sau đó biến mất
 // khỏi gate và một đích hỏng đi qua cổng. Nhánh chỉ để nhảy qua nên không capture
 // và không đổi văn bản.
+// <iframe> không vào nhóm này, dù trong một tài liệu HTML thật thân của nó là
+// văn bản dự phòng. Renderer của record là GitHub và nó không dựng iframe: đo
+// bằng POST /markdown với mode=gfm, "<iframe><a href='p3.html'>fallback</a>
+// <img src='p3.png'></iframe>" trả về hai thẻ mở iframe đã escape thành văn bản
+// còn <a> và <img> bên trong ra thành phần tử sống. Che thân iframe ở tầng
+// ngoài là nới lỏng: một đích hỏng viết trong đó vẫn render và vẫn hỏng thật.
+// "<!" không đi kèm "--" mở một bogus comment, đóng ngay tại ">" đầu tiên. Đo
+// bằng cùng access log: ngoài foreign content,
+// <div><![CDATA[<image href="a.png"><img src="b.png">]]></div> chỉ xin b.png,
+// tức ảnh đầu nằm trong bogus comment còn ảnh sau đã ở ngoài. Bỏ nhánh này thì
+// thẻ nằm trong bogus comment vẫn vào cổng và một tài liệu đúng bị từ chối.
 const rawTextOrComment = new RegExp(
-  "(?:<(?!(?:script|style|textarea)[ \\t\\r\\n/>])[A-Za-z][A-Za-z0-9-]*" +
+  "(?:<(?!(?:script|style|textarea|svg)[ \\t\\r\\n/>])[A-Za-z][A-Za-z0-9-]*" +
     htmlAttributes + htmlOptionalSpace + "/?>)" +
-    "|<!--[\\s\\S]*?(?:-->|$)" +
-    "|(<(script|style|textarea)" + htmlAttributes + htmlOptionalSpace + ">)" +
+    "|<!--(?:>|->|[\\s\\S]*?(?:-->|$))" +
+    "|<!(?!--)[^>]*(?:>|$)" +
+    "|(<(script|style|textarea)" + htmlAttributes + htmlOptionalSpace +
+    ">)" +
     // Thẻ đóng của một phần tử raw text vẫn đóng phần tử khi nó mang thuộc
     // tính: bộ phân tích ghi nhận parse error rồi bỏ thuộc tính đi chứ không bỏ
     // thẻ. Đo trong Chrome: "<script></script foo><img src=x.png>" phát ra đúng
     // một yêu cầu tới "x.png", tức ảnh nằm ngoài script. Chỉ nhận dấu đóng
     // trống thì thân script chạy tới hết tài liệu và mọi đích hỏng sau đó biến
     // mất khỏi cổng.
-    "([\\s\\S]*?)(</\\2" + htmlAttributes + htmlOptionalSpace + "/?>|$)",
+    "([\\s\\S]*?)(</\\2" + htmlAttributes + htmlOptionalSpace + "/?>|$)" +
+    // Trong foreign content, "<![CDATA[" mở một section character data thật,
+    // đóng ở "]]>" chứ không ở ">" đầu tiên. Đo bằng access log của Chrome:
+    // <svg><![CDATA[<image href="a.png"><image href="b.png">]]></svg> không xin
+    // tấm nào, còn ca đối chứng <svg><image href="live.png"></image></svg> xin
+    // ngay. Vì hai chiều dài khác nhau, chỉ vùng svg mới được che tới "]]>";
+    // ngoài nó nhánh bogus comment ở trên che tới ">" đầu tiên. Thân svg giữ
+    // nguyên phần còn lại vì thẻ trong đó vẫn dựng ra tài nguyên thật.
+    "|(<svg" + htmlAttributes + htmlOptionalSpace + ">)" +
+    "([\\s\\S]*?)(</svg" + htmlAttributes + htmlOptionalSpace + "/?>|$)",
   "gi",
 );
+// Che một section CDATA nhưng giữ nguyên độ dài từng dòng, để các đường quét
+// theo chỉ số trong body gốc không lệch.
+const maskCdata = (text) =>
+  text.replace(
+    /<!\[CDATA\[[\s\S]*?(?:\]\]>|$)/g,
+    (section) => section.replace(/[^\n]/g, " "),
+  );
 function outsideRawTextAndComments(body) {
   // Backslash chỉ vô hiệu hóa ký tự trong văn bản Markdown. Bên trong một khối
   // HTML thô nó là ký tự thường của HTML, nên "\<!--" ở đó vẫn mở một comment
@@ -507,7 +552,10 @@ function outsideRawTextAndComments(body) {
   while ((match = rawTextOrComment.exec(body))) {
     // Thẻ mở thường chỉ chiếm chỗ để phần bên trong nó không mở token khác;
     // văn bản của nó ở lại nguyên vẹn.
-    if (match[1] === undefined && !match[0].startsWith("<!--")) continue;
+    if (
+      match[1] === undefined && match[5] === undefined &&
+      !match[0].startsWith("<!")
+    ) continue;
     // Dấu mở bị escape là ký tự literal, không mở token nào; quét tiếp ngay sau
     // nó để một token thật đứng sau vẫn được nhận, cùng cách outsideHtmlComments
     // xử lý "\<!--".
@@ -521,7 +569,10 @@ function outsideRawTextAndComments(body) {
     // Comment xóa cả cụm; raw text giữ nguyên thẻ mở để src của chính nó vẫn bị
     // kiểm và chỉ xóa phần thân. Cả hai thay bằng khoảng trắng để các đường quét
     // theo dòng không lệch.
-    const replacement = match[1] === undefined
+    const replacement = match[5] !== undefined
+      // svg giữ cả thẻ mở lẫn thân, chỉ che các section CDATA bên trong.
+      ? match[5] + maskCdata(match[6]) + match[7]
+      : match[1] === undefined
       ? match[0].replace(/[^\n]/g, " ")
       : match[1] + match[3].replace(/[^\n]/g, " ") + match[4];
     output += body.slice(cursor, match.index) + replacement;
@@ -3887,6 +3938,27 @@ const baseDirectory = (href) => {
 // <base href='../'>: href='#x' cho ra ".../#x" ở thư mục cha, href='/abs.png'
 // giữ nguyên gốc site, còn href tuyệt đối không đổi. Fragment vì thế cũng phải
 // ghép: nó trỏ vào tài liệu ở gốc mới chứ không phải trang lồng.
+// Một meta refresh tự lái khung tới địa chỉ trong "content", nên đích ấy là một
+// điều hướng thật và hỏng được y như href. Cú pháp là thời gian, rồi ";" hoặc
+// ",", rồi tùy chọn "url" và dấu bằng không phân biệt hoa thường, rồi địa chỉ có
+// thể nằm trong một cặp nháy. Đo bằng access log của Chrome trong srcdoc:
+// "0;url=a.html", "0; URL=b.html" và "0;c.html" đều phát ra yêu cầu tới đúng
+// tệp ấy. Thiếu phần thời gian thì chuẩn dừng ngay và không có điều hướng nào,
+// nên mẫu đòi chữ số là đúng chiều chứ không phải bỏ sót.
+// Lớp khoảng trắng viết tường minh chứ không dùng \s: \s của JavaScript nuốt cả
+// U+00A0, mà ký tự ấy thuộc về chính địa chỉ và bị cắt đi là dựng ra một URL
+// khác.
+const metaRefreshTarget = (content) => {
+  const parsed =
+    /^[ \t\r\n\f]*\d+(?:\.\d*)?[ \t\r\n\f]*[;,][ \t\r\n\f]*(?:url[ \t\r\n\f]*=[ \t\r\n\f]*)?([\s\S]*)$/i
+      .exec(content);
+  if (!parsed) return "";
+  const rest = parsed[1];
+  const quote = rest[0];
+  if (quote !== '"' && quote !== "'") return rest;
+  const closing = rest.indexOf(quote, 1);
+  return closing === -1 ? rest.slice(1) : rest.slice(1, closing);
+};
 const rebase = (base, target) =>
   !base || !target || target.startsWith("/") ||
     /^[A-Za-z][A-Za-z0-9+.\-]*:/.test(target)
@@ -3902,7 +3974,14 @@ function htmlAttributeTargets(rawHtml, nested = false) {
   // tài liệu. Chỉ áp cho tài liệu lồng: trong Markdown của kế hoạch, renderer
   // của record là GitHub và nó xóa hẳn thẻ <base>, nên đọc thẻ ấy ở tầng ngoài
   // là bịa ra một gốc không ai dùng.
+  // Chuẩn đóng băng base ở phần tử <base> đầu tiên có thuộc tính href, kể cả
+  // khi giá trị rỗng: href="" phân giải theo địa chỉ dự phòng của khung, tức
+  // đúng gốc đang có. Đo bằng access log của Chrome trong srcdoc:
+  // <base href=''><base href='../src/'><img src='m2.png'> xin /pages/m2.png,
+  // tức base thứ hai bị bỏ qua. Đo cờ bằng chính chuỗi gốc thì một base rỗng
+  // không đóng băng được gì và base sau đè lên, dựng ra một gốc không ai dùng.
   let base = "";
+  let baseFrozen = false;
   const pictures = elementRanges(rawHtml, rawTags, "picture");
   const svgs = elementRanges(rawHtml, rawTags, "svg");
   const audios = elementRanges(rawHtml, rawTags, "audio");
@@ -3938,7 +4017,21 @@ function htmlAttributeTargets(rawHtml, nested = false) {
     // Cùng phép so vị trí, chiều ngược lại: vùng mở muộn nhất mới là phần tử
     // bao gần nhất. Một <source> không nằm trong picture nào cũng cho false,
     // đúng như <source src> ngoài media, vì khi ấy không phần tử nào chọn nó.
-    const picture = opensAt(pictures) > mediaAt;
+    // Chưa đủ: ứng viên của một <source> chỉ tới được cái <img> đứng sau nó
+    // trong cùng cụm, nên một source viết sau <img> không góp gì. Đo bằng access
+    // log của Chrome: <picture><img src="a.png"><source srcset="b.png"></picture>
+    // chỉ xin a.png, còn ca đối chứng đảo thứ tự xin ứng viên của source ngay.
+    // Hỏi srcset ở vị trí sau ảnh là bắt cổng bắt buộc từ chối một tài liệu đúng.
+    const pictureAt = opensAt(pictures);
+    const pictureEnd = pictures.reduce(
+      (end, [start, stop]) => start === pictureAt ? stop : end,
+      -1,
+    );
+    const picture = pictureAt > mediaAt &&
+      rawTags.some((other) =>
+        other.index > tag.index && other.index < pictureEnd &&
+        ["img", "image"].includes(other[1].toLowerCase())
+      );
     // Ngoài SVG, bộ phân tích HTML đổi thẳng thẻ mở "image" thành "img", nên
     // <image src="x.png"> tải tài nguyên y như <img>. Đo trong Chrome: cây
     // DOM trả về IMG và trang phát ra đúng một yêu cầu tới "x.png". Chỉ nhận
@@ -3962,6 +4055,20 @@ function htmlAttributeTargets(rawHtml, nested = false) {
         );
         continue;
       }
+      // Chỉ hỏi trong tài liệu lồng, cùng lý do với <base>: renderer của record
+      // là GitHub và nó xóa hẳn thẻ <meta>, nên đọc thẻ ấy ở tầng ngoài là bịa
+      // ra một điều hướng không ai chạy. Đo bằng POST /markdown: một tài liệu
+      // chỉ có meta refresh trả về đúng chuỗi rỗng.
+      if (
+        nested && name === "content" && element === "meta" &&
+        enumeratedKeyword(attributes, "http-equiv") === "refresh"
+      ) {
+        const refresh = attributeTarget(
+          metaRefreshTarget(decodeAttribute(value)),
+        );
+        if (refresh) htmlTargets.push(rebase(base, refresh));
+        continue;
+      }
       htmlTargets.push(
         ...attributeTargets(
           element,
@@ -3980,9 +4087,11 @@ function htmlAttributeTargets(rawHtml, nested = false) {
     // ở thư mục cũ, vì bộ phân tích đã phân giải src trước khi gặp base. Chuẩn
     // cũng chỉ đóng băng base đầu tiên, nên href của chính thẻ base không tự
     // ghép vào mình và một base thứ hai không đè được base thứ nhất.
-    if (nested && !base && element === "base") {
-      const href = attributes.get("href");
-      if (href) base = baseDirectory(attributeTarget(decodeAttribute(href)));
+    if (nested && !baseFrozen && element === "base" && attributes.has("href")) {
+      baseFrozen = true;
+      base = baseDirectory(
+        attributeTarget(decodeAttribute(attributes.get("href") ?? "")),
+      );
     }
   }
   return htmlTargets;

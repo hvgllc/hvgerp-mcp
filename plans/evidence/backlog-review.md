@@ -3297,3 +3297,98 @@ Bốn finding trên head `4860c8e`: nhận một, từ chối ba. Mỗi từ ch�
 | `node --test plans/test-validator.mjs` | 853 pass          |
 | `git diff --check`                     | sạch              |
 | `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+## Codex vòng tiếp: review 5131950521
+
+Tám finding trên head `ad14bd7`: nhận sáu, từ chối hai. Sáu ca nhận đều đo bằng
+renderer độc lập trước khi sửa, không ca nào sửa theo lời mô tả suông.
+
+- M1 (P1, `evidence/001.md:10`) nêu SHA `605348765cfb...`. Đây là lần thứ tư
+  liên tiếp một P1 cùng dạng nêu một SHA không có trong repository:
+  `git cat-file -e` trả về lỗi. `refs/pull/25/merge` lúc này là `f9ccda4f`, cha
+  là `164be320` và `ad14bd7`. Chạy đúng thủ tục mà báo cáo mô tả, fetch một
+  revision vào một bare repo rồi
+  `git clone --no-local --single-branch
+  --no-tags`: trên head thật, clone có
+  510 commit, validator exit 0, test lịch sử 1 pass. Trên bản squash của cùng
+  nhánh lên `164be32`, clone có 357 commit, validator exit khác 0 với đúng 55
+  dòng lỗi, test lịch sử 1 fail. 55 là đúng con số báo cáo nêu, và các dòng mẫu
+  trùng luôn chữ nghĩa của nó. Vậy finding chỉ dựng lại được trên một squash,
+  không dựng lại được trên chính nhánh này; cách gọi "shallow clone" là triệu
+  chứng của checkout tổng hợp chứ không phải lỗi của cổng.
+- M2 (P2, `validate-plans.mjs:3985`) nhận. Chuẩn đóng băng base ở phần tử
+  `<base>` đầu tiên có thuộc tính `href`, không phải ở cái đầu tiên có `href`
+  khác rỗng. Đo bằng access log của Chrome: tài liệu lồng
+  `<base href=''><base href='../'><img src='m2-probe.png'>` xin đúng
+  `/pages/m2-probe.png`, nghĩa là cái base rỗng đã chốt gốc. Ca đối chứng giữ
+  chiều còn lại: base đầu tiên có giá trị thật vẫn dời gốc, cổng vẫn báo
+  `../missing-c6.png`.
+- M3 (P2, `validate-plans.mjs:1297`) nhận. Ứng viên của một `<source>` chỉ tới
+  được cái `<img>` đứng sau nó trong cùng một `<picture>`. Access log:
+  `<picture><img src="m3-img.png"><source srcset="m3-after.png"></picture>` chỉ
+  xin `m3-img.png`; cụm đảo thứ tự thì xin `m3-before.png`. Phép so vị trí đọc
+  cả vùng đóng của `<picture>` đang bao, nên một `<source>` ở cụm sau không bị
+  ghép nhầm với ảnh của cụm trước.
+- M4 (P2, `validate-plans.mjs:264`) nhận. Đo trên renderer của GitHub bằng
+  `POST /markdown` với `mode=gfm`: đoạn viết sau `<!-->` trả về một thẻ `<img>`
+  sống, y hệt đoạn viết sau một `<!-- c -->` thường. Hai dạng đóng ngay `<!-->`
+  và `<!--->` kết thúc comment tại chỗ, nên mẫu comment thu lại thành
+  `<!--(?:>|->|[\s\S]*?(?:-->|$))`. Ca đối chứng đòi comment thường vẫn che hết
+  thân, để đây là một comment hẹp hơn chứ không phải một comment bị tắt.
+- M5 (P2, `validate-plans.mjs:486`) từ chối, và ở đây phép đo lật ngược hẳn giả
+  định của báo cáo. Renderer của record là GitHub chứ không phải bộ phân tích
+  HTML của trình duyệt, và GitHub không dựng `iframe` bao giờ. Đo bằng
+  `POST /markdown` với `mode=gfm`:
+  `<iframe><a href="p3.html">fallback</a><img src="p3.png"></iframe>` trả về hai
+  thẻ `iframe` đã escape thành văn bản, còn `<a>` và `<img>` bên trong ra thành
+  phần tử sống; viết `iframe` thành block riêng cũng vậy. Nên một đích hỏng viết
+  trong thân `iframe` render thật và hỏng thật, còn che thân ấy là nới lỏng,
+  đúng chiều nguy hiểm. Mô tả tokenizer trong báo cáo chỉ đúng với tài liệu do
+  trình duyệt phân tích, và nó đúng trong `srcdoc`, chỗ có bộ phân tích thật.
+  Trong Chrome, `<iframe src="f.html"><img src="fallback.png"></iframe>` quả
+  thật chỉ xin `f.html`; nhưng chuỗi ấy không bao giờ tới Chrome dưới dạng một
+  `iframe`, vì GitHub đã escape thẻ trước đó.
+- M6 (P2, `validate-plans.mjs:3897`) nhận, và nhận cả hai chiều. Trong foreign
+  content, `<![CDATA[ ... ]]>` là character data: access log không xin tấm nào
+  viết trong đó. Ngoài foreign content, cùng chuỗi ấy chỉ là bogus comment đóng
+  ở dấu `>` đầu tiên, nên phần viết sau dấu ấy là markup sống: probe xin
+  `m6c-after-first-gt.png` và không xin `m6b-inside.png`. Cổng che CDATA chỉ
+  trong thân `svg`, còn ngoài đó cắt `<!...` tại `>` đầu tiên. Thẻ mở `svg` và
+  con sống của nó vẫn nằm trong vùng quét.
+- M7 (P2, `validate-plans.mjs:349`) nhận, giới hạn ở HTML mức block, đúng phạm
+  vi mà phép đo đỡ được. `POST /markdown` dựng `<div><img/src="x.png"></div>`
+  thành một `<img>` sống có `src` thật: tokenizer ghi nhận
+  unexpected-solidus-in-tag rồi đọc lại ký tự kế tiếp như đầu một tên thuộc
+  tính. Cùng chuỗi ấy viết inline, không bọc block, thì GitHub để nguyên văn
+  bản. Nên bộ đọc thuộc tính nhận `/` làm dấu ngăn cạnh khoảng trắng, và không
+  nới sang ca inline vì ở đó cổng sẽ báo nhầm.
+- M8 (P2, `validate-plans.mjs:1284`) nhận, chỉ trong tài liệu lồng. Access log:
+  trong một `iframe srcdoc`, cả ba dạng `content='0;url=file'`,
+  `content='0; URL=file'` và `content='0;file'` đều khiến Chrome tải đúng tệp
+  được nêu. Cổng đọc `content` của `<meta>` khi `http-equiv` là `refresh`, bóc
+  phần số, dấu ngăn, từ khóa `url=` tùy chọn và giá trị có thể đặt trong nháy.
+  Giới hạn ở tài liệu lồng là cố ý: đo bằng `POST /markdown` thì GitHub xóa hẳn
+  `<meta>` và `<base>` khỏi chính bản ghi, nên một meta refresh mức trên cùng
+  không lái được gì và bắt nó là báo nhầm. Một ca đối chứng ghim ranh giới đó.
+- Phép đo của M3 còn sửa hai ca cũ. `<picture><source srcset="x.png"></picture>`
+  không có `<img>` nào thì access log không có dòng nào cho `x.png`, nên hai ca
+  vốn ghim hình dạng ấy được viết lại cho có `<img>` đứng sau `<source>`, đúng
+  cụm mà máy chọn tài nguyên thật sự đọc.
+- Mười bốn ca hồi quy cho vòng này. Sáu ca dựng lại đúng sáu finding đã nhận,
+  một ca ghim chiều của M5 bị từ chối: `<img>` viết trong thân `iframe` vẫn phải
+  bị hỏi. Bảy ca còn lại giữ các chiều đối lập: `<picture>` không có ảnh thì
+  không chọn gì, `<image>` sống ngoài mọi CDATA vẫn bị hỏi, comment thường vẫn
+  che hết thân, phần sau dấu `>` đầu tiên của một CDATA ngoài `svg` vẫn bị hỏi,
+  base đầu tiên có giá trị thật vẫn dời gốc, meta refresh mức trên cùng vẫn được
+  bỏ qua, và `srcset` của `<img>` vẫn bị hỏi ở mọi vị trí. Cất
+  `validate-plans.mjs` đi thì các ca dựng lại finding đỏ, còn ca đối chứng xanh
+  cả hai chiều.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 867 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
