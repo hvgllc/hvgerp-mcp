@@ -3188,3 +3188,48 @@ mã; phần dưới ghi số đo để vòng sau không phải dựng lại.
 | `node --test plans/test-validator.mjs` | 840 pass          |
 | `git diff --check`                     | sạch              |
 | `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+## Codex vòng tiếp: review 5131171692
+
+Hai finding trên `e85f4d9`. K1 tái hiện được nhưng chỉ đúng trên một checkout
+squash, không đúng trên nhánh; K2 là lỗ thật, đã sửa.
+
+- K1 (P1, `evidence/001.md:10`) nêu SHA `f873797`. SHA ấy không có trong
+  repository, và cũng không phải merge ref của PR: `refs/pull/25/merge` là
+  `848ccdf5`, merge của head `e85f4d98` vào `main` `164be320`. Dựng lại đúng
+  hình dạng báo cáo mô tả bằng cách squash nhánh lên `main` trong một clone
+  `--no-local --no-tags` sạch, được `c60e5ff5`: `b9d6d02a`, `db2f31fa` và
+  `bb78ace7` đều không còn là tổ tiên, validator vẫn exit 0, còn
+  `test-history.mjs` ra 3 pass 2 fail. Trùng khít báo cáo. Trên merge ref thật
+  thì cả bốn ref là tổ tiên và `test-history.mjs` ra 5 pass 0 fail.
+- K1 có một chỗ chẩn đoán sai cần ghi lại: validator không đi qua nhờ object còn
+  nằm trong cache của repository nguồn. Clone squash ở trên là clone sạch và
+  `--no-local`, validator vẫn exit 0. Hai cổng đo hai thứ khác nhau: validator
+  đo record, `test-history.mjs` đo ancestry, chỉ cổng sau nhạy với squash.
+  `plans/AGENTS.md:34` đã viết sẵn luật này, nên squash là ca bị chặn có chủ ý.
+- K2 (P2, `validate-plans.mjs:3856`) nhận. `baseDirectory` lấy dấu gạch chéo
+  cuối của nguyên giá trị `href`, nên một dấu gạch chéo nằm trong query hay
+  fragment cũng dựng thành thư mục gốc. Đo bằng access log của Chrome trong
+  srcdoc: `<base href='evidence/001.md?x=/foo/'>`,
+  `<base href='evidence/001.md#a/b/'>` và `<base href='evidence/001.md#a?z/w/'>`
+  đều cho ảnh tương đối đi tới `/evidence/<tên>`, giống hệt
+  `<base href='evidence/'>`. Query và fragment không thuộc đường dẫn.
+- Chiều lỗi của K2 là chiều lỏng, nên phải sửa: gốc dài hơn thật khiến đích
+  thành `../evidence/001.md?x=/foo/definitely-missing.png`, rồi bộ tách query
+  cắt lại thành `../evidence/001.md` là tập tin có thật, và một ảnh hỏng đi qua
+  cổng. Sửa bằng cách cắt `#` trước rồi cắt `?`, thứ tự ấy bắt buộc vì dấu hỏi
+  nằm trong fragment không mở query.
+- Năm ca hồi quy: ba ca đòi bắt `link hỏng ../evidence/definitely-missing.png`
+  cho query, cho fragment và cho dấu hỏi trong fragment; hai ca đối chứng giữ
+  chiều ngược lại, một đích có thật trong thư mục đã phân giải vẫn qua cổng, và
+  một base không có dấu gạch chéo ngoài query vẫn không đổi đích. Cất
+  `validate-plans.mjs` đi thì ba ca đầu đỏ, hai ca đối chứng xanh cả hai chiều.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 845 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |

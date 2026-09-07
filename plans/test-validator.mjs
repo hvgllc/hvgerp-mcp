@@ -7161,3 +7161,63 @@ test("a line tabulation does not separate a tag name from its attribute", () => 
   assert.equal(result.thrown, undefined);
   assert.equal(result.exitCode, 0, result.messages.join("\n"));
 });
+
+test("a base whose query carries a slash still resolves from its path", () => {
+  // Đo bằng access log của Chrome: srcdoc mang
+  // <base href='evidence/001.md?x=/foo/'> cho ảnh tương đối đi tới
+  // /evidence/<tên>, y hệt <base href='evidence/'>. Query không thuộc đường dẫn
+  // nên dấu "/" trong đó không dựng được thư mục gốc.
+  invalid({
+    [review]: (text) =>
+      text +
+      "\n<iframe srcdoc=\"&lt;base href='../evidence/001.md?x=/foo/'&gt;" +
+      "&lt;img src='definitely-missing.png'&gt;\"></iframe>\n",
+  }, /link hỏng \.\.\/evidence\/definitely-missing\.png/);
+});
+
+test("a base whose fragment carries a slash still resolves from its path", () => {
+  // Cùng phép đo với <base href='evidence/001.md#a/b/'>: ảnh vẫn đi tới
+  // /evidence/<tên>. Fragment cũng nằm ngoài đường dẫn.
+  invalid({
+    [review]: (text) =>
+      text +
+      "\n<iframe srcdoc=\"&lt;base href='../evidence/001.md#a/b/'&gt;" +
+      "&lt;img src='definitely-missing.png'&gt;\"></iframe>\n",
+  }, /link hỏng \.\.\/evidence\/definitely-missing\.png/);
+});
+
+test("a question mark inside a base fragment does not start a query", () => {
+  // <base href='evidence/001.md#a?z/w/'> cũng cho /evidence/<tên> trong access
+  // log. Fragment bắt đầu trước nên dấu hỏi bên trong nó chỉ là ký tự thường,
+  // phải cắt "#" trước rồi mới cắt "?".
+  invalid({
+    [review]: (text) =>
+      text +
+      "\n<iframe srcdoc=\"&lt;base href='../evidence/001.md#a?z/w/'&gt;" +
+      "&lt;img src='definitely-missing.png'&gt;\"></iframe>\n",
+  }, /link hỏng \.\.\/evidence\/definitely-missing\.png/);
+});
+
+test("a base with a query still accepts a target that exists", () => {
+  // Chiều ngược lại của cùng phép đo: gốc phân giải đúng là ../evidence/ nên
+  // một đích có thật trong thư mục ấy vẫn qua cổng.
+  const result = run({
+    [review]: (text) =>
+      text +
+      "\n<iframe srcdoc=\"&lt;base href='../evidence/001.md?x=/foo/'&gt;" +
+      "&lt;img src='001.md'&gt;\"></iframe>\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a base with no slash outside its query leaves the target alone", () => {
+  // <base href='001.md?x=y'> không có dấu "/" nào trong đường dẫn, nên nó chỉ
+  // là một tên tệp cùng thư mục và không đổi gốc; đích giữ nguyên cách viết.
+  invalid({
+    [review]: (text) =>
+      text +
+      "\n<iframe srcdoc=\"&lt;base href='001.md?x=y'&gt;" +
+      "&lt;img src='definitely-missing.png'&gt;\"></iframe>\n",
+  }, /link hỏng definitely-missing\.png/);
+});

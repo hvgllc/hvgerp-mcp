@@ -3853,7 +3853,17 @@ function documentAnchors(path) {
 // Gốc phân giải của một tài liệu lồng: phần đường dẫn tính tới dấu "/" cuối
 // cùng của giá trị <base href>, đúng như trình duyệt đọc nó. Một base không có
 // dấu "/" nào chỉ là một tên tệp trong cùng thư mục nên không đổi gốc.
-const baseDirectory = (href) => href.slice(0, href.lastIndexOf("/") + 1);
+// Query và fragment bị cắt trước khi tìm dấu "/" cuối vì chúng không thuộc
+// đường dẫn. Đo bằng access log của Chrome trong một srcdoc: cả
+// <base href='evidence/001.md?x=/foo/'>, <base href='evidence/001.md#a/b/'> lẫn
+// <base href='evidence/001.md#a?z/w/'> đều cho ảnh tương đối đi tới
+// /evidence/<tên>, giống hệt <base href='evidence/'>. Lấy dấu "/" nằm trong
+// query hay fragment là dựng ra một gốc dài hơn, rồi khúc đuôi ấy bị bộ tách
+// query cắt lại thành một tập tin có thật, nên đích hỏng lọt cổng.
+const baseDirectory = (href) => {
+  const basePath = href.split("#")[0].split("?")[0];
+  return basePath.slice(0, basePath.lastIndexOf("/") + 1);
+};
 // URL tuyệt đối và đường dẫn tính từ gốc site không đọc <base>, nên chỉ tham
 // chiếu tương đối mới được ghép. Đo trong Chrome bên trong một srcdoc mang
 // <base href='../'>: href='#x' cho ra ".../#x" ở thư mục cha, href='/abs.png'
