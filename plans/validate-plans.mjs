@@ -244,7 +244,10 @@ function outsideBlockCode(body) {
 // đóng thì mọi section sau một "<!--" bỏ quên vẫn được đọc như nội dung thật và
 // một kế hoạch không còn hiển thị phạm vi, bước hay tiêu chí nào vẫn qua gate.
 const htmlComment = /<!--[\s\S]*?(?:-->|$)/g;
-function outsideHtmlComments(body) {
+// filler cho phép chỗ gọi đánh dấu phần vừa xóa thay vì trả về khoảng trắng.
+// Đường quét anchor cần phân biệt đúng chỗ đó: comment không góp chữ nào vào
+// văn bản render, nên nó cũng không được góp khoảng trắng vào slug.
+function outsideHtmlComments(body, filler = " ") {
   // Code span và comment là hai token inline cùng cấp, nên chỉ thứ tự mở trong
   // tài liệu mới quyết định ai thắng. Gọi trên bản đã xóa inline code thì tập
   // span rỗng và hàm chạy y như trước; gọi trên bản còn backtick thì một "<!--"
@@ -267,7 +270,8 @@ function outsideHtmlComments(body) {
       htmlComment.lastIndex = spans[span][1];
       continue;
     }
-    output += body.slice(cursor, match.index) + match[0].replace(/[^\n]/g, " ");
+    output += body.slice(cursor, match.index) +
+      match[0].replace(/[^\n]/g, filler);
     cursor = match.index + match[0].length;
   }
   return output + body.slice(cursor);
@@ -569,6 +573,28 @@ const structuralMarkdown = (body) =>
 // không render gì cả nhưng vẫn thỏa gate, và một báo cáo BLOCKED rỗng trước mắt
 // người đọc vẫn giữ được trạng thái đó.
 const visibleMarkdown = (body) => outsideHtmlComments(outsideHtmlBlocks(body));
+// Một khối lệnh chỉ là bằng chứng khi trong nó có chữ. Hỏi mỗi dấu mở thì hai
+// dòng fence liền nhau, thứ GitHub render ra một khung rỗng, vẫn giữ nguyên
+// trạng thái BLOCKED cho một báo cáo không ghi lệnh nào và không ai trả giá.
+// Fence chưa đóng vẫn tính, vì chuẩn kéo khối tới hết tài liệu và người đọc
+// vẫn thấy nội dung đó.
+function commandBlockBody(report) {
+  let fence;
+  for (const line of report.split("\n")) {
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)\r?$/);
+    if (fence) {
+      if (
+        marker && marker[1][0] === fence[0] &&
+        marker[1].length >= fence.length && /^[ \t\r]*$/.test(marker[2])
+      ) {
+        fence = undefined;
+      } else if (line.trim()) return true;
+    } else if (marker && (marker[1][0] === "~" || !marker[2].includes("`"))) {
+      fence = marker[1];
+    }
+  }
+  return false;
+}
 // Những dòng tự mở một block mới nên không bao giờ là lazy continuation của
 // đoạn văn phía trên: heading ATX, fence, list marker, thematic break, setext
 // underline và thẻ HTML đầu dòng.
@@ -653,10 +679,21 @@ function inlineCodeSpans(body) {
     // cả hai chiều: GitHub giữ "1234567890." trong code span, nhưng "2." hay
     // "123456789." viết dưới một item đang mở vẫn đóng đoạn của item đó, nên
     // siết thêm theo luật "chỉ số 1 mới ngắt đoạn" sẽ bỏ sót link hỏng.
-    if (
-      standalone || /^[ \t]*$/.test(content) ||
-      /^ {0,3}(?:(?:[-+*]|\d{1,9}[.)])[ \t]+|>)/.test(content)
-    ) flush();
+    const container = content.match(
+      /^ {0,3}(?:([-+*]|\d{1,9}[.)])[ \t]+|(>))/,
+    );
+    const ordered = container?.[1]?.match(/^(\d{1,9})[.)]$/);
+    // Một list có số bắt đầu khác 1 không ngắt được đoạn đang mở: GitHub giữ
+    // nguyên "Text `start" rồi "2. [x](y.md)" rồi backtick đóng thành đúng một
+    // code span vắt qua ba dòng, không link nào. Cắt ở đó là bịa ra một link
+    // sống trong backtick và báo hỏng một tài liệu đúng. Trong một list item
+    // thì ngược lại, vì dòng ấy rời container đang mở và đoạn bên trong đóng
+    // theo: cùng ba dòng đó viết dưới "- item" cho ra một list với link sống,
+    // nên bỏ luật ở đây là để một đích hỏng đi qua cổng.
+    const interrupts = container &&
+      (container[2] || !ordered || Number(ordered[1]) === 1 ||
+        /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]/.test(current));
+    if (standalone || /^[ \t]*$/.test(content) || interrupts) flush();
     current += line;
     if (standalone || /^[ \t]*$/.test(content)) flush();
   }
@@ -722,6 +759,17 @@ function structuralSection(body, heading) {
 // này và "b.md>)" ở dòng sau là văn bản literal, không phải link. Cho "." nuốt
 // qua newline thì cả hai dòng bị ghép làm một đường dẫn không ai viết và một tài
 // liệu đúng bị báo hỏng.
+// Khoảng trắng của CommonMark chỉ gồm space, tab, xuống dòng, form feed và
+// carriage return. Mọi khoảng trắng Unicode khác, NBSP trước tiên, là ký tự dữ
+// liệu của URL: renderer mã hóa nó vào href chứ không cắt bỏ. Lớp "\s" của
+// JavaScript và trim() của nó thì gộp cả hai nhóm, nên đọc theo chúng là biến
+// một đích không tồn tại thành một đích có thật rồi cho nó qua cổng.
+const asciiWhitespace = " \\t\\n\\f\\r";
+const asciiTrim = (value) =>
+  value.replace(
+    new RegExp("^[" + asciiWhitespace + "]+|[" + asciiWhitespace + "]+$", "g"),
+    "",
+  );
 const linkTitle =
   "(?:\"(?:\\\\[\\s\\S]|[^\"\\\\])*\"|'(?:\\\\[\\s\\S]|[^'\\\\])*'|\\((?:\\\\[\\s\\S]|[^()\\\\])*\\))";
 const linkSeparator = "(?:[ \\t]+|[ \\t]*\\r?\\n[ \\t]*)";
@@ -732,7 +780,8 @@ const linkSeparator = "(?:[ \\t]+|[ \\t]*\\r?\\n[ \\t]*)";
 // hỏng: một link đúng chuẩn bị cổng bắt buộc từ chối.
 const bracketedDestination = "<((?:\\\\[^\\r\\n]|[^<>\\\\\\r\\n])*)>";
 const linkDestination = new RegExp(
-  "^(?:" + bracketedDestination + "|([^\\s<>]+))(?:" + linkSeparator +
+  "^(?:" + bracketedDestination + "|([^" + asciiWhitespace + "<>]+))(?:" +
+    linkSeparator +
     linkTitle + ")?$",
 );
 // Inline link được phép rỗng hoàn toàn giữa hai ngoặc: "[home]()" render thành
@@ -742,7 +791,8 @@ const linkDestination = new RegExp(
 // nháy làm destination, nên cho title đứng một mình là bịa ra một link tới
 // trang hiện tại mà không renderer nào dựng.
 const inlineDestination = new RegExp(
-  "^(?:(?:" + bracketedDestination + "|([^\\s<>]+))(?:" + linkSeparator +
+  "^(?:(?:" + bracketedDestination + "|([^" + asciiWhitespace + "<>]+))(?:" +
+    linkSeparator +
     linkTitle + ")?)?$",
 );
 // Destination trần chỉ chứa ngoặc lồng tới 32 lớp; qua đó thì renderer bỏ cả cụm
@@ -830,12 +880,29 @@ const submitter = (element, attributes) => {
 };
 // SVG vẫn hỗ trợ dạng cũ "xlink:href" và trình duyệt phân giải nó y như "href",
 // nên bỏ qua tên đó là để một tài nguyên SVG hỏng thật đi qua cổng.
-const linkAttribute = (element, name, attributes) =>
+const linkAttribute = (element, name, attributes, picture) =>
   name === "href" || name === "xlink:href"
     ? hrefElements.has(element)
     : name === "src" &&
-      (srcElements.has(element) ||
+      ((srcElements.has(element) && !(element === "source" && picture)) ||
         (element === "input" && imageInput(attributes)));
+// <source src> chỉ trỏ tới tài nguyên khi thẻ nằm trong <audio> hay <video>.
+// Dưới <picture>, trình duyệt chọn ứng viên từ srcset và không đụng tới src:
+// Chrome chỉ phát ra một yêu cầu cho srcset, còn GitHub xóa hẳn thuộc tính src
+// của <source> khi sanitize. Hỏi nó ở đó là bắt cổng từ chối một cụm ảnh đáp
+// ứng hoàn toàn hợp lệ vì một thuộc tính không renderer nào đọc.
+const pictureBoundary = /<(\/?)picture(?=[ \t\r\n/>])/gi;
+function pictureRanges(text) {
+  const ranges = [];
+  let depth = 0, start = 0;
+  for (const match of text.matchAll(pictureBoundary)) {
+    if (match[1]) {
+      if (depth > 0 && --depth === 0) ranges.push([start, match.index]);
+    } else if (depth++ === 0) start = match.index;
+  }
+  if (depth > 0) ranges.push([start, text.length]);
+  return ranges;
+}
 // "srcset" mang cả một danh sách ứng viên và trình duyệt tải đúng một trong số
 // đó theo mật độ điểm ảnh hay khổ màn hình, nên mọi URL trong danh sách đều là
 // tài nguyên thật và đều hỏng được. Chỉ đọc "src" thì một ảnh 2x thiếu file đi
@@ -916,8 +983,8 @@ const attributeTarget = (value) => {
 // reference thay vì thành một xuống dòng bị bỏ đi, dựng ra một đường dẫn không
 // tồn tại và báo hỏng một link đúng; srcset viết "a.png&#44;b.png" thì mất luôn
 // ranh giới giữa hai ứng viên.
-const attributeTargets = (element, name, value, attributes) =>
-  (linkAttribute(element, name, attributes) ||
+const attributeTargets = (element, name, value, attributes, picture) =>
+  (linkAttribute(element, name, attributes, picture) ||
       (name === "poster" && posterElements.has(element)) ||
       (name === "data" && dataElements.has(element)) ||
       (name === "action" && element === "form") ||
@@ -1500,10 +1567,11 @@ const inlineLinkTargets = (text) => scanInline(text).targets;
 // Mô tả của một image render thành văn bản alt, nên HTML thô nằm trong đó không
 // dựng ra phần tử nào: "![<img src=a.png>](b.md)" chỉ tải b.md. Quét cả mô tả
 // thì gate đem một src không ai tải đi phân giải và báo hỏng một tài liệu đúng.
-// Chỉ che dạng inline "![...](...)" và dạng tham chiếu đầy đủ "![...][...]";
-// dạng rút gọn "![nhãn]" chỉ là ảnh khi nhãn có definition, và khi không có thì
-// chính HTML trong đó lại render thật, nên để nguyên là chọn phía fail-closed.
-function outsideImageDescriptions(text) {
+// Chỉ che dạng inline "![...](...)", dạng tham chiếu đầy đủ "![...][...]" và
+// dạng rút gọn "![nhãn]" khi nhãn ấy có definition: lúc đó nó cũng là một ảnh
+// thật và mô tả của nó cũng chỉ là chữ alt. Không có definition thì cả cụm là
+// văn bản, chính HTML trong đó lại render thật, nên để nguyên là fail-closed.
+function outsideImageDescriptions(text, labels = new Set()) {
   let result = "";
   let index = 0;
   while (index < text.length) {
@@ -1529,7 +1597,9 @@ function outsideImageDescriptions(text) {
       cursor++;
     }
     const next = text[cursor];
-    if (depth !== 0 || (next !== "(" && next !== "[")) {
+    const shortcut = depth === 0 && next !== "(" && next !== "[" &&
+      labels.has(referenceLabel(text.slice(opener + 2, cursor - 1)));
+    if (depth !== 0 || (next !== "(" && next !== "[" && !shortcut)) {
       result += text.slice(index, opener + 2);
       index = opener + 2;
       continue;
@@ -1548,6 +1618,12 @@ function scanInline(text) {
   // bỏ sót cả link, khiến destination hỏng lọt qua gate. Quét đếm độ sâu để
   // tìm đúng ] đóng label, có tính escape \[ \], rồi mới đọc (destination).
   const targets = [];
+  // Vị trí tuyệt đối của phần trong ngoặc của từng inline link đã được nhận.
+  // Destination và title ở đó là metadata: renderer đưa chúng vào href và vào
+  // thuộc tính title dưới dạng văn bản đã escape, không dựng phần tử nào. Quét
+  // chúng như HTML thô thì một title viết hình dạng thẻ làm gate báo hỏng một
+  // tài nguyên không ai tải.
+  const spans = [];
   let link = false;
   for (let index = 0; index < text.length; index++) {
     // Thẻ HTML inline là một token nguyên khối với cả vòng quét ngoài, không
@@ -1659,7 +1735,12 @@ function scanInline(text) {
     // Tách destination khỏi title tùy chọn, nếu không title bị ghép vào đường
     // dẫn và bước kiểm tra file sau đó tìm một tên file không tồn tại. Phần
     // không parse được vẫn đẩy vào để bị báo lỗi thay vì im lặng bỏ qua.
-    const inside = text.slice(cursor + 1, scan - 1).trim();
+    // Chuẩn chỉ coi khoảng trắng ASCII là thứ ngăn cách destination; NBSP và
+    // họ hàng Unicode của nó là dữ liệu của chính URL. trim() của JavaScript
+    // cắt cả nhóm sau, nên một destination kẹp giữa hai NBSP bị đọc thành
+    // đúng đường dẫn bên trong, trong khi GitHub dựng href
+    // "%C2%A0../../README.md%C2%A0", tức một đích không tồn tại đi qua cổng.
+    const inside = asciiTrim(text.slice(cursor + 1, scan - 1));
     const destination = inside.match(inlineDestination);
     // Trừ khi phần đó bắc qua nhiều dòng: một destination hợp lệ chỉ xuống dòng
     // được đúng một lần, giữa nó và title. Cụm không parse được mà lại nhiều
@@ -1680,6 +1761,11 @@ function scanInline(text) {
     // liệu đúng. Chiều ngược lại vẫn giữ: image nằm trong nhãn của một link vẫn
     // tải ảnh thật, nên chỉ opener image mới bỏ target của nhãn.
     if (!image) targets.push(...label.targets);
+    spans.push(
+      ...label.spans.map((
+        [start, end],
+      ) => [start + index + 1, end + index + 1]),
+    );
     // Link không lồng trong link: khi label đã chứa một link thật, CommonMark
     // vô hiệu hóa opener bên ngoài và "[outer [inner](a.md)](b.md)" render ra
     // link tới a.md rồi "](b.md)" nguyên văn. Đẩy b.md vào gate là đem một
@@ -1691,13 +1777,28 @@ function scanInline(text) {
         destination ? destination[1] ?? destination[2] ?? "" : inside,
       );
       if (!image) link = true;
+      spans.push([cursor + 1, scan - 1]);
     }
     // Một link nằm sâu trong label của image vẫn là link thật với opener bao
     // ngoài, nên cờ đi ngược lên qua cả image.
     link = link || label.link;
     index = scan - 1;
   }
-  return { targets, link };
+  return { targets, link, spans };
+}
+// Che phần trong ngoặc của mọi inline link đã được nhận, giữ nguyên độ dài để
+// các khung nhìn khác còn khớp theo dòng và theo cột.
+function outsideLinkTargets(text) {
+  let output = "", cursor = 0;
+  for (
+    const [start, end] of scanInline(text).spans.sort((a, b) => a[0] - b[0])
+  ) {
+    if (start < cursor) continue;
+    output += text.slice(cursor, start) +
+      text.slice(start, end).replace(/[^\n]/g, " ");
+    cursor = end;
+  }
+  return output + text.slice(cursor);
 }
 // Section metadata phải cắt từ Markdown cấu trúc. Split thô trên body lấy lần
 // xuất hiện đầu tiên của chuỗi heading, kể cả khi nó nằm trong một fence ví dụ
@@ -2346,7 +2447,7 @@ for (const entry of manifest) {
       const missing = [];
       if (!report.includes(id)) missing.push("the plan id " + id);
       if (!report.includes("BLOCKED")) missing.push("the BLOCKED status");
-      if (!/^ {0,3}(?:```|~~~)/m.test(report)) missing.push("a command block");
+      if (!commandBlockBody(report)) missing.push("a command block");
       if (missing.length) {
         fail(
           "evidence/" + id + ".md: BLOCKED evidence report is missing " +
@@ -3151,7 +3252,18 @@ function documentAnchors(path) {
     return anchors;
   }
   const seen = new Map();
-  const structural = structuralMarkdown(body);
+  // Hai khung nhìn khớp nhau từng ký tự, khác đúng chỗ comment: bản structural
+  // để nguyên khoảng trắng như mọi gate khác đọc, bản masked đánh dấu chỗ đó
+  // bằng cùng sentinel mà headingText dùng cho thẻ HTML inline. GitHub render
+  // "## Alpha<!--x-->Beta" thành "AlphaBeta" và sinh id "alphabeta"; đọc chỗ
+  // comment thành khoảng trắng thì slug mọc thêm đúng bấy nhiêu gạch nối, id
+  // thật vắng mặt khỏi tập anchor và một link đúng bị báo hỏng.
+  const masked = outsideHtmlComments(
+    outsideBlockCode(outsideHtmlBlocks(body)),
+    inlineHtmlMark,
+  );
+  const structural = masked.replaceAll(inlineHtmlMark, " ");
+  const maskedLines = masked.split("\n");
   // Nhãn reference được định nghĩa ở bất kỳ đâu trong tài liệu, kể cả sau
   // heading dùng nó, nên tập định nghĩa phải dựng trước vòng quét heading. Cùng
   // một cách đọc với đường quét target, nên một nhãn định nghĩa trong blockquote
@@ -3163,13 +3275,25 @@ function documentAnchors(path) {
     found.map((entry) => referenceLabel(entry.label)),
   );
   const definitionLines = definitionLineNumbers(found);
+  // Cùng một đoạn chữ, đọc lại trên bản masked. Cấu trúc vẫn quyết trên bản
+  // structural để không gate nào đổi cách chia khối; chỉ phần chữ đi vào slug
+  // mới mang dấu comment theo.
+  const withComments = (index, text) => {
+    const plain = (rawLines[index] ?? "").replace(/\r$/, "");
+    const line = (maskedLines[index] ?? "").replace(/\r$/, "");
+    if (line.length !== plain.length || !text) return text;
+    const offset = Math.max(0, plain.length - (lines[index]?.text.length ?? 0));
+    const at = plain.indexOf(text, offset);
+    return at < 0 ? text : line.slice(at, at + text.length);
+  };
   for (let index = 0; index < lines.length; index++) {
     const atx = lines[index].text.match(
       /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$/,
     );
     let text;
-    if (atx) text = (atx[2] ?? "").replace(/[ \t]#+[ \t]*$/, "");
-    // Setext: một dòng văn bản không rỗng theo sau bởi hàng chỉ có "=" hoặc
+    if (atx) {
+      text = withComments(index, (atx[2] ?? "").replace(/[ \t]#+[ \t]*$/, ""));
+    } // Setext: một dòng văn bản không rỗng theo sau bởi hàng chỉ có "=" hoặc
     // "-". Hàng toàn dấu gạch sau một đoạn văn là heading chứ không phải
     // thematic break, đúng thứ tự ưu tiên của CommonMark.
     // Hai dòng phải thuộc cùng một khối, nên chúng phải cùng độ sâu container
@@ -3200,8 +3324,9 @@ function documentAnchors(path) {
         paragraphText(lines[start - 1]) &&
         lines[start - 1].depth === lines[index].depth
       ) start--;
-      text = lines.slice(start, index).map((entry) => entry.text.trim())
-        .join(" ");
+      text = lines.slice(start, index).map((entry, at) =>
+        withComments(start + at, entry.text.trim())
+      ).join(" ");
     } else continue;
     const slug = headingSlug(headingText(text, definitions));
     if (!slug) continue;
@@ -3277,25 +3402,42 @@ for (const filePath of planFiles(planRoot)) {
     // Markdown bên trong nó không render; nhưng thuộc tính link của chính HTML
     // đó vẫn render và vẫn hỏng được. Quét lại trước khi block bị xóa, sau khi
     // code và comment đã bị xóa, nên một ví dụ <a href> trong fence không sống.
-    const rawHtml = markdownLinkSections(body).map((section) =>
-      outsideImageDescriptions(
-        outsideRawTextAndComments(outsideInlineCode(outsideBlockCode(section))),
-      )
-    ).join("\n\n");
+    // Phần trong ngoặc của một inline link và cả dòng của một definition đều là
+    // metadata: renderer đưa destination vào href và title vào thuộc tính title
+    // dưới dạng văn bản đã escape, không dựng phần tử nào từ chúng. Quét chúng
+    // như HTML thô thì một title viết hình dạng thẻ làm gate đem một src không
+    // ai tải đi phân giải và báo hỏng một tài liệu đúng. Tập nhãn definition đi
+    // kèm để "![nhãn]" đã phân giải cũng được nhận là ảnh thật và mô tả của nó
+    // được che đúng như dạng inline.
+    const rawSections = markdownLinkSections(body).map((section) =>
+      outsideRawTextAndComments(outsideInlineCode(outsideBlockCode(section)))
+    ).join("\n\n").split("\n");
+    const rawHtml = outsideImageDescriptions(
+      outsideLinkTargets(
+        rawSections.map((line, index) =>
+          definitionLines.has(index) ? " ".repeat(line.length) : line
+        ).join("\n"),
+      ),
+      new Set(definitions.map((entry) => referenceLabel(entry.label))),
+    );
     // Đích đến từ thuộc tính HTML đi đường giải mã riêng: bên trong một thẻ thô,
     // "\" là ký tự dữ liệu chứ không phải escape của Markdown. Trộn chung thì
     // href="#\&amp;" bị đọc thành fragment "&amp;" thay vì "\&", khớp nhầm một
     // id không ai có và một link hỏng thật đi qua cổng.
     const htmlTargets = [];
+    const pictures = pictureRanges(rawHtml);
     for (const tag of renderedTags(rawHtml)) {
       const element = tag[1].toLowerCase();
+      const picture = pictures.some(([start, end]) =>
+        tag.index > start && tag.index < end
+      );
       // Cả thẻ đi cùng nhau vì một thuộc tính không tự nói hết vai trò của nó:
       // src của <input> chỉ là tài nguyên khi type của chính thẻ đó là "image".
       const attributes = new Map(tagAttributes(tag[2]));
       for (const [name, value] of attributes) {
         if (value) {
           htmlTargets.push(
-            ...attributeTargets(element, name, value, attributes),
+            ...attributeTargets(element, name, value, attributes, picture),
           );
         }
       }

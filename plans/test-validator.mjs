@@ -459,8 +459,6 @@ for (
     "* Item",
     "1. Item",
     "1) Item",
-    "2. Item",
-    "42) Item",
     "> Quote",
     "***",
     "---",
@@ -474,6 +472,21 @@ for (
         "\nExample " + tick + "\n" + boundary +
         "\n[Live](missing-live.md)\n" + tick + "\n",
     }, /link hỏng missing-live.md/);
+  });
+}
+// Một list có số bắt đầu khác 1 không ngắt được đoạn đang mở, nên bốn dòng dưới
+// vẫn là một đoạn và GitHub render chúng thành đúng một thẻ <code>, không list
+// và không link nào.
+for (const boundary of ["2. Item", "42) Item"]) {
+  test(`Markdown inline span survives a later ordered marker ${boundary}`, () => {
+    const result = run({
+      "plans/evidence/backlog-review.md": (text) =>
+        text +
+        "\nExample " + tick + "\n" + boundary +
+        "\n[Inert](missing-live.md)\n" + tick + "\n",
+    });
+    assert.equal(result.thrown, undefined);
+    assert.equal(result.exitCode, 0, result.messages.join("\n"));
   });
 }
 test("Markdown heading inline opener cannot mask the following paragraph", () => {
@@ -5717,11 +5730,16 @@ test("a ten digit ordered marker keeps a code span open", () => {
   assert.equal(result.exitCode, 0, result.messages.join("\n"));
 });
 
-test("a nine digit ordered marker still ends the paragraph", () => {
-  invalid({
+test("a nine digit ordered marker does not interrupt a paragraph", () => {
+  // Dấu chín chữ số là dấu list hợp lệ, nhưng số bắt đầu khác 1 nên nó không
+  // ngắt được đoạn đang mở. GitHub render đúng ba dòng này thành một thẻ <code>
+  // duy nhất, không list và không link nào.
+  const result = run({
     "plans/evidence/backlog-review.md": (text) =>
-      text + "\nText `start\n123456789. [live](missing-f1b.md)\nend` done.\n",
-  }, /link hỏng missing-f1b\.md/);
+      text + "\nText `start\n123456789. [inert](missing-f1b.md)\nend` done.\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
 });
 
 test("a line that opens no html block stays a lazy continuation", () => {
@@ -5884,4 +5902,172 @@ test("inline code elsewhere in the catalog does not hide a plan row", () => {
   });
   assert.equal(result.thrown, undefined);
   assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an empty command block does not satisfy BLOCKED evidence", () => {
+  // Hai dòng fence liền nhau render ra một khung rỗng: báo cáo không ghi lệnh
+  // nào mà vẫn giữ nguyên trạng thái BLOCKED thì không ai trả giá cho nó.
+  invalid(
+    blocked(22),
+    /evidence\/022\.md: BLOCKED evidence report is missing a command block$/m,
+    [],
+    {
+      "plans/evidence/022.md": {
+        kind: "file",
+        content: "# Bằng chứng 022\n\nTrạng thái: BLOCKED\n\n" +
+          tick.repeat(3) + "bash\n" + tick.repeat(3) + "\n",
+      },
+    },
+  );
+});
+
+test("an unclosed command block still satisfies BLOCKED evidence", () => {
+  // Chuẩn kéo khối chưa đóng tới hết tài liệu, nên người đọc vẫn thấy lệnh.
+  const result = run(blocked(22), [], {
+    "plans/evidence/022.md": {
+      kind: "file",
+      content: "# Bằng chứng 022\n\nTrạng thái: BLOCKED\n\n" +
+        tick.repeat(3) + "bash\ndeno test\n",
+    },
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a non breaking space stays inside a link destination", () => {
+  // NBSP không phải khoảng trắng của CommonMark: renderer mã hóa nó vào href,
+  // nên đích thật là một đường dẫn không tồn tại.
+  const nbsp = String.fromCharCode(0x00a0);
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[r41a](" + nbsp + "../../README.md" + nbsp + ")\n",
+  }, /link hỏng/);
+});
+
+test("ascii spaces around a link destination are still trimmed", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[r41b]( ../../README.md )\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a source src under picture is not a resource", () => {
+  // Dưới <picture> trình duyệt chỉ đọc srcset; GitHub xóa hẳn thuộc tính src
+  // của <source> khi sanitize, nên không ai tải đường dẫn đó.
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      '\n<picture><source src="missing-r41c.png" srcset="../../README.md">' +
+      "</picture>\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a source srcset under picture is still a resource", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<picture><source srcset="missing-r41d.png"></picture>\n',
+  }, /link hỏng missing-r41d\.png/);
+});
+
+test("a source src under video is still a resource", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<video><source src="missing-r41e.png"></video>\n',
+  }, /link hỏng missing-r41e\.png/);
+});
+
+test("a tag shaped inline link title builds no element", () => {
+  // Title đi ra HTML trong thuộc tính title dưới dạng văn bản đã escape.
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[r41f](../../README.md \"<img src='missing-r41f.png'>\")\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a tag shaped definition title builds no element", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[r41g]: ../../README.md \"<img src='missing-r41g.png'>\"\n" +
+      "\n[probe][r41g]\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a tag next to a link is still scanned", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n[r41h](../../README.md) <img src='missing-r41h.png'>\n",
+  }, /link hỏng missing-r41h\.png/);
+});
+
+test("a resolved shortcut image description is only alt text", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n![<img src="missing-r41i.png">]\n' +
+      '\n[<img src="missing-r41i.png">]: ../../README.md\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an unresolved shortcut label leaves its html alive", () => {
+  // Không có definition thì cả cụm là văn bản thường và thẻ trong đó render
+  // thật, nên đích của nó vẫn phải qua cổng.
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n![<img src="missing-r41j.png">]\n',
+  }, /link hỏng missing-r41j\.png/);
+});
+
+test("a comment inside a heading adds no word to the slug", () => {
+  // GitHub render "## Alpha<!--x-->Beta" thành <h2>AlphaBeta</h2>, nên id là
+  // "alphabeta" chứ không phải "alpha-beta".
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## Alpha<!--hidden-->Beta\n\n[r41k](#alphabeta)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a comment inside a heading does not create a dashed slug", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n## Gamma<!--hidden-->Delta\n\n[r41l](#gamma-delta)\n",
+  }, /anchor hỏng #gamma-delta/);
+});
+
+test("an ordered marker of 2 keeps a multiline code span open", () => {
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nText " + tick + "start\n2. [inert](missing-r41m.md)\n" + tick +
+      "\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an ordered marker of 1 still cuts a multiline code span", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\nText " + tick + "start\n1. [live](missing-r41n.md)\n" + tick +
+      "\n",
+  }, /link hỏng missing-r41n\.md/);
+});
+
+test("an ordered marker of 2 still cuts a code span inside a list item", () => {
+  // Dòng ấy rời container đang mở, nên đoạn bên trong item đóng theo và link
+  // sống lại.
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n- item " + tick + "start\n2. [live](missing-r41o.md)\n" + tick +
+      "\n",
+  }, /link hỏng missing-r41o\.md/);
 });

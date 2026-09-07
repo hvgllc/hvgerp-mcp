@@ -2698,3 +2698,66 @@ bằng một mẻ dò mười ca trước khi động vào code. Bốn đúng, m
 Mười ba mẻ dò guard của các vòng trước (96 ca) chạy trên cả head cũ lẫn cây đã
 sửa cho output giống nhau từng dòng, nên bốn thay đổi này không đổi kết luận của
 bất kỳ ca nào đã chốt trước đó.
+
+## Codex vòng tiếp: review 5127497691
+
+Bảy finding P2 trên head `35af5de`. Dò lại từng cái bằng một mẻ mười bốn ca ghi
+thẳng vào file thật rồi khôi phục, và hỏi trọng tài độc lập trước khi sửa:
+renderer thật của GitHub qua `gh api /markdown` và Chrome thật qua MCP. Cả bảy
+đều tái hiện được, nên nhận cả bảy. Bốn cái là cổng lỏng hơn tài liệu người đọc
+thấy, ba cái là cổng siết nhầm vào thứ không renderer nào tải.
+
+- Khối lệnh rỗng vẫn thỏa bằng chứng BLOCKED. Cổng chỉ hỏi có dấu mở fence hay
+  không, nên hai dòng fence liền nhau, thứ GitHub render ra một khung trống, đủ
+  để một báo cáo không ghi lệnh nào giữ nguyên trạng thái BLOCKED mà không ai
+  trả giá. Nay phải có ít nhất một dòng có chữ trong khối. Fence chưa đóng vẫn
+  tính, vì chuẩn kéo khối tới hết tài liệu và người đọc vẫn thấy nội dung đó.
+- Khoảng trắng không ngắt trong destination. Khoảng trắng của CommonMark chỉ gồm
+  space, tab, xuống dòng, form feed và carriage return; mọi khoảng trắng Unicode
+  khác là ký tự dữ liệu của URL. Lớp `\s` và `trim()` của JavaScript gộp cả hai
+  nhóm, nên một destination kẹp giữa hai ký tự không ngắt bị cắt thành một đích
+  có thật và đi qua cổng. GitHub trả về `href="%C2%A0../../README.md%C2%A0"`:
+  đích thật là một đường dẫn không tồn tại. Nay cắt và tách destination theo
+  đúng năm ký tự ASCII, còn dạng bọc ngoặc nhọn giữ nguyên đường cũ.
+- Ba ca siết nhầm, mỗi ca đo trên một renderer rồi mới nới, và chỉ nới đúng phần
+  đã đo. Thuộc tính `src` của `<source>` dưới `<picture>`: Chrome chỉ phát ra
+  một yêu cầu mạng cho `srcset`, GitHub xóa hẳn thuộc tính đó khi sanitize, nên
+  hỏi nó là bắt cổng từ chối một cụm ảnh đáp ứng hợp lệ vì một thuộc tính không
+  ai đọc; dưới `<audio>` và `<video>` thì giữ nguyên độ siết vì chưa đo được
+  hành vi ở đó. Title của link và của definition: GitHub escape cả chuỗi vào
+  thuộc tính `title`, không dựng phần tử nào, nên nay che phần trong ngoặc của
+  mọi inline link đã nhận và che trọn dòng definition trước khi quét HTML thô.
+  Mô tả của một ảnh dạng rút gọn có definition: GitHub render đúng một thẻ ảnh
+  với chuỗi thẻ nằm trong thuộc tính `alt` dưới dạng chữ, nên nhãn ấy được che
+  như dạng inline; không có definition thì cả cụm là văn bản và thẻ trong đó
+  render thật, nên vẫn để nguyên cho fail closed.
+- Comment nằm giữa một heading. Cổng thay comment bằng khoảng trắng rồi mới cắt
+  slug, nên `## Alpha<!--x-->Beta` ra `alpha-beta`, còn GitHub render nó thành
+  đúng `AlphaBeta` và id là `alphabeta`: mọi link tới id thật bị báo hỏng. Nay
+  đường quét anchor dựng hai khung nhìn cùng độ dài, một khung đánh dấu chỗ
+  comment bằng một ký tự sẽ bị xóa hẳn khi cắt slug, nên comment không góp ký tự
+  nào và cũng không sinh thêm dấu gạch nối.
+- Dấu list số khác 1 trong code span nhiều dòng. Chuẩn chỉ cho một list ngắt
+  đoạn đang mở khi số bắt đầu là 1, còn cổng nhận mọi dấu hợp lệ. GitHub render
+  "Text
+  `start" rồi "2. [x](y.md)" rồi backtick đóng thành đúng một thẻ`code`vắt qua ba dòng, không list và không link nào. Nới thẳng thì lệch chiều, nên
+  bản sửa có điều kiện: trong một list item, dòng ấy rời container đang mở và
+  đoạn bên trong đóng theo, GitHub phát ra một list bắt đầu từ 2 với link sống,
+  nên ở đó vẫn ngắt. Ba ca đã chốt ở vòng trước phải đổi kết luận theo, và cả ba
+  đều được hỏi lại renderer thật trước khi đổi: dấu chín chữ số ở vòng 39 cùng
+  hai ranh giới`2.
+  Item`và`42) Item`trong bộ ca ban đầu đều cho ra một thẻ`code` duy nhất, nên
+  kết luận cũ của chúng là báo động thừa.
+
+Mười bốn mẻ dò guard của các vòng trước (104 ca) chạy trên cả head cũ lẫn cây đã
+sửa cho output giống nhau từng dòng, trừ đúng một dòng: ca dấu chín chữ số của
+vòng 39, đã đổi có chủ ý và đã xác minh lại bằng renderer thật ở trên.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 720 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
