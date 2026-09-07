@@ -11,7 +11,6 @@ import {
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { runInNewContext } from "node:vm";
 
 const planRoot = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(planRoot, "..");
@@ -24,6 +23,35 @@ const manifest = JSON.parse(
 );
 const fileFor = (id) =>
   "plans/" + manifest.find((entry) => entry.id === id).file;
+// Tên các binding validator nhận từ ngoài, đúng bằng danh sách import vừa bị
+// tước khỏi source cộng với planRoot đã thay thế.
+const injectedNames = [
+  "existsSync",
+  "lstatSync",
+  "realpathSync",
+  "readdirSync",
+  "readFileSync",
+  "execFileSync",
+  "dirname",
+  "isAbsolute",
+  "Buffer",
+  "createHash",
+  "relative",
+  "resolve",
+  "injectedPlanRoot",
+  "process",
+  "console",
+];
+// Biên dịch validator một lần rồi gọi lại cho từng fixture. runInNewContext
+// dựng một context V8 mới cho mỗi lượt: khai báo cấp cao của script thành
+// thuộc tính của global đã contextify nên mọi lần đọc đi qua interceptor, và
+// không có gì mà JIT giữ lại được giữa các fixture. Bọc source trong một hàm
+// thì các khai báo ấy là binding cục bộ và bản dịch dùng chung cho cả bộ test.
+// Đo trên head hiện tại: một lượt chạy ấm giảm từ 312ms xuống 245ms.
+const compiledValidator = new Function(
+  "bindings",
+  "const {" + injectedNames.join(", ") + "} = bindings;\n" + source,
+);
 const gitFixtureCache = new Map();
 function readGitFixture(
   command,
@@ -32,15 +60,20 @@ function readGitFixture(
   execute,
   cache = gitFixtureCache,
 ) {
-  // Chỉ object ID đầy đủ là bất biến; HEAD, refs và filesystem luôn được đọc lại.
+  // Chỉ object ID là bất biến; HEAD, refs và filesystem luôn được đọc lại. Một
+  // ID viết tắt cũng địa chỉ theo nội dung y như bản đủ 40 ký tự: nó chỉ đổi
+  // nghĩa khi kho nhận thêm object, mà một lượt chạy test thì không ghi gì vào
+  // kho. Đo trên head hiện tại: 16 trong 19 lời gọi Git còn lại của mỗi fixture
+  // là cat-file và ls-tree trên ID viết tắt, tốn 70ms một lượt.
+  const objectId = /^[0-9a-f]{7,40}$/;
   const immutable = command === "git" && (
     (args.length === 2 && args[0] === "show" &&
-      /^[0-9a-f]{40}:.+$/.test(args[1])) ||
+      /^[0-9a-f]{7,40}:.+$/.test(args[1])) ||
     (args.length === 3 && args[0] === "cat-file" && args[1] === "-t" &&
-      /^[0-9a-f]{40}$/.test(args[2])) ||
+      objectId.test(args[2])) ||
     (args.length === 6 &&
       args.slice(0, 5).join(" ") === "ls-tree -r -t -z --full-tree" &&
-      /^[0-9a-f]{40}$/.test(args[5]))
+      objectId.test(args[5]))
   );
   const key = JSON.stringify([
     command,
@@ -79,7 +112,7 @@ function run(replacements = {}, hidden = [], filesystem = {}, gitOutput) {
   const state = { exitCode: 0, argv: [] };
   let thrown;
   try {
-    runInNewContext(source, {
+    compiledValidator({
       existsSync: (path) => {
         existenceChecks.push(path);
         return !hidden.includes(relative(repoRoot, path)) &&
@@ -2519,6 +2552,75 @@ test("Git fixture cache never retains failures unknown reads or mutable refs", (
   }
   assert.equal(calls, 10);
   assert.equal(cache.size, 0);
+});
+test("Git fixture cache keeps reads of abbreviated object IDs", () => {
+  // ID viết tắt địa chỉ theo nội dung y như bản đủ, và đó là hình dạng mà
+  // validator thật dùng cho phần lớn lời gọi Git: bỏ chúng ra ngoài cache thì
+  // mỗi fixture trả lại 16 lần gọi tiến trình con cho cùng một object.
+  const cache = new Map();
+  let calls = 0;
+  const execute = () => {
+    calls++;
+    return "cached";
+  };
+  const short = "d2c5305";
+  for (
+    const args of [
+      ["cat-file", "-t", short],
+      ["ls-tree", "-r", "-t", "-z", "--full-tree", short],
+      ["show", short + ":src/runtime.ts"],
+    ]
+  ) {
+    readGitFixture("git", args, { cwd: repoRoot }, execute, cache);
+    readGitFixture("git", args, { cwd: repoRoot }, execute, cache);
+  }
+  assert.equal(calls, 3);
+  assert.equal(cache.size, 3);
+  // Nửa còn lại của phép đo: chuỗi ngắn hơn bảy ký tự không phải hình dạng của
+  // một object ID, nên nó vẫn thuộc nhóm luôn đọc lại.
+  for (let index = 0; index < 2; index++) {
+    readGitFixture(
+      "git",
+      ["cat-file", "-t", "d2c53"],
+      { cwd: repoRoot },
+      execute,
+      cache,
+    );
+  }
+  assert.equal(calls, 5);
+});
+test("the compiled validator declares nothing on the real global", () => {
+  // Validator chạy trong thân một hàm chứ không trong context riêng, nên phép
+  // đo phải hỏi thẳng: không tên cấp cao nào của nó rò ra globalThis, và một
+  // fixture hỏng không để lại trạng thái cho lượt chạy sau.
+  const names = [
+    ...source.matchAll(/^(?:function|const|let) ([A-Za-z_$][\w$]*)/gm),
+  ]
+    .map((match) => match[1]);
+  assert(names.length > 50, "Validator source must expose top-level names");
+  // Vài tên có thể trùng một global có sẵn của Node, nên phép so sánh là tên
+  // mới xuất hiện sau khi chạy chứ không phải danh sách rỗng tuyệt đối.
+  const before = new Set(names.filter((name) => name in globalThis));
+  const added = () =>
+    names.filter((name) => name in globalThis && !before.has(name));
+  assert.deepEqual(added(), []);
+  // Đo luôn sức phát hiện của phép so sánh: một gán không khai báo trong thân
+  // hàm sloppy tạo đúng loại rò mà test này canh, và nó phải bị bắt.
+  const escaped = names.find((name) => !before.has(name));
+  new Function(escaped + " = 1;")();
+  assert.deepEqual(added(), [escaped]);
+  delete globalThis[escaped];
+  assert.deepEqual(added(), []);
+  const first = run();
+  invalid({
+    "plans/manifest.json": editManifest((entries) => {
+      entries[0].evidence[0].sourceRef = "g".repeat(40);
+    }),
+  }, /001.*valid sourceRef/);
+  const after = run();
+  assert.equal(after.exitCode, 0, after.messages.join("\n"));
+  assert.deepEqual(after.messages, first.messages);
+  assert.deepEqual(added(), []);
 });
 test("Git output callbacks bypass warm fixtures and cannot poison later runs", () => {
   const baseline = run();

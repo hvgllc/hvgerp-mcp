@@ -3392,3 +3392,69 @@ renderer độc lập trước khi sửa, không ca nào sửa theo lời mô t�
 | `node --test plans/test-validator.mjs` | 867 pass          |
 | `git diff --check`                     | sạch              |
 | `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+## Codex vòng tiếp: review 5132524906
+
+Hai finding, cùng rơi trúng head cũ `ad14bd7` chứ không phải `d946dfa` đang
+đứng: nhận một, từ chối một.
+
+- P1 (`evidence/001.md:10`) từ chối, lần thứ năm liên tiếp cùng một hình dạng.
+  Lần này báo cáo gọi tên `cc32c229` với cha duy nhất `164be320`;
+  `git cat-file -t cc32c229` trong repository trả về "Not a valid object name".
+  Đo trên head thật bằng đúng thao tác mà báo cáo mô tả,
+  `git clone
+  --single-branch --branch advisor/goal-backlog` thẳng từ GitHub
+  vào một thư mục trống: clone ra `d946dfa`, `node plans/validate-plans.mjs`
+  exit 0, và cả 64 reference mà `--print-references` in ra đều tồn tại trong
+  clone ấy và đều là ancestor của HEAD. Không có 20 SHA nào lạc, không có 55
+  dòng lỗi nào. 55 dòng chỉ hiện ra khi dựng lại một bản squash một cha lên
+  `164be320`, đúng như đã đo ở vòng trước. Đáng nói là chính finding đề nghị
+  phát hành qua một merge giữ được lịch sử provenance, tức đúng luật đã ghi
+  trong `plans/AGENTS.md`: nhánh này về `main` bằng merge commit, không squash
+  và không rebase.
+- P2 (`test-validator.mjs:82`) nhận phần khiếu nại, bác phần chẩn đoán. Báo cáo
+  nói mỗi fixture "recompiles the entire 240 KB validator"; đo riêng khâu biên
+  dịch được 0,1ms một lần, nên nó không giải thích nổi thời gian chạy. Phân rã
+  một lượt chạy ấm 312ms bằng đồng hồ đặt quanh từng tầng: 82ms là 19 tiến trình
+  con Git, 9ms là các shim đọc đĩa, phần còn lại là lượt quét thật của
+  validator. Ghi thêm một phép đo hụt để lần sau khỏi lặp: `--cpu-prof` quy 98%
+  thời gian cho `scanInline`, nhưng đặt đồng hồ thẳng vào hàm đó chỉ ra 10ms một
+  lượt. Profiler gộp các callee đã inline vào frame cha, nên self time của nó
+  không dùng để chọn chỗ tối ưu được.
+- Hai thay đổi cho P2, không đụng tới một khẳng định nào của test. Thứ nhất,
+  `runInNewContext` cho từng fixture đổi thành một `new Function` biên dịch một
+  lần lúc nạp module: context V8 mới biến mọi khai báo cấp cao của validator
+  thành thuộc tính của một global đã contextify, nên mỗi lần đọc đi qua
+  interceptor và không có gì JIT học được sống sót qua fixture; trong thân một
+  hàm thì các khai báo ấy là binding cục bộ và bản dịch dùng chung cho cả bộ
+  test. 312ms xuống 245ms. Thứ hai, luật bất biến của cache Git mở từ object ID
+  đủ 40 ký tự sang cả ID viết tắt: ID viết tắt địa chỉ theo nội dung y như bản
+  đủ, chỉ đổi nghĩa khi kho nhận thêm object, mà một lượt chạy test thì không
+  ghi gì vào kho. 16 trong 19 lời gọi Git còn lại của mỗi fixture là `cat-file`
+  và `ls-tree` trên ID viết tắt. 245ms xuống 176ms, và 19 tiến trình con xuống
+  còn 3.
+- Chỗ cố ý không nới: cache hết mọi lời gọi `git` thì xuống 152ms, nhưng
+  `status --short` và mọi ref đổi được như `HEAD` phụ thuộc trạng thái ngoài
+  object database, và đã có một ca ghim rằng chúng luôn được đọc lại. Giữ bất
+  biến ấy đáng hơn 24ms.
+- Hai ca hồi quy cho vòng này. Một ca ghim ID viết tắt được cache còn chuỗi ngắn
+  hơn bảy ký tự thì không; trả luật về `{40}` thì ca này đỏ còn ca đối chứng về
+  ref đổi được vẫn xanh. Một ca ghim rằng validator biên dịch sẵn không thêm tên
+  nào vào global thật và một fixture hỏng không để lại trạng thái cho lượt sau;
+  ca này tự đo sức phát hiện của nó bằng một gán không khai báo trong thân hàm
+  sloppy, phải bắt được đúng tên vừa rò rồi mới xoá đi.
+- Toàn bộ bộ test: 869 pass trong 193,48s, đỉnh RSS 364 MiB, so với 318,92s và
+  313 MiB trước khi sửa. Nhanh hơn 1,65 lần; RSS nhích lên vì bản dịch dùng
+  chung và mã đã tối ưu của nó sống suốt lượt chạy thay vì mất theo từng
+  context. Phần chi phí còn lại của mỗi fixture là lượt quét thật của validator
+  trên repository, tức đúng thứ đang được đo; nhớ đệm nội bộ của nó qua các
+  fixture thì cổng không còn đo cái script mà CI chạy nữa.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 869 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
