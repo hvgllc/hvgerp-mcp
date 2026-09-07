@@ -3068,3 +3068,66 @@ finding phải sửa lại phần mô tả trước khi sửa mã.
 | `node --test plans/test-validator.mjs` | 820 pass          |
 | `git diff --check`                     | sạch              |
 | `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+## Codex vòng tiếp: review 5130386548
+
+Bảy finding P2 trên head `77904ef`. Tái hiện đủ bảy và nhận cả bảy, nhưng bốn
+finding phải sửa lại phần mô tả trước khi sửa mã: hai chỗ phép thử là thuộc tính
+có mặt chứ không phải giá trị khác rỗng, một chỗ phạm vi rộng hơn báo cáo, và
+một chỗ ranh giới ký tự hẹp hơn báo cáo.
+
+- I1: `<base href>` viết bên trong `srcdoc` đổi gốc phân giải của tài liệu lồng.
+  Đo trong Chrome: `baseURI` của tài liệu ấy và `currentSrc` của thẻ ảnh đều
+  chuyển sang thư mục mà base trỏ tới. Phép đo thêm một chiều mà finding không
+  nói: một `<base>` viết sau thẻ ảnh không đổi thẻ ảnh đó, `currentSrc` vẫn ở
+  thư mục cũ, nên base chỉ có hiệu lực với thẻ đứng sau nó. Đích tuyệt đối và
+  đích bắt đầu bằng dấu gạch chéo không đổi gốc. Thẻ `base` ở tài liệu ngoài thì
+  GitHub xóa hẳn, nên luật này chỉ áp cho tài liệu lồng.
+- I2: `<iframe>` có `srcdoc` thì không bao giờ tải `src`. Đo trong Chrome:
+  `contentDocument.location.href` là `about:srcdoc` và access log của server
+  không có dòng nào xin đường dẫn ở `src`. Finding nói "có srcdoc", và phép đo
+  chốt đúng chỗ đó: `srcdoc=""` cũng cho ra `about:srcdoc`, nên phép thử là
+  thuộc tính có mặt, không phải giá trị khác rỗng.
+- I3: media có `src` của chính nó thì bỏ qua mọi `<source>` con. Đo bằng
+  `currentSrc`: `<video src=A><source src=B>` chọn A. Chiều rỗng cũng được đo và
+  nó sửa lời của finding: `<video src="">` trả về `currentSrc` rỗng chứ không
+  rơi xuống `<source>`, nên ở đây cũng là phép thử thuộc tính có mặt.
+- I4: `<link rel=preload as=image>` chọn ứng viên từ `imagesrcset`. Đo bằng
+  access log ở dpr 1: chỉ ứng viên trong `imagesrcset` được xin, `href` không.
+  Dù vậy cổng vẫn giữ `href` trong tập đích, vì client không hiểu `imagesrcset`
+  còn dùng `href` làm dự phòng; bỏ `href` là chiều lỏng. Hai token `rel` và `as`
+  so khớp không phân biệt hoa thường, đúng như chuẩn định nghĩa chúng.
+- I5: footnote definition không phải văn bản đoạn, nên dòng `---` ngay sau nó
+  không dựng setext heading. Đo trên renderer của GitHub: kết quả là một `<hr>`,
+  không có heading và cũng không có id nào. Hai phép đo thêm ghim ranh giới:
+  nhãn footnote chứa dấu cách thì không phải definition, `[^my note]: Body` rồi
+  `---` vẫn ra `<h2>`; và footnote definition ngắt được một đoạn đang mở, khác
+  reference definition, nên không cần theo dõi trạng thái đoạn.
+- I6: title của một link là thuộc tính `title=` chứ không phải chữ người đọc
+  thấy, nên nó không phải một lần khai trường. Đo trên renderer của GitHub:
+  `[valid](../README.md "Trạng thái thực thi: example")` trả về thẻ `<a>` mang
+  `title=`. Phạm vi rộng hơn báo cáo và cả phần rộng thêm đều được tái hiện:
+  title của một reference definition và cả nhãn của nó cũng bị đếm nhầm, trong
+  khi GitHub không render khối definition ra gì. Cách sửa vì vậy che cả nhịp
+  `(...)` của inline link lẫn trọn dòng của mọi reference definition. Văn xuôi
+  lặp lại nhãn trường thì vẫn là lần khai thứ hai và vẫn bị từ chối.
+- I7: form feed là khoảng trắng của bộ tokenize HTML. Đo trên renderer của
+  GitHub: `<img` + U+000C + `src="x.png">` render ra một thẻ ảnh sống, và U+000C
+  cũng kết thúc một giá trị không đóng ngoặc kép. Ranh giới hẹp hơn báo cáo:
+  U+000B không được thêm vào, nó không ngăn được thuộc tính và cũng không kết
+  thúc giá trị, nên nhận nó là dựng ra đích mà không renderer nào tải.
+
+Chuyển `containerPrefix`, `definitionHead`, `definitionLabelLimit`,
+`commonmarkSpaceClass`, `labelBlank` và `labelIsBlank` lên trước `declarations`.
+Lượt quét kế hoạch ở thân module gọi `statusOf` ngay khi module nạp, mà sau I6
+`statusOf` đi qua bộ quét container và bộ đọc reference definition; để chúng ở
+chỗ cũ thì cổng chết bằng `ReferenceError` thay vì báo lỗi kế hoạch.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 840 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |

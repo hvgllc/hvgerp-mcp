@@ -321,12 +321,19 @@ const htmlBlockNames =
 // nào, href của nó không bao giờ được thu, và một link hỏng đi qua gate. Mỗi
 // khoảng nhận tối đa một lần xuống dòng, nên hai newline liền, tức dòng trống,
 // vẫn kết thúc thẻ đúng chuẩn.
-const htmlSpace = "(?:[ \\t]+|[ \\t]*\\r?\\n[ \\t]*)";
-const htmlOptionalSpace = "(?:[ \\t]*\\r?\\n)?[ \\t]*";
+// Form feed cũng là khoảng trắng của thẻ HTML. Đo trên renderer của GitHub:
+// "text <img\fsrc=\"x.png\">" trả về một thẻ <img src="x.png"> sống, và
+// "<img src=ff.png\falt=x>" tách đúng thành hai thuộc tính. Chỉ nhận space và
+// tab thì thẻ ấy không khớp mẫu nào, đích của nó không bao giờ vào cổng và một
+// ảnh hỏng đi qua. Line tabulation U+000B đứng ngoài: cùng phép đo trả về
+// src="vt.png\valt=y" nguyên một chuỗi, còn "<img\vsrc=...>" không dựng ra thẻ
+// nào, nên coi nó là khoảng trắng sẽ bịa ra một đích không renderer nào tải.
+const htmlSpace = "(?:[ \\t\\f]+|[ \\t\\f]*\\r?\\n[ \\t\\f]*)";
+const htmlOptionalSpace = "(?:[ \\t\\f]*\\r?\\n)?[ \\t\\f]*";
 const htmlAttributes = "(?:" + htmlSpace +
   "[A-Za-z_:][A-Za-z0-9_.:-]*(?:" + htmlOptionalSpace + "=" +
   htmlOptionalSpace +
-  "(?:[^ \\t\\r\\n\"'=<>`]+|'[^']*'|\"[^\"]*\"))?)*";
+  "(?:[^ \\t\\f\\r\\n\"'=<>`]+|'[^']*'|\"[^\"]*\"))?)*";
 // Bên trong một HTML block, nội dung đi thẳng tới bộ phân tích HTML và không
 // qua ngữ pháp thẻ chặt hơn của CommonMark. Máy đọc thuộc tính ở đó nuốt một
 // giá trị không nháy tới khoảng trắng hoặc ">", coi "=", "<", nháy và backtick
@@ -339,7 +346,7 @@ const htmlAttributes = "(?:" + htmlSpace +
 const htmlBlockAttributes = "(?:" + htmlSpace +
   "[A-Za-z_:][A-Za-z0-9_.:-]*(?:" + htmlOptionalSpace + "=" +
   htmlOptionalSpace +
-  "(?:'[^']*'|\"[^\"]*\"|[^ \\t\\r\\n>]+))?)*";
+  "(?:'[^']*'|\"[^\"]*\"|[^ \\t\\f\\r\\n>]+))?)*";
 // Điều kiện đóng null nghĩa là block chạy tới dòng trống đầu tiên. Không có
 // dạng comment ở đây: "<!--" đã do outsideHtmlComments xử lý theo span, và
 // nhánh <![A-Za-z] bên dưới không khớp dấu gạch nên hai đường không giẫm nhau.
@@ -423,7 +430,8 @@ const htmlBlockTagAttributes = new RegExp(
 // trong nháy bị nuốt trọn cùng thuộc tính chứa nó nên không còn tự đứng ra.
 const htmlAttributePair = new RegExp(
   "([A-Za-z_:][A-Za-z0-9_.:-]*)(?:" + htmlOptionalSpace + "=" +
-    htmlOptionalSpace + "(?:\"([^\"]*)\"|'([^']*)'|([^ \\t\\r\\n\"'=<>`]+)))?",
+    htmlOptionalSpace +
+    "(?:\"([^\"]*)\"|'([^']*)'|([^ \\t\\f\\r\\n\"'=<>`]+)))?",
   "g",
 );
 // Bản đọc theo luật của HTML block: giá trị không nháy chạy tới khoảng trắng
@@ -432,7 +440,7 @@ const htmlAttributePair = new RegExp(
 // tiếp như một tên thuộc tính khác, và đích sống của thẻ vẫn vắng mặt khỏi cổng.
 const htmlBlockAttributePair = new RegExp(
   "([A-Za-z_:][A-Za-z0-9_.:-]*)(?:" + htmlOptionalSpace + "=" +
-    htmlOptionalSpace + "(?:\"([^\"]*)\"|'([^']*)'|([^ \\t\\r\\n>]+)))?",
+    htmlOptionalSpace + "(?:\"([^\"]*)\"|'([^']*)'|([^ \\t\\f\\r\\n>]+)))?",
   "g",
 );
 // HTML giữ lần xuất hiện đầu tiên của một tên thuộc tính và bỏ mọi lần sau, kể
@@ -1026,6 +1034,23 @@ const enumeratedKeyword = (attributes, name) =>
 // link hỏng trong khi trình duyệt không tải gì cả.
 const imageInput = (attributes) =>
   enumeratedKeyword(attributes, "type") === "image";
+// <link rel="preload" as="image"> chọn tài nguyên từ "imagesrcset" y như một
+// <img srcset>, nên mọi URL trong danh sách đó đều là tài nguyên thật. Đo trong
+// Chrome trên devicePixelRatio 1: với imagesrcset="i4-set.png 1x" thì access
+// log chỉ có i4-set.png, còn href của cùng thẻ ấy không phát ra yêu cầu nào.
+// Chỉ nhận đúng tên "srcset" thì cả danh sách ứng viên vắng mặt khỏi cổng và
+// một ảnh 2x thiếu file đi qua. "rel" là danh sách token ngăn bằng khoảng
+// trắng, so khớp không phân biệt hoa thường; href vẫn được hỏi vì nó là ứng
+// viên dự phòng cho client không đọc imagesrcset.
+const relTokens = (attributes) =>
+  new Set(
+    decodeAttribute(attributes.get("rel") ?? "").toLowerCase().split(
+      /[ \t\f\r\n]+/,
+    ),
+  );
+const imagePreload = (attributes) =>
+  relTokens(attributes).has("preload") &&
+  enumeratedKeyword(attributes, "as") === "image";
 // "action" của form là URL trình duyệt điều hướng tới khi form được submit, nên
 // nó là một đích thật và hỏng được y như "href". "formaction" trên nút submit
 // đè lên đích đó, và chỉ nút submit mới có quyền đè: <button> mặc định là
@@ -1056,8 +1081,18 @@ const submitter = (element, attributes) => {
 const linkAttribute = (element, name, attributes, media, svg) =>
   name === "href" || name === "xlink:href"
     ? hrefElements.has(element) && (element !== "script" || svg)
+    // srcdoc là nội dung của chính khung lồng, và khi nó có mặt thì src không
+    // bao giờ được nạp: đo trong Chrome, <iframe src="a.html" srcdoc="...">
+    // cho contentDocument.location.href bằng "about:srcdoc" và access log của
+    // http.server không có dòng nào cho "a.html". Cả dạng srcdoc="" cũng vậy,
+    // nên hỏi theo sự có mặt của thuộc tính chứ không theo giá trị rỗng hay
+    // không. Hỏi src ở đó là bắt cổng bắt buộc từ chối một tài liệu đúng vì một
+    // đường dẫn không renderer nào đụng tới. Một srcdoc viết trần, không dấu
+    // bằng, không vào được map thuộc tính nên vẫn bị hỏi src: đó là hướng chặt,
+    // cùng lắm báo thừa chứ không bỏ sót.
     : name === "src" &&
-      ((srcElements.has(element) && (element !== "source" || media)) ||
+      ((srcElements.has(element) && (element !== "source" || media) &&
+        (element !== "iframe" || !attributes.has("srcdoc"))) ||
         (element === "input" && imageInput(attributes)));
 // <source src> chỉ trỏ tới tài nguyên khi phần tử bao nó gần nhất là <audio>
 // hay <video>. Dưới <picture>, trình duyệt chọn ứng viên từ srcset và không
@@ -1241,6 +1276,8 @@ const attributeTargets = (element, name, value, attributes, media, svg) =>
       (name === "formaction" && submitter(element, attributes))
     ? [decodeAttribute(value)]
     : name === "srcset" && srcsetElements.has(element)
+    ? srcsetTargets(decodeAttribute(value))
+    : name === "imagesrcset" && element === "link" && imagePreload(attributes)
     ? srcsetTargets(decodeAttribute(value))
     : []).map(attributeTarget).filter(Boolean);
 // Một ô bảng được phép chứa dấu | literal, viết là "\|". split("|") thô coi nó
@@ -2130,6 +2167,73 @@ const auditCategories = new Map([
   ["Hướng phát triển 3", "direction"],
 ]);
 const auditCategory = (audit) => auditCategories.get(audit) ?? "bug";
+// Nhóm hằng dưới đây phải khai trước declarations() vì lượt quét kế hoạch ở
+// thân module gọi statusOf() ngay khi module nạp, và statusOf() nay đi qua bộ
+// quét container cùng bộ đọc reference definition. Để chúng ở chỗ cũ, nửa
+// dưới tập tin, thì lượt quét ấy chạm vào binding chưa khởi tạo và cổng chết
+// bằng ReferenceError thay vì báo lỗi kế hoạch.
+// Nhãn của một reference definition, dừng ở dấu "]" chưa escape nên không ăn
+// sang chuỗi "]:" nằm trong title. "[^label]:" là footnote definition của GFM,
+// phần sau dấu hai chấm là văn xuôi chứ không phải destination, nên đem đi khớp
+// linkDestination sẽ bác bỏ một chú thích đúng chuẩn. Nhãn được phép bắc qua
+// nhiều dòng: "[multi\nline]: dest" định nghĩa nhãn "multi line" và một link
+// "[text][multi line]" phía dưới trỏ đích thật, nên lớp ký tự của nhãn không
+// cấm xuống dòng; cấm thì cả definition lẫn đích của nó vắng mặt khỏi gate và
+// một đích hỏng đi qua. Dấu hai chấm và destination vẫn phải nằm trên dòng cuối
+// của cụm, còn dòng trống thì cắt đứt nhãn vì nó kết thúc đoạn.
+const definitionHead =
+  /^ {0,3}\[(?!\^)((?:\\[^\r\n]|[^\[\]\\])+)\]:[ \t]*([^\r\n]*)$/;
+
+// Chuẩn giới hạn nhãn ở 999 ký tự, nên một dấu "[" mở ra ở đầu một đoạn văn dài
+// không kéo cả đoạn vào một phép thử vô tận.
+const definitionLabelLimit = 999;
+
+// Reference link chỉ render thành văn bản nhãn khi label của nó có định nghĩa.
+// "## [Ghost][undefined-ref]" không có "[undefined-ref]:" nào thì render nguyên
+// văn cả cụm và id GitHub sinh ra là "ghostundefined-ref"; thu gọn vô điều kiện
+// ghi "ghost", tức vừa nhận một link tới anchor không tồn tại vừa báo hỏng link
+// tới anchor thật. Label rỗng của dạng collapsed thì thu gọn kiểu nào cũng ra
+// một slug, nên không cần hỏi định nghĩa.
+// Hai nhãn bằng nhau sau case folding của Unicode là một nhãn: "[Σ]" định nghĩa
+// và "[ς]" tham chiếu cùng một link, vì sigma cuối từ gấp về cùng một ký tự với
+// sigma thường. Chỉ hạ chữ thường thì "σ" và "ς" khác nhau, một reference link
+// thật bị đọc thành văn bản literal, và slug của heading chứa nó sai theo. Hạ
+// rồi nâng là đúng công thức normalizeReference của commonmark.js, thứ đang làm
+// trọng tài cho mọi tranh chấp CommonMark ở đây.
+// Phép thu gọn chỉ gộp đúng tập khoảng trắng của CommonMark: space, tab,
+// newline, line tabulation, form feed và carriage return. String.trim() và "\s"
+// còn nuốt cả U+00A0, nên một nhãn kết thúc bằng U+00A0 bị đọc thành nhãn đã
+// cắt sạch và một reference chưa hề được định nghĩa hóa thành đã định nghĩa. Đo
+// trên renderer của GitHub: một heading "[Ghost][label" kèm U+00A0 rồi "]", đi
+// cùng "[label]: ...", render nguyên văn cả cụm chứ không thành link, trong khi
+// cùng hình dạng đó viết bằng dấu cách thường thì thành link thật. Thu gọn rộng
+// tay ghi một id "#ghost" không renderer nào dựng và một link tới nó đi qua cổng.
+// Viết bằng mã ký tự để không vướng no-control-regex.
+const commonmarkSpaceClass = "[\\u0020\\u0009\\u000a\\u000b\\u000c\\u000d]";
+
+// Nhãn phải chứa ít nhất một ký tự không phải khoảng trắng. Tập khoảng trắng
+// của chuẩn hẹp hơn String.trim(): chỉ space, tab, newline, line tabulation,
+// form feed và carriage return. Đo bằng trim() thì một nhãn chỉ gồm U+00A0 bị
+// coi là rỗng, definition thật của nó biến mất khỏi gate và đích hỏng của nó
+// đi qua. Dùng chung đúng một lớp ký tự với referenceLabel: hai chỗ cùng trả
+// lời câu "ký tự này có phải khoảng trắng của chuẩn không" nên không được có
+// hai định nghĩa.
+const labelBlank = new RegExp("^" + commonmarkSpaceClass + "*$");
+const labelIsBlank = (label) => labelBlank.test(label);
+
+// Blockquote và list item chỉ đặt tiền tố lên đầu dòng chứ không đổi bản chất
+// khối bên trong: "> ## Ghi chú" vẫn render ra một heading và vẫn sinh id trên
+// GitHub. Đọc nguyên dòng thì heading đó vắng mặt trong tập anchor và một link
+// đúng bị báo hỏng. Gỡ lặp vì container lồng được; một thematic break kiểu
+// "- - -" gỡ hết thành dòng rỗng nên không hóa thành setext underline giả.
+// Nhánh khoảng trắng sau list marker chép đúng luật thụt của CommonMark: từ một
+// tới bốn khoảng trắng thì nội dung bắt đầu ngay sau chúng, còn từ năm trở lên
+// thì chỉ một khoảng trắng thuộc về marker và phần dư là indented code. Gỡ hết
+// khoảng trắng sẽ biến "-     ## X" thành heading giả và cho một link tới anchor
+// không tồn tại đi qua cổng.
+const containerPrefix =
+  /^ {0,3}(?:>[ \t]?|(?:[-*+]|\d{1,9}[.)])(?:[ \t]{1,4}(?![ \t])|[ \t](?=[ \t])|$))/;
+
 // Đếm số lần khai một trường phải bỏ qua Markdown không render. Một fence ví dụ
 // mang đúng khuôn metadata là tài liệu hợp lệ, không phải lần khai thứ hai, nên
 // đếm trên body thô sẽ từ chối kế hoạch đúng. Cùng lý do đó, một ví dụ HTML thô
@@ -2145,10 +2249,32 @@ const auditCategory = (audit) => auditCategories.get(audit) ?? "bug";
 // trang một trạng thái trái với metadata canonical lẫn hàng README của nó vẫn
 // đi qua. Chỗ này chỉ đếm số lần xuất hiện nên việc giải mã làm lệch offset
 // không ảnh hưởng gì; các gate đọc theo vị trí vẫn dùng chuỗi chưa giải mã.
+// Phần trong ngoặc của một inline link và cả dòng của một reference definition
+// đều là metadata chứ không phải chữ người đọc thấy, đúng như đường quét target
+// đã đọc chúng. Đo trên renderer của GitHub:
+// '[valid](../README.md "Trạng thái thực thi: example")' trả về
+// '<a href="../README.md" title="Trạng thái thực thi: example">valid</a>', tức
+// nhãn trường nằm trong một thuộc tính, không phải một lần khai thứ hai; còn cả
+// khối definition thì không render ra gì. Đếm trên chuỗi thô thì một link hoàn
+// toàn hợp lệ làm kế hoạch trượt "missing valid execution status", và cùng lỗi
+// ấy đánh luôn "Mốc soạn:" vì hai gate dùng chung hàm này.
+const metadataMasked = (text) => {
+  const lines = text.split("\n");
+  const definitionLines = definitionLineNumbers(
+    referenceDefinitions(scanContainers(lines), lines),
+  );
+  return outsideLinkTargets(
+    lines.map((line, index) =>
+      definitionLines.has(index) ? " ".repeat(line.length) : line
+    ).join("\n"),
+  );
+};
 const declarations = (body, field) =>
   decodeReferences(
-    outsideHtmlComments(
-      outsideInlineCode(outsideBlockCode(outsideHtmlBlocks(body))),
+    metadataMasked(
+      outsideHtmlComments(
+        outsideInlineCode(outsideBlockCode(outsideHtmlBlocks(body))),
+      ),
     ),
   ).split(field).length - 1;
 function statusOf(body) {
@@ -3070,28 +3196,6 @@ const autolinkText = new RegExp(
     "|" + emailAutolinkBody + ")>",
   "g",
 );
-// Reference link chỉ render thành văn bản nhãn khi label của nó có định nghĩa.
-// "## [Ghost][undefined-ref]" không có "[undefined-ref]:" nào thì render nguyên
-// văn cả cụm và id GitHub sinh ra là "ghostundefined-ref"; thu gọn vô điều kiện
-// ghi "ghost", tức vừa nhận một link tới anchor không tồn tại vừa báo hỏng link
-// tới anchor thật. Label rỗng của dạng collapsed thì thu gọn kiểu nào cũng ra
-// một slug, nên không cần hỏi định nghĩa.
-// Hai nhãn bằng nhau sau case folding của Unicode là một nhãn: "[Σ]" định nghĩa
-// và "[ς]" tham chiếu cùng một link, vì sigma cuối từ gấp về cùng một ký tự với
-// sigma thường. Chỉ hạ chữ thường thì "σ" và "ς" khác nhau, một reference link
-// thật bị đọc thành văn bản literal, và slug của heading chứa nó sai theo. Hạ
-// rồi nâng là đúng công thức normalizeReference của commonmark.js, thứ đang làm
-// trọng tài cho mọi tranh chấp CommonMark ở đây.
-// Phép thu gọn chỉ gộp đúng tập khoảng trắng của CommonMark: space, tab,
-// newline, line tabulation, form feed và carriage return. String.trim() và "\s"
-// còn nuốt cả U+00A0, nên một nhãn kết thúc bằng U+00A0 bị đọc thành nhãn đã
-// cắt sạch và một reference chưa hề được định nghĩa hóa thành đã định nghĩa. Đo
-// trên renderer của GitHub: một heading "[Ghost][label" kèm U+00A0 rồi "]", đi
-// cùng "[label]: ...", render nguyên văn cả cụm chứ không thành link, trong khi
-// cùng hình dạng đó viết bằng dấu cách thường thì thành link thật. Thu gọn rộng
-// tay ghi một id "#ghost" không renderer nào dựng và một link tới nó đi qua cổng.
-// Viết bằng mã ký tự để không vướng no-control-regex.
-const commonmarkSpaceClass = "[\\u0020\\u0009\\u000a\\u000b\\u000c\\u000d]";
 const commonmarkSpaceRun = new RegExp(commonmarkSpaceClass + "+", "g");
 const commonmarkSpaceEdge = new RegExp(
   "^" + commonmarkSpaceClass + "+|" + commonmarkSpaceClass + "+$",
@@ -3337,18 +3441,6 @@ const headingText = (raw, definitions) =>
       ).replace(/\\([!-/:-@[-`{-~])/g, "\0$1")
     ).join(""),
   ).replaceAll("\0", "").replaceAll(inlineHtmlMark, "");
-// Blockquote và list item chỉ đặt tiền tố lên đầu dòng chứ không đổi bản chất
-// khối bên trong: "> ## Ghi chú" vẫn render ra một heading và vẫn sinh id trên
-// GitHub. Đọc nguyên dòng thì heading đó vắng mặt trong tập anchor và một link
-// đúng bị báo hỏng. Gỡ lặp vì container lồng được; một thematic break kiểu
-// "- - -" gỡ hết thành dòng rỗng nên không hóa thành setext underline giả.
-// Nhánh khoảng trắng sau list marker chép đúng luật thụt của CommonMark: từ một
-// tới bốn khoảng trắng thì nội dung bắt đầu ngay sau chúng, còn từ năm trở lên
-// thì chỉ một khoảng trắng thuộc về marker và phần dư là indented code. Gỡ hết
-// khoảng trắng sẽ biến "-     ## X" thành heading giả và cho một link tới anchor
-// không tồn tại đi qua cổng.
-const containerPrefix =
-  /^ {0,3}(?:>[ \t]?|(?:[-*+]|\d{1,9}[.)])(?:[ \t]{1,4}(?![ \t])|[ \t](?=[ \t])|$))/;
 // Container mở ra ở một dòng còn hiệu lực cho những dòng sau nó: nội dung của
 // một list item nằm ở cột ngay sau marker, nên "123. item" rồi một dòng thụt
 // năm khoảng trắng mang "## X" vẫn là heading thật bên trong item. Gỡ container
@@ -3470,29 +3562,6 @@ function paragraphText(entry) {
     !/^ {0,3}(?:=+|-+)[ \t]*$/.test(entry.text) &&
     !/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(entry.text);
 }
-// Nhãn của một reference definition, dừng ở dấu "]" chưa escape nên không ăn
-// sang chuỗi "]:" nằm trong title. "[^label]:" là footnote definition của GFM,
-// phần sau dấu hai chấm là văn xuôi chứ không phải destination, nên đem đi khớp
-// linkDestination sẽ bác bỏ một chú thích đúng chuẩn. Nhãn được phép bắc qua
-// nhiều dòng: "[multi\nline]: dest" định nghĩa nhãn "multi line" và một link
-// "[text][multi line]" phía dưới trỏ đích thật, nên lớp ký tự của nhãn không
-// cấm xuống dòng; cấm thì cả definition lẫn đích của nó vắng mặt khỏi gate và
-// một đích hỏng đi qua. Dấu hai chấm và destination vẫn phải nằm trên dòng cuối
-// của cụm, còn dòng trống thì cắt đứt nhãn vì nó kết thúc đoạn.
-const definitionHead =
-  /^ {0,3}\[(?!\^)((?:\\[^\r\n]|[^\[\]\\])+)\]:[ \t]*([^\r\n]*)$/;
-// Chuẩn giới hạn nhãn ở 999 ký tự, nên một dấu "[" mở ra ở đầu một đoạn văn dài
-// không kéo cả đoạn vào một phép thử vô tận.
-const definitionLabelLimit = 999;
-// Nhãn phải chứa ít nhất một ký tự không phải khoảng trắng. Tập khoảng trắng
-// của chuẩn hẹp hơn String.trim(): chỉ space, tab, newline, line tabulation,
-// form feed và carriage return. Đo bằng trim() thì một nhãn chỉ gồm U+00A0 bị
-// coi là rỗng, definition thật của nó biến mất khỏi gate và đích hỏng của nó
-// đi qua. Dùng chung đúng một lớp ký tự với referenceLabel: hai chỗ cùng trả
-// lời câu "ký tự này có phải khoảng trắng của chuẩn không" nên không được có
-// hai định nghĩa.
-const labelBlank = new RegExp("^" + commonmarkSpaceClass + "*$");
-const labelIsBlank = (label) => labelBlank.test(label);
 // Cụm definition bắt đầu ở dòng start, nối thêm dòng chừng nào chúng còn là văn
 // bản của cùng khối. Trả về nhãn, destination trên dòng cuối, và chính dòng
 // cuối đó; null khi cụm không phải definition.
@@ -3613,6 +3682,23 @@ function referenceDefinitions(lines, rawLines) {
 // Tập chỉ số dòng mà những definition này chiếm trọn. Chúng là metadata: chuẩn
 // không render gì từ chúng, nên cả nhãn lẫn title đều không góp mặt vào tài
 // liệu người đọc thấy.
+// Một GFM footnote definition là khối riêng, không phải văn bản của đoạn, nên
+// nó chặn vòng quét ngược của setext y như một reference definition. Đo trên
+// renderer của GitHub: "[^note]: Footnote body" rồi "---" trả về đúng một <hr>
+// và không có heading nào, kể cả khi dòng ấy đứng ngay dưới một đoạn đang mở,
+// tức footnote definition cắt được đoạn văn. Đọc nó như văn bản thì gate dựng
+// ra một anchor không renderer nào có và một link tới id bịa đi qua cổng.
+// Nhãn không được chứa khoảng trắng: cùng phép đo, "[^my note]: Body" giữ
+// nguyên là văn bản và "---" bên dưới dựng thành <h2> thật, nên nhận nhãn có
+// dấu cách sẽ xoá mất một anchor có thật và báo hỏng một link đúng.
+const footnoteDefinition = /^ {0,3}\[\^[^\]\s]+\]:/;
+function footnoteDefinitionLines(lines) {
+  const numbers = new Set();
+  for (let index = 0; index < lines.length; index++) {
+    if (footnoteDefinition.test(lines[index].text)) numbers.add(index);
+  }
+  return numbers;
+}
 function definitionLineNumbers(definitions) {
   const numbers = new Set();
   for (const definition of definitions) {
@@ -3658,6 +3744,7 @@ function documentAnchors(path) {
     found.map((entry) => referenceLabel(entry.label)),
   );
   const definitionLines = definitionLineNumbers(found);
+  for (const line of footnoteDefinitionLines(lines)) definitionLines.add(line);
   // Cùng một đoạn chữ, đọc lại trên bản masked. Cấu trúc vẫn quyết trên bản
   // structural để không gate nào đổi cách chia khối; chỉ phần chữ đi vào slug
   // mới mang dấu comment theo.
@@ -3763,9 +3850,31 @@ function documentAnchors(path) {
 // dung ấy là để một tài nguyên hỏng đi qua cổng, trong khi src của chính
 // <iframe> đã nằm trong srcElements từ đầu. Đệ quy dừng chắc chắn vì giá trị
 // srcdoc luôn là một đoạn con thực sự ngắn hơn tài liệu chứa nó.
-function htmlAttributeTargets(rawHtml) {
+// Gốc phân giải của một tài liệu lồng: phần đường dẫn tính tới dấu "/" cuối
+// cùng của giá trị <base href>, đúng như trình duyệt đọc nó. Một base không có
+// dấu "/" nào chỉ là một tên tệp trong cùng thư mục nên không đổi gốc.
+const baseDirectory = (href) => href.slice(0, href.lastIndexOf("/") + 1);
+// URL tuyệt đối và đường dẫn tính từ gốc site không đọc <base>, nên chỉ tham
+// chiếu tương đối mới được ghép. Đo trong Chrome bên trong một srcdoc mang
+// <base href='../'>: href='#x' cho ra ".../#x" ở thư mục cha, href='/abs.png'
+// giữ nguyên gốc site, còn href tuyệt đối không đổi. Fragment vì thế cũng phải
+// ghép: nó trỏ vào tài liệu ở gốc mới chứ không phải trang lồng.
+const rebase = (base, target) =>
+  !base || !target || target.startsWith("/") ||
+    /^[A-Za-z][A-Za-z0-9+.\-]*:/.test(target)
+    ? target
+    : base + target;
+function htmlAttributeTargets(rawHtml, nested = false) {
   const htmlTargets = [];
   const rawTags = renderedTags(rawHtml);
+  // Vùng của elementRanges bắt đầu đúng tại chỉ số thẻ mở, nên tra ngược được
+  // chính thẻ đã mở vùng ấy để đọc thuộc tính của nó.
+  const tagAt = new Map(rawTags.map((tag) => [tag.index, tag]));
+  // <base href> đầu tiên đổi gốc phân giải của mọi đích đứng sau nó trong cùng
+  // tài liệu. Chỉ áp cho tài liệu lồng: trong Markdown của kế hoạch, renderer
+  // của record là GitHub và nó xóa hẳn thẻ <base>, nên đọc thẻ ấy ở tầng ngoài
+  // là bịa ra một gốc không ai dùng.
+  let base = "";
   const pictures = elementRanges(rawHtml, rawTags, "picture");
   const svgs = elementRanges(rawHtml, rawTags, "svg");
   const audios = elementRanges(rawHtml, rawTags, "audio");
@@ -3785,8 +3894,19 @@ function htmlAttributeTargets(rawHtml) {
         -1,
       );
     const svg = inside(svgs);
-    const media = Math.max(opensAt(audios), opensAt(videos)) >
-      opensAt(pictures);
+    // Máy chọn tài nguyên của media đọc src của chính phần tử trước, và chỉ khi
+    // thuộc tính ấy vắng mặt mới đi tìm <source> con. Đo trong Chrome:
+    // <video src="a.mp4"><source src="b.mp4"></video> cho currentSrc bằng
+    // a.mp4, và <video src=""><source src="b.mp4"></video> cho currentSrc rỗng,
+    // tức src rỗng vẫn khoá đường con. Hỏi src của <source> ở đó là bắt cổng
+    // bắt buộc từ chối một tài liệu đúng vì một URL không renderer nào tải. Một
+    // src viết trần, không dấu bằng, không vào được map thuộc tính nên vẫn để
+    // ngỏ đường con: hướng chặt, cùng lắm báo thừa.
+    const mediaAt = Math.max(opensAt(audios), opensAt(videos));
+    const owner = tagAt.get(mediaAt);
+    const media = mediaAt > opensAt(pictures) &&
+      !(owner &&
+        new Map(tagAttributes(owner[2], owner.blockRaw)).has("src"));
     // Ngoài SVG, bộ phân tích HTML đổi thẳng thẻ mở "image" thành "img", nên
     // <image src="x.png"> tải tài nguyên y như <img>. Đo trong Chrome: cây
     // DOM trả về IMG và trang phát ra đúng một yêu cầu tới "x.png". Chỉ nhận
@@ -3801,12 +3921,29 @@ function htmlAttributeTargets(rawHtml) {
     for (const [name, value] of attributes) {
       if (!value) continue;
       if (name === "srcdoc" && element === "iframe") {
-        htmlTargets.push(...htmlAttributeTargets(decodeAttribute(value)));
+        // Gốc của tài liệu lồng chính là gốc đang có hiệu lực ở đây, nên đích
+        // của nó đi qua base của chính nó trước rồi mới qua base này.
+        htmlTargets.push(
+          ...htmlAttributeTargets(decodeAttribute(value), true).map((target) =>
+            rebase(base, target)
+          ),
+        );
         continue;
       }
       htmlTargets.push(
-        ...attributeTargets(element, name, value, attributes, media, svg),
+        ...attributeTargets(element, name, value, attributes, media, svg).map((
+          target,
+        ) => rebase(base, target)),
       );
+    }
+    // Gốc mới chỉ có hiệu lực với thẻ đứng sau nó: đo trong Chrome, một
+    // <base href='../'> viết sau <img src='x.png'> để nguyên currentSrc của ảnh
+    // ở thư mục cũ, vì bộ phân tích đã phân giải src trước khi gặp base. Chuẩn
+    // cũng chỉ đóng băng base đầu tiên, nên href của chính thẻ base không tự
+    // ghép vào mình và một base thứ hai không đè được base thứ nhất.
+    if (nested && !base && element === "base") {
+      const href = attributes.get("href");
+      if (href) base = baseDirectory(attributeTarget(decodeAttribute(href)));
     }
   }
   return htmlTargets;

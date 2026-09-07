@@ -6957,3 +6957,207 @@ test("srcdoc outside an iframe is not a nested document", () => {
   assert.equal(result.thrown, undefined);
   assert.equal(result.exitCode, 0, result.messages.join("\n"));
 });
+
+test("a base inside srcdoc rebases a resource after it", () => {
+  // Đo trong Chrome: baseURI của tài liệu srcdoc và currentSrc của thẻ ảnh đều
+  // chuyển sang thư mục mà base trỏ tới. Thẻ base ở tài liệu ngoài thì GitHub
+  // xóa, nên chỉ tài liệu lồng mới có luật này.
+  invalid({
+    [review]: (text) =>
+      text +
+      "\n<iframe srcdoc=\"&lt;base href='../'&gt;" +
+      "&lt;img src='001-executor-local.md'&gt;\"></iframe>\n",
+  }, /link hỏng \.\.\/001-executor-local\.md/);
+});
+
+test("a base inside srcdoc leaves a resource before it alone", () => {
+  // Cùng phép đo: currentSrc của thẻ ảnh đứng trước base vẫn nằm ở thư mục cũ.
+  const result = run({
+    [review]: (text) =>
+      text +
+      "\n<iframe srcdoc=\"&lt;img src='001-executor-local.md'&gt;" +
+      "&lt;base href='../'&gt;\"></iframe>\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an iframe carrying srcdoc never loads its src", () => {
+  // Đo trong Chrome: contentDocument.location.href là "about:srcdoc" và access
+  // log của server không hề có dòng nào xin đường dẫn ở src.
+  const result = run({
+    [review]: (text) =>
+      text +
+      '\n<iframe src="missing-r47b.html" srcdoc="&lt;p&gt;ok&lt;/p&gt;">' +
+      "</iframe>\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an empty srcdoc still keeps the iframe src unloaded", () => {
+  // Phép thử là thuộc tính có mặt hay không, không phải giá trị rỗng hay không:
+  // srcdoc="" cũng cho ra about:srcdoc và src vẫn không được xin.
+  const result = run({
+    [review]: (text) =>
+      text + '\n<iframe src="missing-r47c.html" srcdoc=""></iframe>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an iframe without srcdoc still checks its src", () => {
+  invalid({
+    [review]: (text) => text + '\n<iframe src="missing-r47d.html"></iframe>\n',
+  }, /link hỏng missing-r47d\.html/);
+});
+
+test("a video with its own src ignores its source children", () => {
+  // Đo bằng currentSrc: <video src=A><source src=B> chọn A, còn B không bao giờ
+  // được xin.
+  const result = run({
+    [review]: (text) =>
+      text + '\n<video src="../../README.md">' +
+      '<source src="missing-r47e.mp4"></video>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("an empty video src still suppresses its source children", () => {
+  // currentSrc trả về chuỗi rỗng chứ không rơi xuống <source>, nên ở đây cũng
+  // là phép thử thuộc tính có mặt.
+  const result = run({
+    [review]: (text) =>
+      text + '\n<video src=""><source src="missing-r47f.mp4"></video>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a preload image link checks its imagesrcset candidates", () => {
+  // Đo bằng access log ở dpr 1: chỉ ứng viên trong imagesrcset được xin.
+  invalid({
+    [review]: (text) =>
+      text + '\n<link rel="preload" as="image" href="../../README.md" ' +
+      'imagesrcset="missing-r47g.png 1x">\n',
+  }, /link hỏng missing-r47g\.png/);
+});
+
+test("a preload image link still checks its href", () => {
+  // Client không hiểu imagesrcset vẫn dùng href, nên href là ứng viên dự phòng
+  // và cổng giữ nó lại theo hướng chặt.
+  invalid({
+    [review]: (text) =>
+      text + '\n<link rel="preload" as="image" href="missing-r47h.png" ' +
+      'imagesrcset="../../README.md 1x">\n',
+  }, /link hỏng missing-r47h\.png/);
+});
+
+test("preload and image are matched without regard to case", () => {
+  invalid({
+    [review]: (text) =>
+      text + '\n<link rel="PRELOAD" as="Image" href="../../README.md" ' +
+      'imagesrcset="missing-r47i.png 1x">\n',
+  }, /link hỏng missing-r47i\.png/);
+});
+
+test("imagesrcset on a link that is not an image preload is ignored", () => {
+  // Chỉ rel=preload kèm as=image mới đọc imagesrcset; ở mọi rel khác thuộc tính
+  // này không chọn tài nguyên nào.
+  const result = run({
+    [review]: (text) =>
+      text + '\n<link rel="preload" as="script" href="../../README.md" ' +
+      'imagesrcset="missing-r47j.png 1x">\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a footnote definition does not become a setext heading", () => {
+  // Đo trên renderer của GitHub: dòng "---" sau một footnote definition ra thẻ
+  // <hr>, không có heading nào và cũng không có id nào.
+  invalid({
+    [review]: (text) =>
+      text + "\n[^r47k]: Footnote body\n\n---\n\n[bad](#r47k-footnote-body)\n",
+  }, /anchor hỏng #r47k-footnote-body/);
+});
+
+test("a footnote label containing a space is ordinary paragraph text", () => {
+  // Cùng phép đo: nhãn có dấu cách không phải definition, nên dòng ấy vẫn là
+  // văn bản đoạn và "---" bên dưới dựng một setext heading thật.
+  const result = run({
+    [review]: (text) =>
+      text +
+      "\n[^r47l note]: Footnote body\n---\n\n[ok](#r47l-note-footnote-body)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a link title carrying a field label is not a declaration", () => {
+  // Đo trên renderer của GitHub: title thành thuộc tính title= của thẻ <a>, tức
+  // metadata chứ không phải chữ người đọc thấy.
+  const result = run({
+    "plans/022-release-security-documentation.md": (text) =>
+      text + '\n[valid](../README.md "Trạng thái thực thi: example")\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a reference definition title carrying a field label is ignored", () => {
+  // Cả khối definition không render ra gì, nên cả title lẫn nhãn đều không phải
+  // một lần khai.
+  const result = run({
+    "plans/022-release-security-documentation.md": (text) =>
+      text + '\n[r47m]: ../README.md "Trạng thái thực thi: example"\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a reference definition label carrying a field label is ignored", () => {
+  const result = run({
+    "plans/022-release-security-documentation.md": (text) =>
+      text + "\n[Trạng thái thực thi: x]: ../README.md\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("prose repeating a field label is still a second declaration", () => {
+  invalid({
+    "plans/022-release-security-documentation.md": (text) =>
+      text + "\nTrạng thái thực thi: example\n",
+  }, /missing valid execution status/);
+});
+
+test("a form feed separates a tag name from its attribute", () => {
+  // Đo trên renderer của GitHub: <img\fsrc="x.png"> render ra một thẻ ảnh sống.
+  invalid({
+    [review]: (text) =>
+      text + "\ntext <img" + String.fromCharCode(12) +
+      'src="missing-r47n.png">\n',
+  }, /link hỏng missing-r47n\.png/);
+});
+
+test("a form feed also terminates an unquoted attribute value", () => {
+  invalid({
+    [review]: (text) =>
+      text + "\ntext <img src=missing-r47o.png" + String.fromCharCode(12) +
+      "width=1>\n",
+  }, /link hỏng missing-r47o\.png/);
+});
+
+test("a line tabulation does not separate a tag name from its attribute", () => {
+  // U+000B không nằm trong tập khoảng trắng của bộ tokenize HTML: cùng hình
+  // dạng ấy không render ra thẻ ảnh nào, nên cổng không được đọc ra đích.
+  const result = run({
+    [review]: (text) =>
+      text + "\ntext <img" + String.fromCharCode(11) +
+      'src="missing-r47p.png">\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
