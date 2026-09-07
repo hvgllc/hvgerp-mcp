@@ -5773,3 +5773,115 @@ test("markdown keeps the seven digit cap on numeric references", () => {
       text + "\n[f4c](missing&#000000065;.md)\n",
   }, /link hỏng missing&#000000065;\.md/);
 });
+
+test("an invalid button type still submits its formaction", () => {
+  // "type" của <button> có invalid value default là trạng thái submit, nên
+  // Chrome trả button.type === "submit" cho type="bogus" và formaction của nút
+  // đó vẫn là đích điều hướng thật.
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      '\n<form action="../../README.md"><button type="bogus" formaction="missing-f1">go</button></form>\n',
+  }, /link hỏng missing-f1$/m);
+});
+
+test("a button that cannot submit does not resolve its formaction", () => {
+  // Chỉ đúng hai keyword "button" và "reset" tước quyền submit của <button>.
+  // <input> thì ngược lại: invalid value default của nó là trạng thái text.
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text +
+      '\n<form action="../../README.md"><button type="reset" formaction="missing-f1b">x</button></form>\n' +
+      '\n<form action="../../README.md"><input type="bogus" formaction="missing-f1c"></form>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("nested list markers open a fence on the same line", () => {
+  // Hai dấu container chung một dòng mở hai list lồng nhau, và nội dung của
+  // item chỉ bắt đầu sau dấu trong cùng, nên fence mở thật và dòng dưới là code.
+  const result = run({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n- - ~~~text\n    [inert](missing-f2.md)\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("nested list markers without a fence keep the content live", () => {
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + "\n- - text\n    [live](missing-f2b.md)\n",
+  }, /link hỏng missing-f2b\.md/);
+});
+
+test("an image inside a title element is still a resource", () => {
+  // Chrome đọc thân <title> là văn bản, nhưng GitHub chỉ xóa cặp thẻ title và
+  // giữ nguyên thẻ img bên trong: ảnh đó render thật và hỏng thật. Tài liệu
+  // trong plans/ được đọc trên GitHub, nên che thân title là để một tài nguyên
+  // hỏng thật đi qua cổng.
+  invalid({
+    "plans/evidence/backlog-review.md": (text) =>
+      text + '\n<title><img src="missing-f3.png"></title>\n',
+  }, /link hỏng missing-f3\.png/);
+});
+
+test("a command block hidden in a comment does not satisfy BLOCKED evidence", () => {
+  invalid(
+    blocked(22),
+    /evidence\/022\.md: BLOCKED evidence report is missing a command block$/m,
+    [],
+    {
+      "plans/evidence/022.md": {
+        kind: "file",
+        content: "# Bằng chứng 022\n\nTrạng thái: BLOCKED\n\n<!--\n" +
+          tick.repeat(3) + "bash\ndeno test\n" + tick.repeat(3) + "\n-->\n",
+      },
+    },
+  );
+});
+
+test("a hidden id and status do not satisfy BLOCKED evidence", () => {
+  invalid(
+    blocked(22),
+    /evidence\/022\.md: BLOCKED evidence report is missing the plan id 022, the BLOCKED status$/m,
+    [],
+    {
+      "plans/evidence/022.md": {
+        kind: "file",
+        content: "# Bằng chứng\n\n<!-- 022 và BLOCKED -->\n\n" +
+          tick.repeat(3) + "bash\ndeno test\n" + tick.repeat(3) + "\n",
+      },
+    },
+  );
+});
+
+test("a catalog row wrapped in a code span does not list a plan", () => {
+  // GitHub render cụm ba dòng đó thành đúng một thẻ <code>: không hàng bảng nào
+  // và không link nào, nên kế hoạch biến mất khỏi danh mục trước mắt người đọc.
+  const file = manifest.find((entry) => entry.id === 1).file;
+  invalid({
+    "plans/README.md": (text) => {
+      const lines = text.split("\n");
+      const row = lines.find((line) => line.startsWith("| 001 |"));
+      return [
+        ...lines.filter((line) => line !== row),
+        "",
+        tick,
+        row,
+        tick,
+        "",
+      ].join("\n");
+    },
+  }, new RegExp("README thiếu " + file.replace(/\./g, "\\.")));
+});
+
+test("inline code elsewhere in the catalog does not hide a plan row", () => {
+  const result = run({
+    "plans/README.md": (text) =>
+      text + "\nGhi chú: chạy " + tick + "deno test" + tick + " trước.\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});

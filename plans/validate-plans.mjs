@@ -65,21 +65,33 @@ function listIndentTracker() {
   return (relative, width, blank) => {
     if (blank) return { indent: innermost(), marker: undefined };
     while (stack.length && width < innermost()) stack.pop();
-    // Marker đánh số dài quá chín chữ số không mở list: chuẩn ghim đúng chín,
-    // nên "1234567890. ~~~" là một đoạn văn thường. Nhận nó là list thì phần
-    // sau dấu chấm mở được cả fence lẫn block HTML, và những dòng sống nằm dưới
-    // bị ẩn khỏi mọi gate. Cùng giới hạn với containerPrefix, để hai đường quét
-    // không hiểu một tài liệu theo hai kiểu.
-    const marker = width <= innermost() + 3
-      ? relative.match(/^(?:[-+*]|\d{1,9}[.)])[ \t]+/)
-      : undefined;
-    // Content indent của item đo bằng cột chứ không bằng số ký tự của dấu: tab
-    // trong dấu đẩy nội dung tới mốc bốn cột kế tiếp, nên "-\t~~~" đặt nội dung
-    // ở cột bốn chứ không phải hai. Đếm ký tự thì container đóng muộn hơn ranh
-    // giới thật, và những dòng đã ra khỏi list vẫn bị tính là nằm trong fence
-    // của nó, tức là bị ẩn khỏi mọi gate.
-    if (marker) stack.push(columnsOf(marker[0], width));
-    return { indent: innermost(), marker: marker?.[0] };
+    // Nhiều dấu container đứng chung một dòng vật lý thì mở nhiều list lồng
+    // nhau, và nội dung của item chỉ bắt đầu sau dấu trong cùng: "- - ~~~text"
+    // mở hai list rồi mở một fence. Ăn đúng một dấu thì dấu trong còn nằm chắn
+    // trước dấu mở, fence không được nhận, và những dòng nằm trong nó bị quét
+    // như Markdown sống làm gate báo hỏng một tài liệu đúng.
+    let rest = relative, consumed = "", column = width;
+    for (;;) {
+      // Marker đánh số dài quá chín chữ số không mở list: chuẩn ghim đúng chín,
+      // nên "1234567890. ~~~" là một đoạn văn thường. Nhận nó là list thì phần
+      // sau dấu chấm mở được cả fence lẫn block HTML, và những dòng sống nằm
+      // dưới bị ẩn khỏi mọi gate. Cùng giới hạn với containerPrefix, để hai
+      // đường quét không hiểu một tài liệu theo hai kiểu.
+      const marker = column <= innermost() + 3
+        ? rest.match(/^(?:[-+*]|\d{1,9}[.)])[ \t]+/)
+        : undefined;
+      if (!marker) break;
+      // Content indent của item đo bằng cột chứ không bằng số ký tự của dấu:
+      // tab trong dấu đẩy nội dung tới mốc bốn cột kế tiếp, nên "-\t~~~" đặt
+      // nội dung ở cột bốn chứ không phải hai. Đếm ký tự thì container đóng
+      // muộn hơn ranh giới thật, và những dòng đã ra khỏi list vẫn bị tính là
+      // nằm trong fence của nó, tức là bị ẩn khỏi mọi gate.
+      column = columnsOf(marker[0], column);
+      stack.push(column);
+      consumed += marker[0];
+      rest = rest.slice(marker[0].length);
+    }
+    return { indent: innermost(), marker: consumed || undefined };
   };
 }
 // Blockquote chỉ đặt tiền tố lên đầu dòng chứ không đổi bản chất khối bên
@@ -549,6 +561,14 @@ function outsideHtmlBlocks(body, preserveOffsets = false) {
 // tài liệu.
 const structuralMarkdown = (body) =>
   outsideHtmlComments(outsideBlockCode(outsideHtmlBlocks(body)));
+// Khung nhìn cho những gate đo sự tồn tại của chính khối code: bỏ comment và
+// block HTML thô, nhưng giữ nguyên cả dấu fence lẫn thân khối.
+// structuralMarkdown không dùng được ở đó vì nó xóa dòng fence cùng với thân,
+// nên hỏi "có khối lệnh không" trên khung nhìn ấy thì câu trả lời luôn là
+// không. Hỏi trên văn bản thô thì ngược lại: một fence viết trong HTML comment
+// không render gì cả nhưng vẫn thỏa gate, và một báo cáo BLOCKED rỗng trước mắt
+// người đọc vẫn giữ được trạng thái đó.
+const visibleMarkdown = (body) => outsideHtmlComments(outsideHtmlBlocks(body));
 // Những dòng tự mở một block mới nên không bao giờ là lazy continuation của
 // đoạn văn phía trên: heading ATX, fence, list marker, thematic break, setext
 // underline và thẻ HTML đầu dòng.
@@ -798,7 +818,14 @@ const imageInput = (attributes) =>
 // là để một form trỏ vào đường dẫn không tồn tại đi qua cổng.
 const submitter = (element, attributes) => {
   const type = enumeratedKeyword(attributes, "type");
-  if (element === "button") return type === "" || type === "submit";
+  // "type" của <button> có cả missing value default lẫn invalid value default
+  // là trạng thái submit, nên chỉ đúng hai keyword "button" và "reset" mới tước
+  // quyền submit của nó. Chrome trả button.type === "submit" cho
+  // <button type="bogus">, và formaction của nút đó vẫn là đích điều hướng
+  // thật; đòi đúng chữ "submit" là để một đích hỏng đi qua cổng.
+  if (element === "button") return type !== "button" && type !== "reset";
+  // <input> ngược lại: invalid value default của nó là trạng thái text, nên
+  // <input type="bogus"> không submit gì và formaction ở đó không là đích.
   return element === "input" && (type === "submit" || type === "image");
 };
 // SVG vẫn hỗ trợ dạng cũ "xlink:href" và trình duyệt phân giải nó y như "href",
@@ -2311,7 +2338,11 @@ for (const entry of manifest) {
       // dấu hiệu này đo được trên văn bản: báo cáo nói đúng kế hoạch nó thuộc
       // về, tự khai trạng thái, và giữ ít nhất một khối lệnh chạy thật. Nội
       // dung văn xuôi thì cổng không phán, đó vẫn là việc của review.
-      const report = readFileSync(blockedPath, "utf8");
+      // Ba dấu hiệu đo trên phần còn hiển thị, không đo trên văn bản thô: một
+      // khối lệnh viết trong HTML comment, và cũng vậy với id hay chữ BLOCKED,
+      // không đứng trước mắt ai cả, nên nhận nó là để một báo cáo rỗng giữ
+      // nguyên trạng thái BLOCKED mà không ai trả giá.
+      const report = visibleMarkdown(readFileSync(blockedPath, "utf8"));
       const missing = [];
       if (!report.includes(id)) missing.push("the plan id " + id);
       if (!report.includes("BLOCKED")) missing.push("the BLOCKED status");
@@ -3473,6 +3504,18 @@ else {
   // dụ được render thành code, không quảng cáo thêm kế hoạch nào, nhưng quét
   // thô lại coi nó là ID lạ và bác bỏ một README đúng.
   const index = structuralMarkdown(readFileSync(indexPath, "utf8"));
+  // Hàng nào còn là hàng thì đo trên phần còn render, vì code span vắt được qua
+  // nhiều dòng: một hàng danh mục kẹp giữa hai dòng chỉ có một backtick được
+  // GitHub render thành đúng một thẻ <code>, không hàng bảng nào và không link
+  // nào. Đọc trên khung nhìn đầy đủ thì ánh xạ một-một của README thỏa được
+  // bằng một ví dụ chết, tức kế hoạch đó biến mất khỏi danh mục trước mắt người
+  // đọc mà cổng bắt buộc vẫn xanh. Chỉ dùng khung nhìn này để chọn hàng và hỏi
+  // link, không dùng để đọc giá trị trong ô: chính các ô đó được phép viết
+  // trong backtick, xóa đi là bác bỏ một README đúng. outsideInlineCode thay
+  // bằng khoảng trắng nên hai khung nhìn khớp nhau theo chỉ số dòng.
+  const rendered = outsideInlineCode(index);
+  const indexLines = index.split("\n");
+  const renderedLines = rendered.split("\n");
   // Ánh xạ một-một phải kiểm cả chiều ngược: vòng lặp dưới chỉ hỏi từng ID của
   // manifest có đúng một dòng, nên một dòng danh mục mang ID lạ không bị ai hỏi
   // tới và README quảng cáo thêm kế hoạch ngoài bộ đã duyệt. Đọc ô ID theo đúng
@@ -3486,7 +3529,7 @@ else {
       // số: ghim độ dài thì một hàng mang "1000" không bị ai hỏi tới và README
       // quảng cáo thêm kế hoạch ngoài bộ đã duyệt. Manifest chỉ sinh ID ba chữ
       // số nên mọi ô toàn số khác ba chữ số đều là ID lạ.
-      index.split("\n").map((line) => tableCells(line)[1]?.trim()).filter(
+      renderedLines.map((line) => tableCells(line)[1]?.trim()).filter(
         (cell) => cell !== undefined && /^\d+$/.test(cell),
       ),
     ),
@@ -3497,15 +3540,15 @@ else {
     );
   }
   for (const entry of manifest) {
-    if (!index.includes(`](${entry.file})`)) {
+    if (!rendered.includes(`](${entry.file})`)) {
       fail(`README thiếu ${entry.file}`);
     }
     const id = String(entry.id).padStart(3, "0");
-    const rows = index.split("\n").filter((line) =>
-      tableCells(line)[1]?.trim() === id
+    const rows = renderedLines.flatMap((line, at) =>
+      tableCells(line)[1]?.trim() === id ? [at] : []
     );
     if (rows.length !== 1) fail("README requires exactly one row for ID " + id);
-    const cells = tableCells(rows[0] ?? "");
+    const cells = tableCells(indexLines[rows[0]] ?? "");
     const target = cells[2]?.trim().match(/^\[[^\]]+\]\(([^)]+)\)$/)?.[1];
     if (target !== entry.file) fail("README row file does not match ID " + id);
     // Ô trạng thái đọc theo cùng bộ tách ô, để chỗ này và các ô khác không hiểu

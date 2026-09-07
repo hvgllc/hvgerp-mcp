@@ -2628,3 +2628,73 @@ bằng một mẻ dò tám ca trước khi động vào code, và cả bốn đ�
 Mười hai mẻ dò guard của các vòng trước (88 ca) chạy trên cả head cũ lẫn cây đã
 sửa cho output giống nhau từng dòng, nên bốn thay đổi này không đổi kết luận của
 bất kỳ ca nào đã chốt trước đó.
+
+## Codex vòng tiếp: review 5127312070
+
+Review đọc đúng head `5092e4d578`, nêu năm P2 và không P1 nào. Cả năm tái hiện
+bằng một mẻ dò mười ca trước khi động vào code. Bốn đúng, một sai chiều.
+
+- `type` của `<button>` có cả missing value default lẫn invalid value default là
+  trạng thái submit, nên `<button type="bogus">` vẫn là nút submit và
+  `formaction` của nó vẫn là đích điều hướng thật. Chrome trả `button.type` ra
+  `submit` cho `bogus`, `submit`, `SUBMIT` và cho nút không viết `type`, chỉ trả
+  `button` và `reset` cho đúng hai keyword đó. Guard cũ đòi đúng chữ `submit`
+  nên bỏ sót mọi giá trị lạ. Nay `<button>` là submitter trừ đúng hai keyword
+  ấy. `<input>` giữ nguyên luật cũ vì chiều của nó ngược lại: Chrome trả
+  `input.type` ra `text` cho `<input type="bogus">`, tức invalid value default
+  của input là trạng thái text và nó không submit gì cả.
+- Nhiều dấu container đứng chung một dòng vật lý mở nhiều list lồng nhau, và nội
+  dung của item chỉ bắt đầu sau dấu trong cùng. GitHub trả `- - ~~~text` ra hai
+  `<ul>` lồng nhau rồi một `<pre><code>` chứa nguyên văn dòng sau, tức link
+  trong đó là ví dụ chết; ba lớp `- - - ~~~text` cũng vậy. `listIndentTracker`
+  ăn đúng một dấu nên dấu trong còn chắn trước dấu mở, fence không được nhận, và
+  gate bắt buộc báo hỏng một link chỉ có trong ví dụ. Nay bộ đếm ăn liên tiếp
+  các dấu trên cùng dòng và đẩy đúng một mức stack cho từng dấu. Ca đối chứng
+  `- - text` không có fence thì GitHub vẫn trả link sống, và gate vẫn báo hỏng.
+- Ba dấu hiệu của báo cáo BLOCKED đo trên văn bản thô, nên một fence viết trong
+  HTML comment vẫn thỏa gate. GitHub trả đúng chuỗi rỗng cho cụm comment đó:
+  người đọc không thấy khối lệnh nào mà kế hoạch vẫn giữ được trạng thái
+  BLOCKED. `structuralMarkdown` không dùng được ở đây vì nó xóa cả dòng fence
+  cùng với thân khối, nên câu hỏi "có khối lệnh không" luôn ra không. Thêm
+  `visibleMarkdown`: bỏ comment và block HTML thô, giữ nguyên khối code. Cùng lỗ
+  hổng ấy áp cho cả id lẫn chữ BLOCKED, viết trong comment cũng thỏa được, nên
+  cả ba dấu hiệu chuyển sang khung nhìn này.
+- Code span vắt được qua nhiều dòng, nên một hàng danh mục kẹp giữa hai dòng chỉ
+  có một backtick được GitHub render thành đúng một thẻ `<code>`: không hàng
+  bảng nào, không link nào. Rút hàng 001 khỏi bảng và để lại nó ở cuối README
+  dưới dạng đó thì người đọc không còn thấy kế hoạch 001 ở đâu, mà cổng bắt buộc
+  vẫn xanh. Nay việc chọn hàng và câu hỏi "README có link tới file này không" đo
+  trên khung nhìn đã bỏ inline code, còn giá trị trong ô vẫn đọc trên khung nhìn
+  đầy đủ, vì chính các ô trạng thái và phụ thuộc được phép viết trong backtick;
+  xóa backtick ở cả hai chỗ là bác bỏ một README đúng, và đó là lý do bản sửa
+  rộng đầu tiên làm đỏ regression về cách trình bày phụ thuộc. Một điểm siết dôi
+  ra và tôi giữ nguyên có chủ ý: khi hai dòng backtick nằm giữa một bảng đang
+  mở, GitHub coi chúng là hai hàng rác và hàng 001 vẫn render sống, còn gate thì
+  tính cả cụm là code span và báo thiếu. Đó là báo động thừa trên một cách viết
+  không ai dùng, người đọc gạt được; sửa cho khớp phải dạy `inlineCodeSpans`
+  biết ranh giới bảng, mà hàm đó dùng chung cho mọi gate nên đổi nó là mở đúng
+  chiều bỏ sót ở chỗ khác.
+- Đề nghị che thân `<title>` thì tôi bác, và đo được cả hai renderer trước khi
+  bác. Chrome đúng như finding nói: một thẻ ảnh viết trong thân `<title>` không
+  sinh phần tử ảnh nào, `document.images.length` là 1 chứ không phải 2, và cả
+  chuỗi thẻ đi vào `document.title` như văn bản, vì `title` là phần tử RCDATA
+  của tokenizer. Nhưng GitHub chỉ xóa cặp thẻ `title` khi sanitize và giữ nguyên
+  thẻ `img` bên trong: cụm đó render ra đúng một thẻ ảnh sống bọc trong một thẻ
+  neo, giữ nguyên đích của thuộc tính `src`, còn hai thẻ `title` thì bị escape
+  thành chữ hai bên; ở cả vị trí block lẫn vị trí inline đều vậy. Tài liệu trong
+  thư mục kế hoạch được đọc trên GitHub, nên che thân title là để một tài nguyên
+  hỏng thật đi qua cổng. Cùng chiều lệch với thẻ `base` ở vòng 37, và cũng khóa
+  lại bằng một test.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 703 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+Mười ba mẻ dò guard của các vòng trước (96 ca) chạy trên cả head cũ lẫn cây đã
+sửa cho output giống nhau từng dòng, nên bốn thay đổi này không đổi kết luận của
+bất kỳ ca nào đã chốt trước đó.
