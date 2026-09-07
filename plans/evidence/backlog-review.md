@@ -3233,3 +3233,67 @@ squash, không đúng trên nhánh; K2 là lỗ thật, đã sửa.
 | `node --test plans/test-validator.mjs` | 845 pass          |
 | `git diff --check`                     | sạch              |
 | `node --test plans/test-history.mjs`   | 5 pass sau commit |
+
+## Codex vòng tiếp: review 5131548504
+
+Bốn finding trên head `4860c8e`: nhận một, từ chối ba. Mỗi từ chối kèm một phép
+đo dựng lại đúng ca mà báo cáo mô tả.
+
+- L1 (P1, `evidence/001.md:5`) nêu SHA `e429470`. Đây là lần thứ ba liên tiếp
+  một P1 cùng dạng nêu một SHA không có trong repository: `git cat-file -t` trả
+  `Not a valid object name`. Head của nhánh và của remote đều là `4860c8e`, còn
+  `refs/pull/25/merge` là `ce8a5297`, merge của `4860c8e` vào `main` `164be320`.
+  Dựng lại hình dạng ấy bằng cách squash nhánh lên `main` trong một clone
+  `--no-local --no-tags` sạch, được `468701c1`: `b9d6d02a`, `db2f31fa` và
+  `bb78ace7` mất tư cách tổ tiên, validator vẫn exit 0, `test-history.mjs` ra 3
+  pass 2 fail. Trên `ce8a5297` thì cả bốn ref là tổ tiên và cổng ra 5 pass 0
+  fail. Chính lời của finding, "rather than publishing this tree as a
+  squash-style sibling of that history", mô tả đúng cái checkout tổng hợp ấy,
+  nên nó xác nhận chẩn đoán vòng trước chứ không phải một lỗi mới của cây này.
+  `plans/AGENTS.md:34` đã ghi sẵn luật giữ provenance bằng merge commit.
+- L2 (P2, `validate-plans.mjs:1279`) nhận. `srcsetElements` nhận `source` vô
+  điều kiện, nên `srcset` của một `<source>` nằm dưới `<audio>` hay `<video>`
+  cũng bị hỏi. Máy chọn tài nguyên của media chỉ đọc `src`, `type` và `media`;
+  `srcset` chỉ có nghĩa khi phần tử bao gần nhất là `<picture>`. Đo bằng access
+  log của Chrome: `<video><source src="ok.mp4" srcset="inert.png"></video>` và
+  bản `<audio>` tương ứng không phát ra yêu cầu nào cho ứng viên srcset, còn ca
+  đối chứng `<picture><source srcset="pic.png"><img src="fb.png"></picture>` xin
+  `pic.png` ngay trong cùng một lần tải trang.
+- Chiều lỗi của L2 là chiều chặt quá: cổng bắt buộc từ chối một tài liệu đúng vì
+  một đường dẫn không renderer nào đụng tới. Sửa bằng đúng phép so vị trí đã
+  dùng cho `<source src>`: thêm một biến `picture` đối xứng với `media`, cùng
+  đọc vùng mở muộn nhất, nên phần tử bao gần nhất mới quyết vai trò.
+- L3 (P2, `validate-plans.mjs:3747`) từ chối, và ở đây phép đo lật ngược hẳn giả
+  định của báo cáo. GitHub không sinh id `user-content-fn-1` bao giờ. Render
+  `POST /markdown` với `mode=gfm` cho đúng ba id: `footnote-label`,
+  `user-content-fn-1-<32 hex>` và `user-content-fnref-1-<32 hex>`. Hậu tố ấy
+  ngẫu nhiên theo từng lần render: sáu lần render cùng một chuỗi byte cho sáu
+  hậu tố khác nhau. Vậy `[x](#user-content-fn-1)` hỏng thật trên GitHub, và thêm
+  id chú thích vào cổng chỉ là nới lỏng để nhận một link không bao giờ chạy.
+  Không có hình dạng nào của link chú thích viết tay mà bền, vì đích đổi sau mỗi
+  lần render.
+- L4 (P2, `validate-plans.mjs:3939`) từ chối, đo bằng trình duyệt thật. Trong
+  Chrome, tài liệu `srcdoc` có `baseURI` bằng URL của trang bao,
+  `href='#inside'` phân giải thành `http://localhost:8792/index.html#inside`, và
+  bấm vào nó đưa khung lồng rời hẳn `about:srcdoc` sang chính tài liệu ngoài:
+  sau cú bấm, `contentDocument.location.href` là URL của trang bao và khung chứa
+  HTML của trang bao. Cái `id='inside'` viết trong srcdoc không bao giờ được hỏi
+  tới. Nên làm phẳng srcdoc vào tài liệu chứa là đúng chiều, kể cả ở ca ngược mà
+  báo cáo nêu: nếu tài liệu ngoài có id trùng thì link chạy thật, và cổng nhận
+  nó cũng đúng.
+- Tám ca hồi quy cho vòng này. Bốn ca đòi cổng im: `<source srcset>` dưới
+  `<video>`, dưới `<audio>`, đứng trơ ngoài mọi cụm, và dưới một `<video>` lồng
+  trong `<picture>`. Bốn ca đối chứng đòi cổng vẫn bắt: `<source srcset>` trong
+  `<picture>`, `<img srcset>` ngoài mọi cụm, `<source srcset>` trong một
+  `<picture>` lồng trong `<video>`, và một fragment viết trong srcdoc trỏ vào id
+  chỉ có trong srcdoc. Cất `validate-plans.mjs` đi thì bốn ca đầu đỏ, bốn ca đối
+  chứng xanh cả hai chiều.
+
+| Cổng                                   | Kết quả           |
+| -------------------------------------- | ----------------- |
+| `node plans/validate-plans.mjs`        | Đạt               |
+| `deno fmt --check`                     | 315 file          |
+| `deno lint`                            | 160 file          |
+| `node --test plans/test-validator.mjs` | 853 pass          |
+| `git diff --check`                     | sạch              |
+| `node --test plans/test-history.mjs`   | 5 pass sau commit |

@@ -7221,3 +7221,96 @@ test("a base with no slash outside its query leaves the target alone", () => {
       "&lt;img src='definitely-missing.png'&gt;\"></iframe>\n",
   }, /link hỏng definitely-missing\.png/);
 });
+
+test("a source inside video leaves its srcset alone", () => {
+  // Đo bằng access log của Chrome: <video><source src srcset> không phát ra
+  // yêu cầu nào cho ứng viên srcset. Máy chọn tài nguyên của media chỉ đọc
+  // src, type và media, nên srcset ở đó là thuộc tính chết.
+  const result = run({
+    [review]: (text) =>
+      text +
+      '\n<video><source src="../README.md" srcset="missing-inert-l2.png">' +
+      "</video>\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a source inside audio leaves its srcset alone", () => {
+  // Cùng phép đo với <audio>: access log không có dòng nào cho ứng viên srcset.
+  const result = run({
+    [review]: (text) =>
+      text +
+      '\n<audio><source src="../README.md" srcset="missing-inert-l2b.png">' +
+      "</audio>\n",
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a source inside picture still checks its srcset", () => {
+  // Ca đối chứng của cùng phép đo: cụm ảnh xin ngay ứng viên srcset, nên một
+  // ứng viên thiếu file vẫn phải bị bắt.
+  invalid({
+    [review]: (text) =>
+      text +
+      '\n<picture><source srcset="missing-pic-l2.png"><img src="001.md">' +
+      "</picture>\n",
+  }, /link hỏng missing-pic-l2\.png/);
+});
+
+test("an img keeps its srcset checked outside any picture", () => {
+  // srcset của <img> không phụ thuộc phần tử bao, nên luật mới không được
+  // đụng tới nó.
+  invalid({
+    [review]: (text) =>
+      text + '\n<img src="001.md" srcset="missing-img-l2.png">\n',
+  }, /link hỏng missing-img-l2\.png/);
+});
+
+test("a source outside any picture or media leaves its srcset alone", () => {
+  // Không phần tử nào chọn một <source> đứng trơ, đúng như luật đang có cho
+  // <source src>, nên hỏi srcset ở đó là báo hỏng một chuỗi không ai tải.
+  const result = run({
+    [review]: (text) => text + '\n<source srcset="missing-bare-l2.png">\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a picture nested inside video still checks source srcset", () => {
+  // Vai trò đọc từ phần tử bao gần nhất chứ không từ tổ tiên: vùng picture mở
+  // muộn hơn nên nó mới là chủ của <source> này.
+  invalid({
+    [review]: (text) =>
+      text +
+      '\n<video><picture><source srcset="missing-nested-l2.png">' +
+      '<img src="001.md"></picture></video>\n',
+  }, /link hỏng missing-nested-l2\.png/);
+});
+
+test("a video nested inside picture leaves source srcset alone", () => {
+  // Chiều ngược lại của cùng luật vị trí: vùng video mở muộn hơn nên <source>
+  // này thuộc media, và srcset của nó lại là thuộc tính chết.
+  const result = run({
+    [review]: (text) =>
+      text +
+      '\n<picture><video><source src="../README.md" ' +
+      'srcset="missing-inner-l2.png"></video></picture>\n',
+  });
+  assert.equal(result.thrown, undefined);
+  assert.equal(result.exitCode, 0, result.messages.join("\n"));
+});
+
+test("a fragment written inside srcdoc resolves in the outer document", () => {
+  // Đo trong Chrome: tài liệu srcdoc có baseURI bằng URL của trang bao, nên
+  // href='#x' phân giải thành "<trang bao>#x", và bấm vào nó đưa khung lồng
+  // rời hẳn about:srcdoc sang chính tài liệu ngoài. Cái id nằm trong srcdoc vì
+  // thế không phải đích của fragment ấy.
+  invalid({
+    [review]: (text) =>
+      text +
+      "\n<iframe srcdoc=\"&lt;p id='nested-only-l4'&gt;x&lt;/p&gt;" +
+      "&lt;a href='#nested-only-l4'&gt;go&lt;/a&gt;\"></iframe>\n",
+  }, /anchor hỏng #nested-only-l4/);
+});

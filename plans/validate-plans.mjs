@@ -1268,14 +1268,32 @@ const attributeTarget = (value) => {
 // reference thay vì thành một xuống dòng bị bỏ đi, dựng ra một đường dẫn không
 // tồn tại và báo hỏng một link đúng; srcset viết "a.png&#44;b.png" thì mất luôn
 // ranh giới giữa hai ứng viên.
-const attributeTargets = (element, name, value, attributes, media, svg) =>
+const attributeTargets = (
+  element,
+  name,
+  value,
+  attributes,
+  media,
+  svg,
+  picture,
+) =>
   (linkAttribute(element, name, attributes, media, svg) ||
       (name === "poster" && posterElements.has(element)) ||
       (name === "data" && dataElements.has(element)) ||
       (name === "action" && element === "form") ||
       (name === "formaction" && submitter(element, attributes))
     ? [decodeAttribute(value)]
-    : name === "srcset" && srcsetElements.has(element)
+    // Đối xứng với luật của <source src>: srcset của một <source> chỉ là tài
+    // nguyên khi phần tử bao nó gần nhất là <picture>. Dưới <audio> hay
+    // <video>, máy chọn tài nguyên của media chỉ đọc src, type và media, nên
+    // srcset ở đó là thuộc tính chết. Đo bằng access log của Chrome:
+    // <video><source src="ok.mp4" srcset="inert.png"></video> và bản audio
+    // tương ứng không phát ra yêu cầu nào cho inert.png, trong khi ca đối chứng
+    // <picture><source srcset="pic.png"><img src="fb.png"></picture> xin
+    // pic.png ngay. Hỏi srcset ở đó là bắt cổng bắt buộc từ chối một tài liệu
+    // đúng vì một đường dẫn không renderer nào đụng tới.
+    : name === "srcset" && srcsetElements.has(element) &&
+        (element !== "source" || picture)
     ? srcsetTargets(decodeAttribute(value))
     : name === "imagesrcset" && element === "link" && imagePreload(attributes)
     ? srcsetTargets(decodeAttribute(value))
@@ -3917,6 +3935,10 @@ function htmlAttributeTargets(rawHtml, nested = false) {
     const media = mediaAt > opensAt(pictures) &&
       !(owner &&
         new Map(tagAttributes(owner[2], owner.blockRaw)).has("src"));
+    // Cùng phép so vị trí, chiều ngược lại: vùng mở muộn nhất mới là phần tử
+    // bao gần nhất. Một <source> không nằm trong picture nào cũng cho false,
+    // đúng như <source src> ngoài media, vì khi ấy không phần tử nào chọn nó.
+    const picture = opensAt(pictures) > mediaAt;
     // Ngoài SVG, bộ phân tích HTML đổi thẳng thẻ mở "image" thành "img", nên
     // <image src="x.png"> tải tài nguyên y như <img>. Đo trong Chrome: cây
     // DOM trả về IMG và trang phát ra đúng một yêu cầu tới "x.png". Chỉ nhận
@@ -3941,9 +3963,16 @@ function htmlAttributeTargets(rawHtml, nested = false) {
         continue;
       }
       htmlTargets.push(
-        ...attributeTargets(element, name, value, attributes, media, svg).map((
-          target,
-        ) => rebase(base, target)),
+        ...attributeTargets(
+          element,
+          name,
+          value,
+          attributes,
+          media,
+          svg,
+          picture,
+        )
+          .map((target) => rebase(base, target)),
       );
     }
     // Gốc mới chỉ có hiệu lực với thẻ đứng sau nó: đo trong Chrome, một
