@@ -14,7 +14,7 @@
 
 CONTRIBUTING chỉ dẫn sửa version trong server.ts và dispatch Publish thủ công
 cho cả hai registry, khác code/workflow hiện tại. SECURITY ghi chỉ 2.x được hỗ
-trợ trong khi source mang version3.4.0. Tài liệu cần nói đúng quy trình, không
+trợ trong khi source mang version3.5.0. Tài liệu cần nói đúng quy trình, không
 tự cam kết hỗ trợ phiên bản mới ngoài chính sách hiện có.
 
 ## Hiện trạng và chứng cứ
@@ -39,7 +39,7 @@ này dùng sourceRef mới; các chứng cứ khác giữ baseline riêng đã g
 
 <!-- deno-fmt-ignore -->
 ```text
-export const SERVER_VERSION = "3.4.0";
+export const SERVER_VERSION = "3.5.0";
 ```
 
 `.github/workflows/publish.yml:15`:
