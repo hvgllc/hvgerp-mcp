@@ -757,8 +757,8 @@
       {
         "path": "src/version.ts",
         "line": 15,
-        "code": "export const SERVER_VERSION = \"3.4.0\";",
-        "sourceRef": "d2c53058aa0d6bce8357f6f258dc812105aa38db"
+        "code": "export const SERVER_VERSION = \"3.5.0\";",
+        "sourceRef": "635c2f759335d7974a0334b589963b7872d8e280"
       },
       {
         "path": ".github/workflows/publish.yml",

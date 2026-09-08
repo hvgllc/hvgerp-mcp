@@ -8,7 +8,7 @@ This package is a fork of
 deliberately still point at the upstream repository, where those commits, pull
 requests and tags actually live.
 
-## [Unreleased]
+## [3.5.0] - 2026-09-08
 
 ### Added
 
