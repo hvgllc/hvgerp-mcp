@@ -48,20 +48,41 @@ const TASK_LIST_FIELDS = [
 const TASK_SKU_FIELD = "custom_sku";
 
 /**
- * Whether a site carries `Task.custom_sku`, remembered per client.
+ * Loại sản phẩm, cùng nguồn và cùng luật với {@link TASK_SKU_FIELD}: `update_task_meta` ghi cột,
+ * còn dòng `product_type:` trong `custom_agent_meta` chỉ là bản nháp người dùng gõ. Đọc CỘT, tuyệt
+ * đối không tự tách dòng đó ra: `_extract_task_product_type` còn phải tra tên vào `HVG Product
+ * Category` bằng đúng collation `utf8mb4_unicode_ci` mới biết giá trị có thật hay không, nên một
+ * bản chép lại ở đây sẽ nhận cả những tên không tồn tại trong danh mục.
  *
- * The field belongs to `hvg_workspace`, not to ERPNext, so most sites this package is published
- * for do not have it - and Frappe does not quietly skip a column it cannot find. It fails the
+ * Cột này đi sau `custom_sku` một đợt phát hành, nên một site có `custom_sku` vẫn có thể thiếu nó -
+ * đó là lý do danh sách dưới đây theo dõi từng cột riêng chứ không coi cả hai là một gói.
+ */
+const TASK_PRODUCT_TYPE_FIELD = "custom_product_type";
+
+/**
+ * The `hvg_workspace` columns `erpnext_task_list` asks for when the site turns out to have them.
+ */
+const TASK_OPTIONAL_FIELDS = [TASK_SKU_FIELD, TASK_PRODUCT_TYPE_FIELD];
+
+/**
+ * Which optional columns a site turned out NOT to have, remembered per client.
+ *
+ * These fields belong to `hvg_workspace`, not to ERPNext, so most sites this package is published
+ * for do not have them - and Frappe does not quietly skip a column it cannot find. It fails the
  * whole `SELECT` with MySQL error 1054, which is exactly how five list tools came to return an
- * error instead of a list on v16 (3.3.3). Asking for the field unconditionally would break
+ * error instead of a list on v16 (3.3.3). Asking for the fields unconditionally would break
  * `erpnext_task_list` on every standard site.
  *
  * A `WeakMap` rather than a module-level flag because one process may talk to several sites, and
- * a site without the field must not teach the next client to stop asking. `true` is never stored
- * eagerly: the first successful call records it, so a site that has the field pays no probe at
- * all and a site that lacks it pays one wasted request, once.
+ * a site without a field must not teach the next client to stop asking. Only ABSENCE is recorded,
+ * never presence: a site that has both columns pays no probe at all, and a site that lacks one
+ * pays one wasted request for that column, once.
+ *
+ * A `Set` rather than a single flag because the two columns shipped in different releases. Frappe
+ * names exactly one column per 1054, so a site missing both is learned one column per retry - and
+ * each retry drops one entry from the request, which is what bounds the loop.
  */
-const taskSkuSupport = new WeakMap<FrappeClient, boolean>();
+const taskMissingFields = new WeakMap<FrappeClient, Set<string>>();
 
 /**
  * The column a MySQL 1054 names, e.g. `Unknown column 'tabTask.custom_sku' in 'SELECT'`.
@@ -75,11 +96,12 @@ const UNKNOWN_COLUMN_RE = /Unknown column \\?['"`]([^'"`\\]+)/i;
  *
  * Reads the response body ONLY, and compares the column the database named. Searching
  * `error.message` for the field would be wrong twice over: the message embeds the request path,
- * and that path carries `custom_sku` inside the `fields` query parameter, so an unknown-column
- * error about a COMPLETELY DIFFERENT column would match. The retry, which only drops
- * `custom_sku`, would then fail again anyway - after teaching the client a lie it keeps for the
- * rest of the process, so a site whose real schema problem later gets fixed would silently stop
- * being asked for a column it does have.
+ * and that path carries every optional column inside the `fields` query parameter, so an
+ * unknown-column error about a COMPLETELY DIFFERENT column would match. The retry, which drops
+ * only the column it believes was named, would then fail again anyway - after teaching the client
+ * a lie it keeps for the rest of the process, so a site whose real schema problem later gets fixed
+ * would silently stop being asked for a column it does have. With more than one optional column
+ * the same substring match would also drop them one by one on a single unrelated failure.
  */
 function isUnknownColumnError(error: unknown, field: string): boolean {
   if (!(error instanceof FrappeAPIError)) return false;
@@ -192,8 +214,9 @@ export const projectTools: ErpNextTool[] = [
     _meta: DOCLIST_META,
     description: "List Tasks. Filterable by project, status, priority. " +
       "Fields: name, subject, project, status, priority, exp_start_date, exp_end_date, progress. " +
-      "Sites carrying hvg_workspace also get 'custom_sku'; it is absent elsewhere. Where present " +
-      "it is empty for every Task created before that field shipped and never backfilled, so an " +
+      "Sites carrying hvg_workspace also get 'custom_sku' and 'custom_product_type'; both are " +
+      "absent elsewhere, and a site may carry the first without the second. Where present they " +
+      "are empty for every Task created before each field shipped and never backfilled, so an " +
       "empty value means 'not recorded here', never 'no product'.",
     category: "project",
     inputSchema: {
@@ -259,29 +282,38 @@ export const projectTools: ErpNextTool[] = [
       }
 
       const query = { filters, limit, order_by: "modified desc" };
-      // Chưa biết site có cột SKU hay không thì cứ hỏi: site của Havi có, và đó là ca thường.
-      const askForSku = taskSkuSupport.get(ctx.client) !== false;
+      // Chưa biết site có cột nào thì cứ hỏi cả hai: site của Havi có, và đó là ca thường.
+      const missing = taskMissingFields.get(ctx.client);
+      let optional = TASK_OPTIONAL_FIELDS.filter((field) =>
+        !missing?.has(field)
+      );
 
       let docs;
-      try {
-        docs = await ctx.client.list("Task", {
-          fields: askForSku
-            ? [...TASK_LIST_FIELDS, TASK_SKU_FIELD]
-            : TASK_LIST_FIELDS,
-          ...query,
-        });
-        if (askForSku) taskSkuSupport.set(ctx.client, true);
-      } catch (error) {
-        if (!askForSku || !isUnknownColumnError(error, TASK_SKU_FIELD)) {
-          throw error;
+      for (;;) {
+        try {
+          docs = await ctx.client.list("Task", {
+            fields: [...TASK_LIST_FIELDS, ...optional],
+            ...query,
+          });
+          break;
+        } catch (error) {
+          const absent = optional.find((field) =>
+            isUnknownColumnError(error, field)
+          );
+          // Lỗi không phải "site thiếu một cột mình vừa hỏi" thì để nguyên nó đi lên: nuốt ở đây
+          // là biến một site hỏng thật thành một danh sách trông bình thường.
+          if (absent === undefined) throw error;
+          // Site không mang cột đó. Nhớ lại để lượt sau không tốn thêm một vòng nữa, rồi hỏi lại
+          // thay vì ném lỗi vào mặt người chỉ muốn liệt kê công việc. Mỗi vòng bỏ đúng một cột
+          // khỏi `optional`, nên vòng lặp dừng chậm nhất sau `TASK_OPTIONAL_FIELDS.length` lượt.
+          let known = taskMissingFields.get(ctx.client);
+          if (known === undefined) {
+            known = new Set<string>();
+            taskMissingFields.set(ctx.client, known);
+          }
+          known.add(absent);
+          optional = optional.filter((field) => field !== absent);
         }
-        // Site không mang `hvg_workspace`. Nhớ lại để lượt sau không tốn thêm một vòng nữa, rồi
-        // trả về đúng tám cột chuẩn thay vì ném lỗi vào mặt người chỉ muốn liệt kê công việc.
-        taskSkuSupport.set(ctx.client, false);
-        docs = await ctx.client.list("Task", {
-          fields: TASK_LIST_FIELDS,
-          ...query,
-        });
       }
 
       return await listResult(ctx, "Task", docs, {

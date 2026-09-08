@@ -396,11 +396,11 @@ Deno.test("erpnext_task_list - an email in assigned_to costs no User read", asyn
   assertStringIncludes(JSON.stringify(taskFilters), "khoa.do@havigroup.com");
 });
 
-Deno.test("erpnext_task_list - asks for custom_sku, and only for the column", async () => {
-  // Hai khẳng định trong một phép thử vì chúng là hai nửa của cùng một quyết định: cột SKU phải
-  // được hỏi, và `custom_agent_meta` phải KHÔNG được hỏi. Kéo `custom_agent_meta` về đây là mở
-  // đường cho một bản chép lại luật trích mã phía TypeScript, và ba bản chép độc lập đã cho ba
-  // con số sai khác nhau khi đo trên site thật.
+Deno.test("erpnext_task_list - asks for the hvg columns, and only for the columns", async () => {
+  // Ba khẳng định trong một phép thử vì chúng là ba mặt của cùng một quyết định: hai cột đã tính
+  // sẵn phải được hỏi, và `custom_agent_meta` phải KHÔNG được hỏi. Kéo `custom_agent_meta` về đây
+  // là mở đường cho một bản chép lại luật trích mã phía TypeScript, và ba bản chép độc lập đã cho
+  // ba con số sai khác nhau khi đo trên site thật.
   let taskFields: unknown = null;
   const client = makeMockClient({
     list: async (doctype: string, options: Record<string, unknown>) => {
@@ -409,6 +409,7 @@ Deno.test("erpnext_task_list - asks for custom_sku, and only for the column", as
         name: "TASK-001",
         subject: "Áo thu",
         custom_sku: "CQ-DUC-001",
+        custom_product_type: "Áo",
       }];
     },
   });
@@ -420,17 +421,24 @@ Deno.test("erpnext_task_list - asks for custom_sku, and only for the column", as
 
   const fields = taskFields as string[];
   assertEquals(fields.includes("custom_sku"), true);
+  assertEquals(fields.includes("custom_product_type"), true);
   assertEquals(fields.includes("custom_agent_meta"), false);
   assertStringIncludes(JSON.stringify(result), "CQ-DUC-001");
+  assertStringIncludes(JSON.stringify(result), "Áo");
 });
 
-Deno.test("erpnext_task_list - passes an empty custom_sku through untouched", async () => {
-  // Không có đợt backfill nào, nên mọi việc tạo trước khi trường SKU lên prod đều trả về rỗng.
+Deno.test("erpnext_task_list - passes empty hvg columns through untouched", async () => {
+  // Không có đợt backfill nào, nên mọi việc tạo trước khi hai trường đó lên prod đều trả về rỗng.
   // Tool phải chuyển nguyên trạng: chỗ này mà tự suy ra một mã từ dữ liệu khác thì MCP sẽ nói
   // ngược với báo cáo đối soát của `hvg_workspace`, và người đọc sẽ tưởng một trong hai bên hỏng.
   const client = makeMockClient({
     list: async () => [
-      { name: "TASK-OLD", subject: "Việc cũ", custom_sku: null },
+      {
+        name: "TASK-OLD",
+        subject: "Việc cũ",
+        custom_sku: null,
+        custom_product_type: null,
+      },
     ],
   });
 
@@ -441,17 +449,23 @@ Deno.test("erpnext_task_list - passes an empty custom_sku through untouched", as
 
   const rows = (result as { data: Record<string, unknown>[] }).data;
   assertEquals(rows[0].custom_sku, null);
+  assertEquals(rows[0].custom_product_type, null);
 });
 
 /**
  * Lỗi Frappe trả về khi câu `SELECT` hỏi một cột site không có.
  *
  * Thông điệp dựng đúng như `FrappeClient.request` dựng: có nhúng đường dẫn yêu cầu, mà đường dẫn
- * đó luôn mang `custom_sku` trong tham số `fields`. Nhờ vậy phép thử mới bắt được cái bẫy tìm tên
- * cột trong `error.message` thay vì trong thân phản hồi.
+ * đó luôn mang cả hai cột tuỳ chọn trong tham số `fields`. Nhờ vậy phép thử mới bắt được cái bẫy
+ * tìm tên cột trong `error.message` thay vì trong thân phản hồi.
  */
 function unknownColumnError(field: string): FrappeAPIError {
-  const fields = JSON.stringify(["name", "subject", "custom_sku"]);
+  const fields = JSON.stringify([
+    "name",
+    "subject",
+    "custom_sku",
+    "custom_product_type",
+  ]);
   const path = `/api/resource/Task?fields=${encodeURIComponent(fields)}`;
   return new FrappeAPIError(`GET ${path} failed: OperationalError`, 500, {
     exception:
@@ -459,18 +473,19 @@ function unknownColumnError(field: string): FrappeAPIError {
   });
 }
 
-Deno.test("erpnext_task_list - a site without custom_sku still gets its Tasks", async () => {
-  // `custom_sku` là của `hvg_workspace`, không phải của ERPNext, và Frappe không bỏ qua im lặng
-  // một cột nó không tìm thấy: nó giết cả câu `SELECT` bằng SQL 1054. Hỏi vô điều kiện là làm
-  // hỏng `erpnext_task_list` trên mọi site chuẩn, tức trên chính nhóm người dùng mà gói này phát
-  // hành cho.
+Deno.test("erpnext_task_list - a site without the hvg columns still gets its Tasks", async () => {
+  // Hai cột đó là của `hvg_workspace`, không phải của ERPNext, và Frappe không bỏ qua im lặng một
+  // cột nó không tìm thấy: nó giết cả câu `SELECT` bằng SQL 1054. Hỏi vô điều kiện là làm hỏng
+  // `erpnext_task_list` trên mọi site chuẩn, tức trên chính nhóm người dùng mà gói này phát hành
+  // cho. Frappe nêu đúng MỘT cột mỗi lần, nên site thiếu cả hai phải học từng cột một.
   const attempts: string[][] = [];
   const client = makeMockClient({
     list: async (_doctype: string, options: { fields: string[] }) => {
       attempts.push(options.fields);
-      if (options.fields.includes("custom_sku")) {
-        throw unknownColumnError("custom_sku");
-      }
+      const absent = ["custom_sku", "custom_product_type"].find((field) =>
+        options.fields.includes(field)
+      );
+      if (absent) throw unknownColumnError(absent);
       return [{ name: "TASK-001", subject: "Plain ERPNext task" }];
     },
   });
@@ -480,22 +495,55 @@ Deno.test("erpnext_task_list - a site without custom_sku still gets its Tasks", 
     makeCtx(client),
   );
 
-  assertEquals(attempts.length, 2);
-  assertEquals(attempts[1].includes("custom_sku"), false);
-  assertEquals(attempts[1].length, 8);
+  assertEquals(attempts.length, 3);
+  assertEquals(attempts[2].includes("custom_sku"), false);
+  assertEquals(attempts[2].includes("custom_product_type"), false);
+  assertEquals(attempts[2].length, 8);
   const rows = (result as { data: Record<string, unknown>[] }).data;
   assertEquals(rows[0].name, "TASK-001");
 });
 
-Deno.test("erpnext_task_list - stops asking a site that answered 1054 once", async () => {
-  // Một vòng phí là chấp nhận được, mỗi lượt gọi một vòng phí thì không.
+Deno.test("erpnext_task_list - a site with custom_sku but no custom_product_type keeps the SKU", async () => {
+  // Cột loại sản phẩm đi sau cột SKU một đợt phát hành, nên đây là hình dạng thật của một site
+  // `hvg_workspace` chưa nâng cấp. Bỏ cả gói khi mất một cột là lặng lẽ tước mất cột site đang có.
   const attempts: string[][] = [];
   const client = makeMockClient({
     list: async (_doctype: string, options: { fields: string[] }) => {
       attempts.push(options.fields);
-      if (options.fields.includes("custom_sku")) {
-        throw unknownColumnError("custom_sku");
+      if (options.fields.includes("custom_product_type")) {
+        throw unknownColumnError("custom_product_type");
       }
+      return [{
+        name: "TASK-001",
+        subject: "Áo thu",
+        custom_sku: "CQ-DUC-001",
+      }];
+    },
+  });
+
+  const tool = getTool("erpnext_task_list");
+  const result = await tool.handler({}, makeCtx(client));
+  await tool.handler({}, makeCtx(client));
+
+  // Lượt đầu tốn một vòng phí, lượt sau không tốn vòng nào - và cả hai vẫn hỏi cột SKU.
+  assertEquals(attempts.length, 3);
+  assertEquals(attempts[1].includes("custom_sku"), true);
+  assertEquals(attempts[1].includes("custom_product_type"), false);
+  assertEquals(attempts[2].includes("custom_sku"), true);
+  assertEquals(attempts[2].includes("custom_product_type"), false);
+  assertStringIncludes(JSON.stringify(result), "CQ-DUC-001");
+});
+
+Deno.test("erpnext_task_list - stops asking a site that answered 1054 once", async () => {
+  // Hai vòng phí là chấp nhận được, mỗi lượt gọi hai vòng phí thì không.
+  const attempts: string[][] = [];
+  const client = makeMockClient({
+    list: async (_doctype: string, options: { fields: string[] }) => {
+      attempts.push(options.fields);
+      const absent = ["custom_sku", "custom_product_type"].find((field) =>
+        options.fields.includes(field)
+      );
+      if (absent) throw unknownColumnError(absent);
       return [];
     },
   });
@@ -504,9 +552,9 @@ Deno.test("erpnext_task_list - stops asking a site that answered 1054 once", asy
   await tool.handler({}, makeCtx(client));
   await tool.handler({}, makeCtx(client));
 
-  // Lượt đầu: hỏi có SKU rồi hỏi lại không SKU. Lượt sau: đúng một lần, không SKU.
-  assertEquals(attempts.length, 3);
-  assertEquals(attempts[2].includes("custom_sku"), false);
+  // Lượt đầu: hỏi cả hai cột, bỏ dần từng cột. Lượt sau: đúng một lần, không cột nào.
+  assertEquals(attempts.length, 4);
+  assertEquals(attempts[3].length, 8);
 });
 
 Deno.test("erpnext_task_list - does not read an unrelated failure as a missing column", async () => {
@@ -528,11 +576,12 @@ Deno.test("erpnext_task_list - does not read an unrelated failure as a missing c
   assertEquals(calls, 1);
 });
 
-Deno.test("erpnext_task_list - a 1054 about another column is not a missing custom_sku", async () => {
-  // Thông điệp lỗi có nhúng đường dẫn yêu cầu, và đường dẫn đó mang sẵn `custom_sku` trong tham số
-  // `fields`. Tìm tên cột trong thông điệp là nhận nhầm MỌI lỗi 1054 thành "site không có cột
-  // SKU": lượt gọi này vẫn hỏng (bỏ `custom_sku` đâu có chữa được cột kia), mà client thì đã học
-  // một điều sai và giữ tới hết tiến trình, nên khi lược đồ được sửa nó vẫn im lặng bỏ cột SKU.
+Deno.test("erpnext_task_list - a 1054 about another column is not a missing hvg column", async () => {
+  // Thông điệp lỗi có nhúng đường dẫn yêu cầu, và đường dẫn đó mang sẵn hai cột tuỳ chọn trong
+  // tham số `fields`. Tìm tên cột trong thông điệp là nhận nhầm MỌI lỗi 1054 thành "site không có
+  // cột này": lượt gọi vẫn hỏng (bỏ cột tuỳ chọn đâu có chữa được cột kia), mà client thì đã học
+  // một điều sai và giữ tới hết tiến trình, nên khi lược đồ được sửa nó vẫn im lặng bỏ hai cột.
+  // Với hai cột tuỳ chọn, cùng phép so sai còn bỏ dần từng cột trong cùng một lượt hỏng.
   let calls = 0;
   const client = makeMockClient({
     list: async () => {
@@ -564,6 +613,8 @@ Deno.test("erpnext_task_list - reads a table-qualified column name", async () =>
 
   await getTool("erpnext_task_list").handler({}, makeCtx(client));
 
+  // Lỗi chỉ nêu một cột, nên vòng thử lại chỉ được bỏ đúng cột đó.
   assertEquals(attempts.length, 2);
   assertEquals(attempts[1].includes("custom_sku"), false);
+  assertEquals(attempts[1].includes("custom_product_type"), true);
 });
