@@ -14,6 +14,10 @@ requests and tags actually live.
 
 - `erpnext_stock_ledger_list`: read recent non-cancelled Stock Ledger Entries
   for one required item and warehouse, with a bounded limit of 1 to 20 rows.
+- `erpnext_task_list` now returns `custom_product_type` alongside `custom_sku`
+  on sites carrying `hvg_workspace`. Each column is probed and remembered
+  independently, so a site that has one but not the other keeps the one it has,
+  and a site with neither still gets its Tasks.
 
 ### Fixed
 
