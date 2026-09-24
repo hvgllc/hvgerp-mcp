@@ -217,9 +217,13 @@ work against this config, it only changes which error you get; §5 shows both.
 # release the moment 0.25.1 ships - a silent false green, not a loud failure.
 RANGE=$(grep '"@casys/mcp-server"' deno.json |
         sed 's/.*@casys\/mcp-server@\([^"]*\)".*/\1/')
-VER=$(npm view "@casys/mcp-server@${RANGE}" version \
-        --registry=https://registry.npmjs.org | tail -n1 | tr -d "'" |
-      awk '{print $NF}')
+VIEW_OUTPUT=$(npm view "@casys/mcp-server@${RANGE}" version \
+                --registry=https://registry.npmjs.org) ||
+  { echo "npm view failed for range ${RANGE}" >&2; exit 1; }
+VER=$(printf '%s\n' "$VIEW_OUTPUT" | tail -n1 | tr -d "'" | awk '{print $NF}')
+case "$VER" in
+  '' | [!0-9]*) echo "range ${RANGE} resolved to no version" >&2; exit 1 ;;
+esac
 echo "vendoring @casys/mcp-server@${VER} for range ${RANGE}"
 
 VENDOR=/path/to/hvgerp-mcp/.nojsr-vendor/casys-mcp-server
@@ -229,6 +233,20 @@ mkdir -p "$VENDOR"
   tar -xzf "casys-mcp-server-${VER}.tgz" &&
   rsync -a --delete package/ "$VENDOR"/ )
 ```
+
+The lookup is split across three statements instead of one pipeline because a
+pipeline reports only its last command's status. Measured 2026-09-24:
+`npm view "@casys/mcp-server@^99.0.0" version | tail -n1 | tr -d "'" | awk …`
+leaves `VER` empty and still exits **0**, since `awk` succeeded on no input. An
+empty `VER` then turns `npm pack "@casys/mcp-server@${VER}"` into a bare name,
+which npm treats as `*`: that command really does download
+`casys-mcp-server-0.27.0.tgz`, outside the declared `^0.25.0`. The `tar` that
+follows saves you by accident, failing with
+`casys-mcp-server-.tgz: No such
+file or directory` and exit 1, but that message
+points at the wrong step entirely. Assigning the output first, checking the
+assignment's status, and rejecting a `VER` that does not start with a digit
+fails at the step that actually went wrong.
 
 `npm view` needs the same explicit `--registry` as the `npm pack` below it. Both
 are registry reads, and both honour `registry` from your user or global
