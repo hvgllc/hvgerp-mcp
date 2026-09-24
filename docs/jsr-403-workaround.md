@@ -34,15 +34,58 @@ away a working lockfile.
 ## 2. Confirm it in 30 seconds
 
 ```bash
-for h in jsr.io api.jsr.io npm.jsr.io deno.land registry.npmjs.org; do
-  printf '%-22s %s\n' "$h" \
-    "$(curl -s -o /dev/null -w '%{http_code}' --max-time 12 "https://$h/")"
+probe() {
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 12 "https://$1/")
+  curl_exit=$?
+  printf '%-22s %-3s curl-exit=%s\n' "$1" "$code" "$curl_exit"
+}
+
+jsr_blocked=1
+for h in jsr.io api.jsr.io npm.jsr.io; do
+  probe "$h"
+  [ "$code" = 403 ] || jsr_blocked=0
 done
+
+fallbacks_usable=1
+for h in deno.land registry.npmjs.org; do
+  probe "$h"
+  { [ "$curl_exit" = 0 ] && [ "$code" -ge 200 ] && [ "$code" -lt 400 ]; } ||
+    fallbacks_usable=0
+done
+
+if [ "$jsr_blocked" = 0 ]; then
+  echo "JSR is not answering 403: this page does not apply" >&2
+elif [ "$fallbacks_usable" = 0 ]; then
+  echo "deno.land or registry.npmjs.org is unusable too: nothing here will work" >&2
+else
+  echo "this page applies"
+fi
 ```
 
-A blocked machine prints `403` for all three JSR hosts and a non-`403` for the
-other two. If JSR answers `200` here, your problem is something else and this
-page does not apply.
+A blocked machine prints `403` for all three JSR hosts and a reachable 2xx/3xx
+for the other two, and the block ends with `this page applies`. If JSR answers
+`200`, your problem is something else.
+
+The fallback hosts get the stricter check, and the reason is that an HTTP code
+alone cannot tell "reachable" from "not reachable at all". `curl` prints `000`
+when it never got a response, and `--max-time` only bounds the transfer, so a
+DNS failure, a proxy refusal or a second blocked host all produce that same
+`000` - which is not `403`, and a test for "non-403" therefore reads a dead
+network as a healthy fallback. Measured 2026-09-24: `deno.land` answers `301`
+with exit 0, `registry.npmjs.org` answers `200` with exit 0, and an unresolvable
+host answers `000` with **exit 6**. The status code is the part command
+substitution keeps and the exit code is the part it drops, so the probe captures
+`$?` on the line after the substitution and requires both.
+
+This matters because the rest of the page spends those two hosts: §3 fetches
+`@casys/mcp-server` from `registry.npmjs.org` and the import map points `@std/*`
+at `deno.land`. If they are blocked as well, the workaround has nowhere left to
+resolve from, and finding that out here costs one command instead of three
+sections.
+
+(`code` and `curl_exit` rather than the more obvious `status`: `status` is
+read-only in zsh, the default macOS shell, so the shorter name makes the block
+abort with `read-only variable: status` on the machine most likely to run it.)
 
 The block is per-network, not per-account: a GitHub Actions runner reaches JSR
 fine, which is why CI is the real gate while a local machine is blocked (see
