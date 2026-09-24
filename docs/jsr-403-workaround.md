@@ -497,16 +497,23 @@ RUN_ID=${DISPATCH_OUTPUT##*/}
 case "$RUN_ID" in
   '' | *[!0-9]*)
     RUN_ID=
+    LOOKUP=
     for _attempt in 1 2 3 4 5 6 7 8 9 10; do
       sleep 3
-      CANDIDATE=$(gh run list --workflow=Test --branch="$BRANCH" --limit 1 \
-                    --json databaseId --jq '.[0].databaseId // 0')
-      if [ "$CANDIDATE" != "$LATEST_BEFORE" ] && [ "$CANDIDATE" != 0 ]; then
-        RUN_ID=$CANDIDATE
+      LOOKUP=$(gh run list --workflow=Test --branch="$BRANCH" --limit 1 \
+                 --json databaseId --jq '.[0].databaseId // 0') ||
+        LOOKUP=unreadable
+      case "$LOOKUP" in
+        '' | *[!0-9]*) continue ;;
+      esac
+      if [ "$LOOKUP" != "$LATEST_BEFORE" ] && [ "$LOOKUP" != 0 ]; then
+        RUN_ID=$LOOKUP
         break
       fi
     done
-    [ -n "$RUN_ID" ] || { echo "dispatch registered no new run" >&2; exit 1; } ;;
+    [ -n "$RUN_ID" ] ||
+      { echo "no new run after 10 lookups, last result: ${LOOKUP:-none}" >&2
+        exit 1; } ;;
 esac
 
 ACTUAL_SHA=$(gh run view "$RUN_ID" --json headSha --jq .headSha)
@@ -563,6 +570,16 @@ before the current one. `LATEST_BEFORE` is what makes the fallback safe:
 `gh run list --limit 1` returns the previous dispatch until GitHub registers the
 new one, so polling until the id CHANGES is the difference between watching this
 run and re-confirming the last one.
+
+The lookups inside the retry loop fail open the same way, and there the
+consequence is worse because the comparison is against a value that is supposed
+to change. A `gh run list` that exits non-zero leaves `LOOKUP` empty, and an
+empty string differs from `$LATEST_BEFORE` and from `0`, so an unchecked loop
+would treat the failure as the new run, store an empty id and break on the first
+attempt with nine retries unused. Substituting `unreadable` on a non-zero exit
+and rejecting anything non-numeric keeps a transient failure inside the retry
+budget, and reporting the last result distinguishes "GitHub never registered the
+dispatch" from "the lookups themselves never worked".
 
 The commit checks at the top are not ceremony, and this page's own history is
 the evidence. `actions/checkout@v5` in `.github/workflows/test.yml` checks out
