@@ -414,7 +414,8 @@ Two GitHub Actions workflows matter:
    Actions minutes than the gate was worth, and the same commands run locally.
    Run them locally before pushing, and dispatch the hosted run when you want
    the full suite confirmed (locally, `deno test src/` needs jsr.io access for
-   `@casys/mcp-server`).
+   `@casys/mcp-server`; if your network gets `403 Forbidden` from jsr.io, follow
+   `docs/jsr-403-workaround.md` and treat this workflow as the real gate).
 2. `.github/workflows/publish.yml` runs when a GitHub release is published, and
    is also reusable (`workflow_call`) and manual (`workflow_dispatch`):
    - **publish-jsr**: builds UI → `npx jsr publish --allow-dirty`. Gated on the
@@ -539,6 +540,11 @@ running in its own compose project), join that stack's external network instead
   in the error message (see `src/api/frappe-client.ts`).
 - **Fresh ERPNext instances**: may fail on submit with
   `base_rounded_total = None` until the setup wizard is completed.
+- **`403 Forbidden` from jsr.io**: some networks are blocked from every
+  `*.jsr.io` host, which breaks `deno check`, `deno test` and every `deno task`
+  that resolves imports. It is a network block, not a broken dependency - do not
+  change versions or delete `deno.lock`. See `docs/jsr-403-workaround.md` for
+  the local import-map workaround and for the traps it does not fix.
 
 ## Common Task Recipes
 
