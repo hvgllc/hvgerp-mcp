@@ -215,7 +215,8 @@ work against this config, it only changes which error you get; §5 shows both.
 # Resolve the RANGE, do not strip it. `^0.25.0` in deno.json is what CI resolves
 # against, so vendoring the literal `0.25.0` would type-check against an older
 # release the moment 0.25.1 ships - a silent false green, not a loud failure.
-RANGE=$(grep '"@casys/mcp-server"' deno.json |
+REPO_ROOT=$(git rev-parse --show-toplevel) || exit 1
+RANGE=$(grep '"@casys/mcp-server"' "$REPO_ROOT/deno.json" |
         sed 's/.*@casys\/mcp-server@\([^"]*\)".*/\1/')
 VIEW_OUTPUT=$(npm view "@casys/mcp-server@${RANGE}" version \
                 --registry=https://registry.npmjs.org) ||
@@ -226,7 +227,7 @@ case "$VER" in
 esac
 echo "vendoring @casys/mcp-server@${VER} for range ${RANGE}"
 
-VENDOR=/path/to/hvgerp-mcp/.nojsr-vendor/casys-mcp-server
+VENDOR="$REPO_ROOT/.nojsr-vendor/casys-mcp-server"
 mkdir -p "$VENDOR"
 ( cd "$(mktemp -d)" &&
   npm pack "@casys/mcp-server@${VER}" --registry=https://registry.npmjs.org &&
@@ -255,6 +256,18 @@ fails at `request to https://…/@casys%2fmcp-server failed`, and the same comma
 with the flag returns `0.25.0`. On a machine configured for a corporate mirror,
 leaving the flag off resolves the range against that mirror and then packs a
 possibly different version from the public registry.
+
+`REPO_ROOT` comes from `git rev-parse --show-toplevel` rather than being a
+`/path/to/hvgerp-mcp` placeholder to fill in, because a placeholder pasted
+unchanged does not fail in a way that names itself:
+`mkdir -p
+/path/to/hvgerp-mcp/.nojsr-vendor/casys-mcp-server` reports
+`mkdir: /path: Read-only file system` (measured on macOS 15; elsewhere it is a
+permission error, or worse, it succeeds and installs the package nowhere near
+the checkout). The import map still resolves `./.nojsr-vendor/...` relative to
+the config, so the next Deno command fails on a missing framework with no hint
+that a placeholder was the cause. Deriving it also makes the block work from a
+subdirectory, which is why `deno.json` is read through `$REPO_ROOT` too.
 
 The subshell matters if you are working through this page in one terminal. A
 bare `cd "$(mktemp -d)"` leaves the shell in the temporary directory after the
@@ -461,7 +474,9 @@ EXPECTED_SHA=$(git rev-parse HEAD)
   { echo "push $BRANCH first" >&2; exit 1; }
 
 LATEST_BEFORE=$(gh run list --workflow=Test --branch="$BRANCH" --limit 1 \
-                  --json databaseId --jq '.[0].databaseId // 0')
+                  --json databaseId --jq '.[0].databaseId // 0') ||
+  { echo "cannot read existing runs for $BRANCH" >&2; exit 1; }
+[ -n "$LATEST_BEFORE" ] || { echo "empty baseline run id" >&2; exit 1; }
 
 DISPATCH_OUTPUT=$(gh workflow run Test --ref "$BRANCH") || exit 1
 echo "$DISPATCH_OUTPUT"
@@ -519,10 +534,17 @@ just its last path segment, but `gh workflow run --help` promises the URL only
 form has no id in it at all. Handing that sentence's last word to `gh run watch`
 produces `failed to get run: HTTP 404: Not Found` against a URL ending in that
 word rather than a gate, so the recipe tests for digits and falls back to the
-API. `LATEST_BEFORE` is what makes the fallback safe: `gh run list --limit 1`
-returns the previous dispatch until GitHub registers the new one, so polling
-until the id CHANGES is the difference between watching this run and
-re-confirming the last one.
+API. `LATEST_BEFORE` is checked rather than merely assigned because it fails
+open. An unchained assignment does not stop a script that has no `set -e`, and
+measured 2026-09-24 with a bad token, `gh run list` exits 1 after
+`HTTP 401: Bad credentials` and leaves the variable EMPTY, not `0`. An empty
+baseline then compares unequal to every real run id, so the fallback would
+accept a pre-existing run for the same commit: its sha matches, its conclusion
+is `success`, and the recipe would report the gate as green for a run dispatched
+before the current one. `LATEST_BEFORE` is what makes the fallback safe:
+`gh run list --limit 1` returns the previous dispatch until GitHub registers the
+new one, so polling until the id CHANGES is the difference between watching this
+run and re-confirming the last one.
 
 The commit checks at the top are not ceremony, and this page's own history is
 the evidence. `actions/checkout@v5` in `.github/workflows/test.yml` checks out
