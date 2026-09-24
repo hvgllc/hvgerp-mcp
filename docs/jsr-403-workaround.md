@@ -72,15 +72,74 @@ itself (`hono`, `ajv/`, `jose`, `yaml`, `@modelcontextprotocol/sdk/`, …) as
 `npm:` specifiers. Vendored code is resolved against _your_ import map, not the
 package's own, so anything the package imports bare must appear in yours.
 
+### Writing the two local-only artifacts
+
+Neither artifact is tracked, and `.git/info/exclude` is per-clone metadata that
+no commit can carry, so a fresh clone starts with neither. Recreate both from
+here. First tell your own clone to ignore them, so a stray `git add -A` cannot
+commit one machine's network workaround:
+
+```bash
+printf '%s\n' '.nojsr-vendor/' 'deno.nojsr.json' >> .git/info/exclude
+```
+
+Then write `deno.nojsr.json` at the repository root. The path
+`./.nojsr-vendor/…` resolves relative to this file, so the root is where it has
+to live:
+
+```jsonc
+{
+  "//": "Local-only config: this machine's network is blocked from *.jsr.io.",
+  "nodeModulesDir": "auto",
+  "imports": {
+    "@casys/mcp-server": "./.nojsr-vendor/casys-mcp-server/mod.ts",
+    "@modelcontextprotocol/sdk/": "npm:/@modelcontextprotocol/sdk@^1.29.0/",
+    "@modelcontextprotocol/ext-apps": "npm:@modelcontextprotocol/ext-apps@^1.7.4",
+    "@opentelemetry/api": "npm:@opentelemetry/api@^1.9.0",
+    "ajv/": "npm:/ajv@^8.17.1/",
+    "hono": "npm:hono@^4.0.0",
+    "hono/": "npm:/hono@^4.0.0/",
+    "jose": "npm:jose@^6.0.0",
+    "yaml": "npm:yaml@^2.7.0",
+    "@std/yaml": "https://deno.land/std@0.224.0/yaml/mod.ts",
+    "@std/assert": "https://deno.land/std@0.224.0/assert/mod.ts"
+  }
+}
+```
+
+The `npm:` lines mirror the versions `deno.json` already declares - when a range
+there changes, change it here too, or the workaround type-checks against a
+different dependency than CI does. There is deliberately no `tasks` block: §5
+explains why `deno task --config` cannot work.
+
 ### Rebuilding `.nojsr-vendor/` from scratch
 
 ```bash
-VER=$(grep '"@casys/mcp-server"' deno.json |
-      sed 's/.*@casys\/mcp-server@^\{0,1\}\([^"]*\)".*/\1/')
+# Resolve the RANGE, do not strip it. `^0.25.0` in deno.json is what CI resolves
+# against, so vendoring the literal `0.25.0` would type-check against an older
+# release the moment 0.25.1 ships - a silent false green, not a loud failure.
+RANGE=$(grep '"@casys/mcp-server"' deno.json |
+        sed 's/.*@casys\/mcp-server@\([^"]*\)".*/\1/')
+VER=$(npm view "@casys/mcp-server@${RANGE}" version | tail -n1 | tr -d "'" |
+      awk '{print $NF}')
+echo "vendoring @casys/mcp-server@${VER} for range ${RANGE}"
+
 cd "$(mktemp -d)"
 npm pack "@casys/mcp-server@${VER}" --registry=https://registry.npmjs.org
 tar -xzf "casys-mcp-server-${VER}.tgz"
 rsync -a --delete package/ /path/to/hvgerp-mcp/.nojsr-vendor/casys-mcp-server/
+```
+
+`npm view <pkg>@<range> version` prints one bare version when a single release
+matches and `<pkg>@<v> '<v>'` lines in ascending order when several do, which is
+why the pipeline takes the last line and its last field.
+
+If you still have a `deno.lock` from before the block, it names the version Deno
+itself resolved - cross-check it and prefer it when the two disagree, because it
+is what the machine with working JSR access saw:
+
+```bash
+grep -o '@casys/mcp-server@[0-9][^"_]*' deno.lock | head -1
 ```
 
 Two details explain the shape of this:
@@ -103,9 +162,10 @@ deno check --config deno.nojsr.json --sloppy-imports mod.ts server.ts
 deno test  --config deno.nojsr.json --sloppy-imports --allow-all src/
 ```
 
-Measured on 2026-09-05 with Deno 2.9.5 and vendored `@casys/mcp-server@0.25.0`:
-type check clean, `762 passed | 0 failed | 4 ignored`. `deno.lock` is left
-untouched by both, so the workaround leaves no trace in the working tree.
+Measured on 2026-09-24 with Deno 2.9.5 and vendored `@casys/mcp-server@0.25.0`,
+using the config exactly as written in §3: type check clean,
+`1502 passed | 0 failed | 4 ignored`. `deno.lock` is left untouched by both, so
+the workaround leaves no trace in the working tree.
 
 `deno fmt` and `deno lint` need no config at all - neither resolves imports.
 
