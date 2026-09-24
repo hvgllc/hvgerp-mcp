@@ -170,12 +170,19 @@ VER=$(npm view "@casys/mcp-server@${RANGE}" version | tail -n1 | tr -d "'" |
 echo "vendoring @casys/mcp-server@${VER} for range ${RANGE}"
 
 VENDOR=/path/to/hvgerp-mcp/.nojsr-vendor/casys-mcp-server
-cd "$(mktemp -d)"
-npm pack "@casys/mcp-server@${VER}" --registry=https://registry.npmjs.org
-tar -xzf "casys-mcp-server-${VER}.tgz"
 mkdir -p "$VENDOR"
-rsync -a --delete package/ "$VENDOR"/
+( cd "$(mktemp -d)" &&
+  npm pack "@casys/mcp-server@${VER}" --registry=https://registry.npmjs.org &&
+  tar -xzf "casys-mcp-server-${VER}.tgz" &&
+  rsync -a --delete package/ "$VENDOR"/ )
 ```
+
+The subshell matters if you are working through this page in one terminal. A
+bare `cd "$(mktemp -d)"` leaves the shell in the temporary directory after the
+block, and every later command here is relative to the repository root:
+`deno.nojsr.json`, `mod.ts`, `server.ts` and `scripts/build-node.sh` all resolve
+against the wrong place, so §4 and §6 fail before checking anything. Parentheses
+confine the `cd` to the copy step.
 
 The `mkdir -p` is not redundant, and which machine you are on decides whether
 you find that out. GNU rsync creates only the final destination directory, so on
@@ -232,8 +239,28 @@ real one. Without `--lock` they write `deno.lock` itself: on a clone that has
 none, the run creates one, and the file it creates carries **zero** `jsr`
 entries (measured). On a clone that kept its pre-block `deno.lock` - the one §3
 tells you to cross-check against - that same file becomes the workaround's
-lockfile. `--no-lock` also protects it, at the cost of re-resolving every run; a
-separate lock file keeps the pinning and costs nothing.
+lockfile. `--no-lock` also protects it, at the cost of re-resolving every run.
+
+**A separate lock file is not free either - it goes stale, and quietly.** Once
+`deno.nojsr.lock` exists it pins the whole graph: 96 npm packages, including
+transitive ones, behind 7 declared ranges (measured 2026-09-24, e.g.
+`npm:@modelcontextprotocol/sdk@^1.29.0` → `1.30.0`). CI has no such anchor -
+`deno.lock` is gitignored, so a hosted run starts from a fresh checkout with no
+lockfile and resolves the newest release each range allows that is old enough
+for `minimumDependencyAge`. Leave the local lock alone for a few weeks and the
+two graphs drift apart, with the local one the more optimistic of the pair.
+Re-vendoring does not fix this on its own: it replaces `@casys/mcp-server` and
+leaves every pinned transitive dependency where it was.
+
+Delete it and let the next run rebuild it whenever the graph should move:
+
+```bash
+rm -f deno.nojsr.lock
+```
+
+Do that after re-vendoring, after changing any range in `deno.json` or in the
+vendored `package.json`, and whenever local checks pass while CI fails on
+something that smells like a dependency version. It costs one slower run.
 
 Do not try to verify this with `git status`: `deno.lock` is listed in
 `.gitignore`, so git reports it clean no matter what happened to it. Compare the
@@ -252,6 +279,19 @@ viewers before its test step; locally you have to build them yourself, which is
 §6, and then re-run the test.
 
 `deno fmt` and `deno lint` need no config at all - neither resolves imports.
+`deno fmt --check` does need one flag, though, because it walks into
+`.nojsr-vendor/` and judges the npm sources by this repository's style:
+
+```bash
+deno fmt --check --ignore=.nojsr-vendor/
+```
+
+Measured 2026-09-24 against a vendor restored straight from `npm pack`: plain
+`deno fmt --check` reports a file inside `.nojsr-vendor/` and exits 1, while the
+`--ignore` form reports none and skips the 58 vendored files entirely. The bare
+command is the CI gate reproduced faithfully only on a machine with no vendor;
+here it is a false failure, and §5 explains why running plain `deno fmt` to
+silence it is worse than the failure.
 
 ## 5. Traps
 
@@ -294,8 +334,9 @@ error: JSR package manifest for '@std/assert' failed to load … 403 Forbidden
 does not), so a plain `deno fmt` will rewrite vendored files. That does not
 dirty git - the directory is excluded - but it makes the vendor drift from the
 published tarball, so a later `diff` against a fresh `npm pack` shows changes
-that are formatting, not patches. Prefer `deno fmt <specific paths>`, or
-remember this before concluding the vendor was modified.
+that are formatting, not patches. Use `--ignore=.nojsr-vendor/` (§4) to run the
+gate over the whole repository without touching the copy, and remember this
+before concluding the vendor was modified.
 
 **Bumping `@casys/mcp-server` means re-vendoring.** The import map points at a
 fixed directory, so after changing the version in `deno.json` the local vendor
