@@ -174,7 +174,8 @@ work against this config, it only changes which error you get; §5 shows both.
 # release the moment 0.25.1 ships - a silent false green, not a loud failure.
 RANGE=$(grep '"@casys/mcp-server"' deno.json |
         sed 's/.*@casys\/mcp-server@\([^"]*\)".*/\1/')
-VER=$(npm view "@casys/mcp-server@${RANGE}" version | tail -n1 | tr -d "'" |
+VER=$(npm view "@casys/mcp-server@${RANGE}" version \
+        --registry=https://registry.npmjs.org | tail -n1 | tr -d "'" |
       awk '{print $NF}')
 echo "vendoring @casys/mcp-server@${VER} for range ${RANGE}"
 
@@ -185,6 +186,14 @@ mkdir -p "$VENDOR"
   tar -xzf "casys-mcp-server-${VER}.tgz" &&
   rsync -a --delete package/ "$VENDOR"/ )
 ```
+
+`npm view` needs the same explicit `--registry` as the `npm pack` below it. Both
+are registry reads, and both honour `registry` from your user or global
+`.npmrc`: with `npm_config_registry` pointed at an unreachable host the lookup
+fails at `request to https://…/@casys%2fmcp-server failed`, and the same command
+with the flag returns `0.25.0`. On a machine configured for a corporate mirror,
+leaving the flag off resolves the range against that mirror and then packs a
+possibly different version from the public registry.
 
 The subshell matters if you are working through this page in one terminal. A
 bare `cd "$(mktemp -d)"` leaves the shell in the temporary directory after the
@@ -380,8 +389,19 @@ Because the block is per-network, hosted runners are unaffected. Confirm work
 there rather than trusting a partially-working local run:
 
 ```bash
-gh workflow run Test --ref <branch>
+RUN_URL=$(gh workflow run Test --ref <branch>)
+gh run watch "${RUN_URL##*/}" --exit-status
 ```
+
+Dispatching is not confirming. `gh workflow run` only creates the
+`workflow_dispatch` event and returns straight away, so on its own it exits 0
+whatever the run later does. It prints the run URL (measured with gh 2.101.0:
+`https://github.com/hvgllc/hvgerp-mcp/actions/runs/35989153502`), which is where
+the run id comes from; its help hedges with "if available", so if the output is
+a `✓ Created workflow_dispatch event` line instead, get the id from
+`gh run list --workflow=Test --branch=<branch> --limit 1 --json databaseId`.
+`gh run watch` is what waits for completion, and `--exit-status` is what turns a
+failed run into a non-zero exit instead of a report you have to read.
 
 `Test` is manual-only (`workflow_dispatch`) and runs six steps. Five of them are
 the ones the local commands cover: `deno fmt --check`, `deno lint`,
