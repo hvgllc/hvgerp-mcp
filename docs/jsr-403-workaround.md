@@ -91,6 +91,7 @@ to live:
 {
   "//": "Local-only config: this machine's network is blocked from *.jsr.io.",
   "nodeModulesDir": "auto",
+  "minimumDependencyAge": { "age": "PT24H" },
   "imports": {
     "@casys/mcp-server": "./.nojsr-vendor/casys-mcp-server/mod.ts",
     "@modelcontextprotocol/sdk/": "npm:/@modelcontextprotocol/sdk@^1.29.0/",
@@ -107,10 +108,35 @@ to live:
 }
 ```
 
-The `npm:` lines mirror the versions `deno.json` already declares - when a range
-there changes, change it here too, or the workaround type-checks against a
-different dependency than CI does. There is deliberately no `tasks` block: §5
-explains why `deno task --config` cannot work.
+Two things in that file are easy to get wrong.
+
+**`minimumDependencyAge` is not decoration.** `deno.json` declares
+`{"age": "PT24H"}`, so CI never resolves an npm release younger than a day. A
+config without it can resolve a package CI deliberately skips, which turns the
+workaround into a different dependency graph rather than a stand-in for the real
+one. Copy the age across. `deno.json` also excludes `jsr:@casys/mcp-server` from
+the policy; that exclusion is meaningless here, because this config reads that
+package off the disk instead of resolving it.
+
+**The `npm:` ranges come from the vendored package, not from `deno.json`.**
+`deno.json` declares only `@casys/mcp-server`, `@opentelemetry/api` and the two
+`@std/*` identifiers. Everything else in the map above exists because
+`@casys/mcp-server` imports it bare, so its own manifest is the source of truth.
+After every re-vendor, re-read it and reconcile:
+
+```bash
+jq -r '.dependencies | to_entries[] | "\(.key)@\(.value)"' \
+  .nojsr-vendor/casys-mcp-server/package.json
+```
+
+Update any range that moved, and add any dependency that appeared - a new bare
+import with no entry in your map fails to resolve, while a stale range silently
+type-checks against the wrong version. Entries are needed in the `"name/"` form
+as well as the plain one when the package imports sub-paths (`ajv/`, `hono/`,
+`@modelcontextprotocol/sdk/` above).
+
+There is deliberately no `tasks` block: §5 explains why `deno task --config`
+cannot work.
 
 ### Rebuilding `.nojsr-vendor/` from scratch
 
@@ -124,11 +150,22 @@ VER=$(npm view "@casys/mcp-server@${RANGE}" version | tail -n1 | tr -d "'" |
       awk '{print $NF}')
 echo "vendoring @casys/mcp-server@${VER} for range ${RANGE}"
 
+VENDOR=/path/to/hvgerp-mcp/.nojsr-vendor/casys-mcp-server
 cd "$(mktemp -d)"
 npm pack "@casys/mcp-server@${VER}" --registry=https://registry.npmjs.org
 tar -xzf "casys-mcp-server-${VER}.tgz"
-rsync -a --delete package/ /path/to/hvgerp-mcp/.nojsr-vendor/casys-mcp-server/
+mkdir -p "$VENDOR"
+rsync -a --delete package/ "$VENDOR"/
 ```
+
+The `mkdir -p` is not redundant, and which machine you are on decides whether
+you find that out. GNU rsync creates only the final destination directory, so on
+a fresh clone - where `.nojsr-vendor/` itself does not exist yet - it stops at
+`mkdir "…/casys-mcp-server" failed: No such file or directory` and exits 11
+(measured with rsync 3.5.0). macOS ships openrsync, which creates the whole path
+and exits 0, so the same line works there and hides the problem. `--mkpath`
+fixes it on GNU rsync only - openrsync answers `unrecognized option`, so
+`mkdir -p` is the portable form.
 
 `npm view <pkg>@<range> version` prints one bare version when a single release
 matches and `<pkg>@<v> '<v>'` lines in ascending order when several do, which is
