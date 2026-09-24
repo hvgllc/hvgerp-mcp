@@ -590,13 +590,27 @@ reason §5 gives - it calls `deno task check` internally, so `--config` cannot
 follow it in - but the step it adds is not:
 
 ```bash
-(cd src/ui && npm ci && npm run typecheck && node build-all.mjs) &&
-  bash scripts/build-node.sh &&
-  deno test --lock=deno.nojsr.lock --config deno.nojsr.json --sloppy-imports \
-    --allow-all src/ui/viewer_handshake_test.ts
+(
+  export npm_config_registry=https://registry.npmjs.org
+  (cd src/ui && npm ci && npm run typecheck && node build-all.mjs) &&
+    bash scripts/build-node.sh &&
+    deno test --lock=deno.nojsr.lock --config deno.nojsr.json --sloppy-imports \
+      --allow-all src/ui/viewer_handshake_test.ts
+)
 ```
 
 Four steps, and every one of them earns its place.
+
+**`npm_config_registry` rather than a `--registry` flag, because two of the
+installs are not yours to flag.** §3 pins `npm view` and `npm pack` explicitly,
+but this block runs `npm ci` and then `scripts/build-node.sh`, which issues two
+more `npm install` commands of its own (lines 81 and 86). All four honour the
+`registry` setting from a user or global `.npmrc`, so on the corporate-mirror
+machine this page keeps warning about, the preflight would install from the
+mirror even though §2 just proved `registry.npmjs.org` reachable. The
+environment variable is the one lever that reaches a command inside a script you
+are not editing, and the outer subshell is what keeps the `export` from leaking
+into the shell you pasted it from.
 
 **The `&&` between them is load-bearing.** Pasted into a shell without `set -e`,
 three unchained commands report only the last one's status, and the last one
