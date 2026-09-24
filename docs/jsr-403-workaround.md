@@ -99,8 +99,17 @@ commit one machine's network workaround:
 
 ```bash
 printf '%s\n' '.nojsr-vendor/' 'deno.nojsr.json' 'deno.nojsr.lock' \
-  >> .git/info/exclude
+  >> "$(git rev-parse --git-path info/exclude)"
 ```
+
+Ask git for the path rather than writing `.git/info/exclude` directly. In a
+linked worktree - which this repository's own work uses routinely - `.git` is a
+file, not a directory, so the literal path fails with
+`not a directory: .git/info/exclude` before anything is written.
+`git rev-parse
+--git-path` returns the real location in both layouts (measured
+2026-09-24 from a linked worktree: it resolves to the main checkout's
+`.git/info/exclude`, which is shared across worktrees).
 
 Then write `deno.nojsr.json` at the repository root. The path
 `./.nojsr-vendor/…` resolves relative to this file, so the root is where it has
@@ -198,8 +207,13 @@ matches and `<pkg>@<v> '<v>'` lines in ascending order when several do, which is
 why the pipeline takes the last line and its last field.
 
 If you still have a `deno.lock` from before the block, it names the version Deno
-itself resolved - cross-check it and prefer it when the two disagree, because it
-is what the machine with working JSR access saw:
+resolved back then. Read it as a diagnostic, not as the answer: when it
+disagrees with the range, take the range. §4 explains why - CI keeps no
+lockfile, so it resolves the newest release the range allows, and an old lock
+records history rather than what CI will do today. A disagreement is worth
+understanding (it usually means a release landed since), but vendoring the older
+version to match the lock is how you get a local pass against code CI never
+runs:
 
 ```bash
 grep -o '@casys/mcp-server@[0-9][^"_]*' deno.lock | head -1
@@ -278,20 +292,36 @@ which run actually checked a bundle. CI never hits this because it builds the
 viewers before its test step; locally you have to build them yourself, which is
 §6, and then re-run the test.
 
-`deno fmt` and `deno lint` need no config at all - neither resolves imports.
-`deno fmt --check` does need one flag, though, because it walks into
-`.nojsr-vendor/` and judges the npm sources by this repository's style:
+`deno fmt` and `deno lint` resolve no imports, so neither needs the config - but
+both walk into `.nojsr-vendor/` and judge npm sources by this repository's
+rules, so both need to be told to skip it:
 
 ```bash
-deno fmt --check --ignore=.nojsr-vendor/
+deno fmt  --check --ignore=.nojsr-vendor/
+deno lint --ignore='.nojsr-vendor,src/ui/**/*.tsx,src/ui/**/*.mjs,src/ui/node_modules/'
 ```
 
 Measured 2026-09-24 against a vendor restored straight from `npm pack`: plain
 `deno fmt --check` reports a file inside `.nojsr-vendor/` and exits 1, while the
-`--ignore` form reports none and skips the 58 vendored files entirely. The bare
-command is the CI gate reproduced faithfully only on a machine with no vendor;
-here it is a false failure, and §5 explains why running plain `deno fmt` to
-silence it is worse than the failure.
+`--ignore` form reports none and skips the 58 vendored files. `deno lint` checks
+216 files with the vendor in place and 160 with it moved aside - it is reading
+56 files of somebody else's code - and it also prints one
+`Download https://jsr.io/…` line on the way, which is a metadata probe, not a
+gate.
+
+**The long lint ignore list is not padding.** `--ignore` on the command line
+_replaces_ `lint.exclude` from `deno.json` rather than adding to it, so
+`deno lint --ignore=.nojsr-vendor/` drops the vendor and simultaneously drags
+`src/ui/**/*.tsx` and `src/ui/**/*.mjs` back in: 194 files, none of which CI
+lints. Restating the three excludes alongside the vendor gets back to exactly
+160, the same set a machine with no vendor lints. `deno fmt` happens not to need
+this - its only config exclude is `src/ui/node_modules/`, which Deno skips
+anyway (319 files either way) - but the flag behaves the same, so restate any
+`fmt.exclude` that is ever added.
+
+The bare commands are the CI gate reproduced faithfully only on a machine with
+no vendor; here they are false failures, and §5 explains why running plain
+`deno fmt` to silence one is worse than the failure.
 
 ## 5. Traps
 
@@ -330,13 +360,14 @@ $ deno test --no-check --allow-all src/tools/
 error: JSR package manifest for '@std/assert' failed to load … 403 Forbidden
 ```
 
-**`deno fmt` reformats `.nojsr-vendor/`.** It walks dot-directories (`deno lint`
-does not), so a plain `deno fmt` will rewrite vendored files. That does not
-dirty git - the directory is excluded - but it makes the vendor drift from the
-published tarball, so a later `diff` against a fresh `npm pack` shows changes
-that are formatting, not patches. Use `--ignore=.nojsr-vendor/` (§4) to run the
-gate over the whole repository without touching the copy, and remember this
-before concluding the vendor was modified.
+**`deno fmt` reformats `.nojsr-vendor/`.** Both it and `deno lint` walk
+dot-directories (measured: §4), but only `fmt` writes, so a plain `deno fmt`
+will rewrite vendored files while a plain `deno lint` merely reports on them.
+That does not dirty git - the directory is excluded - but it makes the vendor
+drift from the published tarball, so a later `diff` against a fresh `npm pack`
+shows changes that are formatting, not patches. Use `--ignore=.nojsr-vendor/`
+(§4) to run the gate over the whole repository without touching the copy, and
+remember this before concluding the vendor was modified.
 
 **Bumping `@casys/mcp-server` means re-vendoring.** The import map points at a
 fixed directory, so after changing the version in `deno.json` the local vendor
