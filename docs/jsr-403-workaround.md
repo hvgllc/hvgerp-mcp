@@ -240,6 +240,17 @@ Do not try to verify this with `git status`: `deno.lock` is listed in
 file instead (`shasum deno.lock` before and after) - that is the check that
 actually sees a rewrite.
 
+**On a fresh clone this suite is greener than it looks.** `src/ui/dist/` is
+gitignored, and the bundle regression in `src/ui/viewer_handshake_test.ts`
+starts by reading those bundles and returns early when none are there
+(`if (present.length === 0) return;`). It does not skip, fail or warn - it
+passes, and the counts are identical either way: that file reports
+`2 passed | 0 failed` with the bundles present and `2 passed | 0 failed` with
+the directory moved aside (measured 2026-09-24). Nothing in the output tells you
+which run actually checked a bundle. CI never hits this because it builds the
+viewers before its test step; locally you have to build them yourself, which is
+§6, and then re-run the test.
+
 `deno fmt` and `deno lint` need no config at all - neither resolves imports.
 
 ## 5. Traps
@@ -311,24 +322,42 @@ reason §5 gives - it calls `deno task check` internally, so `--config` cannot
 follow it in - but the step it adds is not:
 
 ```bash
-deno task ui:install && deno task ui:build && bash scripts/build-node.sh
+(cd src/ui && npm ci && npm run typecheck && node build-all.mjs)
+bash scripts/build-node.sh
+deno test --lock=deno.nojsr.lock --config deno.nojsr.json --sloppy-imports \
+  --allow-all src/ui/viewer_handshake_test.ts
 ```
 
-Run the three together, in that order. `build-node.sh` ends with an
-unconditional `cp -r src/ui/dist bin/ui-dist`, and `src/ui/dist/` is gitignored,
-so on the fresh clone this page is written for the script gets all the way to
-its last step and then dies: measured 2026-09-24, exit 1,
-`cp: src/ui/dist: No such file or directory`. The two `ui:*` tasks are what fill
-that directory, and they are also a useful counter-example to §5 - they shell
-out to `npm ci` and `node build-all.mjs` rather than resolving any Deno import,
-so `deno task` runs them fine on a blocked machine. It is import resolution that
-is blocked, not the task runner.
+Four steps, and every one of them earns its place.
 
-The whole sequence needs nothing from JSR: `build-node.sh` takes
-`@casys/mcp-server` from npm by design, because it builds the npm package.
-Measured 2026-09-24 on a blocked machine: exit 0, writing `dist-node/bin`. Run
-it when a change touches the Node build or the viewers; for everything else the
-CI run is what closes the gap.
+**`npm ci` and `node build-all.mjs`, not `deno task ui:install` / `ui:build`.**
+The tasks run the same two commands (`deno.json` defines them as exactly that),
+but running them _through_ `deno task` loads `deno.json` and rewrites
+`deno.lock` on the way - measured 2026-09-24, `943deec7…` → `6ab4a5ae…`, from a
+task that resolves no Deno import at all. That undoes the isolation §4 just
+bought. `plans/evidence/001.md` records the same thing from the other side: a
+`deno task ui:build` mid-run changed the lock and made the next `--frozen` check
+fail, while a direct `node build-all.mjs` left it alone.
+
+**`npm run typecheck` is not covered by anything else here.**
+`src/ui/build-all.mjs` only shells out to `npx vite build`, and Vite transpiles
+without type checking, so a type error survives the bundle step. CI runs the
+check explicitly (`.github/workflows/test.yml`), and so does
+`scripts/release-check.sh`. Measured 2026-09-24: `npm run typecheck` is
+`tsc --noEmit`, needs nothing from JSR, exit 0.
+
+**`build-node.sh` last, because it consumes what the others produce.** It ends
+with an unconditional `cp -r src/ui/dist bin/ui-dist`, and `src/ui/dist/` is
+gitignored, so on the fresh clone this page is written for the script runs all
+the way to its last line and then dies: measured 2026-09-24, exit 1,
+`cp: src/ui/dist: No such file or directory`. It needs nothing from JSR
+otherwise - it takes `@casys/mcp-server` from npm, because it builds the npm
+package - and the full sequence exits 0 on a blocked machine, writing
+`dist-node/bin`.
+
+**The repeated `deno test`, because §4 ran too early to mean anything.** See the
+warning in §4: until `src/ui/dist/` exists, the bundle test passes without
+testing. Re-running that one file afterwards is cheap and closes the hole.
 
 Publishing is not affected either. `.github/workflows/publish.yml` runs on a
 published release; its `publish-jsr` job is gated on the repository variable
