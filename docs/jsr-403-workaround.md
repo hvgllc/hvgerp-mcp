@@ -58,6 +58,7 @@ project:
 | ----------------- | -------------------------------------------------------------- |
 | `deno.nojsr.json` | A Deno config whose import map replaces every `jsr:` specifier |
 | `.nojsr-vendor/`  | A local copy of `@casys/mcp-server`, fetched from npm          |
+| `deno.nojsr.lock` | A lockfile of its own, so `deno.lock` is never written (§4)    |
 
 The import map redirects the three JSR identifiers this project uses:
 
@@ -70,8 +71,9 @@ The import map redirects the three JSR identifiers this project uses:
   machine, because `@std/*` publishes to JSR only. `npm view @std/assert` and
   `npm view @jsr/std__assert` both answer `E404` (measured 2026-09-24), so the
   npm route that rescues `@casys/mcp-server` has nothing to offer here.
-  `deno.land/std@0.224.0` is the last release before that move and it already
-  sits in the `remote` section of `deno.lock`, so it resolves offline.
+  `deno.land/std@0.224.0` is the last release before that move, and §2 already
+  established that `deno.land` answers normally while JSR does not, so it
+  fetches on the first run and is pinned in `deno.nojsr.lock` afterwards.
 - `@std/yaml` → the same `deno.land/std@0.224.0` tree. `deno.json` declares it,
   but no file in the repository imports it today, so this entry is insurance
   against one appearing rather than a live substitution.
@@ -96,7 +98,8 @@ here. First tell your own clone to ignore them, so a stray `git add -A` cannot
 commit one machine's network workaround:
 
 ```bash
-printf '%s\n' '.nojsr-vendor/' 'deno.nojsr.json' >> .git/info/exclude
+printf '%s\n' '.nojsr-vendor/' 'deno.nojsr.json' 'deno.nojsr.lock' \
+  >> .git/info/exclude
 ```
 
 Then write `deno.nojsr.json` at the repository root. The path
@@ -211,14 +214,31 @@ Two details explain the shape of this:
 ## 4. Commands that work, and how to invoke them
 
 ```bash
-deno check --config deno.nojsr.json --sloppy-imports mod.ts server.ts
-deno test  --config deno.nojsr.json --sloppy-imports --allow-all src/
+deno check --lock=deno.nojsr.lock --config deno.nojsr.json --sloppy-imports \
+  mod.ts server.ts
+deno test  --lock=deno.nojsr.lock --config deno.nojsr.json --sloppy-imports \
+  --allow-all src/
 ```
 
 Measured on 2026-09-24 with Deno 2.9.5 and vendored `@casys/mcp-server@0.25.0`,
 using the config exactly as written in §3: type check clean,
-`1502 passed | 0 failed | 4 ignored`. `deno.lock` is left untouched by both, so
-the workaround leaves no trace in the working tree.
+`1502 passed | 0 failed | 4 ignored`, and `deno.lock` byte-identical before and
+after.
+
+**`--lock` is what keeps that true, not luck.** These commands resolve a
+different dependency graph - vendored source, `npm:` ranges, `deno.land` - so
+whatever lockfile they are given ends up describing that graph instead of the
+real one. Without `--lock` they write `deno.lock` itself: on a clone that has
+none, the run creates one, and the file it creates carries **zero** `jsr`
+entries (measured). On a clone that kept its pre-block `deno.lock` - the one §3
+tells you to cross-check against - that same file becomes the workaround's
+lockfile. `--no-lock` also protects it, at the cost of re-resolving every run; a
+separate lock file keeps the pinning and costs nothing.
+
+Do not try to verify this with `git status`: `deno.lock` is listed in
+`.gitignore`, so git reports it clean no matter what happened to it. Compare the
+file instead (`shasum deno.lock` before and after) - that is the check that
+actually sees a rewrite.
 
 `deno fmt` and `deno lint` need no config at all - neither resolves imports.
 
@@ -291,13 +311,24 @@ reason §5 gives - it calls `deno task check` internally, so `--config` cannot
 follow it in - but the step it adds is not:
 
 ```bash
-bash scripts/build-node.sh
+deno task ui:install && deno task ui:build && bash scripts/build-node.sh
 ```
 
-That script resolves `@casys/mcp-server` from npm by design (it builds the Node
-package), so it needs nothing from JSR and runs on a blocked machine: measured
-2026-09-24, exit 0, writing `dist-node/bin`. Run it directly when a change
-touches the Node build; for everything else the CI run is what closes the gap.
+Run the three together, in that order. `build-node.sh` ends with an
+unconditional `cp -r src/ui/dist bin/ui-dist`, and `src/ui/dist/` is gitignored,
+so on the fresh clone this page is written for the script gets all the way to
+its last step and then dies: measured 2026-09-24, exit 1,
+`cp: src/ui/dist: No such file or directory`. The two `ui:*` tasks are what fill
+that directory, and they are also a useful counter-example to §5 - they shell
+out to `npm ci` and `node build-all.mjs` rather than resolving any Deno import,
+so `deno task` runs them fine on a blocked machine. It is import resolution that
+is blocked, not the task runner.
+
+The whole sequence needs nothing from JSR: `build-node.sh` takes
+`@casys/mcp-server` from npm by design, because it builds the npm package.
+Measured 2026-09-24 on a blocked machine: exit 0, writing `dist-node/bin`. Run
+it when a change touches the Node build or the viewers; for everything else the
+CI run is what closes the gap.
 
 Publishing is not affected either. `.github/workflows/publish.yml` runs on a
 published release; its `publish-jsr` job is gated on the repository variable
