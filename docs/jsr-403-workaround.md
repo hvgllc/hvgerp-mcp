@@ -232,7 +232,9 @@ mkdir -p "$VENDOR"
 ( cd "$(mktemp -d)" &&
   npm pack "@casys/mcp-server@${VER}" --registry=https://registry.npmjs.org &&
   tar -xzf "casys-mcp-server-${VER}.tgz" &&
-  rsync -a --delete package/ "$VENDOR"/ )
+  rsync -a --delete package/ "$VENDOR"/ ) || exit 1
+
+cd "$REPO_ROOT"
 ```
 
 The lookup is split across three statements instead of one pipeline because a
@@ -269,12 +271,19 @@ the config, so the next Deno command fails on a missing framework with no hint
 that a placeholder was the cause. Deriving it also makes the block work from a
 subdirectory, which is why `deno.json` is read through `$REPO_ROOT` too.
 
-The subshell matters if you are working through this page in one terminal. A
-bare `cd "$(mktemp -d)"` leaves the shell in the temporary directory after the
-block, and every later command here is relative to the repository root:
-`deno.nojsr.json`, `mod.ts`, `server.ts` and `scripts/build-node.sh` all resolve
-against the wrong place, so §4 and §6 fail before checking anything. Parentheses
-confine the `cd` to the copy step.
+The subshell and the `cd "$REPO_ROOT"` after it are two halves of the same
+problem, and either one alone leaves you somewhere the next section does not
+work from. Every later command on this page is written relative to the
+repository root: `deno.nojsr.json`, `mod.ts`, `server.ts` and
+`scripts/build-node.sh` all resolve against the current directory, so §4 and §6
+fail before checking anything if it is wrong. A bare `cd "$(mktemp -d)"` would
+strand the shell in the temporary directory, which the parentheses prevent; but
+the parentheses restore only what the block itself changed, so a reader who
+started in `src/ui/` is still in `src/ui/` afterwards. The explicit `cd` is what
+makes the advertised "run it from anywhere" actually hold. `|| exit 1` on the
+subshell is part of it too: without it a failed `npm pack` or `rsync` would be
+followed by a `cd` into a repository whose vendor directory is empty or
+half-written.
 
 The `mkdir -p` is not redundant, and which machine you are on decides whether
 you find that out. GNU rsync creates only the final destination directory, so on
@@ -511,10 +520,12 @@ ACTUAL_SHA=$(gh run view "$RUN_ID" --json headSha --jq .headSha)
 # failed, since the run is already `completed` by the first iteration.
 if ! gh run watch "$RUN_ID" --exit-status; then
   RUN_STATUS=
-  for _poll in $(seq 1 180); do
+  POLLS=0
+  while [ "$POLLS" -lt 180 ]; do
     RUN_STATUS=$(gh run view "$RUN_ID" --json status --jq .status) ||
       RUN_STATUS=unreadable
     [ "$RUN_STATUS" = completed ] && break
+    POLLS=$((POLLS + 1))
     sleep 10
   done
   [ "$RUN_STATUS" = completed ] ||
