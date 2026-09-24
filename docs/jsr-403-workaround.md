@@ -389,19 +389,52 @@ Because the block is per-network, hosted runners are unaffected. Confirm work
 there rather than trusting a partially-working local run:
 
 ```bash
-RUN_URL=$(gh workflow run Test --ref <branch>)
-gh run watch "${RUN_URL##*/}" --exit-status
+BRANCH=<branch>
+LATEST_BEFORE=$(gh run list --workflow=Test --branch="$BRANCH" --limit 1 \
+                  --json databaseId --jq '.[0].databaseId // 0')
+
+DISPATCH_OUTPUT=$(gh workflow run Test --ref "$BRANCH") || exit 1
+echo "$DISPATCH_OUTPUT"
+RUN_ID=${DISPATCH_OUTPUT##*/}
+
+# The run URL is printed only "if available". When it is not, the output is a
+# confirmation sentence and ${DISPATCH_OUTPUT##*/} is its last word, so test for
+# digits rather than trusting the substitution, and ask the API instead.
+case "$RUN_ID" in
+  '' | *[!0-9]*)
+    RUN_ID=
+    for _attempt in 1 2 3 4 5 6 7 8 9 10; do
+      sleep 3
+      CANDIDATE=$(gh run list --workflow=Test --branch="$BRANCH" --limit 1 \
+                    --json databaseId --jq '.[0].databaseId // 0')
+      if [ "$CANDIDATE" != "$LATEST_BEFORE" ] && [ "$CANDIDATE" != 0 ]; then
+        RUN_ID=$CANDIDATE
+        break
+      fi
+    done
+    [ -n "$RUN_ID" ] || { echo "dispatch registered no new run" >&2; exit 1; } ;;
+esac
+
+gh run watch "$RUN_ID" --exit-status
 ```
 
 Dispatching is not confirming. `gh workflow run` only creates the
 `workflow_dispatch` event and returns straight away, so on its own it exits 0
-whatever the run later does. It prints the run URL (measured with gh 2.101.0:
-`https://github.com/hvgllc/hvgerp-mcp/actions/runs/35989153502`), which is where
-the run id comes from; its help hedges with "if available", so if the output is
-a `✓ Created workflow_dispatch event` line instead, get the id from
-`gh run list --workflow=Test --branch=<branch> --limit 1 --json databaseId`.
-`gh run watch` is what waits for completion, and `--exit-status` is what turns a
-failed run into a non-zero exit instead of a report you have to read.
+whatever the run later does. `gh run watch` is what waits for completion, and
+`--exit-status` is what turns a failed run into a non-zero exit instead of a
+report you then have to read.
+
+Getting the run id is the fiddly part. On gh 2.101.0 the dispatch printed
+`https://github.com/hvgllc/hvgerp-mcp/actions/runs/35989153502` and the id is
+just its last path segment, but `gh workflow run --help` promises the URL only
+"if available", and the older `✓ Created workflow_dispatch event for test.yml`
+form has no id in it at all. Handing that sentence's last word to `gh run watch`
+produces `failed to get run: HTTP 404: Not Found` against a URL ending in that
+word rather than a gate, so the recipe tests for digits and falls back to the
+API. `LATEST_BEFORE` is what makes the fallback safe: `gh run list --limit 1`
+returns the previous dispatch until GitHub registers the new one, so polling
+until the id CHANGES is the difference between watching this run and
+re-confirming the last one.
 
 `Test` is manual-only (`workflow_dispatch`) and runs six steps. Five of them are
 the ones the local commands cover: `deno fmt --check`, `deno lint`,
