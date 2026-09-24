@@ -389,7 +389,16 @@ Because the block is per-network, hosted runners are unaffected. Confirm work
 there rather than trusting a partially-working local run:
 
 ```bash
-BRANCH=<branch>
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+# The runner checks out the GitHub ref, so nothing that is only local is in the
+# run. Refuse to dispatch until the tree is clean and the branch is pushed.
+[ -z "$(git status --porcelain)" ] || { echo "commit or stash first" >&2; exit 1; }
+git fetch -q origin "$BRANCH"
+EXPECTED_SHA=$(git rev-parse HEAD)
+[ "$EXPECTED_SHA" = "$(git rev-parse "origin/$BRANCH")" ] ||
+  { echo "push $BRANCH first" >&2; exit 1; }
+
 LATEST_BEFORE=$(gh run list --workflow=Test --branch="$BRANCH" --limit 1 \
                   --json databaseId --jq '.[0].databaseId // 0')
 
@@ -415,7 +424,25 @@ case "$RUN_ID" in
     [ -n "$RUN_ID" ] || { echo "dispatch registered no new run" >&2; exit 1; } ;;
 esac
 
-gh run watch "$RUN_ID" --exit-status
+ACTUAL_SHA=$(gh run view "$RUN_ID" --json headSha --jq .headSha)
+[ "$ACTUAL_SHA" = "$EXPECTED_SHA" ] ||
+  { echo "run $RUN_ID tests $ACTUAL_SHA, not $EXPECTED_SHA" >&2; exit 1; }
+
+# `gh run watch` blocks with live progress, but its own help says it cannot
+# authenticate with a fine-grained PAT, because `checks:read` cannot be granted
+# to one. Polling `gh run view` needs only `actions:read`, so it covers that
+# case; it also costs nothing when the watch exited non-zero because the RUN
+# failed, since the run is already `completed` by the first iteration.
+if ! gh run watch "$RUN_ID" --exit-status; then
+  until [ "$(gh run view "$RUN_ID" --json status --jq .status)" = completed ]; do
+    sleep 10
+  done
+fi
+
+CONCLUSION=$(gh run view "$RUN_ID" --json conclusion --jq .conclusion)
+[ "$CONCLUSION" = success ] ||
+  { echo "run $RUN_ID finished: $CONCLUSION" >&2; exit 1; }
+echo "run $RUN_ID confirmed $EXPECTED_SHA"
 ```
 
 Dispatching is not confirming. `gh workflow run` only creates the
@@ -436,6 +463,22 @@ returns the previous dispatch until GitHub registers the new one, so polling
 until the id CHANGES is the difference between watching this run and
 re-confirming the last one.
 
+The commit checks at the top are not ceremony, and this page's own history is
+the evidence. `actions/checkout@v5` in `.github/workflows/test.yml` checks out
+the ref GitHub resolves at dispatch time, so uncommitted or unpushed work is
+simply not in the run. Measured while writing this section: a dispatch issued
+with HEAD at `5f1622d5` produced run `35989153502`, two further commits landed
+on the branch, and `gh run view 35989153502 --json headSha` still reports
+`5f1622d560f8…`. The green tick was real and confirmed nothing about the work
+written after it. Comparing the run's `headSha` against the local HEAD is what
+turns "a run passed" into "this commit passed"; the `git fetch` before it is
+what stops a local-only commit from being compared against a stale remote ref.
+
+Note that `Test` sets `concurrency` with `cancel-in-progress: true` per ref, so
+dispatching again while an earlier run is still going cancels that earlier one.
+The `CONCLUSION` check catches it: a cancelled run reports `cancelled`, not
+`success`, rather than silently looking unfinished.
+
 `Test` is manual-only (`workflow_dispatch`) and runs six steps. Five of them are
 the ones the local commands cover: `deno fmt --check`, `deno lint`,
 `deno task check`, the UI build, and `deno test --allow-all src/`. The sixth is
@@ -447,13 +490,23 @@ reason §5 gives - it calls `deno task check` internally, so `--config` cannot
 follow it in - but the step it adds is not:
 
 ```bash
-(cd src/ui && npm ci && npm run typecheck && node build-all.mjs)
-bash scripts/build-node.sh
-deno test --lock=deno.nojsr.lock --config deno.nojsr.json --sloppy-imports \
-  --allow-all src/ui/viewer_handshake_test.ts
+(cd src/ui && npm ci && npm run typecheck && node build-all.mjs) &&
+  bash scripts/build-node.sh &&
+  deno test --lock=deno.nojsr.lock --config deno.nojsr.json --sloppy-imports \
+    --allow-all src/ui/viewer_handshake_test.ts
 ```
 
 Four steps, and every one of them earns its place.
+
+**The `&&` between them is load-bearing.** Pasted into a shell without `set -e`,
+three unchained commands report only the last one's status, and the last one
+here passes when the earlier ones fail. Measured 2026-09-24 with `src/ui/dist`
+moved aside to imitate a fresh clone: `scripts/build-node.sh` exits 1 at
+`cp: src/ui/dist: No such file or directory`, and the `deno test` that follows
+reports `ok | 2 passed | 0 failed` anyway, because
+`src/ui/viewer_handshake_test.ts` returns early when no bundles exist. So the
+unchained sequence exits 0 on a run where the build never happened - the exact
+false green §4 warns about, one section later.
 
 **`npm ci` and `node build-all.mjs`, not `deno task ui:install` / `ui:build`.**
 The tasks run the same two commands (`deno.json` defines them as exactly that),
