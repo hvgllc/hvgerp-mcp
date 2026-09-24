@@ -24,8 +24,8 @@ Import 'https://jsr.io/@casys/mcp-server/meta.json' failed: 403 Forbidden
 
 The message names a package, so it reads like a broken or unpublished
 dependency. It is not. `403` is an access decision made before JSR ever looked
-at the package name, and the same error appears for `@std/assert` and
-`@std/yaml` as soon as a test file imports one.
+at the package name, and the same error appears for `@std/assert` as soon as a
+test file imports it.
 
 **Do not "fix" this by changing a dependency, pinning a different version, or
 deleting `deno.lock`.** None of those touch the cause, and the last one throws
@@ -64,8 +64,24 @@ The import map redirects the three JSR identifiers this project uses:
 - `@casys/mcp-server` → `./.nojsr-vendor/casys-mcp-server/mod.ts`. The same
   source is published to npm under the same name and the same version numbers,
   so npm is an exact substitute for the JSR copy.
-- `@std/assert` and `@std/yaml` → `https://deno.land/std@0.224.0/…`. These were
-  already in the `remote` section of `deno.lock`, so they resolve offline.
+- `@std/assert` → `https://deno.land/std@0.224.0/assert/mod.ts`. This is the one
+  substitution that is **not** equivalent, and it stays that way: `deno.json`
+  declares `jsr:@std/assert@^1`, and no 1.x copy is reachable from a blocked
+  machine, because `@std/*` publishes to JSR only. `npm view @std/assert` and
+  `npm view @jsr/std__assert` both answer `E404` (measured 2026-09-24), so the
+  npm route that rescues `@casys/mcp-server` has nothing to offer here.
+  `deno.land/std@0.224.0` is the last release before that move and it already
+  sits in the `remote` section of `deno.lock`, so it resolves offline.
+- `@std/yaml` → the same `deno.land/std@0.224.0` tree. `deno.json` declares it,
+  but no file in the repository imports it today, so this entry is insurance
+  against one appearing rather than a live substitution.
+
+The `@std/assert` gap is bounded, and worth knowing exactly how far it reaches
+before trusting a local green: all 68 files that import it are `*_test.ts`, so
+it can only change how assertions behave in tests, never what ships. A test that
+depends on 1.x-only assertion behaviour therefore passes here and fails on CI.
+That is the right way round for a local workaround, and one more reason §6 is
+the gate rather than this page.
 
 It also has to restate the bare specifiers that `@casys/mcp-server` imports for
 itself (`hono`, `ajv/`, `jose`, `yaml`, `@modelcontextprotocol/sdk/`, …) as
@@ -135,8 +151,8 @@ type-checks against the wrong version. Entries are needed in the `"name/"` form
 as well as the plain one when the package imports sub-paths (`ajv/`, `hono/`,
 `@modelcontextprotocol/sdk/` above).
 
-There is deliberately no `tasks` block: §5 explains why `deno task --config`
-cannot work.
+There is deliberately no `tasks` block. Adding one does not make `deno task`
+work against this config, it only changes which error you get; §5 shows both.
 
 ### Rebuilding `.nojsr-vendor/` from scratch
 
@@ -208,19 +224,33 @@ the workaround leaves no trace in the working tree.
 
 ## 5. Traps
 
-**`deno task` cannot be redirected with `--config`.** This looks like it should
-work and silently does not:
+**`deno task` cannot be redirected with `--config`.** It fails twice, and the
+first failure hides the second. With the config from §3, `--config` _replaces_
+the config file rather than layering on it, so `deno.json`'s task list is simply
+not there:
 
 ```bash
 $ deno task --config deno.nojsr.json check
+Task not found: check
+Available tasks:
+  No tasks found in configuration file
+```
+
+The obvious repair is to copy the `tasks` block across. Do that and the command
+gets further, then lands exactly where it started:
+
+```bash
+$ deno task --config deno.nojsr.withtasks.json check
 Task check deno check mod.ts server.ts
-error: … 403 Forbidden
+error: JSR package manifest for '@casys/mcp-server' failed to load… 403 Forbidden
 ```
 
 The flag configures the task _runner_; the command it then spawns is a fresh
-`deno check`, which loads `deno.json` on its own. Every `deno task` that
+`deno check` with no flags of its own, which loads `deno.json` and hits the
+block. Both transcripts were measured on 2026-09-24. Every `deno task` that
 resolves imports - `check`, `test`, `release:check` - is unusable on a blocked
-machine. Run the underlying command directly, with the flags from §4.
+machine, whichever config you point the runner at. Run the underlying command
+directly, with the flags from §4.
 
 **`--no-check` does not help.** It skips type checking, not module resolution:
 
@@ -250,9 +280,24 @@ there rather than trusting a partially-working local run:
 gh workflow run Test --ref <branch>
 ```
 
-`Test` is manual-only (`workflow_dispatch`) and runs the same five steps the
-local commands cover: `deno fmt --check`, `deno lint`, `deno task check`, the UI
-build, and `deno test --allow-all src/`.
+`Test` is manual-only (`workflow_dispatch`) and runs six steps. Five of them are
+the ones the local commands cover: `deno fmt --check`, `deno lint`,
+`deno task check`, the UI build, and `deno test --allow-all src/`. The sixth is
+`deno task release:check`, and it is the one §4 does not reach.
+
+`release:check` runs `scripts/release-check.sh`, which repeats those five and
+then adds `scripts/build-node.sh`. The wrapper task is unreachable here for the
+reason §5 gives - it calls `deno task check` internally, so `--config` cannot
+follow it in - but the step it adds is not:
+
+```bash
+bash scripts/build-node.sh
+```
+
+That script resolves `@casys/mcp-server` from npm by design (it builds the Node
+package), so it needs nothing from JSR and runs on a blocked machine: measured
+2026-09-24, exit 0, writing `dist-node/bin`. Run it directly when a change
+touches the Node build; for everything else the CI run is what closes the gap.
 
 Publishing is not affected either. `.github/workflows/publish.yml` runs on a
 published release; its `publish-jsr` job is gated on the repository variable
