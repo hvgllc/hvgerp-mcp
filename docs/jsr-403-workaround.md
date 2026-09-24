@@ -510,9 +510,16 @@ ACTUAL_SHA=$(gh run view "$RUN_ID" --json headSha --jq .headSha)
 # case; it also costs nothing when the watch exited non-zero because the RUN
 # failed, since the run is already `completed` by the first iteration.
 if ! gh run watch "$RUN_ID" --exit-status; then
-  until [ "$(gh run view "$RUN_ID" --json status --jq .status)" = completed ]; do
+  RUN_STATUS=
+  for _poll in $(seq 1 180); do
+    RUN_STATUS=$(gh run view "$RUN_ID" --json status --jq .status) ||
+      RUN_STATUS=unreadable
+    [ "$RUN_STATUS" = completed ] && break
     sleep 10
   done
+  [ "$RUN_STATUS" = completed ] ||
+    { echo "gave up on run $RUN_ID after 30m, last status: $RUN_STATUS" >&2
+      exit 1; }
 fi
 
 CONCLUSION=$(gh run view "$RUN_ID" --json conclusion --jq .conclusion)
@@ -556,6 +563,16 @@ on the branch, and `gh run view 35989153502 --json headSha` still reports
 written after it. Comparing the run's `headSha` against the local HEAD is what
 turns "a run passed" into "this commit passed"; the `git fetch` before it is
 what stops a local-only commit from being compared against a stale remote ref.
+
+The poll is bounded for the same reason the baseline is checked. Command
+substitution keeps the output and drops the status, so a `gh run view` that
+fails because the token expired or the Actions API is down returns an empty
+string, which is simply not `completed`; an `until` loop around that waits
+forever and the recipe never reaches a verdict either way. Recording
+`unreadable` instead of an empty string keeps a transient failure from ending
+the wait, and the 180-iteration cap (30 minutes at 10s, against a workflow that
+finishes in under two) turns a persistent one into a non-zero exit that names
+the last status it saw.
 
 Note that `Test` sets `concurrency` with `cancel-in-progress: true` per ref, so
 dispatching again while an earlier run is still going cancels that earlier one.
