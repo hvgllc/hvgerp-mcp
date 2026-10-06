@@ -328,7 +328,8 @@ export function parseSubscribeParams(params: unknown): SubscribeRequest {
   }
   if (params.maxAgeMs !== undefined) {
     const maxAge = params.maxAgeMs;
-    if (!(Number.isSafeInteger(maxAge) && (maxAge as number) > 0)) {
+    // 0 hợp lệ: "không phát lại lịch sử", cursor cũ hơn bị báo cắt thay vì bị từ chối.
+    if (!(Number.isSafeInteger(maxAge) && (maxAge as number) >= 0)) {
       throw invalid("maxAgeMs");
     }
     request.maxAgeMs = maxAge as number;

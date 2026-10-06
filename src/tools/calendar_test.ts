@@ -182,7 +182,10 @@ Deno.test("erpnext_meeting_get rejects user_id and any unknown key without calli
 });
 
 Deno.test("erpnext_meeting_get rejects a bad event_id or malformed dates", async () => {
-  const { ctx, calls } = makeClient(() => ({ ok: true, result: MEETING }));
+  const { ctx, calls } = makeClient((call) => ({
+    ok: true,
+    result: { ...MEETING, event_id: call.args.event_id },
+  }));
   const tool = getTool();
   for (
     const bad of [{}, { event_id: "" }, { event_id: 5 }, {
@@ -191,6 +194,15 @@ Deno.test("erpnext_meeting_get rejects a bad event_id or malformed dates", async
   ) {
     await assertRejects(() => tool.handler(bad, ctx), Error, "event_id");
   }
+  assertEquals(calls.length, 0);
+  // Giới hạn 140 tính theo code point: 71 emoji (142 code unit) là hợp lệ.
+  await tool.handler({ event_id: "😀".repeat(71) }, ctx);
+  await assertRejects(
+    () => tool.handler({ event_id: "😀".repeat(141) }, ctx),
+    Error,
+    "event_id",
+  );
+  calls.length = 0;
   for (const key of ["occurrence_start", "window_start", "window_end"]) {
     for (
       const value of [

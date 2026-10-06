@@ -233,7 +233,7 @@ export async function fetchMeeting(
   ) {
     throw new Error("Events backend error");
   }
-  return pickMeetingFields(envelope.result);
+  return pickMeetingFields(envelope.result, args);
 }
 
 const MEETING_KEYS = [
@@ -388,6 +388,7 @@ function validateOccurrence(
  */
 function pickMeetingFields(
   result: Record<string, unknown>,
+  args: MeetingGetArgs,
 ): Record<string, unknown> {
   // Cuộc họp đã xóa chỉ trả đúng ba trường của tombstone, kể cả khi ERP (lệch phiên bản) còn kèm lịch cũ.
   if (result.deleted === true) {
@@ -446,6 +447,11 @@ function pickMeetingFields(
     assertShape(result.recurrence === null);
     picked.recurrence = null;
   }
+  // Người gọi hỏi một cửa sổ thì ERP phải trả mảng `occurrences` (rỗng cũng được): thiếu nó là phản hồi lệch phiên bản, và
+  // bỏ qua kiểm tra sẽ biến nó thành một kết quả cửa sổ "hợp lệ" mà không có dữ liệu.
+  const windowed = args.occurrence_start !== undefined ||
+    args.window_start !== undefined || args.window_end !== undefined;
+  if (windowed) assertShape(Array.isArray(result.occurrences));
   if (Object.hasOwn(result, "occurrences")) {
     // Một phần tử hỏng không được lặng lẽ bị bỏ: người gọi sẽ tưởng lịch đã đủ và bỏ lỡ cuộc họp.
     const items = result.occurrences;

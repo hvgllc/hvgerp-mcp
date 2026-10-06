@@ -688,11 +688,27 @@ Deno.test("subscribe and unsubscribe reject unknown top-level keys instead of de
     cursor: null,
   });
   assertEquals(parsed.maxAgeMs, 1000);
-  for (const bad of [0, -1, 1.5, "1000", null, Number.NaN]) {
+  // 0 là "không phát lại lịch sử": hợp lệ, được chuyển tiếp nguyên vẹn.
+  assertEquals(
+    parseSubscribeParams({ ...BASE_SUBSCRIBE, maxAgeMs: 0 }).maxAgeMs,
+    0,
+  );
+  for (const bad of [-1, 1.5, "1000", null, Number.NaN]) {
     const error = assertThrows(
       () => parseSubscribeParams({ ...BASE_SUBSCRIBE, maxAgeMs: bad }),
       EventsProtocolError,
     );
     assertEquals(error.toJsonRpcError().data, { field: "maxAgeMs" });
   }
+});
+
+Deno.test("schema lengths count Unicode code points, not UTF-16 code units", () => {
+  const schema = { type: "string", minLength: 1, maxLength: 140 };
+  // 140 code point ngoài BMP là 280 code unit: vẫn hợp lệ.
+  assertEquals(validateJsonSchema(schema, "😀".repeat(140)), []);
+  assertEquals(validateJsonSchema(schema, "😀".repeat(141)).length, 1);
+  assertEquals(
+    validateJsonSchema({ type: "string", minLength: 3 }, "😀😀").length,
+    1,
+  );
 });

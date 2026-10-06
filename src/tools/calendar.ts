@@ -9,6 +9,7 @@
  */
 
 import { fetchMeeting, type MeetingGetArgs } from "../events/erp-store.ts";
+import { codePointLength } from "../events/json-schema.ts";
 import { compareFractions } from "../events/protocol.ts";
 import type { ErpNextTool } from "./types.ts";
 
@@ -159,7 +160,7 @@ export const calendarTools: ErpNextTool[] = [
       const eventId = input.event_id;
       if (
         typeof eventId !== "string" || eventId.length === 0 ||
-        eventId.length > 140
+        codePointLength(eventId) > 140
       ) {
         throw new Error(
           "Invalid event_id: expected a non-empty string of at most 140 characters",

@@ -86,7 +86,7 @@ itself makes the adapter step aside.
 Subscribe notes: `refreshBefore` is always a finite timestamp. `ttlMs: null` is
 only a request for no expiry; the ERP grants a finite lease capped by the
 verified token, so a `null` `refresh_before` from the backend is treated as a
-malformed reply. `maxAgeMs` (a positive integer) is forwarded to the ERP as
+malformed reply. `maxAgeMs` (a non-negative integer; `0` means no history, so any older cursor is reported as truncated) is forwarded to the ERP as
 `max_age_ms`: it can only narrow the replay window of a resume cursor, never
 widen it (the ERP caps replay at 24 hours by default, 7 days retained), and the
 events carry only a pointer to be re-read with `erpnext_meeting_get`.
@@ -101,7 +101,7 @@ never stored, logged or echoed back.
 
 | Code     | HTTP | Meaning                                                                                                                                                                     |
 | -------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-32020` | 400  | `Mcp-Method` / `MCP-Protocol-Version` mismatch (SDK), or `Mcp-Name` missing or different from `params.name` on `events/subscribe` and `events/unsubscribe`.                 |
+| `-32020` | 400  | `Mcp-Method` / `MCP-Protocol-Version` mismatch (SDK), or a supplied `Mcp-Name` that differs from `params.name` on `events/subscribe` and `events/unsubscribe` (omitting it is accepted). |
 | `-32022` | 400  | `_meta` protocol version problem (SDK).                                                                                                                                     |
 | `-32602` | 400  | Invalid params. Names the offending field, never its value.                                                                                                                 |
 | `-32011` | 404  | Unknown event name.                                                                                                                                                         |

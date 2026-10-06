@@ -41,6 +41,13 @@ const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const DATE_TIME_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 
+/** Số code point Unicode của chuỗi (cặp surrogate tính một), đúng cách JSON Schema đo `minLength`/`maxLength`. */
+export function codePointLength(value: string): number {
+  let count = 0;
+  for (const _ of value) count++;
+  return count;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -124,13 +131,15 @@ function walk(
   }
 
   if (typeof value === "string") {
+    // JSON Schema đo độ dài bằng code point Unicode, không phải code unit UTF-16 của `String.length`.
+    const length = codePointLength(value);
     if (
-      typeof schema.minLength === "number" && value.length < schema.minLength
+      typeof schema.minLength === "number" && length < schema.minLength
     ) {
       errors.push(`${path}: shorter than minLength`);
     }
     if (
-      typeof schema.maxLength === "number" && value.length > schema.maxLength
+      typeof schema.maxLength === "number" && length > schema.maxLength
     ) {
       errors.push(`${path}: longer than maxLength`);
     }

@@ -845,3 +845,28 @@ Deno.test("fetchMeeting rejects a result that answers for a different event", as
     "Events backend error",
   );
 });
+
+Deno.test("fetchMeeting requires an occurrences array for every windowed read", async () => {
+  const withoutOccurrences = { ...MEETING } as Record<string, unknown>;
+  delete withoutOccurrences.occurrences;
+  const { client } = fakeClient(() => ({
+    ok: true,
+    result: withoutOccurrences,
+  }));
+  for (
+    const args of [
+      { event_id: "EVT-1", window_start: "2030-05-01" },
+      { event_id: "EVT-1", window_end: "2030-05-02" },
+      { event_id: "EVT-1", occurrence_start: "2030-05-01" },
+    ]
+  ) {
+    await assertRejects(
+      () => fetchMeeting(client, args),
+      Error,
+      "Events backend error",
+    );
+  }
+  // Không có cửa sổ thì không bắt buộc, như trước.
+  const plain = await fetchMeeting(client, { event_id: "EVT-1" });
+  assertEquals(Object.hasOwn(plain, "occurrences"), false);
+});
