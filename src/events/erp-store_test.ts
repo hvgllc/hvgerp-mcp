@@ -870,3 +870,134 @@ Deno.test("fetchMeeting requires an occurrences array for every windowed read", 
   const plain = await fetchMeeting(client, { event_id: "EVT-1" });
   assertEquals(Object.hasOwn(plain, "occurrences"), false);
 });
+
+Deno.test("fetchMeeting requires recurrence on a live meeting: an object or exactly null", async () => {
+  const withoutRecurrence = { ...MEETING } as Record<string, unknown>;
+  delete withoutRecurrence.recurrence;
+  const { client } = fakeClient(() => ({
+    ok: true,
+    result: withoutRecurrence,
+  }));
+  for (
+    const args of [
+      { event_id: "EVT-1" },
+      { event_id: "EVT-1", window_start: "2030-05-01" },
+    ]
+  ) {
+    await assertRejects(
+      () => fetchMeeting(client, args),
+      Error,
+      "Events backend error",
+    );
+  }
+  // Một phản hồi `undefined` (khóa có mặt nhưng rỗng) cũng không phải `null`.
+  const { client: undefinedClient } = fakeClient(() => ({
+    ok: true,
+    result: { ...MEETING, recurrence: undefined },
+  }));
+  await assertRejects(
+    () => fetchMeeting(undefinedClient, { event_id: "EVT-1" }),
+    Error,
+    "Events backend error",
+  );
+});
+
+const TIMED_OCCURRENCE = {
+  series_id: "EVT-1",
+  occurrence_start: "2030-05-01T02:00:00Z",
+  occurrence_end: "2030-05-01T03:00:00Z",
+  zone: "Asia/Ho_Chi_Minh",
+  schedule_revision: 4,
+};
+
+async function readOccurrences(
+  requested: string,
+  occurrence: Record<string, unknown>,
+  meeting: Record<string, unknown> = {},
+) {
+  const { client } = fakeClient(() => ({
+    ok: true,
+    result: { ...MEETING, ...meeting, occurrences: [occurrence] },
+  }));
+  return await fetchMeeting(client, {
+    event_id: "EVT-1",
+    occurrence_start: requested,
+  });
+}
+
+Deno.test("fetchMeeting accepts occurrences that touch the requested day in the meeting zone", async () => {
+  for (
+    const requested of [
+      "2030-05-01T02:00:00Z",
+      "2030-05-01",
+      // 20:00Z ngày 30/04 là 03:00 ngày 01/05 theo giờ Việt Nam: ngày UTC lệch nhưng ngày của cuộc họp thì không.
+      "2030-04-30T20:00:00Z",
+      "2030-05-01T09:00:00",
+      "2030-05-01T09:00:00+07:00",
+    ]
+  ) {
+    const result = await readOccurrences(requested, TIMED_OCCURRENCE);
+    assertEquals((result.occurrences as unknown[]).length, 1, requested);
+  }
+  // Lần bắt đầu tối 01/05 và kết thúc 01:00 ngày 02/05 vẫn chạm ngày 02/05.
+  const spanning = {
+    ...TIMED_OCCURRENCE,
+    occurrence_start: "2030-05-01T15:00:00Z",
+    occurrence_end: "2030-05-01T18:00:00Z",
+  };
+  assertEquals(
+    ((await readOccurrences("2030-05-02", spanning)).occurrences as unknown[])
+      .length,
+    1,
+  );
+});
+
+Deno.test("fetchMeeting rejects an occurrence that does not touch the requested day", async () => {
+  for (
+    const requested of [
+      "2030-05-03",
+      "2030-04-30",
+      "2030-05-01T20:00:00Z",
+      "2030-05-03T02:00:00+07:00",
+    ]
+  ) {
+    await assertRejects(
+      () => readOccurrences(requested, TIMED_OCCURRENCE),
+      Error,
+      "Events backend error",
+      requested,
+    );
+  }
+});
+
+Deno.test("fetchMeeting binds all-day occurrences to the requested day with an exclusive end", async () => {
+  const meeting = {
+    all_day: true,
+    starts_at: null,
+    ends_at: null,
+    start_date: "2030-05-01",
+    end_date_exclusive: "2030-05-03",
+  };
+  const allDay = {
+    ...TIMED_OCCURRENCE,
+    occurrence_start: "2030-05-01",
+    occurrence_end: "2030-05-03",
+  };
+  for (const requested of ["2030-05-01", "2030-05-02"]) {
+    const result = await readOccurrences(requested, allDay, meeting);
+    assertEquals((result.occurrences as unknown[]).length, 1, requested);
+  }
+  for (const requested of ["2030-05-03", "2030-04-30"]) {
+    await assertRejects(
+      () => readOccurrences(requested, allDay, meeting),
+      Error,
+      "Events backend error",
+      requested,
+    );
+  }
+});
+
+Deno.test("fetchMeeting leaves the day check to ERP when it cannot read the requested start", async () => {
+  const result = await readOccurrences("20300503", TIMED_OCCURRENCE);
+  assertEquals((result.occurrences as unknown[]).length, 1);
+});

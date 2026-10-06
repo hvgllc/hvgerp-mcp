@@ -354,10 +354,69 @@ function validateRecurrence(
   return picked;
 }
 
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+const NAIVE_DATE_TIME = /^(\d{4}-\d{2}-\d{2})[T ]\d{2}:\d{2}[\d:.]*$/;
+const OFFSET_DATE_TIME =
+  /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}[\d:.]*(?:[zZ]|[+-]\d{2}(?::?\d{2})?)$/;
+
+/** Ngày lịch (`YYYY-MM-DD`) của một thời điểm theo múi giờ `zone`; `null` khi thời điểm hay múi giờ không hợp lệ. */
+function localDay(instantMs: number, zone: string): string | null {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: zone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(instantMs));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ngày lịch mà ERP dùng để thu hẹp cửa sổ khi người gọi gửi `occurrence_start`: ngày thuần giữ nguyên, mốc có offset đổi sang
+ * múi giờ của cuộc họp, mốc không offset đã là giờ của site. `null` khi chuỗi có dạng mà ERP chấp nhận nhưng ta không
+ * đọc được: lúc đó không có gì để đối chiếu và ERP vẫn là bên kiểm tham số.
+ */
+function requestedDay(requested: string, zone: string): string | null {
+  const text = requested.trim();
+  if (DATE_ONLY.test(text)) return text;
+  const naive = NAIVE_DATE_TIME.exec(text);
+  if (naive) return naive[1];
+  if (!OFFSET_DATE_TIME.test(text)) return null;
+  return localDay(Date.parse(text.replace(" ", "T")), zone);
+}
+
+/**
+ * Mỗi lần diễn ra trả về phải chạm ngày được hỏi: ERP trả cả lần bắt đầu ngày trước nhưng còn kéo dài sang ngày đó. Một lần
+ * rơi hẳn ngày khác là phản hồi lệch phiên bản, và người gọi sẽ nhầm nó với lần diễn ra đã hỏi.
+ */
+function assertTouchesDay(
+  occurrence: Record<string, unknown>,
+  allDay: boolean,
+  requested: string,
+): void {
+  const zone = occurrence.zone as string;
+  const day = requestedDay(requested, zone);
+  if (day === null) return;
+  const start = occurrence.occurrence_start as string;
+  const end = occurrence.occurrence_end as string;
+  if (allDay) {
+    assertShape(start <= day && end > day);
+    return;
+  }
+  const startDay = localDay(Date.parse(start), zone);
+  const endDay = localDay(Date.parse(end), zone);
+  assertShape(
+    startDay !== null && endDay !== null && startDay <= day && endDay >= day,
+  );
+}
+
 function validateOccurrence(
   item: Record<string, unknown>,
   allDay: boolean,
   eventId: string,
+  requestedStart?: string,
 ): Record<string, unknown> {
   const picked = pickKeys(item, OCCURRENCE_KEYS);
   assertShape(typeof picked.zone === "string" && picked.zone !== "");
@@ -379,6 +438,9 @@ function validateOccurrence(
     ),
   );
   assertShape(isRevision(picked.schedule_revision));
+  if (requestedStart !== undefined) {
+    assertTouchesDay(picked, allDay, requestedStart);
+  }
   return picked;
 }
 
@@ -442,8 +504,9 @@ function pickMeetingFields(
       ? picked.start_date as string
       : previousDate((picked.starts_at as string).slice(0, 10));
     picked.recurrence = validateRecurrence(result.recurrence, firstDate);
-  } else if (Object.hasOwn(result, "recurrence")) {
-    // Chỉ `null` thật mới nghĩa là "không lặp": giá trị hỏng mà bị đổi thành null sẽ làm người gọi bỏ lỡ các lần sau.
+  } else {
+    // Cuộc họp còn sống luôn mang `recurrence`: đối tượng hợp lệ hoặc đúng `null` (không lặp). Thiếu trường hay giá trị hỏng
+    // mà bị coi là "không lặp" sẽ làm người gọi bỏ lỡ các lần sau, nên cả hai đều là lỗi backend.
     assertShape(result.recurrence === null);
     picked.recurrence = null;
   }
@@ -463,6 +526,7 @@ function pickMeetingFields(
         item,
         picked.all_day as boolean,
         result.event_id as string,
+        args.occurrence_start,
       )
     );
   }

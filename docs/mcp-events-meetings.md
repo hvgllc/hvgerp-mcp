@@ -86,7 +86,8 @@ itself makes the adapter step aside.
 Subscribe notes: `refreshBefore` is always a finite timestamp. `ttlMs: null` is
 only a request for no expiry; the ERP grants a finite lease capped by the
 verified token, so a `null` `refresh_before` from the backend is treated as a
-malformed reply. `maxAgeMs` (a non-negative integer; `0` means no history, so any older cursor is reported as truncated) is forwarded to the ERP as
+malformed reply. `maxAgeMs` (a non-negative integer; `0` means no history, so
+any older cursor is reported as truncated) is forwarded to the ERP as
 `max_age_ms`: it can only narrow the replay window of a resume cursor, never
 widen it (the ERP caps replay at 24 hours by default, 7 days retained), and the
 events carry only a pointer to be re-read with `erpnext_meeting_get`.
@@ -99,18 +100,18 @@ never stored, logged or echoed back.
 
 ### Errors
 
-| Code     | HTTP | Meaning                                                                                                                                                                     |
-| -------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Code     | HTTP | Meaning                                                                                                                                                                                  |
+| -------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `-32020` | 400  | `Mcp-Method` / `MCP-Protocol-Version` mismatch (SDK), or a supplied `Mcp-Name` that differs from `params.name` on `events/subscribe` and `events/unsubscribe` (omitting it is accepted). |
-| `-32022` | 400  | `_meta` protocol version problem (SDK).                                                                                                                                     |
-| `-32602` | 400  | Invalid params. Names the offending field, never its value.                                                                                                                 |
-| `-32011` | 404  | Unknown event name.                                                                                                                                                         |
-| `-32012` | 403  | No user identity, or ERPNext refused the user.                                                                                                                              |
-| `-32013` | 429  | Subscription limit reached.                                                                                                                                                 |
-| `-32014` | 400  | Unsupported delivery (not `webhook`, or an unusable URL).                                                                                                                   |
-| `-32015` | 502  | Callback verification failed (reason from a fixed list).                                                                                                                    |
-| `-32603` | 502  | ERPNext unavailable, throttling the request (transport HTTP 429, not a subscription quota), or returned an unexpected shape; also the token verifier failing operationally. |
-| `-32603` | 503  | Too many subscribe/unsubscribe calls in flight (see below).                                                                                                                 |
+| `-32022` | 400  | `_meta` protocol version problem (SDK).                                                                                                                                                  |
+| `-32602` | 400  | Invalid params. Names the offending field, never its value.                                                                                                                              |
+| `-32011` | 404  | Unknown event name.                                                                                                                                                                      |
+| `-32012` | 403  | No user identity, or ERPNext refused the user.                                                                                                                                           |
+| `-32013` | 429  | Subscription limit reached.                                                                                                                                                              |
+| `-32014` | 400  | Unsupported delivery (not `webhook`, or an unusable URL).                                                                                                                                |
+| `-32015` | 502  | Callback verification failed (reason from a fixed list).                                                                                                                                 |
+| `-32603` | 502  | ERPNext unavailable, throttling the request (transport HTTP 429, not a subscription quota), or returned an unexpected shape; also the token verifier failing operationally.              |
+| `-32603` | 503  | Too many subscribe/unsubscribe calls in flight (see below).                                                                                                                              |
 
 ERPNext answers every method with HTTP 200 and `{ok, result}` or
 `{ok:false, error}`. Only `error` is mapped to JSON-RPC, and only through fixed
@@ -143,14 +144,21 @@ validated and forwarded.
 
 All methods are under `hvg_workspace.mcp_events.api`:
 
-| Method        | HTTP | Arguments                                                        |
-| ------------- | ---- | ---------------------------------------------------------------- |
-| `subscribe`   | POST | `name, arguments, delivery_url, delivery_secret, ttl_ms, cursor` |
-| `unsubscribe` | POST | `name, arguments, delivery_url`                                  |
-| `meeting_get` | GET  | `event_id, occurrence_start?, window_start?, window_end?`        |
+| Method        | HTTP | Arguments                                                                    |
+| ------------- | ---- | ---------------------------------------------------------------------------- |
+| `subscribe`   | POST | `name, arguments, delivery_url, delivery_secret, ttl_ms, cursor, max_age_ms` |
+| `unsubscribe` | POST | `name, arguments, delivery_url`                                              |
+| `meeting_get` | GET  | `event_id, occurrence_start?, window_start?, window_end?`                    |
 
-`ttl_ms` and `cursor` are left out of the call when the client did not send
-them, and sent as `null` when the client sent `null`.
+`ttl_ms`, `cursor` and `max_age_ms` are left out of the call when the client did
+not send them. `ttl_ms` and `cursor` are sent as `null` when the client sent
+`null`; `max_age_ms` is only ever sent as a non-negative integer (`0` means no
+history), because the protocol layer rejects a client `null` for it. An ERP
+implementation must therefore accept `max_age_ms` as an optional keyword.
+
+For `meeting_get`, a live (non-deleted) response always carries `recurrence` as
+a recurrence object or `null`, and the occurrences it returns for an
+`occurrence_start` request must overlap the calendar day of that start.
 
 ## erpnext_meeting_get
 
