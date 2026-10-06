@@ -579,6 +579,24 @@ Deno.test("fetchMeeting rejects a successful result whose values have the wrong 
         schedule_revision: 4,
       }],
     }],
+    ["occurrence from another series", {
+      occurrences: [{
+        series_id: "EVT-2",
+        occurrence_start: "2030-05-01T02:00:00Z",
+        occurrence_end: "2030-05-01T03:00:00Z",
+        zone: "Asia/Ho_Chi_Minh",
+        schedule_revision: 4,
+      }],
+    }],
+    ["occurrence with an empty series", {
+      occurrences: [{
+        series_id: "",
+        occurrence_start: "2030-05-01T02:00:00Z",
+        occurrence_end: "2030-05-01T03:00:00Z",
+        zone: "Asia/Ho_Chi_Minh",
+        schedule_revision: 4,
+      }],
+    }],
     ["timed meeting with a date-only occurrence", {
       occurrences: [{
         series_id: "EVT-1",

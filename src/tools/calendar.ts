@@ -42,6 +42,40 @@ function isRealTemporal(value: string): boolean {
     moment.getUTCMonth() === month - 1 && moment.getUTCDate() === day;
 }
 
+/**
+ * Mốc thời gian (ms UTC) của một chuỗi đã qua `isRealTemporal`. Chuỗi không có múi giờ tính là UTC,
+ * và ngày trơn ở đầu mút `end` nghĩa là hết ngày đó, để `window_end: "2030-05-01"` không bị coi là
+ * đứng trước `window_start: "2030-05-01T10:00"`.
+ */
+function temporalMillis(value: string, endOfDay: boolean): number {
+  const parts = value.match(
+    /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.(\d+))?(?:(Z)|([+-])(\d{2}):?(\d{2}))?)?$/,
+  )!;
+  const [year, month, day] = [
+    Number(parts[1]),
+    Number(parts[2]),
+    Number(parts[3]),
+  ];
+  if (parts[4] === undefined) {
+    return Date.UTC(year, month - 1, day) + (endOfDay ? 86_400_000 - 1 : 0);
+  }
+  const fraction = parts[7] === undefined
+    ? 0
+    : Math.floor(Number(`0.${parts[7]}`) * 1000);
+  const local = Date.UTC(
+    year,
+    month - 1,
+    day,
+    Number(parts[4]),
+    Number(parts[5]),
+    Number(parts[6] ?? 0),
+    fraction,
+  );
+  if (parts[9] === undefined) return local;
+  const offset = (Number(parts[10]) * 60 + Number(parts[11])) * 60_000;
+  return parts[9] === "+" ? local - offset : local + offset;
+}
+
 function readTemporal(
   input: Record<string, unknown>,
   key: string,
@@ -117,6 +151,15 @@ export const calendarTools: ErpNextTool[] = [
       for (const key of TEMPORAL_FIELDS) {
         const value = readTemporal(input, key);
         if (value !== undefined) args[key] = value;
+      }
+      if (
+        args.window_start !== undefined && args.window_end !== undefined &&
+        temporalMillis(args.window_start, false) >
+          temporalMillis(args.window_end, true)
+      ) {
+        throw new Error(
+          "Invalid window: window_start must not be after window_end",
+        );
       }
       return await fetchMeeting(ctx.client, args);
     },

@@ -321,11 +321,12 @@ function validateRecurrence(
 function validateOccurrence(
   item: Record<string, unknown>,
   allDay: boolean,
+  eventId: string,
 ): Record<string, unknown> {
   const picked = pickKeys(item, OCCURRENCE_KEYS);
-  for (const key of ["series_id", "zone"]) {
-    assertShape(typeof picked[key] === "string");
-  }
+  assertShape(typeof picked.zone === "string");
+  // Mỗi lần diễn ra phải thuộc đúng chuỗi của cuộc họp được hỏi, nếu không người gọi nhận lịch của Event khác.
+  assertShape(picked.series_id === eventId);
   // Cuộc họp cả ngày phát ngày (`YYYY-MM-DD`), cuộc họp có giờ phát thời điểm UTC (`...Z`).
   for (const key of ["occurrence_start", "occurrence_end"]) {
     const value = picked[key];
@@ -412,7 +413,11 @@ function pickMeetingFields(
       throw new Error(BACKEND_ERROR);
     }
     picked.occurrences = items.map((item) =>
-      validateOccurrence(item, picked.all_day as boolean)
+      validateOccurrence(
+        item,
+        picked.all_day as boolean,
+        result.event_id as string,
+      )
     );
   }
   return picked;

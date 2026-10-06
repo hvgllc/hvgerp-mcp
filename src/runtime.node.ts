@@ -145,6 +145,13 @@ export function serveHttp(
                     } catch { /* stream đã bị hủy */ }
                   };
                   detachBody = () => {
+                    // Client ngắt giữa chừng khi body chưa đủ: bên đọc (`request.text()`) đang chờ phải được báo lỗi,
+                    // nếu không promise của nó treo mãi sau khi listener bị gỡ. Stream đã đóng thì `error` ném và bị bỏ qua.
+                    if (!finished) {
+                      try {
+                        controller.error(new Error("Request body aborted"));
+                      } catch { /* stream đã đóng hoặc đã bị hủy */ }
+                    }
                     finished = true;
                     incoming.off("data", onData);
                     incoming.off("end", onEnd);

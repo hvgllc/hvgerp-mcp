@@ -114,6 +114,49 @@ Deno.test("erpnext_meeting_get forwards only the declared arguments", async () =
   });
 });
 
+Deno.test("erpnext_meeting_get rejects a reversed occurrence window without calling ERP", async () => {
+  const { ctx, calls } = makeClient(() => ({ ok: true, result: MEETING }));
+  const tool = getTool();
+  for (
+    const [start, end] of [
+      ["2030-06-01", "2030-05-01"],
+      ["2030-05-01T10:00:00Z", "2030-05-01T09:59:59Z"],
+      // 10:00 giờ +07:00 là 03:00Z, muộn hơn 02:00Z cùng ngày.
+      ["2030-05-01T10:00:00+07:00", "2030-05-01T02:00:00Z"],
+    ]
+  ) {
+    await assertRejects(
+      () =>
+        tool.handler(
+          { event_id: "EVT-1", window_start: start, window_end: end },
+          ctx,
+        ),
+      Error,
+      "window_start must not be after window_end",
+    );
+  }
+  assertEquals(calls.length, 0);
+});
+
+Deno.test("erpnext_meeting_get accepts equal and same-day window bounds", async () => {
+  const { ctx, calls } = makeClient(() => ({ ok: true, result: MEETING }));
+  const tool = getTool();
+  for (
+    const [start, end] of [
+      ["2030-05-01", "2030-05-01"],
+      ["2030-05-01T10:00:00Z", "2030-05-01T10:00:00Z"],
+      // Ngày trơn ở đầu mút kết thúc nghĩa là hết ngày đó.
+      ["2030-05-01T10:00", "2030-05-01"],
+    ]
+  ) {
+    await tool.handler(
+      { event_id: "EVT-1", window_start: start, window_end: end },
+      ctx,
+    );
+  }
+  assertEquals(calls.length, 3);
+});
+
 Deno.test("erpnext_meeting_get rejects user_id and any unknown key without calling ERP", async () => {
   const { ctx, calls } = makeClient(() => ({ ok: true, result: MEETING }));
   for (

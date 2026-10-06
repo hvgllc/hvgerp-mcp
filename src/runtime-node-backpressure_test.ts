@@ -132,3 +132,111 @@ Deno.test("serveHttp cancels the response body when the client disconnects befor
     await finished;
   }
 });
+
+Deno.test("serveHttp settles a pending request body read when the client disconnects mid-POST", async () => {
+  const stop = new AbortController();
+  const ready = Promise.withResolvers<{ port: number }>();
+  const settled = Promise.withResolvers<string>();
+  const finished = serveHttp({
+    port: 0,
+    hostname: "127.0.0.1",
+    signal: stop.signal,
+    onListen: (info) => ready.resolve({ port: info.port }),
+  }, async (request) => {
+    try {
+      await request.text();
+      settled.resolve("resolved");
+    } catch {
+      settled.resolve("rejected");
+    }
+    return new Response("done");
+  });
+  const { port } = await ready.promise;
+  const socket = await Deno.connect({ port, hostname: "127.0.0.1" });
+  // Khai báo 100 byte nhưng chỉ gửi 5 rồi ngắt: body không bao giờ đủ.
+  await socket.write(
+    new TextEncoder().encode(
+      "POST /partial HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n\r\nhello",
+    ),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  socket.close();
+  const timer = setTimeout(
+    () => settled.reject(new Error("request body read never settled")),
+    3000,
+  );
+  try {
+    assert((await settled.promise) === "rejected");
+  } finally {
+    clearTimeout(timer);
+    stop.abort();
+    await finished;
+  }
+});
+
+/** Node thật (không phải lớp tương thích của Deno) mới tái hiện đúng thứ tự sự kiện `close` và `error`. */
+async function nodeMajor(): Promise<number | null> {
+  try {
+    const { stdout, success } = await new Deno.Command("node", {
+      args: ["--version"],
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    if (!success) return null;
+    return Number(
+      new TextDecoder().decode(stdout).trim().slice(1).split(".")[0],
+    );
+  } catch {
+    return null;
+  }
+}
+
+const NODE_MID_POST_SCRIPT = `
+import net from "node:net";
+const { serveHttp } = await import(process.argv[1]);
+const stop = new AbortController();
+let port;
+let outcome = "pending";
+const done = serveHttp({
+  port: 0, hostname: "127.0.0.1", signal: stop.signal,
+  onListen: (info) => { port = info.port; },
+}, async (request) => {
+  try { await request.text(); outcome = "resolved"; } catch { outcome = "rejected"; }
+  return new Response("x");
+});
+await new Promise((resolve) => setTimeout(resolve, 300));
+const socket = net.connect(port, "127.0.0.1");
+socket.write("POST /p HTTP/1.1\\r\\nHost: l\\r\\nContent-Length: 100\\r\\n\\r\\nhello");
+await new Promise((resolve) => setTimeout(resolve, 200));
+socket.destroy();
+await new Promise((resolve) => setTimeout(resolve, 1000));
+console.log(outcome);
+stop.abort();
+await done;
+`;
+
+Deno.test({
+  name:
+    "serveHttp on real Node settles a pending request body read when the client disconnects mid-POST",
+  ignore: (await nodeMajor() ?? 0) < 22,
+  async fn() {
+    const runtimeUrl = new URL("./runtime.node.ts", import.meta.url);
+    const { stdout, stderr, success } = await new Deno.Command("node", {
+      args: [
+        "--experimental-strip-types",
+        "--no-warnings",
+        "--input-type=module",
+        "-e",
+        NODE_MID_POST_SCRIPT,
+        runtimeUrl.href,
+      ],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assert(
+      success,
+      `node script failed: ${new TextDecoder().decode(stderr)}`,
+    );
+    assert(new TextDecoder().decode(stdout).trim() === "rejected");
+  },
+});
