@@ -383,16 +383,51 @@ function localDay(instantMs: number, zone: string): string | null {
 
 /**
  * Ngày lịch mà ERP dùng để thu hẹp cửa sổ khi người gọi gửi `occurrence_start`: ngày thuần giữ nguyên, mốc có offset đổi sang
- * múi giờ của cuộc họp, mốc không offset đã là giờ của site. `null` khi chuỗi có dạng mà ERP chấp nhận nhưng ta không
- * đọc được: lúc đó không có gì để đối chiếu và ERP vẫn là bên kiểm tham số.
+ * múi giờ của cuộc họp. Mốc không offset được ERP đọc theo múi giờ của SITE, mà ta không biết múi giờ đó (cuộc họp có thể
+ * mang múi giờ khác), nên ngày từ vựng của nó không đáng tin để đối chiếu. `null` cũng dành cho chuỗi có dạng mà ERP chấp
+ * nhận nhưng ta không đọc được: lúc đó không có gì để đối chiếu và ERP vẫn là bên kiểm tham số.
  */
 function requestedDay(requested: string, zone: string): string | null {
   const text = requested.trim();
   if (DATE_ONLY.test(text)) return text;
-  const naive = NAIVE_DATE_TIME.exec(text);
-  if (naive) return naive[1];
   if (!OFFSET_DATE_TIME.test(text)) return null;
   return localDay(Date.parse(text.replace(" ", "T")), zone);
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Mốc (ms UTC) của một biên cửa sổ; mốc không offset coi như UTC vì dưới đây đã chừa biên một ngày. `null` nếu không đọc được. */
+function boundMs(bound: string): number | null {
+  const text = bound.trim();
+  let parsed: number;
+  if (DATE_ONLY.test(text)) parsed = Date.parse(`${text}T00:00:00Z`);
+  else if (OFFSET_DATE_TIME.test(text)) {
+    parsed = Date.parse(text.replace(" ", "T"));
+  } else if (NAIVE_DATE_TIME.test(text)) {
+    parsed = Date.parse(`${text.replace(" ", "T")}Z`);
+  } else return null;
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+/**
+ * Mỗi lần diễn ra trả về không được nằm hẳn ngoài cửa sổ người gọi hỏi. ERP chọn theo NGÀY (theo múi giờ của site) nên mốc
+ * biên được nới một ngày mỗi phía: đủ để mọi cách đổi múi giờ vẫn hợp lệ, nhưng một lần diễn ra cách xa cửa sổ là phản hồi lệch
+ * phiên bản mà người gọi sẽ nhầm với lịch trong cửa sổ.
+ */
+function assertWithinWindow(
+  occurrence: Record<string, unknown>,
+  allDay: boolean,
+  windowStart: string | undefined,
+  windowEnd: string | undefined,
+): void {
+  const toMs = (value: unknown) =>
+    Date.parse(allDay ? `${value as string}T00:00:00Z` : value as string);
+  const start = toMs(occurrence.occurrence_start);
+  const end = toMs(occurrence.occurrence_end);
+  const lower = windowStart === undefined ? null : boundMs(windowStart);
+  const upper = windowEnd === undefined ? null : boundMs(windowEnd);
+  if (lower !== null) assertShape(end > lower - DAY_MS);
+  if (upper !== null) assertShape(start < upper + 2 * DAY_MS);
 }
 
 /**
@@ -424,7 +459,7 @@ function validateOccurrence(
   item: Record<string, unknown>,
   allDay: boolean,
   eventId: string,
-  requestedStart?: string,
+  args: MeetingGetArgs,
 ): Record<string, unknown> {
   const picked = pickKeys(item, OCCURRENCE_KEYS);
   assertShape(typeof picked.zone === "string" && picked.zone !== "");
@@ -446,8 +481,11 @@ function validateOccurrence(
     ),
   );
   assertShape(isRevision(picked.schedule_revision));
-  if (requestedStart !== undefined) {
-    assertTouchesDay(picked, allDay, requestedStart);
+  if (args.occurrence_start !== undefined) {
+    assertTouchesDay(picked, allDay, args.occurrence_start);
+  } else {
+    // Có `occurrence_start` thì ERP bỏ qua cửa sổ, nên chỉ đối chiếu cửa sổ khi người gọi không gửi nó.
+    assertWithinWindow(picked, allDay, args.window_start, args.window_end);
   }
   return picked;
 }
@@ -536,7 +574,7 @@ function pickMeetingFields(
         item,
         picked.all_day as boolean,
         result.event_id as string,
-        args.occurrence_start,
+        args,
       )
     );
   }

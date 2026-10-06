@@ -168,10 +168,20 @@ export const calendarTools: ErpNextTool[] = [
     },
     annotations: { readOnlyHint: true },
     async handler(input, ctx) {
+      // Tool này đọc lịch THAY MẶT một người cụ thể: client dùng chung (service account hoặc khoá tĩnh của stdio) sẽ đọc
+      // bằng quyền của tài khoản đó chứ không phải của người hỏi, nên bị từ chối thay vì lặng lẽ đọc rộng hơn.
+      if (ctx.client.actsAs !== "caller") {
+        throw new Error("Not authorized to read this meeting");
+      }
       // Chỉ nhận đúng các khoá đã khai báo: `user_id` hay bất kỳ khoá lạ nào bị từ chối thay vì
       // được lặng lẽ chuyển tiếp, vì danh tính luôn lấy từ bearer của request.
       for (const key of Object.keys(input)) {
-        if (!ALLOWED_KEYS.has(key)) throw new Error(`Unknown argument: ${key}`);
+        // Thông điệp CỐ ĐỊNH: tên khoá do người gọi đặt, không được phản chiếu lại vào lỗi.
+        if (!ALLOWED_KEYS.has(key)) {
+          throw new Error(
+            "Unknown argument: only event_id, occurrence_start, window_start and window_end are accepted",
+          );
+        }
       }
       const eventId = input.event_id;
       if (

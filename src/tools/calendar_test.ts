@@ -27,6 +27,7 @@ interface Call {
 function makeClient(respond: (call: Call) => unknown) {
   const calls: Call[] = [];
   const client = {
+    actsAs: "caller",
     callMethod(
       method: string,
       args: Record<string, unknown>,
@@ -181,6 +182,33 @@ Deno.test("erpnext_meeting_get rejects user_id and any unknown key without calli
       () => getTool().handler({ event_id: "EVT-1", ...extra }, ctx),
       Error,
       "Unknown argument",
+    );
+  }
+  assertEquals(calls.length, 0);
+});
+
+Deno.test("erpnext_meeting_get does not reflect the unknown argument name in its error", async () => {
+  const { ctx } = makeClient(() => ({ ok: true, result: MEETING }));
+  const hostile = "<script>alert(1)</script>";
+  const error = await assertRejects(() =>
+    getTool().handler({ event_id: "EVT-1", [hostile]: "x" }, ctx)
+  );
+  assert(error instanceof Error);
+  assert(error.message.startsWith("Unknown argument"));
+  assert(!error.message.includes(hostile));
+});
+
+Deno.test("erpnext_meeting_get refuses a client that does not act as the caller", async () => {
+  const { ctx, calls } = makeClient(() => ({ ok: true, result: MEETING }));
+  for (const identity of ["service", undefined]) {
+    const shared = {
+      ...ctx,
+      client: Object.assign(Object.create(ctx.client), { actsAs: identity }),
+    } as ErpNextToolContext;
+    await assertRejects(
+      () => getTool().handler({ event_id: "EVT-1" }, shared),
+      Error,
+      "Not authorized to read this meeting",
     );
   }
   assertEquals(calls.length, 0);

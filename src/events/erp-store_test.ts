@@ -1004,3 +1004,112 @@ Deno.test("fetchMeeting leaves the day check to ERP when it cannot read the requ
   const result = await readOccurrences("20300503", TIMED_OCCURRENCE);
   assertEquals((result.occurrences as unknown[]).length, 1);
 });
+
+Deno.test("fetchMeeting leaves a naive occurrence_start to ERP because its zone is the site's", async () => {
+  // ERP đọc mốc không offset theo múi giờ của site, nên ngày từ vựng không phải ngày của cuộc họp: không được từ chối.
+  for (const requested of ["2030-05-03T09:00:00", "2030-04-30 23:30:00"]) {
+    const result = await readOccurrences(requested, TIMED_OCCURRENCE);
+    assertEquals((result.occurrences as unknown[]).length, 1, requested);
+  }
+});
+
+async function readWindow(
+  window: { window_start?: string; window_end?: string },
+  occurrence: Record<string, unknown>,
+  meeting: Record<string, unknown> = {},
+) {
+  const { client } = fakeClient(() => ({
+    ok: true,
+    result: { ...MEETING, ...meeting, occurrences: [occurrence] },
+  }));
+  return await fetchMeeting(client, { event_id: "EVT-1", ...window });
+}
+
+Deno.test("fetchMeeting accepts occurrences inside or touching the requested window", async () => {
+  for (
+    const window of [
+      {
+        window_start: "2030-05-01T00:00:00Z",
+        window_end: "2030-05-02T00:00:00Z",
+      },
+      { window_start: "2030-05-01", window_end: "2030-05-01" },
+      // Biên không offset được nới một ngày mỗi phía vì múi giờ của site chưa biết.
+      {
+        window_start: "2030-05-01T20:00:00",
+        window_end: "2030-05-02T08:00:00",
+      },
+      { window_start: "2030-05-01T09:00:00+07:00" },
+      { window_end: "2030-05-01T10:00:00Z" },
+      {},
+    ]
+  ) {
+    const result = await readWindow(window, TIMED_OCCURRENCE);
+    assertEquals(
+      (result.occurrences as unknown[]).length,
+      1,
+      JSON.stringify(window),
+    );
+  }
+});
+
+Deno.test("fetchMeeting rejects an occurrence wholly outside the requested window", async () => {
+  for (
+    const window of [
+      {
+        window_start: "2030-05-04T00:00:00Z",
+        window_end: "2030-05-10T00:00:00Z",
+      },
+      { window_start: "2030-05-04" },
+      { window_end: "2030-04-20T00:00:00Z" },
+      { window_start: "2030-06-01T00:00:00+07:00", window_end: "2030-06-02" },
+    ]
+  ) {
+    await assertRejects(
+      () => readWindow(window, TIMED_OCCURRENCE),
+      Error,
+      "Events backend error",
+      JSON.stringify(window),
+    );
+  }
+});
+
+Deno.test("fetchMeeting applies the window check to all-day occurrences", async () => {
+  const meeting = {
+    all_day: true,
+    starts_at: null,
+    ends_at: null,
+    start_date: "2030-05-01",
+    end_date_exclusive: "2030-05-03",
+  };
+  const allDay = {
+    ...TIMED_OCCURRENCE,
+    occurrence_start: "2030-05-01",
+    occurrence_end: "2030-05-03",
+  };
+  const inside = await readWindow(
+    { window_start: "2030-05-02", window_end: "2030-05-09" },
+    allDay,
+    meeting,
+  );
+  assertEquals((inside.occurrences as unknown[]).length, 1);
+  await assertRejects(
+    () => readWindow({ window_start: "2030-05-20" }, allDay, meeting),
+    Error,
+    "Events backend error",
+  );
+});
+
+Deno.test("fetchMeeting ignores the window bounds when occurrence_start is given", async () => {
+  // ERP bỏ qua cửa sổ khi có `occurrence_start`, nên biên cửa sổ không được làm hỏng lần diễn ra đúng ngày.
+  const { client } = fakeClient(() => ({
+    ok: true,
+    result: { ...MEETING, occurrences: [TIMED_OCCURRENCE] },
+  }));
+  const result = await fetchMeeting(client, {
+    event_id: "EVT-1",
+    occurrence_start: "2030-05-01",
+    window_start: "2031-01-01",
+    window_end: "2031-02-01",
+  });
+  assertEquals((result.occurrences as unknown[]).length, 1);
+});
