@@ -332,8 +332,7 @@ export function parseSubscribeParams(params: unknown): SubscribeRequest {
     const cursor = params.cursor;
     if (
       cursor !== null &&
-      !(typeof cursor === "string" && cursor.length > 0 &&
-        cursor.length <= MAX_CURSOR_LENGTH)
+      !isReplayableCursor(cursor)
     ) {
       throw invalid("cursor");
     }
@@ -373,7 +372,7 @@ export interface SubscribeResult {
 const ISO_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 
 /** Chuỗi khớp hình dạng ISO UTC và là một thời điểm có thật (không có tháng 99 hay ngày 31/02). */
-function isRealUtcInstant(value: string): boolean {
+export function isRealUtcInstant(value: string): boolean {
   if (!ISO_UTC_PATTERN.test(value)) return false;
   const [year, month, day, hour, minute, second] = value.slice(0, 19)
     .split(/[-T:]/).map(Number);
@@ -382,6 +381,26 @@ function isRealUtcInstant(value: string): boolean {
     moment.getUTCMonth() === month - 1 && moment.getUTCDate() === day &&
     moment.getUTCHours() === hour && moment.getUTCMinutes() === minute &&
     moment.getUTCSeconds() === second;
+}
+
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Ngày lịch có thật theo dạng `YYYY-MM-DD` (loại `2030-02-30`). */
+export function isRealDate(value: unknown): boolean {
+  if (typeof value !== "string" || !ISO_DATE_PATTERN.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const moment = new Date(Date.UTC(year, month - 1, day));
+  return moment.getUTCFullYear() === year &&
+    moment.getUTCMonth() === month - 1 && moment.getUTCDate() === day;
+}
+
+/**
+ * Cursor mà client có thể gửi lại ở lần refresh sau: chuỗi không rỗng, không dài quá giới hạn. Dùng chung
+ * cho cursor client gửi lên và cursor ERP trả về, để server không bao giờ phát cursor chính nó từ chối.
+ */
+export function isReplayableCursor(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 &&
+    value.length <= MAX_CURSOR_LENGTH;
 }
 
 function malformedBackend(): EventsProtocolError {
@@ -400,7 +419,7 @@ export function toSubscribeResult(raw: unknown): SubscribeResult {
   ) {
     throw malformedBackend();
   }
-  if (cursor !== null && typeof cursor !== "string") throw malformedBackend();
+  if (cursor !== null && !isReplayableCursor(cursor)) throw malformedBackend();
   if (typeof truncated !== "boolean") throw malformedBackend();
   return {
     id,

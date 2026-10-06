@@ -547,6 +547,47 @@ Deno.test("fetchMeeting rejects a successful result whose values have the wrong 
     ["number ends_at", { ends_at: 5 }],
     ["array start_date", { start_date: ["2030-05-01"] }],
     ["string has_more", { has_more: "no" }],
+    ["non-date starts_at", { starts_at: "tomorrow" }],
+    ["starts_at without a UTC designator", {
+      starts_at: "2030-05-01T02:00:00",
+    }],
+    ["impossible starts_at day", { starts_at: "2030-02-30T02:00:00Z" }],
+    ["non-date ends_at", { ends_at: "soon" }],
+    ["impossible all-day date", {
+      all_day: true,
+      starts_at: null,
+      ends_at: null,
+      start_date: "2030-02-30",
+      end_date_exclusive: "2030-03-01",
+    }],
+    ["all-day end given as a timestamp", {
+      all_day: true,
+      starts_at: null,
+      ends_at: null,
+      start_date: "2030-05-01",
+      end_date_exclusive: "2030-05-02T00:00:00Z",
+    }],
+    ["malformed recurrence until", {
+      recurrence: { frequency: "Weekly", until: "2030-13-01" },
+    }],
+    ["malformed occurrence start", {
+      occurrences: [{
+        series_id: "EVT-1",
+        occurrence_start: "next tuesday",
+        occurrence_end: "2030-05-01T03:00:00Z",
+        zone: "Asia/Ho_Chi_Minh",
+        schedule_revision: 4,
+      }],
+    }],
+    ["timed meeting with a date-only occurrence", {
+      occurrences: [{
+        series_id: "EVT-1",
+        occurrence_start: "2030-05-01",
+        occurrence_end: "2030-05-02",
+        zone: "Asia/Ho_Chi_Minh",
+        schedule_revision: 4,
+      }],
+    }],
     ["timed meeting without starts_at", { starts_at: null }],
     ["timed meeting with empty starts_at", { starts_at: "" }],
     ["timed meeting carrying all-day dates", {
@@ -626,6 +667,24 @@ Deno.test("fetchMeeting accepts a well-formed all-day meeting and a timed meetin
   const meeting = await fetchMeeting(allDayClient, { event_id: "EVT-1" });
   assertEquals(meeting.all_day, true);
   assertEquals(meeting.start_date, "2030-05-01");
+  const { client: dateOccurrenceClient } = fakeClient(() => ({
+    ok: true,
+    result: {
+      ...allDay,
+      recurrence: { frequency: "Weekly", until: "2030-06-01" },
+      occurrences: [{
+        series_id: "EVT-1",
+        occurrence_start: "2030-05-01",
+        occurrence_end: "2030-05-02",
+        zone: "Asia/Ho_Chi_Minh",
+        schedule_revision: 4,
+      }],
+    },
+  }));
+  const dated = await fetchMeeting(dateOccurrenceClient, {
+    event_id: "EVT-1",
+  });
+  assertEquals((dated.occurrences as unknown[]).length, 1);
   const { client: openEndedClient } = fakeClient(() => ({
     ok: true,
     result: { ...MEETING, ends_at: null },

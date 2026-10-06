@@ -22,6 +22,8 @@ import {
 import {
   EventsErrorCode,
   EventsProtocolError,
+  isRealDate,
+  isRealUtcInstant,
   mapErpError,
   type SubscribeRequest,
   type SubscribeResult,
@@ -273,10 +275,6 @@ function isRevision(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
 }
 
-function isNullableString(value: unknown): boolean {
-  return value === null || typeof value === "string";
-}
-
 /**
  * Kiểm đủ hình dạng của từng giá trị trước khi chép sang phản hồi. Lọc theo tên khóa là chưa đủ:
  * một khóa được phép vẫn có thể mang object lồng nhau hoặc kiểu sai, và từ đó dữ liệu tùy ý đi tiếp
@@ -286,13 +284,21 @@ function assertShape(ok: boolean): void {
   if (!ok) throw new Error(BACKEND_ERROR);
 }
 
+/** Giá trị là chuỗi hợp lệ theo `check` hoặc `null`; mọi thứ khác là lỗi backend. */
+function isNullableOf(
+  value: unknown,
+  check: (text: string) => boolean,
+): boolean {
+  return value === null || (typeof value === "string" && check(value));
+}
+
 function validateRecurrence(
   recurrence: Record<string, unknown>,
 ): Record<string, unknown> {
   const picked = pickKeys(recurrence, RECURRENCE_KEYS);
   assertShape(typeof picked.frequency === "string");
   assertShape(
-    !Object.hasOwn(picked, "until") || isNullableString(picked.until),
+    !Object.hasOwn(picked, "until") || isNullableOf(picked.until, isRealDate),
   );
   assertShape(
     !Object.hasOwn(picked, "weekdays") ||
@@ -304,12 +310,19 @@ function validateRecurrence(
 
 function validateOccurrence(
   item: Record<string, unknown>,
+  allDay: boolean,
 ): Record<string, unknown> {
   const picked = pickKeys(item, OCCURRENCE_KEYS);
-  for (
-    const key of ["series_id", "occurrence_start", "occurrence_end", "zone"]
-  ) {
+  for (const key of ["series_id", "zone"]) {
     assertShape(typeof picked[key] === "string");
+  }
+  // Cuộc họp cả ngày phát ngày (`YYYY-MM-DD`), cuộc họp có giờ phát thời điểm UTC (`...Z`).
+  for (const key of ["occurrence_start", "occurrence_end"]) {
+    const value = picked[key];
+    assertShape(
+      typeof value === "string" &&
+        (allDay ? isRealDate(value) : isRealUtcInstant(value)),
+    );
   }
   assertShape(isRevision(picked.schedule_revision));
   return picked;
@@ -335,10 +348,16 @@ function pickMeetingFields(
   assertShape(typeof picked.all_day === "boolean");
   assertShape(typeof picked.time_zone === "string");
   assertShape(typeof picked.has_more === "boolean");
-  for (
-    const key of ["starts_at", "ends_at", "start_date", "end_date_exclusive"]
-  ) {
-    assertShape(!Object.hasOwn(picked, key) || isNullableString(picked[key]));
+  for (const key of ["starts_at", "ends_at"]) {
+    assertShape(
+      !Object.hasOwn(picked, key) ||
+        isNullableOf(picked[key], isRealUtcInstant),
+    );
+  }
+  for (const key of ["start_date", "end_date_exclusive"]) {
+    assertShape(
+      !Object.hasOwn(picked, key) || isNullableOf(picked[key], isRealDate),
+    );
   }
   // Trường lịch bắt buộc theo `all_day` (đúng như catalog): cả ngày cần ngày bắt đầu và ngày kết thúc loại trừ,
   // giờ cụ thể cần `starts_at`. Trường của nhánh kia không được có, nếu không người gọi nhận lịch tự mâu thuẫn.
@@ -362,7 +381,9 @@ function pickMeetingFields(
     if (!Array.isArray(items) || !items.every(isRecord)) {
       throw new Error(BACKEND_ERROR);
     }
-    picked.occurrences = items.map(validateOccurrence);
+    picked.occurrences = items.map((item) =>
+      validateOccurrence(item, picked.all_day as boolean)
+    );
   }
   return picked;
 }

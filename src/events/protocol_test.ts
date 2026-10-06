@@ -435,6 +435,21 @@ Deno.test("toSubscribeResult maps snake_case to the wire shape and validates it"
       truncated: true,
     },
   );
+  // Cursor ở đúng giới hạn vẫn đi qua và phải được parseSubscribeParams nhận lại.
+  const edge = "x".repeat(1024);
+  assertEquals(
+    toSubscribeResult({
+      id: "sub_1",
+      refresh_before: "2030-01-01T00:00:00Z",
+      cursor: edge,
+      truncated: false,
+    }).cursor,
+    edge,
+  );
+  assertEquals(
+    parseSubscribeParams({ ...BASE_SUBSCRIBE, cursor: edge }).cursor,
+    edge,
+  );
   const malformed: unknown[] = [
     null,
     {},
@@ -480,6 +495,13 @@ Deno.test("toSubscribeResult maps snake_case to the wire shape and validates it"
       cursor: null,
       truncated: "no",
     },
+    // Cursor mà chính server sẽ từ chối khi client gửi lại: rỗng hoặc dài quá 1024 ký tự.
+    ...["", "x".repeat(1025)].map((cursor) => ({
+      id: "s",
+      refresh_before: "2030-01-01T00:00:00Z",
+      cursor,
+      truncated: false,
+    })),
   ];
   for (const raw of malformed) {
     assertEquals(
