@@ -16,9 +16,13 @@
  * @module lib/erpnext/src/runtime
  */
 
-import type { ContextStore } from "./runtime-types.ts";
+import type {
+  ContextStore,
+  HttpServeHandler,
+  ServeHttpOptions,
+} from "./runtime-types.ts";
 
-export type { ContextStore };
+export type { ContextStore, HttpServeHandler, ServeHttpOptions };
 
 type RuntimePort = {
   env(key: string): string | undefined;
@@ -29,6 +33,10 @@ type RuntimePort = {
   exit(code: number): never;
   onSignal(signal: string, handler: () => void): void;
   createContextStore<T>(): ContextStore<T>;
+  serveHttp(
+    options: ServeHttpOptions,
+    handler: HttpServeHandler,
+  ): Promise<void>;
 };
 
 // Structural detection: a bare `globalThis.Deno = {}` shim (seen in some
@@ -50,3 +58,4 @@ export const getArgs = impl.getArgs;
 export const exit = impl.exit;
 export const onSignal = impl.onSignal;
 export const createContextStore = impl.createContextStore;
+export const serveHttp = impl.serveHttp;

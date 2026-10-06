@@ -27,6 +27,7 @@
       "mod.ts",
       "server.ts",
       "src/**/*.ts",
+      "src/events/contract/*.json",
       "src/ui/dist/",
       "README.md",
       "LICENSE"

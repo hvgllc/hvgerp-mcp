@@ -9,7 +9,11 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { ContextStore } from "./runtime-types.ts";
+import type {
+  ContextStore,
+  HttpServeHandler,
+  ServeHttpOptions,
+} from "./runtime-types.ts";
 
 // ─── Environment ─────────────────────────────────────────
 
@@ -69,4 +73,25 @@ export function createContextStore<T>(): ContextStore<T> {
     run: <R>(value: T, fn: () => R): R => storage.run(value, fn),
     current: (): T | undefined => storage.getStore(),
   };
+}
+
+// ─── HTTP listener ───────────────────────────────────────
+
+/**
+ * Mở một cổng HTTP và giao mọi request cho `handler`. Chỉ dùng khi server cần tự bọc handler của
+ * SDK (ví dụ adapter Events); đường mặc định vẫn là `McpApp.startHttp`. Promise chỉ hoàn tất khi
+ * server dừng.
+ */
+export async function serveHttp(
+  options: ServeHttpOptions,
+  handler: HttpServeHandler,
+): Promise<void> {
+  const server = Deno.serve({
+    port: options.port,
+    hostname: options.hostname,
+    signal: options.signal,
+    onListen: (address) =>
+      options.onListen?.({ hostname: address.hostname, port: address.port }),
+  }, handler);
+  await server.finished;
 }

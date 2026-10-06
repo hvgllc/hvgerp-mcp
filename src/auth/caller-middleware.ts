@@ -8,13 +8,13 @@
  * @module lib/erpnext/src/auth/caller-middleware
  */
 
-import type { Middleware, MiddlewareContext } from "@casys/mcp-server";
+import type { Middleware } from "@casys/mcp-server";
 import { type CallerIdentity, runWithCaller } from "../api/caller-context.ts";
 import { env } from "../runtime.ts";
 
 const BEARER_PATTERN = /^bearer[ \t]+(\S+)$/i;
 
-interface VerifiedAuth {
+export interface VerifiedAuth {
   subject?: string;
   claims?: Record<string, unknown>;
 }
@@ -45,10 +45,36 @@ export function callerPrincipal(
   return undefined;
 }
 
-function bearerToken(ctx: MiddlewareContext): string | undefined {
-  const header = ctx.request?.headers.get("authorization")?.trim();
+/**
+ * Token bearer trong header `Authorization`, hoặc `undefined` nếu không có.
+ *
+ * Dùng chung cho middleware của tool và cho adapter Events, để hai đường vào đọc token theo đúng
+ * một quy tắc. Hàm chỉ KHÔI PHỤC chuỗi token; việc token có hợp lệ hay không đã do bước xác thực
+ * của framework quyết định.
+ */
+export function bearerTokenFromHeaders(
+  headers: Headers | undefined,
+): string | undefined {
+  const header = headers?.get("authorization")?.trim();
   if (!header) return undefined;
   return BEARER_PATTERN.exec(header)?.[1];
+}
+
+/**
+ * Danh tính người gọi từ kết quả xác thực ĐÃ XÁC MINH cộng header chứa token, hoặc `undefined`
+ * khi request không mang danh tính dùng được (ví dụ bearer tĩnh dùng chung không có claim email).
+ *
+ * Đây là điểm quyết định duy nhất cho câu hỏi "ai đang gọi": middleware của tool và adapter
+ * Events cùng gọi hàm này, nên hai đường không thể lệch nhau về việc chấp nhận hay từ chối.
+ */
+export function resolveCallerIdentity(
+  authInfo: VerifiedAuth | undefined,
+  headers: Headers | undefined,
+): CallerIdentity | undefined {
+  const accessToken = bearerTokenFromHeaders(headers);
+  const principal = callerPrincipal(authInfo);
+  if (!accessToken || !principal) return undefined;
+  return { accessToken, principal };
 }
 
 export interface CallerIdentityMiddlewareOptions {
@@ -70,10 +96,12 @@ export function createCallerIdentityMiddleware(
   // Ham dong bo nem loi thi moi ben goi lam `mw(ctx, next).catch(...)` deu vo, va chinh test cua
   // module nay da do vi dieu do.
   return async (ctx, next) => {
-    const token = bearerToken(ctx);
-    const principal = callerPrincipal(ctx.authInfo as VerifiedAuth | undefined);
+    const identity = resolveCallerIdentity(
+      ctx.authInfo as VerifiedAuth | undefined,
+      ctx.request?.headers,
+    );
 
-    if (!token || !principal) {
+    if (!identity) {
       if (options.required) {
         throw new Error(
           "[hvgerp-mcp] refusing to run: this server acts as the calling user, and this request " +
@@ -84,7 +112,6 @@ export function createCallerIdentityMiddleware(
       return next();
     }
 
-    const identity: CallerIdentity = { accessToken: token, principal };
     return runWithCaller(identity, next);
   };
 }

@@ -19,6 +19,7 @@ import { manufacturingTools } from "./manufacturing.ts";
 import { crmTools } from "./crm.ts";
 import { assetsTools } from "./assets.ts";
 import { operationsTools } from "./operations.ts";
+import { calendarTools } from "./calendar.ts";
 import { setupTools } from "./setup.ts";
 import { analyticsTools } from "./analytics.ts";
 import { kanbanTools } from "./kanban.ts";
@@ -29,6 +30,7 @@ export {
   accountingTools,
   analyticsTools,
   assetsTools,
+  calendarTools,
   crmTools,
   deliveryTools,
   discoveryTools,
@@ -58,7 +60,7 @@ export const toolsByCategory: Record<string, ErpNextTool[]> = {
   manufacturing: manufacturingTools,
   crm: crmTools,
   assets: assetsTools,
-  operations: operationsTools,
+  operations: [...operationsTools, ...calendarTools],
   setup: setupTools,
   analytics: analyticsTools,
   kanban: kanbanTools,
@@ -79,6 +81,7 @@ export const allTools: ErpNextTool[] = [
   ...crmTools,
   ...assetsTools,
   ...operationsTools,
+  ...calendarTools,
   ...setupTools,
   ...analyticsTools,
   ...kanbanTools,

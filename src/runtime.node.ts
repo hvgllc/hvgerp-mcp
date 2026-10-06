@@ -12,7 +12,12 @@
 import { readdirSync, statSync as fsStatSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { ContextStore } from "./runtime-types.ts";
+import { createServer } from "node:http";
+import type {
+  ContextStore,
+  HttpServeHandler,
+  ServeHttpOptions,
+} from "./runtime-types.ts";
 
 // ─── Environment ─────────────────────────────────────────
 
@@ -72,4 +77,91 @@ export function createContextStore<T>(): ContextStore<T> {
     run: <R>(value: T, fn: () => R): R => storage.run(value, fn),
     current: (): T | undefined => storage.getStore(),
   };
+}
+
+// ─── HTTP listener ───────────────────────────────────────
+
+/**
+ * Mở một cổng HTTP và giao mọi request cho `handler`, đổi `IncomingMessage` sang `Request` và
+ * `Response` sang `ServerResponse` (phát trực tiếp từng khối, không gom cả body vào bộ nhớ).
+ * Promise chỉ hoàn tất khi server đóng.
+ */
+export function serveHttp(
+  options: ServeHttpOptions,
+  handler: HttpServeHandler,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const server = createServer((incoming, outgoing) => {
+      const abort = new AbortController();
+      outgoing.on("close", () => abort.abort());
+      const headers = new Headers();
+      for (const [name, value] of Object.entries(incoming.headers)) {
+        if (value === undefined) continue;
+        if (Array.isArray(value)) {
+          for (const item of value) headers.append(name, item);
+        } else headers.set(name, value);
+      }
+      const method = incoming.method ?? "GET";
+      const hasBody = method !== "GET" && method !== "HEAD";
+      const url = `http://${
+        incoming.headers.host ?? `${options.hostname}:${options.port}`
+      }${incoming.url ?? "/"}`;
+      const request = new Request(url, {
+        method,
+        headers,
+        signal: abort.signal,
+        ...(hasBody
+          ? {
+            body: new ReadableStream<Uint8Array>({
+              start(controller) {
+                incoming.on("data", (chunk: Uint8Array) =>
+                  controller.enqueue(chunk));
+                incoming.on("end", () =>
+                  controller.close());
+                incoming.on("error", (error) => controller.error(error));
+              },
+            }),
+            duplex: "half",
+          }
+          : {}),
+      } as RequestInit);
+
+      Promise.resolve(handler(request)).then(async (response) => {
+        outgoing.statusCode = response.status;
+        response.headers.forEach((value, name) =>
+          outgoing.setHeader(name, value)
+        );
+        if (response.body === null) {
+          outgoing.end();
+          return;
+        }
+        const reader = response.body.getReader();
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            outgoing.write(value);
+          }
+        } finally {
+          outgoing.end();
+        }
+      }).catch(() => {
+        if (!outgoing.headersSent) outgoing.statusCode = 500;
+        outgoing.end();
+      });
+    });
+    server.on("error", reject);
+    server.on("close", () => resolve());
+    options.signal?.addEventListener("abort", () => {
+      server.close();
+      server.closeAllConnections();
+    }, { once: true });
+    server.listen(options.port, options.hostname, () => {
+      const address = server.address();
+      const port = typeof address === "object" && address !== null
+        ? address.port
+        : options.port;
+      options.onListen?.({ hostname: options.hostname, port });
+    });
+  });
 }

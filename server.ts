@@ -47,9 +47,18 @@ import {
   getArgs,
   onSignal,
   readTextFile,
+  serveHttp,
   statSync,
 } from "./src/runtime.ts";
-import { buildAuthProvider, loadAuthConfig } from "./src/auth/config.ts";
+import {
+  assertEventsPolicy,
+  buildAuthProvider,
+  EVENTS_FLAG_ENV,
+  eventsFlagEnabled,
+  loadAuthConfig,
+} from "./src/auth/config.ts";
+import { createEventsAdapter } from "./src/events/adapter.ts";
+import { createErpEventsStore } from "./src/events/erp-store.ts";
 import {
   type CallerIdentityMode,
   createCallerIdentityMiddleware,
@@ -63,6 +72,7 @@ import { SERVER_VERSION } from "./src/version.ts";
 import { buildServerInstructions } from "./src/instructions.ts";
 
 const DEFAULT_HTTP_PORT = 3012;
+const SERVER_NAME = "hvgerp-mcp";
 
 async function main() {
   const args = getArgs();
@@ -110,6 +120,22 @@ async function main() {
     : "off";
   const mrtrConfig = loadMrtrConfig();
 
+  // MCP Events (lịch họp): mặc định TẮT. Khi bật, cấu hình phải chắc chắn mọi request mang danh
+  // tính người dùng đã xác minh, nếu không thì khởi động thất bại thay vì chạy ở chế độ yếu hơn.
+  const eventsEnabled = eventsFlagEnabled();
+  if (eventsEnabled) {
+    if (!httpFlag) {
+      throw new Error(
+        `[hvgerp-mcp] ${EVENTS_FLAG_ENV} is on but MCP Events only run over HTTP (pass --http).`,
+      );
+    }
+    for (
+      const warning of assertEventsPolicy({ callerIdentity, authConfig })
+    ) {
+      console.error(`[hvgerp-mcp] WARNING: ${warning}`);
+    }
+  }
+
   // Resolve the viewer bundles up front. They are registered further down, but two decisions above
   // that point depend on which ones exist: which tools may keep their viewer binding, and whether
   // to declare MCP Apps at all. Both answer the same question — never point a host at a resource
@@ -131,12 +157,13 @@ async function main() {
       ...(categories ? { categories } : {}),
       enableLinkDisambiguation: mrtrConfig !== undefined,
       servableViewerUris,
+      includeEventsTools: eventsEnabled,
     },
   );
 
   // Build MCP server
   const server = new McpApp({
-    name: "hvgerp-mcp",
+    name: SERVER_NAME,
     version: SERVER_VERSION,
     transport: "stateless",
     // Read by the client before the first tool call. It exists for one reason: nothing in a tool
@@ -282,29 +309,51 @@ async function main() {
       );
     }
 
-    await server.startHttp({
-      port: httpPort,
-      hostname,
+    const httpOptions = {
       cors: true,
       customRoutes: authMetadataRoute ? [authMetadataRoute] : undefined,
-      onListen: (info: { hostname: string; port: number }) => {
-        console.error(
-          `[hvgerp-mcp] HTTP server listening${
-            authConfig ? "" : " (unauthenticated)"
-          } on http://${info.hostname}:${info.port}`,
-        );
-        if (authConfig) {
-          const authMethods: string[] = [];
-          if (authConfig.tokens.size > 0) {
-            authMethods.push(`static tokens (${authConfig.tokens.size})`);
-          }
-          if (authConfig.jwksUrl) {
-            authMethods.push(`OAuth JWT JWKS (${authConfig.jwksUrl})`);
-          }
-          console.error(`[hvgerp-mcp] Auth: ${authMethods.join(", ")}`);
+    };
+    const onListen = (info: { hostname: string; port: number }) => {
+      console.error(
+        `[hvgerp-mcp] HTTP server listening${
+          authConfig ? "" : " (unauthenticated)"
+        } on http://${info.hostname}:${info.port}`,
+      );
+      if (authConfig) {
+        const authMethods: string[] = [];
+        if (authConfig.tokens.size > 0) {
+          authMethods.push(`static tokens (${authConfig.tokens.size})`);
         }
-      },
-    });
+        if (authConfig.jwksUrl) {
+          authMethods.push(`OAuth JWT JWKS (${authConfig.jwksUrl})`);
+        }
+        console.error(`[hvgerp-mcp] Auth: ${authMethods.join(", ")}`);
+      }
+    };
+
+    if (eventsEnabled && authProvider) {
+      // Đường bật Events: SDK 0.25 chưa có API đăng ký method, nên bọc handler Fetch của nó bằng
+      // adapter rồi tự mở cổng qua runtime port. Cờ tắt thì không đi qua nhánh này.
+      const baseHandler = await server.getFetchHandler(httpOptions);
+      const handler = createEventsAdapter({
+        base: baseHandler,
+        authProvider,
+        serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
+        store: createErpEventsStore(),
+        log: (message) => console.error(`[hvgerp-mcp] ${message}`),
+      });
+      console.error(
+        "[hvgerp-mcp] MCP Events enabled (meeting events, webhook delivery)",
+      );
+      await serveHttp({ port: httpPort, hostname, onListen }, handler);
+    } else {
+      await server.startHttp({
+        port: httpPort,
+        hostname,
+        ...httpOptions,
+        onListen,
+      });
+    }
   } else {
     // Mirrors the `cache` option above — kept in sync so the stdio compat
     // shim stamps the same ttlMs/cacheScope the SDK itself would emit under

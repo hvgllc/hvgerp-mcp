@@ -122,6 +122,12 @@ is not: it reads four doctypes outside whatever surface was requested.
 | `erpnext_doc_unassign`    | Any     | Remove one user's native assignment                                | -              |
 | `erpnext_method_call`     | Any     | Call an allowlisted whitelisted method by dotted path              | -              |
 
+Flag-gated (only with `MCP_EVENTS_ENABLED`, not in the count above):
+
+| Tool                  | DocType | Operations                                         | UI Viewer |
+| --------------------- | ------- | -------------------------------------------------- | --------- |
+| `erpnext_meeting_get` | Event   | Fresh, uncached read of one meeting for MCP Events | -         |
+
 ### Discovery (1 tool)
 
 | Tool                     | DocType | Operations                                                                                                                                                | UI Viewer |
