@@ -236,6 +236,14 @@ export async function fetchMeeting(
   return pickMeetingFields(envelope.result, args);
 }
 
+/** Tập đóng các giá trị `status` của Event native (Select `Open/Completed/Closed/Cancelled`); giá trị khác là ERP lệch hợp đồng. */
+const MEETING_STATUSES: ReadonlySet<string> = new Set([
+  "Open",
+  "Completed",
+  "Closed",
+  "Cancelled",
+]);
+
 const MEETING_KEYS = [
   "event_id",
   "revision",
@@ -461,7 +469,9 @@ function pickMeetingFields(
   const picked = pickKeys(result, MEETING_KEYS);
   assertShape(isRevision(picked.revision));
   assertShape(!Object.hasOwn(picked, "deleted") || picked.deleted === false);
-  assertShape(typeof picked.status === "string");
+  assertShape(
+    typeof picked.status === "string" && MEETING_STATUSES.has(picked.status),
+  );
   assertShape(typeof picked.all_day === "boolean");
   assertShape(typeof picked.time_zone === "string" && picked.time_zone !== "");
   assertShape(typeof picked.has_more === "boolean");

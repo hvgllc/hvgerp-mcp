@@ -120,6 +120,7 @@ Deno.test("erpnext_meeting_get rejects a reversed occurrence window without call
   for (
     const [start, end] of [
       ["2030-06-01", "2030-05-01"],
+      ["2030-05-01T10:00:00", "2030-05-01T09:59:59"],
       ["2030-05-01T10:00:00Z", "2030-05-01T09:59:59Z"],
       // 10:00 giờ +07:00 là 03:00Z, muộn hơn 02:00Z cùng ngày.
       ["2030-05-01T10:00:00+07:00", "2030-05-01T02:00:00Z"],
@@ -155,6 +156,10 @@ Deno.test("erpnext_meeting_get accepts equal and same-day window bounds", async 
       ["2030-05-01T10:00:00.9990Z", "2030-05-01T10:00:00.9999Z"],
       // Chữ số thập phân dài của cuối ngày vẫn nằm trong ngày đó.
       ["2030-05-01T23:59:59.99999999Z", "2030-05-01"],
+      // Giờ trần là giờ địa phương của site (ví dụ +07:00) nên lẫn với mốc có múi giờ thì không sắp thứ tự được:
+      // để ERP kiểm, không từ chối nhầm cửa sổ hợp lệ.
+      ["2030-05-01T20:00:00", "2030-05-01T14:00:00Z"],
+      ["2030-05-01T10:00:00+07:00", "2030-05-01T02:00:00"],
     ]
   ) {
     await tool.handler(
@@ -162,7 +167,7 @@ Deno.test("erpnext_meeting_get accepts equal and same-day window bounds", async 
       ctx,
     );
   }
-  assertEquals(calls.length, 6);
+  assertEquals(calls.length, 8);
 });
 
 Deno.test("erpnext_meeting_get rejects user_id and any unknown key without calling ERP", async () => {

@@ -48,11 +48,14 @@ function isRealTemporal(value: string): boolean {
 interface TemporalInstant {
   seconds: number;
   fraction: string;
+  /** Chuỗi gốc có múi giờ (`Z` hoặc độ lệch). Ngày trơn và giờ trần là "không múi giờ". */
+  zoned: boolean;
 }
 
 /**
- * Mốc thời gian của một chuỗi đã qua `isRealTemporal`. Chuỗi không có múi giờ tính là UTC,
- * và ngày trơn ở đầu mút `end` nghĩa là hết ngày đó, để `window_end: "2030-05-01"` không bị coi là
+ * Mốc thời gian của một chuỗi đã qua `isRealTemporal`. Chuỗi không có múi giờ được đặt tạm trên trục UTC
+ * (chỉ để so với một mốc cũng không có múi giờ: ERP hiểu chúng theo múi giờ của site, nên so với mốc có múi giờ
+ * là vô nghĩa, xem `canOrder`), và ngày trơn ở đầu mút `end` nghĩa là hết ngày đó, để `window_end: "2030-05-01"` không bị coi là
  * đứng trước `window_start: "2030-05-01T10:00"`. Phần thập phân không bị cắt ở mili giây: hai mốc chỉ khác
  * nhau ở chữ số thứ tư trở đi vẫn được sắp đúng thứ tự.
  */
@@ -70,6 +73,7 @@ function temporalInstant(value: string, endOfDay: boolean): TemporalInstant {
     return {
       seconds: Date.UTC(year, month - 1, day) + (endOfDay ? 86_399_000 : 0),
       fraction: endOfDay ? "9".repeat(TEMPORAL_MAX_LENGTH) : "",
+      zoned: false,
     };
   }
   const local = Date.UTC(
@@ -81,15 +85,27 @@ function temporalInstant(value: string, endOfDay: boolean): TemporalInstant {
     Number(parts[6] ?? 0),
   );
   const fraction = parts[7] ?? "";
-  if (parts[9] === undefined) return { seconds: local, fraction };
+  if (parts[9] === undefined) {
+    return { seconds: local, fraction, zoned: parts[8] !== undefined };
+  }
   const offset = (Number(parts[10]) * 60 + Number(parts[11])) * 60_000;
   return {
     seconds: parts[9] === "+" ? local - offset : local + offset,
     fraction,
+    zoned: true,
   };
 }
 
 /** Âm nếu `a` đứng trước `b`, 0 nếu bằng nhau, dương nếu đứng sau. */
+/**
+ * Chỉ hai mốc cùng loại (cùng có hoặc cùng không có múi giờ) mới sắp thứ tự được ở đây: mốc không múi giờ là giờ địa
+ * phương của site mà MCP không biết, nên "2030-05-01T20:00" có thể đứng trước hay sau "2030-05-01T14:00Z" tùy múi giờ
+ * của site. Cặp lẫn loại để ERP tự kiểm, không bị từ chối nhầm một cửa sổ hợp lệ.
+ */
+function canOrder(a: TemporalInstant, b: TemporalInstant): boolean {
+  return a.zoned === b.zoned;
+}
+
 function compareInstants(a: TemporalInstant, b: TemporalInstant): number {
   if (a.seconds !== b.seconds) return a.seconds < b.seconds ? -1 : 1;
   return compareFractions(a.fraction, b.fraction);
@@ -171,16 +187,14 @@ export const calendarTools: ErpNextTool[] = [
         const value = readTemporal(input, key);
         if (value !== undefined) args[key] = value;
       }
-      if (
-        args.window_start !== undefined && args.window_end !== undefined &&
-        compareInstants(
-            temporalInstant(args.window_start, false),
-            temporalInstant(args.window_end, true),
-          ) > 0
-      ) {
-        throw new Error(
-          "Invalid window: window_start must not be after window_end",
-        );
+      if (args.window_start !== undefined && args.window_end !== undefined) {
+        const start = temporalInstant(args.window_start, false);
+        const end = temporalInstant(args.window_end, true);
+        if (canOrder(start, end) && compareInstants(start, end) > 0) {
+          throw new Error(
+            "Invalid window: window_start must not be after window_end",
+          );
+        }
       }
       return await fetchMeeting(ctx.client, args);
     },
