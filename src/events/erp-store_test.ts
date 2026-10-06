@@ -1113,3 +1113,121 @@ Deno.test("fetchMeeting ignores the window bounds when occurrence_start is given
   });
   assertEquals((result.occurrences as unknown[]).length, 1);
 });
+
+Deno.test("fetchMeeting limits a date-time window_end to a one-day slack but gives a date-only end its whole day", async () => {
+  const farLater = {
+    ...TIMED_OCCURRENCE,
+    occurrence_start: "2030-05-03T09:00:00Z",
+    occurrence_end: "2030-05-03T10:00:00Z",
+  };
+  await assertRejects(
+    () => readWindow({ window_end: "2030-05-01T10:00:00Z" }, farLater),
+    Error,
+    "Events backend error",
+  );
+  const nextDay = {
+    ...TIMED_OCCURRENCE,
+    occurrence_start: "2030-05-02T08:00:00Z",
+    occurrence_end: "2030-05-02T09:00:00Z",
+  };
+  // Một ngày chừa biên múi giờ vẫn được nhận với mốc có giờ.
+  assertEquals(
+    ((await readWindow({ window_end: "2030-05-01T10:00:00Z" }, nextDay))
+      .occurrences as unknown[]).length,
+    1,
+  );
+  // Biên chỉ có ngày nghĩa là hết ngày đó: lần diễn ra cuối ngày 01/05 và đầu ngày 02/05 (UTC) đều hợp lệ, ngày 04/05 thì không.
+  const endOfDay = {
+    ...TIMED_OCCURRENCE,
+    occurrence_start: "2030-05-02T20:00:00Z",
+    occurrence_end: "2030-05-02T21:00:00Z",
+  };
+  assertEquals(
+    ((await readWindow({ window_end: "2030-05-01" }, endOfDay))
+      .occurrences as unknown[]).length,
+    1,
+  );
+  await assertRejects(
+    () =>
+      readWindow({ window_end: "2030-05-01" }, {
+        ...TIMED_OCCURRENCE,
+        occurrence_start: "2030-05-04T00:00:00Z",
+        occurrence_end: "2030-05-04T01:00:00Z",
+      }),
+    Error,
+    "Events backend error",
+  );
+});
+
+async function readRecurrence(
+  meeting: Record<string, unknown>,
+  until: string,
+) {
+  const { client } = fakeClient(() => ({
+    ok: true,
+    result: {
+      ...MEETING,
+      ...meeting,
+      recurrence: { frequency: "Weekly", until },
+    },
+  }));
+  return await fetchMeeting(client, { event_id: "EVT-1" });
+}
+
+Deno.test("fetchMeeting derives the first local day of a timed recurrence from the declared zone", async () => {
+  const utcMeeting = {
+    time_zone: "UTC",
+    starts_at: "2030-05-10T09:00:00Z",
+    ends_at: "2030-05-10T10:00:00Z",
+  };
+  assertEquals(
+    ((await readRecurrence(utcMeeting, "2030-05-10")).recurrence as {
+      until: string;
+    }).until,
+    "2030-05-10",
+  );
+  await assertRejects(
+    () => readRecurrence(utcMeeting, "2030-05-09"),
+    Error,
+    "Events backend error",
+  );
+  // 20:00Z ngày 09/05 là 03:00 ngày 10/05 theo giờ Việt Nam: ngày bắt đầu của cuộc họp là 10/05.
+  const vietnamMeeting = {
+    time_zone: "Asia/Ho_Chi_Minh",
+    starts_at: "2030-05-09T20:00:00Z",
+    ends_at: "2030-05-09T21:00:00Z",
+  };
+  await readRecurrence(vietnamMeeting, "2030-05-10");
+  await assertRejects(
+    () => readRecurrence(vietnamMeeting, "2030-05-09"),
+    Error,
+    "Events backend error",
+  );
+});
+
+Deno.test("fetchMeeting rejects a time zone it cannot interpret on the meeting or on an occurrence", async () => {
+  const { client: badMeeting } = fakeClient(() => ({
+    ok: true,
+    result: { ...MEETING, time_zone: "private notes" },
+  }));
+  await assertRejects(
+    () => fetchMeeting(badMeeting, { event_id: "EVT-1" }),
+    Error,
+    "Events backend error",
+  );
+  // Zone hỏng trên lần diễn ra không được làm kiểm tra ngày bị bỏ qua: `private notes` không bao giờ tới người gọi.
+  await assertRejects(
+    () =>
+      readOccurrences("2030-05-03T02:00:00+07:00", {
+        ...TIMED_OCCURRENCE,
+        zone: "private notes",
+      }),
+    Error,
+    "Events backend error",
+  );
+  await assertRejects(
+    () => readWindow({}, { ...TIMED_OCCURRENCE, zone: "private notes" }),
+    Error,
+    "Events backend error",
+  );
+});

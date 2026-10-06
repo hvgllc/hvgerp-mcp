@@ -103,3 +103,40 @@ Deno.test("serveHttp cuts the connection when the response stream errors after p
   await finished;
   assertEquals(readFailed, true);
 });
+
+Deno.test("serveHttp rejects a GET that declares a body and closes the connection", async () => {
+  const stop = new AbortController();
+  const ready = Promise.withResolvers<{ port: number }>();
+  let handled = false;
+  const finished = serveHttp({
+    port: 0,
+    hostname: "127.0.0.1",
+    signal: stop.signal,
+    onListen: (info) => ready.resolve({ port: info.port }),
+  }, () => {
+    handled = true;
+    return new Response("ok");
+  });
+  const { port } = await ready.promise;
+  const connection = await Deno.connect({ hostname: "127.0.0.1", port });
+  // Khai báo 1 MB body nhưng không gửi: kết nối vẫn phải được đóng sau phản hồi.
+  await connection.write(
+    new TextEncoder().encode(
+      "GET /health HTTP/1.1\r\nHost: x\r\nContent-Length: 1048576\r\n\r\n",
+    ),
+  );
+  const chunks: string[] = [];
+  const buffer = new Uint8Array(4096);
+  while (true) {
+    const read = await connection.read(buffer);
+    if (read === null) break;
+    chunks.push(new TextDecoder().decode(buffer.subarray(0, read)));
+  }
+  connection.close();
+  stop.abort();
+  await finished;
+  const text = chunks.join("");
+  assertEquals(text.startsWith("HTTP/1.1 400"), true);
+  assertEquals(/connection: close/i.test(text), true);
+  assertEquals(handled, false);
+});

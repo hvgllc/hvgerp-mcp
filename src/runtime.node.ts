@@ -103,6 +103,21 @@ export function serveHttp(
       }
       const method = incoming.method ?? "GET";
       const hasBody = method !== "GET" && method !== "HEAD";
+      // GET/HEAD không có route nào đọc body, nên một request vẫn khai báo body (Content-Length khác 0 hoặc Transfer-Encoding) là
+      // bất thường: client có thể nhỏ giọt phần body để giữ socket sau khi phản hồi đã gửi. Từ chối ngay và đóng kết nối
+      // (`Connection: close`) thay vì chờ xả body ngoài mọi giới hạn của adapter.
+      if (!hasBody) {
+        const declaredLength = incoming.headers["content-length"];
+        if (
+          incoming.headers["transfer-encoding"] !== undefined ||
+          (declaredLength !== undefined && declaredLength.trim() !== "0")
+        ) {
+          outgoing.statusCode = 400;
+          outgoing.setHeader("Connection", "close");
+          outgoing.end();
+          return;
+        }
+      }
       const url = `http://${
         incoming.headers.host ?? `${options.hostname}:${options.port}`
       }${incoming.url ?? "/"}`;

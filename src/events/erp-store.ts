@@ -327,13 +327,6 @@ function isNullableOf(
   return value === null || (typeof value === "string" && check(value));
 }
 
-/** Ngày lịch liền trước của `YYYY-MM-DD` (đầu vào đã qua `isRealDate`). */
-function previousDate(date: string): string {
-  const moment = new Date(`${date}T00:00:00Z`);
-  moment.setUTCDate(moment.getUTCDate() - 1);
-  return moment.toISOString().slice(0, 10);
-}
-
 /**
  * `firstDate` là ngày sớm nhất mà lần diễn ra đầu tiên có thể rơi vào theo lịch của cuộc họp. `until` là ngày theo múi giờ
  * của cuộc họp nên không được đứng trước ngày đó, nếu không chuỗi đã kết thúc trước khi bắt đầu.
@@ -367,6 +360,12 @@ const NAIVE_DATE_TIME = /^(\d{4}-\d{2}-\d{2})[T ]\d{2}:\d{2}[\d:.]*$/;
 const OFFSET_DATE_TIME =
   /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}[\d:.]*(?:[zZ]|[+-]\d{2}(?::?\d{2})?)$/;
 
+/** `zone` là tên múi giờ mà `Intl` đọc được; chuỗi tự do (ví dụ ghi chú) bị từ chối thay vì lặng lẽ bỏ qua kiểm tra. */
+function isTimeZone(zone: unknown): zone is string {
+  return typeof zone === "string" && zone !== "" &&
+    localDay(0, zone) !== null;
+}
+
 /** Ngày lịch (`YYYY-MM-DD`) của một thời điểm theo múi giờ `zone`; `null` khi thời điểm hay múi giờ không hợp lệ. */
 function localDay(instantMs: number, zone: string): string | null {
   try {
@@ -396,8 +395,11 @@ function requestedDay(requested: string, zone: string): string | null {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** Mốc (ms UTC) của một biên cửa sổ; mốc không offset coi như UTC vì dưới đây đã chừa biên một ngày. `null` nếu không đọc được. */
-function boundMs(bound: string): number | null {
+/**
+ * Mốc (ms UTC) của một biên cửa sổ và cờ cho biết biên đó chỉ là NGÀY; mốc không offset coi như UTC vì dưới đây đã chừa biên
+ * một ngày. `null` nếu không đọc được.
+ */
+function boundMs(bound: string): { ms: number; dateOnly: boolean } | null {
   const text = bound.trim();
   let parsed: number;
   if (DATE_ONLY.test(text)) parsed = Date.parse(`${text}T00:00:00Z`);
@@ -406,7 +408,9 @@ function boundMs(bound: string): number | null {
   } else if (NAIVE_DATE_TIME.test(text)) {
     parsed = Date.parse(`${text.replace(" ", "T")}Z`);
   } else return null;
-  return Number.isNaN(parsed) ? null : parsed;
+  return Number.isNaN(parsed)
+    ? null
+    : { ms: parsed, dateOnly: DATE_ONLY.test(text) };
 }
 
 /**
@@ -426,8 +430,12 @@ function assertWithinWindow(
   const end = toMs(occurrence.occurrence_end);
   const lower = windowStart === undefined ? null : boundMs(windowStart);
   const upper = windowEnd === undefined ? null : boundMs(windowEnd);
-  if (lower !== null) assertShape(end > lower - DAY_MS);
-  if (upper !== null) assertShape(start < upper + 2 * DAY_MS);
+  if (lower !== null) assertShape(end > lower.ms - DAY_MS);
+  if (upper !== null) {
+    // Biên cuối chỉ có ngày nghĩa là hết ngày đó (thêm một ngày), còn mốc có giờ thì không; cả hai cùng chừa một ngày múi giờ.
+    const endOfBound = upper.dateOnly ? upper.ms + DAY_MS : upper.ms;
+    assertShape(start < endOfBound + DAY_MS);
+  }
 }
 
 /**
@@ -462,7 +470,7 @@ function validateOccurrence(
   args: MeetingGetArgs,
 ): Record<string, unknown> {
   const picked = pickKeys(item, OCCURRENCE_KEYS);
-  assertShape(typeof picked.zone === "string" && picked.zone !== "");
+  assertShape(isTimeZone(picked.zone));
   // Mỗi lần diễn ra phải thuộc đúng chuỗi của cuộc họp được hỏi, nếu không người gọi nhận lịch của Event khác.
   assertShape(picked.series_id === eventId);
   // Cuộc họp cả ngày phát ngày (`YYYY-MM-DD`), cuộc họp có giờ phát thời điểm UTC (`...Z`).
@@ -511,7 +519,7 @@ function pickMeetingFields(
     typeof picked.status === "string" && MEETING_STATUSES.has(picked.status),
   );
   assertShape(typeof picked.all_day === "boolean");
-  assertShape(typeof picked.time_zone === "string" && picked.time_zone !== "");
+  assertShape(isTimeZone(picked.time_zone));
   assertShape(typeof picked.has_more === "boolean");
   for (const key of ["starts_at", "ends_at"]) {
     assertShape(
@@ -547,10 +555,13 @@ function pickMeetingFields(
     );
   }
   if (isRecord(result.recurrence)) {
-    // Cuộc họp có giờ: ngày UTC có thể lệch tới một ngày so với ngày theo múi giờ của cuộc họp, nên chừa biên một ngày.
-    const firstDate = picked.all_day
-      ? picked.start_date as string
-      : previousDate((picked.starts_at as string).slice(0, 10));
+    // Cuộc họp có giờ: `until` là ngày theo múi giờ của cuộc họp, nên ngày bắt đầu cũng tính chính xác theo `time_zone` (đã
+    // được kiểm là đọc được) thay vì chừa biên một ngày.
+    const firstDate = picked.all_day ? picked.start_date as string : localDay(
+      Date.parse(picked.starts_at as string),
+      picked.time_zone as string,
+    );
+    if (firstDate === null) throw new Error(BACKEND_ERROR);
     picked.recurrence = validateRecurrence(result.recurrence, firstDate);
   } else {
     // Cuộc họp còn sống luôn mang `recurrence`: đối tượng hợp lệ hoặc đúng `null` (không lặp). Thiếu trường hay giá trị hỏng
