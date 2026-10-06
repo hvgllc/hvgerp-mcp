@@ -96,30 +96,30 @@ Deno.test("node serveHttp answers 400 to a malformed Host header and keeps servi
   });
 });
 
-Deno.test("node serveHttp drains the body of a request whose Host header is malformed", async () => {
+Deno.test("node serveHttp closes the connection of a malformed-Host request instead of draining its body", async () => {
   await withNodeServer(() => new Response("ok"), async (port) => {
     const conn = await Deno.connect({ hostname: "127.0.0.1", port });
     try {
-      const total = 8 * 1024 * 1024;
+      // Khai báo 8 MB nhưng chỉ gửi một ít: kẻ nhỏ giọt phần còn lại không được giữ socket, nên server phải đóng kết nối.
       await conn.write(new TextEncoder().encode(
-        `POST / HTTP/1.1\r\nHost: ]\r\nContent-Length: ${total}\r\n\r\n`,
+        "POST / HTTP/1.1\r\nHost: ]\r\nContent-Length: 8388608\r\n\r\npartial",
       ));
-      const chunk = new Uint8Array(64 * 1024);
-      let sent = 0;
-      const sender = (async () => {
-        while (sent < total) {
-          sent += await conn.write(
-            chunk.subarray(0, Math.min(chunk.length, total - sent)),
-          );
-        }
-      })().catch(() => {});
+      const chunks: string[] = [];
+      const buffer = new Uint8Array(4096);
       const deadline = Date.now() + 3000;
-      while (sent < total && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
+      let closed = false;
+      while (Date.now() < deadline) {
+        const read = await conn.read(buffer);
+        if (read === null) {
+          closed = true;
+          break;
+        }
+        chunks.push(new TextDecoder().decode(buffer.subarray(0, read)));
       }
-      // Socket không bị tạm dừng sau 400: toàn bộ body đã được xả.
-      assertEquals(sent, total);
-      await sender;
+      const reply = chunks.join("");
+      assert(reply.startsWith("HTTP/1.1 400"), reply);
+      assert(/connection: close/i.test(reply), reply);
+      assertEquals(closed, true);
     } finally {
       conn.close();
     }

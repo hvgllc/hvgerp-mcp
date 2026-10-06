@@ -196,7 +196,10 @@ export function serveHttp(
         // Stream body đã gắn listener lên `incoming` trước khi `new Request` ném lỗi: gỡ và xả phần body
         // còn lại, nếu không `onData` sẽ tạm dừng socket vĩnh viễn và kết nối keep-alive bị treo.
         detachBody();
+        // Đóng kết nối thay vì giữ keep-alive: request sai `Host` đứng ngoài `maxPeeks` và hạn peek của adapter, nên
+        // client nhỏ giọt phần body còn lại sẽ giữ được socket vô hạn nếu ta chỉ xả nó.
         outgoing.statusCode = 400;
+        outgoing.setHeader("Connection", "close");
         outgoing.end();
         return;
       }

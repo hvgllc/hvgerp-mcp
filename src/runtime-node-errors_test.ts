@@ -140,3 +140,40 @@ Deno.test("serveHttp rejects a GET that declares a body and closes the connectio
   assertEquals(/connection: close/i.test(text), true);
   assertEquals(handled, false);
 });
+
+Deno.test("serveHttp closes the connection after rejecting a malformed Host with an unfinished body", async () => {
+  const stop = new AbortController();
+  const ready = Promise.withResolvers<{ port: number }>();
+  let handled = false;
+  const finished = serveHttp({
+    port: 0,
+    hostname: "127.0.0.1",
+    signal: stop.signal,
+    onListen: (info) => ready.resolve({ port: info.port }),
+  }, () => {
+    handled = true;
+    return new Response("ok");
+  });
+  const { port } = await ready.promise;
+  const connection = await Deno.connect({ hostname: "127.0.0.1", port });
+  // `Host: ]` làm `new Request` ném; body khai báo 1 MB không bao giờ tới đủ nhưng kết nối vẫn phải đóng sau phản hồi.
+  await connection.write(
+    new TextEncoder().encode(
+      "POST /mcp HTTP/1.1\r\nHost: ]\r\nContent-Length: 1048576\r\n\r\npartial",
+    ),
+  );
+  const chunks: string[] = [];
+  const buffer = new Uint8Array(4096);
+  while (true) {
+    const read = await connection.read(buffer);
+    if (read === null) break;
+    chunks.push(new TextDecoder().decode(buffer.subarray(0, read)));
+  }
+  connection.close();
+  stop.abort();
+  await finished;
+  const text = chunks.join("");
+  assertEquals(text.startsWith("HTTP/1.1 400"), true);
+  assertEquals(/connection: close/i.test(text), true);
+  assertEquals(handled, false);
+});
