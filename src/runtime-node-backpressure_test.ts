@@ -50,3 +50,40 @@ Deno.test("serveHttp stops pulling the response body while a slow client is not 
     `expected the bridge to pause reads, but ${pulledWhileStalled} of ${TOTAL_CHUNKS} chunks were pulled`,
   );
 });
+
+Deno.test("serveHttp cancels the response body when the client disconnects while a read is pending", async () => {
+  const stop = new AbortController();
+  const ready = Promise.withResolvers<{ port: number }>();
+  const cancelled = Promise.withResolvers<void>();
+  const finished = serveHttp({
+    port: 0,
+    hostname: "127.0.0.1",
+    signal: stop.signal,
+    onListen: (info) => ready.resolve({ port: info.port }),
+  }, () =>
+    new Response(
+      // Luồng không bao giờ có dữ liệu: `reader.read()` treo cho tới khi bị hủy.
+      new ReadableStream<Uint8Array>({
+        pull: () => new Promise<void>(() => {}),
+        cancel: () => cancelled.resolve(),
+      }, { highWaterMark: 0 }),
+    ));
+  const { port } = await ready.promise;
+  const socket = await Deno.connect({ port, hostname: "127.0.0.1" });
+  await socket.write(
+    new TextEncoder().encode("GET /stall HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  socket.close();
+  const timer = setTimeout(
+    () => cancelled.reject(new Error("body was not cancelled after close")),
+    3000,
+  );
+  try {
+    await cancelled.promise;
+  } finally {
+    clearTimeout(timer);
+    stop.abort();
+    await finished;
+  }
+});

@@ -113,6 +113,15 @@ Deno.test("subscribe omits ttl_ms and cursor when the caller did not send them",
   ]);
 });
 
+Deno.test("subscribe forwards maxAgeMs as max_age_ms and omits it otherwise", async () => {
+  const { client, calls } = fakeClient(() => OK_SUBSCRIBE);
+  const store = createErpEventsStore({ getClient: () => client });
+  await asCaller(() => store.subscribe({ ...SUBSCRIBE, maxAgeMs: 60_000 }));
+  assertEquals(calls[0].args.max_age_ms, 60_000);
+  await asCaller(() => store.subscribe(SUBSCRIBE));
+  assertEquals(Object.hasOwn(calls[1].args, "max_age_ms"), false);
+});
+
 Deno.test("unsubscribe posts name, arguments and url only, never a secret, and returns {}", async () => {
   const { client, calls } = fakeClient(() => ({
     ok: true,
@@ -208,7 +217,7 @@ Deno.test("an ok:false envelope becomes the matching Events error without the ER
     error: {
       code: -32013,
       message: "limit 10 reached for user khoa",
-      data: { limit: { max: 10 } },
+      data: { limit: "subscriptions", max: 10 },
     },
   }));
   const store = createErpEventsStore({ getClient: () => client });
@@ -219,7 +228,7 @@ Deno.test("an ok:false envelope becomes the matching Events error without the ER
   assertEquals(error.toJsonRpcError(), {
     code: -32013,
     message: "Subscription limit reached",
-    data: { limit: { max: 10 } },
+    data: { limit: "subscriptions", max: 10 },
   });
 });
 
@@ -538,6 +547,24 @@ Deno.test("fetchMeeting rejects a successful result whose values have the wrong 
     ["number ends_at", { ends_at: 5 }],
     ["array start_date", { start_date: ["2030-05-01"] }],
     ["string has_more", { has_more: "no" }],
+    ["timed meeting without starts_at", { starts_at: null }],
+    ["timed meeting with empty starts_at", { starts_at: "" }],
+    ["timed meeting carrying all-day dates", {
+      start_date: "2030-05-01",
+      end_date_exclusive: "2030-05-02",
+    }],
+    ["all-day meeting without dates", { all_day: true }],
+    ["all-day meeting with only a start date", {
+      all_day: true,
+      starts_at: null,
+      ends_at: null,
+      start_date: "2030-05-01",
+    }],
+    ["all-day meeting carrying timed fields", {
+      all_day: true,
+      start_date: "2030-05-01",
+      end_date_exclusive: "2030-05-02",
+    }],
     ["truthy non-boolean deleted", { deleted: "yes" }],
     ["object frequency", { recurrence: { frequency: { a: 1 }, until: null } }],
     ["object until", { recurrence: { frequency: "Weekly", until: { a: 1 } } }],
@@ -581,6 +608,32 @@ Deno.test("fetchMeeting rejects a successful result whose values have the wrong 
       label,
     );
   }
+});
+
+Deno.test("fetchMeeting accepts a well-formed all-day meeting and a timed meeting without an end", async () => {
+  const allDay = {
+    ...MEETING,
+    all_day: true,
+    starts_at: null,
+    ends_at: null,
+    start_date: "2030-05-01",
+    end_date_exclusive: "2030-05-02",
+  };
+  const { client: allDayClient } = fakeClient(() => ({
+    ok: true,
+    result: allDay,
+  }));
+  const meeting = await fetchMeeting(allDayClient, { event_id: "EVT-1" });
+  assertEquals(meeting.all_day, true);
+  assertEquals(meeting.start_date, "2030-05-01");
+  const { client: openEndedClient } = fakeClient(() => ({
+    ok: true,
+    result: { ...MEETING, ends_at: null },
+  }));
+  const openEnded = await fetchMeeting(openEndedClient, {
+    event_id: "EVT-1",
+  });
+  assertEquals(openEnded.ends_at, null);
 });
 
 Deno.test("fetchMeeting rejects a tombstone without an integer revision", async () => {

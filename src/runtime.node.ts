@@ -198,6 +198,12 @@ export function serveHttp(
           }
           const reader = response.body.getReader();
           let finished = false;
+          // Client đóng kết nối khi `reader.read()` đang treo (SSE hoặc luồng chậm): kiểm `destroyed` sau read sẽ
+          // không bao giờ chạy, nên hủy nguồn ngay từ sự kiện `close` để read treo kết thúc và producer dừng.
+          const onClose = () => {
+            if (!finished) void reader.cancel().catch(() => {});
+          };
+          outgoing.once("close", onClose);
           try {
             while (true) {
               const { done, value } = await reader.read();
@@ -220,6 +226,7 @@ export function serveHttp(
               }
             }
           } finally {
+            outgoing.off("close", onClose);
             // Client bỏ đi giữa chừng: hủy nguồn để không tiếp tục sinh dữ liệu vô ích.
             if (!finished) void reader.cancel().catch(() => {});
             outgoing.end();

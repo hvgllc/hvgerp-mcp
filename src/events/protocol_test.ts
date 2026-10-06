@@ -515,10 +515,23 @@ Deno.test("mapErpError keeps only the closed code set and drops ERP messages", (
   assertEquals(
     mapErpError({
       code: -32013,
-      data: { limit: { max: 10, "bad key!": 1, note: "free text here" } },
+      data: { limit: "subscriptions", max: 10, note: "free text here" },
     })
       .data,
-    { limit: { max: 10 } },
+    { limit: "subscriptions", max: 10 },
+  );
+  // Tên hạn mức bẩn hoặc sai kiểu thì bỏ cả khối; `max` không hữu hạn thì chỉ bỏ `max`.
+  assertEquals(
+    mapErpError({ code: -32013, data: { limit: "bad key!", max: 10 } }).data,
+    undefined,
+  );
+  assertEquals(
+    mapErpError({ code: -32013, data: { limit: { max: 10 } } }).data,
+    undefined,
+  );
+  assertEquals(
+    mapErpError({ code: -32013, data: { limit: "rate", max: "ten" } }).data,
+    { limit: "rate" },
   );
   assertEquals(
     mapErpError({ code: -32014, data: { supportedModes: ["poll", "sms"] } })
@@ -592,10 +605,18 @@ Deno.test("subscribe and unsubscribe reject unknown top-level keys instead of de
     // Các khoá giao thức đã công bố vẫn được nhận.
     parse({ ...base, _meta: { trace: "x" } });
   }
-  parseSubscribeParams({
+  const parsed = parseSubscribeParams({
     ...BASE_SUBSCRIBE,
     maxAgeMs: 1000,
     ttlMs: null,
     cursor: null,
   });
+  assertEquals(parsed.maxAgeMs, 1000);
+  for (const bad of [0, -1, 1.5, "1000", null, Number.NaN]) {
+    const error = assertThrows(
+      () => parseSubscribeParams({ ...BASE_SUBSCRIBE, maxAgeMs: bad }),
+      EventsProtocolError,
+    );
+    assertEquals(error.toJsonRpcError().data, { field: "maxAgeMs" });
+  }
 });

@@ -177,6 +177,8 @@ export interface SubscribeRequest {
   /** `undefined` là không gửi (ERP dùng mặc định), `null` là yêu cầu không hết hạn. */
   ttlMs?: number | null;
   cursor?: string | null;
+  /** Cursor cũ hơn mức này (mili giây) bị ERP báo cắt; chỉ thu hẹp, không nới cửa sổ replay của server. */
+  maxAgeMs?: number;
 }
 
 export interface UnsubscribeRequest {
@@ -278,7 +280,7 @@ const SUBSCRIBE_KEYS = [
   "delivery",
   "ttlMs",
   "cursor",
-  "maxAgeMs", // Được chấp nhận và bỏ qua: cửa sổ replay do server quyết định.
+  "maxAgeMs",
   "_meta",
 ] as const;
 const UNSUBSCRIBE_KEYS = ["name", "arguments", "delivery", "_meta"] as const;
@@ -318,6 +320,13 @@ export function parseSubscribeParams(params: unknown): SubscribeRequest {
       throw invalid("ttlMs");
     }
     request.ttlMs = ttl as number | null;
+  }
+  if (params.maxAgeMs !== undefined) {
+    const maxAge = params.maxAgeMs;
+    if (!(Number.isSafeInteger(maxAge) && (maxAge as number) > 0)) {
+      throw invalid("maxAgeMs");
+    }
+    request.maxAgeMs = maxAge as number;
   }
   if (params.cursor !== undefined) {
     const cursor = params.cursor;
@@ -403,20 +412,21 @@ export function toSubscribeResult(raw: unknown): SubscribeResult {
 
 const SAFE_FIELD_PATTERN = /^[a-zA-Z0-9_.]{1,40}$/;
 
+/**
+ * Dữ liệu hạn mức theo hợp đồng Events: `limit` là tên hạn mức, `max` là trần (tuỳ chọn). Chỉ hai trường
+ * vô hướng đó đi qua; tên hạn mức phải khớp mẫu an toàn và `max` phải là số hữu hạn.
+ */
 function pickLimit(
   data: Record<string, unknown>,
 ): Record<string, unknown> | undefined {
-  const limit = data.limit;
-  if (!isRecord(limit)) return undefined;
-  const safe: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(limit).slice(0, 8)) {
-    if (!SAFE_FIELD_PATTERN.test(key)) continue;
-    if (typeof value === "number" && Number.isFinite(value)) safe[key] = value;
-    else if (typeof value === "string" && SAFE_FIELD_PATTERN.test(value)) {
-      safe[key] = value;
-    }
+  if (typeof data.limit !== "string" || !SAFE_FIELD_PATTERN.test(data.limit)) {
+    return undefined;
   }
-  return Object.keys(safe).length > 0 ? safe : undefined;
+  const safe: Record<string, unknown> = { limit: data.limit };
+  if (typeof data.max === "number" && Number.isFinite(data.max)) {
+    safe.max = data.max;
+  }
+  return safe;
 }
 
 /**
@@ -441,10 +451,9 @@ export function mapErpError(raw: unknown): EventsProtocolError {
     case EventsErrorCode.Forbidden:
       return new EventsProtocolError(raw.code);
     case EventsErrorCode.QuotaExceeded: {
-      const limit = pickLimit(data);
       return new EventsProtocolError(
         EventsErrorCode.QuotaExceeded,
-        limit ? { limit } : undefined,
+        pickLimit(data),
       );
     }
     case EventsErrorCode.UnsupportedDelivery:

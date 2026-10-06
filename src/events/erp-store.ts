@@ -144,6 +144,7 @@ export function createErpEventsStore(
       // Vắng mặt và `null` khác nhau: vắng là "dùng mặc định", null là "xin không hết hạn".
       if (request.ttlMs !== undefined) args.ttl_ms = request.ttlMs;
       if (request.cursor !== undefined) args.cursor = request.cursor;
+      if (request.maxAgeMs !== undefined) args.max_age_ms = request.maxAgeMs;
       const result = await callErp(
         getClient,
         ERP_EVENTS_METHODS.subscribe,
@@ -339,6 +340,15 @@ function pickMeetingFields(
   ) {
     assertShape(!Object.hasOwn(picked, key) || isNullableString(picked[key]));
   }
+  // Trường lịch bắt buộc theo `all_day` (đúng như catalog): cả ngày cần ngày bắt đầu và ngày kết thúc loại trừ,
+  // giờ cụ thể cần `starts_at`. Trường của nhánh kia không được có, nếu không người gọi nhận lịch tự mâu thuẫn.
+  const [required, forbidden] = picked.all_day
+    ? [["start_date", "end_date_exclusive"], ["starts_at", "ends_at"]]
+    : [["starts_at"], ["start_date", "end_date_exclusive"]];
+  for (const key of required) {
+    assertShape(typeof picked[key] === "string" && picked[key] !== "");
+  }
+  for (const key of forbidden) assertShape(picked[key] == null);
   if (isRecord(result.recurrence)) {
     picked.recurrence = validateRecurrence(result.recurrence);
   } else if (Object.hasOwn(result, "recurrence")) {

@@ -971,7 +971,8 @@ Deno.test("store errors: protocol errors keep their code and fixed message", asy
       subscribe: () =>
         Promise.reject(
           new EventsProtocolError(EventsErrorCode.QuotaExceeded, {
-            limit: { max: 5 },
+            limit: "subscriptions",
+            max: 5,
           }),
         ),
     },
@@ -982,7 +983,7 @@ Deno.test("store errors: protocol errors keep their code and fixed message", asy
   assertEquals(body.error, {
     code: -32013,
     message: "Subscription limit reached",
-    data: { limit: { max: 5 } },
+    data: { limit: "subscriptions", max: 5 },
   });
 });
 
