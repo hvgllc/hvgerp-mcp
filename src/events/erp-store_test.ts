@@ -333,6 +333,52 @@ Deno.test("fetchMeeting passes a tombstone through unchanged", async () => {
   assertEquals(await fetchMeeting(client, { event_id: "EVT-1" }), tombstone);
 });
 
+Deno.test("fetchMeeting returns only the advertised fields, even if ERP adds more", async () => {
+  const { client } = fakeClient(() => ({
+    ok: true,
+    result: {
+      ...MEETING,
+      subject: "Salary review",
+      description: "private notes",
+      participants: [{ email: "someone@example.com" }],
+      recurrence: {
+        frequency: "Weekly",
+        until: null,
+        weekdays: ["monday"],
+        link: "https://meet.example.com/x",
+      },
+      occurrences: [{
+        series_id: "EVT-1",
+        occurrence_start: "2030-05-01T02:00:00Z",
+        occurrence_end: "2030-05-01T03:00:00Z",
+        zone: "Asia/Ho_Chi_Minh",
+        schedule_revision: 4,
+        room: "Board room",
+      }],
+    },
+  }));
+  const result = await fetchMeeting(client, { event_id: "EVT-1" });
+  const serialized = JSON.stringify(result);
+  for (
+    const leaked of [
+      "Salary review",
+      "private notes",
+      "someone@example.com",
+      "meet.example.com",
+      "Board room",
+    ]
+  ) {
+    assert(!serialized.includes(leaked), `${leaked} must not be returned`);
+  }
+  assertEquals(result.event_id, "EVT-1");
+  assertEquals(result.revision, 4);
+  assertEquals(
+    (result.recurrence as Record<string, unknown>).frequency,
+    "Weekly",
+  );
+  assertEquals((result.occurrences as unknown[]).length, 1);
+});
+
 Deno.test("fetchMeeting maps every failure to a fixed message", async () => {
   const cases: Array<[() => unknown, string]> = [
     [

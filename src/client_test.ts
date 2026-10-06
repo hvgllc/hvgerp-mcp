@@ -345,6 +345,33 @@ Deno.test("ErpNextToolsClient keeps identity tools under a category filter", () 
   assert(!names.includes("erpnext_sales_order_list"));
 });
 
+Deno.test("ErpNextToolsClient keeps the meeting tool under a category filter when Events is on", () => {
+  const withEvents = new ErpNextToolsClient({
+    categories: ["sales"],
+    includeEventsTools: true,
+  }).listTools().map((candidate) => candidate.name);
+  assert(withEvents.includes("erpnext_meeting_get"));
+  // Chỉ thêm đúng tool đồng hành, không kéo cả category `operations`.
+  assert(!withEvents.includes("erpnext_calendar_events"));
+  assertEquals(
+    withEvents.filter((name) => name === "erpnext_meeting_get").length,
+    1,
+  );
+
+  const withoutEvents = new ErpNextToolsClient({ categories: ["sales"] })
+    .listTools().map((candidate) => candidate.name);
+  assert(!withoutEvents.includes("erpnext_meeting_get"));
+
+  const operations = new ErpNextToolsClient({
+    categories: ["operations"],
+    includeEventsTools: true,
+  }).listTools().map((candidate) => candidate.name);
+  assertEquals(
+    operations.filter((name) => name === "erpnext_meeting_get").length,
+    1,
+  );
+});
+
 Deno.test("ErpNextToolsClient does not load erpnext_whoami twice", () => {
   const names = new ErpNextToolsClient({ categories: ["identity", "project"] })
     .listTools()

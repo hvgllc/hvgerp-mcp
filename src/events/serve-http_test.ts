@@ -47,6 +47,86 @@ Deno.test("serveHttp serves a Fetch handler and stops when its signal aborts", a
   await finished;
 });
 
+// ── Runtime Node: request hỏng không được làm sập tiến trình ───────────────────
+
+async function withNodeServer(
+  handler: (request: Request) => Response | Promise<Response>,
+  body: (port: number) => Promise<void>,
+) {
+  const { serveHttp: serveNode } = await import("../runtime.node.ts");
+  const stop = new AbortController();
+  const ready = Promise.withResolvers<number>();
+  const finished = serveNode({
+    port: 0,
+    hostname: "127.0.0.1",
+    signal: stop.signal,
+    onListen: (info) => ready.resolve(info.port),
+  }, handler);
+  const port = await ready.promise;
+  try {
+    await body(port);
+  } finally {
+    stop.abort();
+    await finished;
+  }
+}
+
+async function rawExchange(port: number, text: string): Promise<string> {
+  const conn = await Deno.connect({ hostname: "127.0.0.1", port });
+  try {
+    await conn.write(new TextEncoder().encode(text));
+    const buffer = new Uint8Array(4096);
+    const read = await conn.read(buffer);
+    return new TextDecoder().decode(buffer.subarray(0, read ?? 0));
+  } finally {
+    conn.close();
+  }
+}
+
+Deno.test("node serveHttp answers 400 to a malformed Host header and keeps serving", async () => {
+  await withNodeServer(() => new Response("ok"), async (port) => {
+    const reply = await rawExchange(
+      port,
+      "GET / HTTP/1.1\r\nHost: ]\r\nConnection: close\r\n\r\n",
+    );
+    assert(reply.startsWith("HTTP/1.1 400"), reply);
+    // Tiến trình còn sống và phục vụ request kế tiếp.
+    const res = await fetch(`http://127.0.0.1:${port}/`);
+    assertEquals(await res.text(), "ok");
+  });
+});
+
+Deno.test("node serveHttp survives data sent after the handler canceled the body", async () => {
+  await withNodeServer(async (request) => {
+    // Bên xử lý hủy body sớm, như khi từ chối body quá lớn.
+    await request.body?.cancel();
+    return new Response("rejected", { status: 413 });
+  }, async (port) => {
+    const conn = await Deno.connect({ hostname: "127.0.0.1", port });
+    try {
+      const enc = new TextEncoder();
+      await conn.write(enc.encode(
+        "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 20\r\n\r\nhello",
+      ));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Phần body còn lại tới sau khi stream đã bị hủy.
+      await conn.write(enc.encode("0123456789ABCDE"));
+      const buffer = new Uint8Array(4096);
+      const read = await conn.read(buffer);
+      assert(
+        new TextDecoder().decode(buffer.subarray(0, read ?? 0)).startsWith(
+          "HTTP/1.1 413",
+        ),
+      );
+    } finally {
+      conn.close();
+    }
+    const res = await fetch(`http://127.0.0.1:${port}/`);
+    assertEquals(res.status, 413);
+    await res.body?.cancel();
+  });
+});
+
 // ── Dây nối trong server.ts ─────────────────────────────────────────────────
 
 const SERVER_SOURCE = await Deno.readTextFile(

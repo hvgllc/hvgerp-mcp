@@ -81,6 +81,15 @@ then verifies the bearer a second time and resolves the caller identity with the
 same function the tool middleware uses. An older SDK that learns `events/*`
 itself makes the adapter step aside.
 
+Subscribe notes: `refreshBefore` is always a finite timestamp. `ttlMs: null` is
+only a request for no expiry; the ERP grants a finite lease capped by the
+verified token, so a `null` `refresh_before` from the backend is treated as a
+malformed reply. `maxAgeMs` is accepted and ignored: replay is bounded on the
+ERP side (24 hours by default, 7 days retained), and the events carry only a
+pointer to be re-read with `erpnext_meeting_get`. `events/unsubscribe` takes
+`delivery.url`; `delivery.mode` may be omitted but, when present, must be
+`webhook`.
+
 The webhook signing secret is `whsec_` followed by base64 of 24 to 64 random
 bytes. It is validated and forwarded to ERPNext in the `subscribe` call; it is
 never stored, logged or echoed back.

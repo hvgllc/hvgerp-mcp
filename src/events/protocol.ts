@@ -309,7 +309,13 @@ export function parseUnsubscribeParams(params: unknown): UnsubscribeRequest {
   if (!isRecord(params)) throw invalid("params");
   const name = parseEventName(params.name);
   // `secret` được chấp nhận nhưng bị bỏ qua: hủy không cần secret và secret không được đi tiếp.
-  const delivery = parseDelivery(params.delivery, ["mode", "url", "secret"]);
+  // Hủy chỉ cần `url`: `mode` có thể vắng (client tuân thủ không bắt buộc gửi), nhưng nếu có thì
+  // vẫn phải là `webhook` để không nhận nhầm một kiểu giao khác.
+  const rawDelivery =
+    isRecord(params.delivery) && params.delivery.mode === undefined
+      ? { ...params.delivery, mode: "webhook" }
+      : params.delivery;
+  const delivery = parseDelivery(rawDelivery, ["mode", "url", "secret"]);
   return {
     name,
     arguments: parseArguments(params.arguments),

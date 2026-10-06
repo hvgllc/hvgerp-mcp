@@ -106,25 +106,69 @@ export function serveHttp(
       const url = `http://${
         incoming.headers.host ?? `${options.hostname}:${options.port}`
       }${incoming.url ?? "/"}`;
-      const request = new Request(url, {
-        method,
-        headers,
-        signal: abort.signal,
-        ...(hasBody
-          ? {
-            body: new ReadableStream<Uint8Array>({
-              start(controller) {
-                incoming.on("data", (chunk: Uint8Array) =>
-                  controller.enqueue(chunk));
-                incoming.on("end", () =>
-                  controller.close());
-                incoming.on("error", (error) => controller.error(error));
-              },
-            }),
-            duplex: "half",
-          }
-          : {}),
-      } as RequestInit);
+      // Header `Host` sai cú pháp (ví dụ `]`) làm `new Request` ném đồng bộ. Ngoài khối try này,
+      // lỗi đó sẽ thoát khỏi callback của `createServer` và làm sập cả tiến trình.
+      let request: Request;
+      let detachBody = () => {};
+      try {
+        request = new Request(url, {
+          method,
+          headers,
+          signal: abort.signal,
+          ...(hasBody
+            ? {
+              body: new ReadableStream<Uint8Array>({
+                start(controller) {
+                  let finished = false;
+                  const onData = (chunk: Uint8Array) => {
+                    if (finished) return;
+                    try {
+                      controller.enqueue(chunk);
+                    } catch {
+                      finished = true;
+                    }
+                  };
+                  const onEnd = () => {
+                    if (finished) return;
+                    finished = true;
+                    try {
+                      controller.close();
+                    } catch { /* stream đã bị hủy */ }
+                  };
+                  const onError = (error: Error) => {
+                    if (finished) return;
+                    finished = true;
+                    try {
+                      controller.error(error);
+                    } catch { /* stream đã bị hủy */ }
+                  };
+                  detachBody = () => {
+                    finished = true;
+                    incoming.off("data", onData);
+                    incoming.off("end", onEnd);
+                    incoming.off("error", onError);
+                    // Bỏ phần body còn lại để phản hồi vẫn gửi được qua cùng kết nối.
+                    incoming.on("error", () => {});
+                    incoming.resume();
+                  };
+                  incoming.on("data", onData);
+                  incoming.on("end", onEnd);
+                  incoming.on("error", onError);
+                },
+                // Bên đọc hủy sớm (ví dụ body quá lớn): ngừng nhét chunk vào stream đã đóng.
+                cancel() {
+                  detachBody();
+                },
+              }),
+              duplex: "half",
+            }
+            : {}),
+        } as RequestInit);
+      } catch {
+        outgoing.statusCode = 400;
+        outgoing.end();
+        return;
+      }
 
       Promise.resolve(handler(request)).then(async (response) => {
         outgoing.statusCode = response.status;

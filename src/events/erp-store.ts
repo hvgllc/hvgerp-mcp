@@ -204,5 +204,57 @@ export async function fetchMeeting(
   ) {
     throw new Error("Events backend error");
   }
-  return envelope.result;
+  return pickMeetingFields(envelope.result);
+}
+
+const MEETING_KEYS = [
+  "event_id",
+  "revision",
+  "deleted",
+  "status",
+  "all_day",
+  "time_zone",
+  "starts_at",
+  "ends_at",
+  "start_date",
+  "end_date_exclusive",
+  "has_more",
+] as const;
+const RECURRENCE_KEYS = ["frequency", "until", "weekdays"] as const;
+const OCCURRENCE_KEYS = [
+  "series_id",
+  "occurrence_start",
+  "occurrence_end",
+  "zone",
+  "schedule_revision",
+] as const;
+
+function pickKeys(
+  source: Record<string, unknown>,
+  keys: readonly string[],
+): Record<string, unknown> {
+  const picked: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (Object.hasOwn(source, key)) picked[key] = source[key];
+  }
+  return picked;
+}
+
+/**
+ * Chỉ giữ các trường đã công bố của tool. Nếu ERP trả thêm trường vì lệch phiên bản hoặc cấu hình
+ * sai (tiêu đề, mô tả, email người tham dự...), chúng không bao giờ đi tiếp tới người gọi.
+ */
+function pickMeetingFields(
+  result: Record<string, unknown>,
+): Record<string, unknown> {
+  const picked = pickKeys(result, MEETING_KEYS);
+  if (isRecord(result.recurrence)) {
+    picked.recurrence = pickKeys(result.recurrence, RECURRENCE_KEYS);
+  } else if (Object.hasOwn(result, "recurrence")) picked.recurrence = null;
+  if (Array.isArray(result.occurrences)) {
+    picked.occurrences = result.occurrences.filter(isRecord).map((item) =>
+      pickKeys(item, OCCURRENCE_KEYS)
+    );
+  }
+  return picked;
 }

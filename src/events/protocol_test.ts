@@ -382,9 +382,35 @@ Deno.test("unsubscribe: needs name and url, tolerates and drops a secret", () =>
     ),
     -32602,
   );
+  // Thiếu `mode` vẫn hủy được, vì hủy chỉ cần `url`.
+  assertEquals(
+    parseUnsubscribeParams({
+      name: "meeting.updated",
+      delivery: { url: CALLBACK },
+    }).deliveryUrl,
+    CALLBACK,
+  );
+  // `mode` có mặt mà khác `webhook` vẫn bị từ chối.
+  assertEquals(
+    code(() =>
+      parseUnsubscribeParams({
+        name: "meeting.updated",
+        delivery: { mode: "polling", url: CALLBACK },
+      })
+    ),
+    -32014,
+  );
+  // Tên sự kiện lạ bị chặn trước khi xét delivery.
   assertEquals(
     code(() => parseUnsubscribeParams({ name: "x", delivery: {} })),
     -32011,
+  );
+  // Thiếu cả `url` là tham số sai.
+  assertEquals(
+    code(() =>
+      parseUnsubscribeParams({ name: "meeting.updated", delivery: {} })
+    ),
+    -32602,
   );
 });
 

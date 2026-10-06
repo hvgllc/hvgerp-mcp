@@ -147,6 +147,17 @@ export class ErpNextToolsClient {
       this.tools = whoami && !selected.some((t) => t.name === WHOAMI_TOOL_NAME)
         ? [whoami, ...selected]
         : selected;
+      // Khi bật Events, sự kiện chỉ mang con trỏ nên bên nhận phải gọi `erpnext_meeting_get` để
+      // đọc lại. Bộ lọc category (ví dụ `--categories=sales` loại `operations`) không được phép
+      // gỡ tool đồng hành này khỏi `tools/list` trong khi adapter vẫn quảng bá capability Events.
+      // Thêm ĐÚNG các tool Events, không kéo cả category `operations` vào.
+      if (options.includeEventsTools) {
+        const missing = [...EVENTS_TOOL_NAMES]
+          .filter((name) => !this.tools.some((t) => t.name === name))
+          .map((name) => getToolByName(name))
+          .filter((tool): tool is ErpNextTool => tool !== undefined);
+        this.tools = [...this.tools, ...missing];
+      }
     } else {
       this.tools = allTools;
     }
