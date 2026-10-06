@@ -524,3 +524,96 @@ Deno.test("fetchMeeting fails on a malformed recurrence instead of reading it as
     null,
   );
 });
+
+Deno.test("fetchMeeting rejects a successful result whose values have the wrong shape", async () => {
+  const bad: Array<[string, Record<string, unknown>]> = [
+    ["missing revision", { revision: undefined }],
+    ["fractional revision", { revision: 1.5 }],
+    ["zero revision", { revision: 0 }],
+    ["string revision", { revision: "4" }],
+    ["object status", { status: { note: "private" } }],
+    ["string all_day", { all_day: "false" }],
+    ["object time_zone", { time_zone: { x: 1 } }],
+    ["object starts_at", { starts_at: { x: 1 } }],
+    ["number ends_at", { ends_at: 5 }],
+    ["array start_date", { start_date: ["2030-05-01"] }],
+    ["string has_more", { has_more: "no" }],
+    ["truthy non-boolean deleted", { deleted: "yes" }],
+    ["object frequency", { recurrence: { frequency: { a: 1 }, until: null } }],
+    ["object until", { recurrence: { frequency: "Weekly", until: { a: 1 } } }],
+    ["object weekday", { recurrence: { frequency: "Weekly", weekdays: [{}] } }],
+    ["string weekdays", {
+      recurrence: { frequency: "Weekly", weekdays: "monday" },
+    }],
+    [
+      "object occurrence zone",
+      {
+        occurrences: [{
+          series_id: "EVT-1",
+          occurrence_start: "2030-05-01T02:00:00Z",
+          occurrence_end: "2030-05-01T03:00:00Z",
+          zone: { a: 1 },
+          schedule_revision: 4,
+        }],
+      },
+    ],
+    [
+      "missing schedule_revision",
+      {
+        occurrences: [{
+          series_id: "EVT-1",
+          occurrence_start: "2030-05-01T02:00:00Z",
+          occurrence_end: "2030-05-01T03:00:00Z",
+          zone: "Asia/Ho_Chi_Minh",
+        }],
+      },
+    ],
+  ];
+  for (const [label, patch] of bad) {
+    const { client } = fakeClient(() => ({
+      ok: true,
+      result: { ...MEETING, ...patch },
+    }));
+    await assertRejects(
+      () => fetchMeeting(client, { event_id: "EVT-1" }),
+      Error,
+      "Events backend error",
+      label,
+    );
+  }
+});
+
+Deno.test("fetchMeeting rejects a tombstone without an integer revision", async () => {
+  for (const revision of [undefined, 0, 2.5, "9", null, { a: 1 }]) {
+    const { client } = fakeClient(() => ({
+      ok: true,
+      result: { event_id: "EVT-1", revision, deleted: true },
+    }));
+    await assertRejects(
+      () => fetchMeeting(client, { event_id: "EVT-1" }),
+      Error,
+      "Events backend error",
+    );
+  }
+});
+
+Deno.test("fetchMeeting accepts a well-formed recurring meeting unchanged", async () => {
+  const recurring = {
+    ...MEETING,
+    recurrence: {
+      frequency: "Weekly",
+      until: "2030-12-31",
+      weekdays: ["monday", "friday"],
+    },
+    occurrences: [{
+      series_id: "EVT-1",
+      occurrence_start: "2030-05-01T02:00:00Z",
+      occurrence_end: "2030-05-01T03:00:00Z",
+      zone: "Asia/Ho_Chi_Minh",
+      schedule_revision: 4,
+    }],
+    has_more: true,
+  };
+  const { client } = fakeClient(() => ({ ok: true, result: recurring }));
+  assertEquals(await fetchMeeting(client, { event_id: "EVT-1" }), recurring);
+});

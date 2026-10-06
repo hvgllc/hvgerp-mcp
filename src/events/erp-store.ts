@@ -265,6 +265,54 @@ function pickKeys(
   return picked;
 }
 
+const BACKEND_ERROR = "Events backend error";
+
+function isRevision(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
+}
+
+function isNullableString(value: unknown): boolean {
+  return value === null || typeof value === "string";
+}
+
+/**
+ * Kiểm đủ hình dạng của từng giá trị trước khi chép sang phản hồi. Lọc theo tên khóa là chưa đủ:
+ * một khóa được phép vẫn có thể mang object lồng nhau hoặc kiểu sai, và từ đó dữ liệu tùy ý đi tiếp
+ * tới người gọi. Mọi lệch hình dạng là lỗi backend cố định, không bao giờ được sửa lặng lẽ.
+ */
+function assertShape(ok: boolean): void {
+  if (!ok) throw new Error(BACKEND_ERROR);
+}
+
+function validateRecurrence(
+  recurrence: Record<string, unknown>,
+): Record<string, unknown> {
+  const picked = pickKeys(recurrence, RECURRENCE_KEYS);
+  assertShape(typeof picked.frequency === "string");
+  assertShape(
+    !Object.hasOwn(picked, "until") || isNullableString(picked.until),
+  );
+  assertShape(
+    !Object.hasOwn(picked, "weekdays") ||
+      (Array.isArray(picked.weekdays) &&
+        picked.weekdays.every((day) => typeof day === "string")),
+  );
+  return picked;
+}
+
+function validateOccurrence(
+  item: Record<string, unknown>,
+): Record<string, unknown> {
+  const picked = pickKeys(item, OCCURRENCE_KEYS);
+  for (
+    const key of ["series_id", "occurrence_start", "occurrence_end", "zone"]
+  ) {
+    assertShape(typeof picked[key] === "string");
+  }
+  assertShape(isRevision(picked.schedule_revision));
+  return picked;
+}
+
 /**
  * Chỉ giữ các trường đã công bố của tool. Nếu ERP trả thêm trường vì lệch phiên bản hoặc cấu hình
  * sai (tiêu đề, mô tả, email người tham dự...), chúng không bao giờ đi tiếp tới người gọi.
@@ -273,25 +321,37 @@ function pickMeetingFields(
   result: Record<string, unknown>,
 ): Record<string, unknown> {
   // Cuộc họp đã xóa chỉ trả đúng ba trường của tombstone, kể cả khi ERP (lệch phiên bản) còn kèm lịch cũ.
-  if (result.deleted === true) return pickKeys(result, TOMBSTONE_KEYS);
+  if (result.deleted === true) {
+    const tombstone = pickKeys(result, TOMBSTONE_KEYS);
+    assertShape(isRevision(tombstone.revision));
+    return tombstone;
+  }
   const picked = pickKeys(result, MEETING_KEYS);
+  assertShape(isRevision(picked.revision));
+  assertShape(!Object.hasOwn(picked, "deleted") || picked.deleted === false);
+  assertShape(typeof picked.status === "string");
+  assertShape(typeof picked.all_day === "boolean");
+  assertShape(typeof picked.time_zone === "string");
+  assertShape(typeof picked.has_more === "boolean");
+  for (
+    const key of ["starts_at", "ends_at", "start_date", "end_date_exclusive"]
+  ) {
+    assertShape(!Object.hasOwn(picked, key) || isNullableString(picked[key]));
+  }
   if (isRecord(result.recurrence)) {
-    picked.recurrence = pickKeys(result.recurrence, RECURRENCE_KEYS);
+    picked.recurrence = validateRecurrence(result.recurrence);
   } else if (Object.hasOwn(result, "recurrence")) {
     // Chỉ `null` thật mới nghĩa là "không lặp": giá trị hỏng mà bị đổi thành null sẽ làm người gọi bỏ lỡ các lần sau.
-    if (result.recurrence !== null) throw new Error("Events backend error");
+    assertShape(result.recurrence === null);
     picked.recurrence = null;
   }
   if (Object.hasOwn(result, "occurrences")) {
     // Một phần tử hỏng không được lặng lẽ bị bỏ: người gọi sẽ tưởng lịch đã đủ và bỏ lỡ cuộc họp.
-    if (
-      !Array.isArray(result.occurrences) || !result.occurrences.every(isRecord)
-    ) {
-      throw new Error("Events backend error");
+    const items = result.occurrences;
+    if (!Array.isArray(items) || !items.every(isRecord)) {
+      throw new Error(BACKEND_ERROR);
     }
-    picked.occurrences = result.occurrences.map((item) =>
-      pickKeys(item, OCCURRENCE_KEYS)
-    );
+    picked.occurrences = items.map(validateOccurrence);
   }
   return picked;
 }
