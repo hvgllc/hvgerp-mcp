@@ -617,3 +617,27 @@ Deno.test("fetchMeeting accepts a well-formed recurring meeting unchanged", asyn
   const { client } = fakeClient(() => ({ ok: true, result: recurring }));
   assertEquals(await fetchMeeting(client, { event_id: "EVT-1" }), recurring);
 });
+
+Deno.test("fetchMeeting rejects a result that answers for a different event", async () => {
+  for (const eventId of ["EVT-2", "", "evt-1", "EVT-1 "]) {
+    const { client } = fakeClient(() => ({
+      ok: true,
+      result: { ...MEETING, event_id: eventId },
+    }));
+    await assertRejects(
+      () => fetchMeeting(client, { event_id: "EVT-1" }),
+      Error,
+      "Events backend error",
+      `event_id ${JSON.stringify(eventId)}`,
+    );
+  }
+  const { client } = fakeClient(() => ({
+    ok: true,
+    result: { event_id: "EVT-2", revision: 3, deleted: true },
+  }));
+  await assertRejects(
+    () => fetchMeeting(client, { event_id: "EVT-1" }),
+    Error,
+    "Events backend error",
+  );
+});

@@ -223,8 +223,9 @@ export async function fetchMeeting(
   if (!envelope.ok) {
     throw new Error(mapErpError(envelope.error).toJsonRpcError().message);
   }
+  // Kết quả phải là của đúng cuộc họp được hỏi: một bản ghi hợp lệ nhưng của Event khác sẽ khiến người gọi cập nhật nhầm.
   if (
-    !isRecord(envelope.result) || typeof envelope.result.event_id !== "string"
+    !isRecord(envelope.result) || envelope.result.event_id !== args.event_id
   ) {
     throw new Error("Events backend error");
   }

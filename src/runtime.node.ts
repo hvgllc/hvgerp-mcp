@@ -185,50 +185,58 @@ export function serveHttp(
       outgoing.once("finish", () => detachBody());
       outgoing.once("close", () => detachBody());
 
-      Promise.resolve(handler(request)).then(async (response) => {
-        outgoing.statusCode = response.status;
-        response.headers.forEach((value, name) =>
-          outgoing.setHeader(name, value)
-        );
-        if (response.body === null) {
-          outgoing.end();
-          return;
-        }
-        const reader = response.body.getReader();
-        let finished = false;
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-              finished = true;
-              break;
-            }
-            if (outgoing.destroyed) break;
-            // Bộ đệm đầy thì dừng đọc luồng Fetch cho tới khi socket xả xong (hoặc đóng).
-            if (!outgoing.write(value)) {
-              await new Promise<void>((resolve) => {
-                const settle = () => {
-                  outgoing.off("drain", settle);
-                  outgoing.off("close", settle);
-                  resolve();
-                };
-                outgoing.once("drain", settle);
-                outgoing.once("close", settle);
-              });
-            }
+      // Bọc trong Promise để handler ném ĐỒNG BỘ cũng rơi vào `.catch` bên dưới (trả 500) thay vì thoát khỏi callback.
+      new Promise<Response>((resolve) => resolve(handler(request))).then(
+        async (response) => {
+          outgoing.statusCode = response.status;
+          response.headers.forEach((value, name) =>
+            outgoing.setHeader(name, value)
+          );
+          if (response.body === null) {
+            outgoing.end();
+            return;
           }
-        } finally {
-          // Client bỏ đi giữa chừng: hủy nguồn để không tiếp tục sinh dữ liệu vô ích.
-          if (!finished) void reader.cancel().catch(() => {});
-          outgoing.end();
-        }
-      }).catch(() => {
+          const reader = response.body.getReader();
+          let finished = false;
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) {
+                finished = true;
+                break;
+              }
+              if (outgoing.destroyed) break;
+              // Bộ đệm đầy thì dừng đọc luồng Fetch cho tới khi socket xả xong (hoặc đóng).
+              if (!outgoing.write(value)) {
+                await new Promise<void>((resolve) => {
+                  const settle = () => {
+                    outgoing.off("drain", settle);
+                    outgoing.off("close", settle);
+                    resolve();
+                  };
+                  outgoing.once("drain", settle);
+                  outgoing.once("close", settle);
+                });
+              }
+            }
+          } finally {
+            // Client bỏ đi giữa chừng: hủy nguồn để không tiếp tục sinh dữ liệu vô ích.
+            if (!finished) void reader.cancel().catch(() => {});
+            outgoing.end();
+          }
+        },
+      ).catch(() => {
         if (!outgoing.headersSent) outgoing.statusCode = 500;
         outgoing.end();
       });
     });
     server.on("error", reject);
     server.on("close", () => resolve());
+    // `abort` không được phát lại cho listener đăng ký muộn: tín hiệu đã hủy từ trước thì không mở cổng.
+    if (options.signal?.aborted) {
+      resolve();
+      return;
+    }
     options.signal?.addEventListener("abort", () => {
       server.close();
       server.closeAllConnections();
