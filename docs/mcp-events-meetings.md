@@ -8,7 +8,7 @@ permissions. The feature is **off by default**.
 Contract file: `src/events/contract/meeting-events.v1.json`
 
 SHA-256 of the contract file:
-`3275780e492dbc226767ed5cdd1c99ebb97505835e1b78759c7b2c766bdc9c06`
+`085a2085ee8b858dbb4843cd8631cde452769d67344bfb771a93875bb22d940e`
 
 A test (`src/events/contract_test.ts`) fails when this value and the file
 disagree, so the ERP side and this server can confirm they hold the same

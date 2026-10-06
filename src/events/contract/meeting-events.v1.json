@@ -37,7 +37,8 @@
             "co_host",
             "recurrence",
             "room",
-            "link"
+            "link",
+            "access"
           ]
         }
       },
