@@ -502,3 +502,25 @@ Deno.test("fetchMeeting fails on a malformed occurrence instead of dropping it",
     );
   }
 });
+
+Deno.test("fetchMeeting fails on a malformed recurrence instead of reading it as non-recurring", async () => {
+  for (const recurrence of ["Weekly", 1, true, [], ["Weekly"]]) {
+    const { client } = fakeClient(() => ({
+      ok: true,
+      result: { ...MEETING, recurrence },
+    }));
+    await assertRejects(
+      () => fetchMeeting(client, { event_id: "EVT-1" }),
+      Error,
+      "Events backend error",
+    );
+  }
+  const { client } = fakeClient(() => ({
+    ok: true,
+    result: { ...MEETING, recurrence: null },
+  }));
+  assertEquals(
+    (await fetchMeeting(client, { event_id: "EVT-1" })).recurrence,
+    null,
+  );
+});

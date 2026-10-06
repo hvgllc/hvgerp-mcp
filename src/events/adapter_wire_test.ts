@@ -720,6 +720,32 @@ Deno.test("an exhausted peek budget is a bounded 503, never a -32601 from the SD
   assertEquals(calls.length, 0);
 });
 
+Deno.test("the busy 503 carries the CORS headers of the base handler and exposes Retry-After", async () => {
+  const request = async () => {
+    const withBody = await withLength(
+      rpc("events/subscribe", SUBSCRIBE_PARAMS, {
+        headers: { Origin: "https://app.example.com" },
+      }),
+    );
+    return withBody;
+  };
+  const { handler } = await buildFixture({ cors: true, maxPeekBytes: 10 });
+  const res = await handler(await request());
+  assertEquals(res.status, 503);
+  assertNotEquals(res.headers.get("access-control-allow-origin"), null);
+  assert(
+    res.headers.get("access-control-expose-headers")?.includes("Retry-After"),
+  );
+  assertEquals(res.headers.get("Retry-After"), "1");
+  await res.body?.cancel();
+  // CORS tắt thì không có header nào của CORS, và không có Origin thì cũng vậy.
+  const plain = await buildFixture({ cors: false, maxPeekBytes: 10 });
+  const denied = await plain.handler(await request());
+  assertEquals(denied.status, 503);
+  assertEquals(denied.headers.get("access-control-allow-origin"), null);
+  await denied.body?.cancel();
+});
+
 Deno.test("tiny declared bodies that are withheld cannot hold more than maxPeeks peeks at once", async () => {
   const { handler } = await buildFixture({
     maxPeeks: 2,

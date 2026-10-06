@@ -461,6 +461,47 @@ export function createEventsAdapter(
     });
   }
 
+  /**
+   * Header CORS của handler gốc cho một request mà ta không được phép chuyển tiếp (body chưa đọc). Hỏi
+   * handler bằng một request OPTIONS không body: nó rẻ, không đụng tới body thật, và trả đúng chính sách
+   * CORS đã cấu hình (rỗng khi CORS tắt). Lỗi thì không kèm header nào, vì phản hồi 503 vẫn phải đi được.
+   */
+  async function corsHeadersFor(request: Request): Promise<Headers> {
+    const origin = request.headers.get("origin");
+    if (origin === null) return new Headers();
+    try {
+      const probe = await base(
+        new Request(request.url, {
+          method: "OPTIONS",
+          headers: {
+            Origin: origin,
+            "Access-Control-Request-Method": "POST",
+          },
+        }),
+      );
+      await probe.body?.cancel();
+      const headers = new Headers();
+      for (const [name, value] of probe.headers) {
+        if (
+          name.toLowerCase().startsWith("access-control-") || name === "vary"
+        ) {
+          headers.set(name, value);
+        }
+      }
+      // Trình duyệt chỉ cho script đọc `Retry-After` khi nó nằm trong danh sách expose.
+      if (headers.has("access-control-allow-origin")) {
+        const exposed = headers.get("access-control-expose-headers");
+        headers.set(
+          "access-control-expose-headers",
+          exposed ? `${exposed}, Retry-After` : "Retry-After",
+        );
+      }
+      return headers;
+    } catch {
+      return new Headers();
+    }
+  }
+
   return async (request) => {
     const rpc = await peekRpc(request, maxBodyBytes, peekBudget, peekTimeoutMs);
     if (rpc === PEEK_BUSY) {
@@ -476,11 +517,14 @@ export function createEventsAdapter(
         }),
         {
           status: 503,
-          headers: {
-            "Content-Type": "application/json",
-            "Retry-After": "1",
-            "MCP-Protocol-Version": PROTOCOL_VERSION,
-          },
+          headers: mergeHeaders(
+            await corsHeadersFor(request),
+            new Headers({
+              "Content-Type": "application/json",
+              "Retry-After": "1",
+              "MCP-Protocol-Version": PROTOCOL_VERSION,
+            }),
+          ),
         },
       );
     }

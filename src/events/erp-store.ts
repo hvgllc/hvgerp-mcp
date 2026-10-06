@@ -277,7 +277,11 @@ function pickMeetingFields(
   const picked = pickKeys(result, MEETING_KEYS);
   if (isRecord(result.recurrence)) {
     picked.recurrence = pickKeys(result.recurrence, RECURRENCE_KEYS);
-  } else if (Object.hasOwn(result, "recurrence")) picked.recurrence = null;
+  } else if (Object.hasOwn(result, "recurrence")) {
+    // Chỉ `null` thật mới nghĩa là "không lặp": giá trị hỏng mà bị đổi thành null sẽ làm người gọi bỏ lỡ các lần sau.
+    if (result.recurrence !== null) throw new Error("Events backend error");
+    picked.recurrence = null;
+  }
   if (Object.hasOwn(result, "occurrences")) {
     // Một phần tử hỏng không được lặng lẽ bị bỏ: người gọi sẽ tưởng lịch đã đủ và bỏ lỡ cuộc họp.
     if (
