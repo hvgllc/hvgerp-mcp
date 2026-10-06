@@ -124,6 +124,8 @@ export function serveHttp(
                     if (finished) return;
                     try {
                       controller.enqueue(chunk);
+                      // Hàng đợi đầy: tạm dừng socket tới khi bên đọc gọi `pull`.
+                      if ((controller.desiredSize ?? 0) <= 0) incoming.pause();
                     } catch {
                       finished = true;
                     }
@@ -154,6 +156,10 @@ export function serveHttp(
                   incoming.on("data", onData);
                   incoming.on("end", onEnd);
                   incoming.on("error", onError);
+                },
+                // Bên đọc cần thêm dữ liệu: nhả lại socket đang bị tạm dừng.
+                pull() {
+                  incoming.resume();
                 },
                 // Bên đọc hủy sớm (ví dụ body quá lớn): ngừng nhét chunk vào stream đã đóng.
                 cancel() {

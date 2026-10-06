@@ -49,9 +49,11 @@ off; any other value stops startup. When on, startup is refused unless:
    `ERPNEXT_API_SECRET` must be unset);
 3. OAuth JWT verification is configured (`MCP_OAUTH_JWKS_URL`).
 
-Static bearer tokens configured next to OAuth keep working for the old tools but
-carry no user identity, so every Events request made with one is refused with
-`-32012`. Startup prints a warning in that case.
+Static bearer tokens carry no user identity, and `MCP_CALLER_IDENTITY=required`
+(which Events needs) refuses every `tools/call` made without one. Startup
+therefore fails when `MCP_AUTH_TOKEN(S)` is set together with the Events flag:
+move those clients to OAuth user tokens and remove the static tokens, or leave
+Events off.
 
 With the flag on, the HTTP listener is opened through the runtime port with the
 SDK's fetch handler wrapped by the Events adapter. With the flag off the
@@ -154,8 +156,9 @@ lifetimes short. The webhook subscription itself is leased by ERPNext through
 
 - `events rpc ok method=<name>` and `events rpc refused code=<code>` on stderr,
   nothing else per request.
-- `-32012` for a client that works for old tools but not for Events usually
-  means it is using a static shared bearer, or its token has no `email` claim.
+- `-32012` usually means the client is using a static shared bearer, or its
+  token has no `email` claim. With `MCP_CALLER_IDENTITY=required` such a client
+  cannot call tools either.
 - `-32603` means ERPNext did not answer in the agreed shape. Check that the
   `hvg_workspace` app on the site exposes `mcp_events.api`.
 - Legacy clients behind `shim.ts` keep working: a 2026-07-28 request passes

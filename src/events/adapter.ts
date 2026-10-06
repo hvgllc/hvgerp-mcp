@@ -61,12 +61,36 @@ export interface EventsAdapterOptions {
   maxConcurrent?: number;
   /** Số lệnh được xếp hàng chờ khi đã đủ `maxConcurrent`; quá số này trả 503. Mặc định 50. */
   maxQueued?: number;
+  /**
+   * Tổng byte adapter được giữ trong bộ nhớ cùng lúc để xem method trước khi vào SDK. Hết ngân
+   * sách thì request đi thẳng vào SDK mà không xem. Mặc định 16 MiB.
+   */
+  maxPeekBytes?: number;
+  /** Thời gian tối đa chờ body để xem method, quá hạn thì đi thẳng vào SDK. Mặc định 5000 ms. */
+  peekTimeoutMs?: number;
   /** Chỉ nhận thông điệp không nhạy cảm (tên method, mã lỗi). */
   log?: (message: string) => void;
 }
 
 const DEFAULT_MAX_CONCURRENT = 10;
 const DEFAULT_MAX_QUEUED = 50;
+const DEFAULT_MAX_PEEK_BYTES = 16 * 1024 * 1024;
+const DEFAULT_PEEK_TIMEOUT_MS = 5000;
+
+/** Ngân sách byte dùng chung: `take` giữ chỗ trước khi đọc, `give` trả lại khi xong. */
+function createByteBudget(total: number) {
+  let used = 0;
+  return {
+    take(bytes: number): boolean {
+      if (used + bytes > total) return false;
+      used += bytes;
+      return true;
+    },
+    give(bytes: number): void {
+      used -= bytes;
+    },
+  };
+}
 
 /** Hàng đợi đã đầy: adapter từ chối việc mới thay vì gom thêm vào bộ nhớ. */
 class EventsBusyError extends Error {}
@@ -117,13 +141,20 @@ function isRequestId(value: unknown): value is string | number {
 async function readLimited(
   stream: ReadableStream<Uint8Array>,
   limit: number,
+  timeoutMs: number,
 ): Promise<Uint8Array | null> {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    void reader.cancel().catch(() => {});
+  }, timeoutMs);
   try {
     while (true) {
       const { done, value } = await reader.read();
+      if (timedOut) return null;
       if (done) break;
       total += value.byteLength;
       if (total > limit) {
@@ -135,6 +166,7 @@ async function readLimited(
       chunks.push(value);
     }
   } finally {
+    clearTimeout(timer);
     reader.releaseLock();
   }
   const joined = new Uint8Array(total);
@@ -150,6 +182,8 @@ async function readLimited(
 async function peekRpc(
   request: Request,
   maxBodyBytes: number,
+  budget: ReturnType<typeof createByteBudget>,
+  timeoutMs: number,
 ): Promise<PeekedRpc | null> {
   if (request.method !== "POST" || request.body === null) return null;
   let pathname: string;
@@ -159,14 +193,30 @@ async function peekRpc(
     return null;
   }
   if (!MCP_PATHS.has(pathname)) return null;
+  // Body khai báo quá trần thì không đệm: SDK sẽ tự từ chối. Không khai báo (chunked) thì giữ chỗ
+  // theo trần, vì chưa biết sẽ đọc bao nhiêu.
+  const declared = request.headers.get("content-length");
+  let reserve = maxBodyBytes;
+  if (declared !== null) {
+    if (!/^\d+$/.test(declared)) return null;
+    reserve = Number(declared);
+    if (reserve > maxBodyBytes) return null;
+  }
+  if (!budget.take(reserve)) return null;
   try {
-    const bytes = await readLimited(request.clone().body!, maxBodyBytes);
+    const bytes = await readLimited(
+      request.clone().body!,
+      maxBodyBytes,
+      timeoutMs,
+    );
     if (bytes === null) return null;
     const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
     if (!isRecord(parsed) || typeof parsed.method !== "string") return null;
     return { method: parsed.method, id: parsed.id, params: parsed.params };
   } catch {
     return null;
+  } finally {
+    budget.give(reserve);
   }
 }
 
@@ -209,6 +259,10 @@ export function createEventsAdapter(
   const { base, authProvider, serverInfo, store } = options;
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
   const log = options.log ?? (() => {});
+  const peekBudget = createByteBudget(
+    options.maxPeekBytes ?? DEFAULT_MAX_PEEK_BYTES,
+  );
+  const peekTimeoutMs = options.peekTimeoutMs ?? DEFAULT_PEEK_TIMEOUT_MS;
   const limit = createLimiter(
     options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
     options.maxQueued ?? DEFAULT_MAX_QUEUED,
@@ -389,7 +443,7 @@ export function createEventsAdapter(
   }
 
   return async (request) => {
-    const rpc = await peekRpc(request, maxBodyBytes);
+    const rpc = await peekRpc(request, maxBodyBytes, peekBudget, peekTimeoutMs);
     if (rpc === null) return await base(request);
 
     if (rpc.method === "server/discover" || rpc.method === "initialize") {

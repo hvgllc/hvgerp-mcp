@@ -223,12 +223,15 @@ export function assertEventsPolicy(input: EventsPolicyInput): string[] {
         "Set MCP_OAUTH_JWKS_URL, MCP_OAUTH_AUDIENCE, MCP_OAUTH_ISSUER and MCP_AUTH_RESOURCE.",
     );
   }
-  const warnings: string[] = [];
   if (input.authConfig.tokens.size > 0) {
-    warnings.push(
-      "static bearer tokens are configured next to OAuth. They keep working for the existing " +
-        "tools but carry no user identity, so every Events request made with one is refused.",
+    // `MCP_CALLER_IDENTITY=required` từ chối mọi `tools/call` không có email, nên token tĩnh sẽ
+    // âm thầm mất quyền gọi cả tool cũ. Từ chối cấu hình trộn còn hơn để tích hợp cũ hỏng im lặng.
+    throw new Error(
+      `[hvgerp-mcp] ${EVENTS_FLAG_ENV} is on but static bearer tokens are also configured. ` +
+        "Events needs MCP_CALLER_IDENTITY=required, which refuses every tools/call made with a " +
+        "static token (no user identity). Move those clients to OAuth user tokens and remove " +
+        "MCP_AUTH_TOKEN(S), or turn Events off.",
     );
   }
-  return warnings;
+  return [];
 }

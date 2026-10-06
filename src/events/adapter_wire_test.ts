@@ -130,6 +130,8 @@ async function buildFixture(
     maxBodyBytes?: number;
     maxConcurrent?: number;
     maxQueued?: number;
+    maxPeekBytes?: number;
+    peekTimeoutMs?: number;
   } = {},
 ): Promise<Fixture> {
   const provider = new MixedProvider();
@@ -164,6 +166,8 @@ async function buildFixture(
     maxBodyBytes: options.maxBodyBytes,
     maxConcurrent: options.maxConcurrent,
     maxQueued: options.maxQueued,
+    maxPeekBytes: options.maxPeekBytes,
+    peekTimeoutMs: options.peekTimeoutMs,
     log: (message) => logs.push(message),
   });
   return { base, handler, calls, logs };
@@ -682,6 +686,47 @@ Deno.test("backend calls are bounded by maxConcurrent and the overflow is refuse
   const settled = await Promise.all(pending);
   assertEquals(settled.map((res) => res.status), [200, 200, 200]);
   assertEquals(peak, 2);
+});
+
+// ── Ngân sách đệm trước khi vào SDK ─────────────────────────────────────────
+
+async function withLength(request: Request): Promise<Request> {
+  const text = await request.text();
+  const headers = new Headers(request.headers);
+  headers.set("content-length", String(new TextEncoder().encode(text).length));
+  return new Request(request.url, { method: "POST", headers, body: text });
+}
+
+Deno.test("a declared body over the cap is not buffered by the adapter", async () => {
+  const { handler, calls } = await buildFixture({ maxBodyBytes: 10 });
+  const res = await handler(
+    await withLength(rpc("events/subscribe", SUBSCRIBE_PARAMS)),
+  );
+  await res.body?.cancel();
+  assertEquals(calls.length, 0);
+});
+
+Deno.test("an exhausted peek budget sends the request straight to the SDK", async () => {
+  const { handler, calls } = await buildFixture({ maxPeekBytes: 10 });
+  const res = await handler(
+    await withLength(rpc("events/subscribe", SUBSCRIBE_PARAMS)),
+  );
+  await res.body?.cancel();
+  assertEquals(calls.length, 0);
+});
+
+Deno.test("the peek budget is returned once a request has been read", async () => {
+  const probe = await withLength(rpc("events/subscribe", SUBSCRIBE_PARAMS));
+  const size = Number(probe.headers.get("content-length"));
+  const { handler, calls } = await buildFixture({ maxPeekBytes: size });
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await handler(
+      await withLength(rpc("events/subscribe", SUBSCRIBE_PARAMS)),
+    );
+    assertEquals(res.status, 200);
+    await res.body?.cancel();
+  }
+  assertEquals(calls.length, 3);
 });
 
 // ── Kiểm tra schema (-32602, -32011, -32014) ────────────────────────────────

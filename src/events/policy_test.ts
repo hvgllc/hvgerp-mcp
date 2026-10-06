@@ -111,13 +111,17 @@ Deno.test("events policy refuses a missing auth config or one without OIDC", () 
   );
 });
 
-Deno.test("events policy warns, without failing, when static tokens sit beside OIDC", () => {
-  const warnings = assertEventsPolicy({
-    callerIdentity: "required",
-    authConfig: { ...OIDC, tokens: new Set(["static-secret"]) },
-  });
-  assertEquals(warnings.length, 1);
-  assertEquals(warnings[0].includes("static-secret"), false);
+Deno.test("events policy refuses static tokens next to OIDC", () => {
+  const error = assertThrows(
+    () =>
+      assertEventsPolicy({
+        callerIdentity: "required",
+        authConfig: { ...OIDC, tokens: new Set(["static-secret"]) },
+      }),
+    Error,
+    "static bearer tokens",
+  );
+  assertEquals(error.message.includes("static-secret"), false);
 });
 
 // ── Danh tính dùng chung ────────────────────────────────────────────────────
