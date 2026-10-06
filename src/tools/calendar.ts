@@ -26,15 +26,17 @@ const TEMPORAL_PATTERN =
   /^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
 const TEMPORAL_MAX_LENGTH = 64;
 
-/** Chuỗi khớp hình dạng ISO và mọi thành phần là giá trị có thật (không có ngày 30/02 hay giờ 25). */
+/** Chuỗi khớp hình dạng ISO và mọi thành phần là giá trị có thật (không có ngày 30/02, giờ 25 hay lệch +99:99). */
 function isRealTemporal(value: string): boolean {
   const parts = value.match(
-    /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?/,
+    /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?(?:Z|[+-](\d{2}):?(\d{2}))?)?$/,
   );
   if (!parts) return false;
-  const [year, month, day, hour = 0, minute = 0, second = 0] = parts.slice(1)
-    .map((part) => (part === undefined ? 0 : Number(part)));
+  const [year, month, day, hour, minute, second, offsetHour, offsetMinute] =
+    parts.slice(1).map((part) => (part === undefined ? 0 : Number(part)));
   if (hour > 23 || minute > 59 || second > 59) return false;
+  // Độ lệch múi giờ thật chỉ tới ±14:00; chặn ở 23:59 là đủ để loại giá trị vô nghĩa như +99:99.
+  if (offsetHour > 23 || offsetMinute > 59) return false;
   const moment = new Date(Date.UTC(year, month - 1, day));
   return moment.getUTCFullYear() === year &&
     moment.getUTCMonth() === month - 1 && moment.getUTCDate() === day;

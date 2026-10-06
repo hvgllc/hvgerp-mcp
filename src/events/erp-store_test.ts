@@ -416,3 +416,58 @@ Deno.test("fetchMeeting maps every failure to a fixed message", async () => {
     assertEquals((error as Error).message, message);
   }
 });
+
+Deno.test("a contradictory or incomplete success envelope is a backend error, even for unsubscribe", async () => {
+  const malformed = [
+    { ok: true },
+    { ok: true, error: { code: -32012 } },
+    { ok: true, result: {}, error: { code: -32012 } },
+    { ok: false },
+    { ok: false, result: {} },
+  ];
+  for (const message of malformed) {
+    assertThrowsBackend(() => unwrapErpEnvelope(message));
+    const { client } = fakeClient(() => message);
+    const store = createErpEventsStore({ getClient: () => client });
+    const error = await assertRejects(() =>
+      asCaller(() =>
+        store.unsubscribe({
+          name: "meeting.updated",
+          arguments: {},
+          deliveryUrl: "https://hooks.example.com/cb",
+        })
+      )
+    );
+    assert(error instanceof EventsProtocolError);
+    assertEquals(error.code, EventsErrorCode.InternalError);
+  }
+  // Phong bì đúng hình vẫn được chấp nhận, kể cả result rỗng.
+  assertEquals(unwrapErpEnvelope({ ok: true, result: null }), {
+    ok: true,
+    result: null,
+  });
+});
+
+function assertThrowsBackend(fn: () => unknown) {
+  try {
+    fn();
+  } catch (error) {
+    assert(error instanceof EventsProtocolError);
+    assertEquals(error.code, EventsErrorCode.InternalError);
+    return;
+  }
+  throw new Error("expected a backend error");
+}
+
+Deno.test("fetchMeeting reports ERP throttling without mentioning subscription limits", async () => {
+  const { client } = fakeClient(() => {
+    throw new FrappeAPIError("slow down", 429, null);
+  });
+  const error = await assertRejects(() =>
+    fetchMeeting(client, { event_id: "EVT-1" })
+  );
+  assertEquals(
+    (error as Error).message,
+    "ERP is rate limiting requests, try again later",
+  );
+});

@@ -61,7 +61,19 @@ export function unwrapErpEnvelope(message: unknown): ErpEnvelope {
   if (!isRecord(message) || typeof message.ok !== "boolean") {
     throw new EventsProtocolError(EventsErrorCode.InternalError);
   }
-  if (message.ok) return { ok: true, result: message.result };
+  // Phong bì mâu thuẫn hoặc thiếu nhánh (`{ok:true}`, `{ok:true,error}`, `{ok:false,result}`) là lỗi
+  // backend: nếu không, unsubscribe (vốn bỏ qua `result`) sẽ báo hủy thành công dù ERP trả sai.
+  const hasResult = Object.hasOwn(message, "result");
+  const hasError = Object.hasOwn(message, "error");
+  if (message.ok) {
+    if (!hasResult || hasError) {
+      throw new EventsProtocolError(EventsErrorCode.InternalError);
+    }
+    return { ok: true, result: message.result };
+  }
+  if (!hasError || hasResult) {
+    throw new EventsProtocolError(EventsErrorCode.InternalError);
+  }
   return { ok: false, error: message.error };
 }
 
@@ -179,6 +191,10 @@ export async function fetchMeeting(
       httpMethod: "GET",
     });
   } catch (error) {
+    // 429 của lần đọc lại cuộc họp là giới hạn tốc độ của ERP, không phải hạn mức subscription.
+    if (error instanceof FrappeAPIError && error.status === 429) {
+      throw new Error("ERP is rate limiting requests, try again later");
+    }
     const mapped = classifyTransportError(error);
     // Tool đọc cuộc họp không có HTTP 401 để trả: cả token bị từ chối lẫn thiếu quyền đều là một câu.
     if (

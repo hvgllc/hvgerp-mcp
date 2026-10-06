@@ -127,6 +127,40 @@ Deno.test("node serveHttp survives data sent after the handler canceled the body
   });
 });
 
+Deno.test("node serveHttp drains a body the handler never read once it has responded", async () => {
+  await withNodeServer(
+    // Từ chối ngay, không đọc body (như khi xác thực thất bại).
+    () => new Response("denied", { status: 401 }),
+    async (port) => {
+      const conn = await Deno.connect({ hostname: "127.0.0.1", port });
+      try {
+        const total = 8 * 1024 * 1024;
+        await conn.write(new TextEncoder().encode(
+          `POST / HTTP/1.1\r\nHost: x\r\nContent-Length: ${total}\r\n\r\n`,
+        ));
+        const chunk = new Uint8Array(64 * 1024);
+        let sent = 0;
+        const sender = (async () => {
+          while (sent < total) {
+            sent += await conn.write(
+              chunk.subarray(0, Math.min(chunk.length, total - sent)),
+            );
+          }
+        })().catch(() => {});
+        const deadline = Date.now() + 3000;
+        while (sent < total && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        // Server không còn giữ socket ở trạng thái tạm dừng: toàn bộ body đã được xả.
+        assertEquals(sent, total);
+        await sender;
+      } finally {
+        conn.close();
+      }
+    },
+  );
+});
+
 // ── Dây nối trong server.ts ─────────────────────────────────────────────────
 
 const SERVER_SOURCE = await Deno.readTextFile(

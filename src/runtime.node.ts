@@ -176,6 +176,12 @@ export function serveHttp(
         return;
       }
 
+      // Phản hồi xong mà body chưa đọc hết (handler từ chối sớm): `onData` có thể đã tạm dừng socket
+      // và hook `cancel()` không bao giờ được gọi. Gỡ listener và xả phần body còn lại để socket
+      // không bị treo ở trạng thái tạm dừng và kết nối vẫn dùng lại được.
+      outgoing.once("finish", () => detachBody());
+      outgoing.once("close", () => detachBody());
+
       Promise.resolve(handler(request)).then(async (response) => {
         outgoing.statusCode = response.status;
         response.headers.forEach((value, name) =>

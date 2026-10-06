@@ -143,6 +143,8 @@ Deno.test("erpnext_meeting_get rejects a bad event_id or malformed dates", async
         "2030-02-30",
         "2030-05-01T25:00:00Z",
         "2030-05-01T10:61:00Z",
+        "2030-05-01T10:00:00+99:99",
+        "2030-05-01T10:00:00-0960",
         "2030-05-01; drop",
         5,
         "2030-05-01".padEnd(80, "0"),
