@@ -53,6 +53,7 @@ interface Call {
 function fakeClient(respond: (call: Call) => unknown) {
   const calls: Call[] = [];
   const client = {
+    actsAs: "caller",
     callMethod(
       method: string,
       args: Record<string, unknown>,
@@ -162,6 +163,32 @@ Deno.test("a call outside a caller scope is refused before it reaches ERP", asyn
   );
   assertEquals(error.code, EventsErrorCode.Forbidden);
   assertEquals(calls.length, 0);
+});
+
+Deno.test("a shared service client is refused even inside a caller scope", async () => {
+  // `setFrappeClient()` có thể tiêm tài khoản dịch vụ; request có danh tính vẫn không được chạy bằng nó.
+  for (const identity of ["service", undefined]) {
+    const { client, calls } = fakeClient(() => OK_SUBSCRIBE);
+    Object.assign(client, { actsAs: identity });
+    const store = createErpEventsStore({ getClient: () => client });
+    for (
+      const call of [
+        () => store.subscribe(SUBSCRIBE),
+        () =>
+          store.unsubscribe({
+            name: SUBSCRIBE.name,
+            arguments: SUBSCRIBE.arguments,
+            deliveryUrl: SUBSCRIBE.deliveryUrl,
+          }),
+      ]
+    ) {
+      const error = await asCaller(() =>
+        assertRejects(call, EventsProtocolError)
+      );
+      assertEquals(error.code, EventsErrorCode.Forbidden);
+    }
+    assertEquals(calls.length, 0);
+  }
 });
 
 Deno.test("the request's own bearer reaches the wire as HVGKeycloak with POST bodies", async () => {

@@ -123,7 +123,13 @@ async function callErp(
   }
   let message: unknown;
   try {
-    message = await getClient().callMethod(method, args, { httpMethod });
+    const client = getClient();
+    // `getFrappeClient()` trả client được tiêm bằng `setFrappeClient()` trước khi hỏi `currentCaller()`, nên có thể là
+    // tài khoản dịch vụ dùng chung dù request có danh tính: chỉ client chạy thay mặt người gọi mới được dùng.
+    if (client.actsAs !== "caller") {
+      throw new EventsProtocolError(EventsErrorCode.Forbidden);
+    }
+    message = await client.callMethod(method, args, { httpMethod });
   } catch (error) {
     throw classifyTransportError(error);
   }
