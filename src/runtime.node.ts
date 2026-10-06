@@ -216,6 +216,8 @@ export function serveHttp(
             return;
           }
           let finished = false;
+          // Luồng nguồn lỗi giữa chừng: không được kết thúc như một phản hồi hợp lệ, để `catch` bên dưới quyết định.
+          let failed = false;
           // Client đóng kết nối khi `reader.read()` đang treo (SSE hoặc luồng chậm): kiểm `destroyed` sau read sẽ
           // không bao giờ chạy, nên hủy nguồn ngay từ sự kiện `close` để read treo kết thúc và producer dừng.
           const onClose = () => {
@@ -243,15 +245,27 @@ export function serveHttp(
                 });
               }
             }
+          } catch (error) {
+            failed = true;
+            throw error;
           } finally {
             outgoing.off("close", onClose);
             // Client bỏ đi giữa chừng: hủy nguồn để không tiếp tục sinh dữ liệu vô ích.
             if (!finished) void reader.cancel().catch(() => {});
-            outgoing.end();
+            if (!failed) outgoing.end();
           }
         },
       ).catch(() => {
-        if (!outgoing.headersSent) outgoing.statusCode = 500;
+        if (outgoing.headersSent) {
+          // Đã có byte đi ra: không thể đổi status, nên cắt kết nối để client thấy phản hồi bị đứt thay vì tưởng đủ.
+          outgoing.destroy();
+          return;
+        }
+        // Header của phản hồi hỏng (content-length, content-type...) không còn đúng với thân lỗi rỗng.
+        for (const name of outgoing.getHeaderNames()) {
+          outgoing.removeHeader(name);
+        }
+        outgoing.statusCode = 500;
         outgoing.end();
       });
     });

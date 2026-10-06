@@ -275,16 +275,16 @@ function mergeHeaders(baseHeaders: Headers, own: Headers): Headers {
   return merged;
 }
 
-async function isMethodNotFound(
-  response: Response,
-  method: string,
-): Promise<boolean> {
+/**
+ * Phản hồi 404 mang mã JSON-RPC -32601 là tín hiệu ổn định; câu chữ của `message` thuộc về SDK và có thể đổi
+ * giữa các bản vá nên không dùng để nhận diện.
+ */
+async function isMethodNotFound(response: Response): Promise<boolean> {
   if (response.status !== 404) return false;
   try {
     const body: unknown = await response.clone().json();
     if (!isRecord(body) || !isRecord(body.error)) return false;
-    return body.error.code === -32601 &&
-      body.error.message === `Method not found: ${method}`;
+    return body.error.code === -32601;
   } catch {
     return false;
   }
@@ -418,7 +418,7 @@ export function createEventsAdapter(
   ): Promise<Response> {
     const baseResponse = await base(request);
     // Chỉ nhận việc khi handler gốc đã cho qua mọi cổng và chỉ còn thiếu method.
-    if (!await isMethodNotFound(baseResponse, rpc.method)) return baseResponse;
+    if (!await isMethodNotFound(baseResponse)) return baseResponse;
 
     const authInfo = await verifyOrUnavailable(request);
     if (authInfo === VERIFIER_UNAVAILABLE) {

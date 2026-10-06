@@ -434,7 +434,9 @@ function malformedBackend(): EventsProtocolError {
 /** Đổi kết quả subscribe của ERP (snake_case) sang kết quả trên dây (camelCase) và kiểm hình dạng. */
 export function toSubscribeResult(raw: unknown): SubscribeResult {
   if (!isRecord(raw)) throw malformedBackend();
-  const { id, refresh_before, cursor, truncated } = raw;
+  const { id, refresh_before, truncated } = raw;
+  // Hợp đồng Events: cursor trong phản hồi là tuỳ chọn và nullable, vắng mặt được hiểu như `null`.
+  const cursor = raw.cursor === undefined ? null : raw.cursor;
   if (typeof id !== "string" || id.length === 0 || id.length > 200) {
     throw malformedBackend();
   }

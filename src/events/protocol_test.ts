@@ -451,6 +451,15 @@ Deno.test("toSubscribeResult maps snake_case to the wire shape and validates it"
     parseSubscribeParams({ ...BASE_SUBSCRIBE, cursor: edge }).cursor,
     edge,
   );
+  // Cursor vắng mặt trong phản hồi ERP được hiểu như `null`, không phải lỗi backend.
+  assertEquals(
+    toSubscribeResult({
+      id: "sub_1",
+      refresh_before: "2030-01-01T00:00:00Z",
+      truncated: false,
+    }).cursor,
+    null,
+  );
   const malformed: unknown[] = [
     null,
     {},

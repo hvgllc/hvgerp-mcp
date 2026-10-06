@@ -1202,3 +1202,27 @@ Deno.test("error bodies never echo caller supplied values", async () => {
     assert(!text.includes(forbidden), `error body leaked ${forbidden}`);
   }
 });
+
+Deno.test("A3 events are still claimed when the SDK rewords its method-not-found text", async () => {
+  const { base } = await buildFixture();
+  const reworded: FetchHandler = async (request) => {
+    const response = await base(request);
+    if (response.status !== 404) return response;
+    const body = await response.json();
+    body.error.message = "Unknown method, try something else";
+    return new Response(JSON.stringify(body), {
+      status: 404,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const { store } = makeStore();
+  const handler = createEventsAdapter({
+    base: reworded,
+    authProvider: new MixedProvider(),
+    serverInfo: SERVER_INFO,
+    store,
+  });
+  const res = await handler(rpc("events/list", {}));
+  assertEquals(res.status, 200);
+  assert(Array.isArray((await json(res)).result.events));
+});
