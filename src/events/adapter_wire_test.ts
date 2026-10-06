@@ -432,6 +432,41 @@ Deno.test("A2 a verifier that throws on the second verification is a bounded 502
   assertEquals(calls.length, 0);
 });
 
+for (const requestId of ["discover-7", 42] as const) {
+  Deno.test(`A2 a verifier outage during server/discover echoes the request id ${requestId}`, async () => {
+    // Lần xác minh đầu (của handler gốc) qua, lần hai (adapter thêm capability) bị sập.
+    let verifications = 0;
+    const flaky = new (class extends FakeOidcProvider {
+      override verifyToken(token: string) {
+        verifications += 1;
+        return verifications === 1
+          ? super.verifyToken(token)
+          : Promise.reject(new Error("jwks unreachable"));
+      }
+    })();
+    const app = new McpApp({
+      name: SERVER_INFO.name,
+      version: SERVER_INFO.version,
+      transport: "stateless",
+      auth: { provider: flaky },
+    });
+    const base = await app.getFetchHandler({ cors: false });
+    const { store } = makeStore();
+    const handler = createEventsAdapter({
+      base,
+      authProvider: flaky,
+      serverInfo: SERVER_INFO,
+      store,
+    });
+    const res = await handler(rpc("server/discover", {}, { id: requestId }));
+    assertEquals(res.status, 502);
+    const body = await res.json();
+    assertEquals(body.id, requestId);
+    assertEquals(body.error.code, -32603);
+    assertEquals(JSON.stringify(body).includes("jwks"), false);
+  });
+}
+
 Deno.test("A2 a second verification that returns null is still a 401", async () => {
   let verifications = 0;
   const revoking = new (class extends FakeOidcProvider {

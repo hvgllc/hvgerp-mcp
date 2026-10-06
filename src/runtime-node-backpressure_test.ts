@@ -87,3 +87,48 @@ Deno.test("serveHttp cancels the response body when the client disconnects while
     await finished;
   }
 });
+
+Deno.test("serveHttp cancels the response body when the client disconnects before the handler resolves", async () => {
+  const stop = new AbortController();
+  const ready = Promise.withResolvers<{ port: number }>();
+  const cancelled = Promise.withResolvers<void>();
+  const handlerStarted = Promise.withResolvers<void>();
+  const releaseHandler = Promise.withResolvers<void>();
+  const finished = serveHttp({
+    port: 0,
+    hostname: "127.0.0.1",
+    signal: stop.signal,
+    onListen: (info) => ready.resolve({ port: info.port }),
+  }, async () => {
+    handlerStarted.resolve();
+    // Handler chậm: client đã ngắt kết nối trước khi Response được trả về.
+    await releaseHandler.promise;
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        pull: () => new Promise<void>(() => {}),
+        cancel: () => cancelled.resolve(),
+      }, { highWaterMark: 0 }),
+    );
+  });
+  const { port } = await ready.promise;
+  const socket = await Deno.connect({ port, hostname: "127.0.0.1" });
+  await socket.write(
+    new TextEncoder().encode("GET /late HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+  );
+  await handlerStarted.promise;
+  socket.close();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  releaseHandler.resolve();
+  const timer = setTimeout(
+    () =>
+      cancelled.reject(new Error("body was not cancelled after early close")),
+    3000,
+  );
+  try {
+    await cancelled.promise;
+  } finally {
+    clearTimeout(timer);
+    stop.abort();
+    await finished;
+  }
+});

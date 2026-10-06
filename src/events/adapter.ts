@@ -454,12 +454,14 @@ export function createEventsAdapter(
   async function withEventsCapability(
     request: Request,
     response: Response,
+    id: unknown,
   ): Promise<Response> {
     if (response.status !== 200) return response;
     const authInfo = await verifyOrUnavailable(request);
     if (authInfo === VERIFIER_UNAVAILABLE) {
+      // Client cần id gốc để ghép lỗi với request; chỉ khi request không có id hợp lệ mới dùng null.
       return jsonRpc(response, {
-        id: null,
+        id: isRequestId(id) ? id : null,
         error: {
           code: EventsErrorCode.InternalError,
           message: "Events backend error",
@@ -561,7 +563,11 @@ export function createEventsAdapter(
     if (rpc === null) return await base(request);
 
     if (rpc.method === "server/discover" || rpc.method === "initialize") {
-      return await withEventsCapability(request, await base(request));
+      return await withEventsCapability(
+        request,
+        await base(request),
+        rpc.id,
+      );
     }
     if (isEventsMethod(rpc.method) && isRequestId(rpc.id)) {
       return await handleEvents(

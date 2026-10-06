@@ -182,8 +182,14 @@ export function serveHttp(
       // Phản hồi xong mà body chưa đọc hết (handler từ chối sớm): `onData` có thể đã tạm dừng socket
       // và hook `cancel()` không bao giờ được gọi. Gỡ listener và xả phần body còn lại để socket
       // không bị treo ở trạng thái tạm dừng và kết nối vẫn dùng lại được.
+      // Cờ đóng được ghi từ lúc nhận request: client có thể ngắt kết nối trước khi handler trả Response, khi đó
+      // sự kiện `close` đã phát và listener đăng ký sau (lúc đọc body) sẽ không bao giờ được gọi.
+      let outgoingClosed = false;
       outgoing.once("finish", () => detachBody());
-      outgoing.once("close", () => detachBody());
+      outgoing.once("close", () => {
+        outgoingClosed = true;
+        detachBody();
+      });
 
       // Bọc trong Promise để handler ném ĐỒNG BỘ cũng rơi vào `.catch` bên dưới (trả 500) thay vì thoát khỏi callback.
       new Promise<Response>((resolve) => resolve(handler(request))).then(
@@ -197,6 +203,11 @@ export function serveHttp(
             return;
           }
           const reader = response.body.getReader();
+          // Client đã đi trước khi handler xong: hủy nguồn ngay thay vì treo ở `read()` đầu tiên của một luồng chậm.
+          if (outgoingClosed || outgoing.destroyed) {
+            void reader.cancel().catch(() => {});
+            return;
+          }
           let finished = false;
           // Client đóng kết nối khi `reader.read()` đang treo (SSE hoặc luồng chậm): kiểm `destroyed` sau read sẽ
           // không bao giờ chạy, nên hủy nguồn ngay từ sự kiện `close` để read treo kết thúc và producer dừng.
