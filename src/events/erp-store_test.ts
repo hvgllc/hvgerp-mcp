@@ -667,6 +667,19 @@ Deno.test("fetchMeeting rejects a successful result whose values have the wrong 
     ["truthy non-boolean deleted", { deleted: "yes" }],
     ["object frequency", { recurrence: { frequency: { a: 1 }, until: null } }],
     ["object until", { recurrence: { frequency: "Weekly", until: { a: 1 } } }],
+    ["free-text weekday", {
+      recurrence: { frequency: "Weekly", weekdays: ["private notes"] },
+    }],
+    ["empty weekday", { recurrence: { frequency: "Weekly", weekdays: [""] } }],
+    ["wrong-case weekday", {
+      recurrence: { frequency: "Weekly", weekdays: ["Monday"] },
+    }],
+    ["duplicate weekday", {
+      recurrence: { frequency: "Weekly", weekdays: ["monday", "monday"] },
+    }],
+    ["free-text frequency", {
+      recurrence: { frequency: "private notes", until: null },
+    }],
     ["object weekday", { recurrence: { frequency: "Weekly", weekdays: [{}] } }],
     ["string weekdays", {
       recurrence: { frequency: "Weekly", weekdays: "monday" },

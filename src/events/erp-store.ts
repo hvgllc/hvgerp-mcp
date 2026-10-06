@@ -251,6 +251,22 @@ const MEETING_KEYS = [
 ] as const;
 const TOMBSTONE_KEYS = ["event_id", "revision", "deleted"] as const;
 const RECURRENCE_KEYS = ["frequency", "until", "weekdays"] as const;
+/** Tập đóng ERP phát ra: chuỗi ngoài tập là dữ liệu hỏng hoặc lệch phiên bản, không được lọt ra ngoài. */
+const RECURRENCE_FREQUENCIES: ReadonlySet<string> = new Set([
+  "Daily",
+  "Weekly",
+  "Monthly",
+  "Yearly",
+]);
+const WEEKDAY_NAMES: ReadonlySet<string> = new Set([
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+]);
 const OCCURRENCE_KEYS = [
   "series_id",
   "occurrence_start",
@@ -307,14 +323,20 @@ function validateRecurrence(
   recurrence: Record<string, unknown>,
 ): Record<string, unknown> {
   const picked = pickKeys(recurrence, RECURRENCE_KEYS);
-  assertShape(typeof picked.frequency === "string");
+  assertShape(
+    typeof picked.frequency === "string" &&
+      RECURRENCE_FREQUENCIES.has(picked.frequency),
+  );
   assertShape(
     !Object.hasOwn(picked, "until") || isNullableOf(picked.until, isRealDate),
   );
   assertShape(
     !Object.hasOwn(picked, "weekdays") ||
       (Array.isArray(picked.weekdays) &&
-        picked.weekdays.every((day) => typeof day === "string")),
+        picked.weekdays.every((day) =>
+          typeof day === "string" && WEEKDAY_NAMES.has(day)
+        ) &&
+        new Set(picked.weekdays).size === picked.weekdays.length),
   );
   return picked;
 }
