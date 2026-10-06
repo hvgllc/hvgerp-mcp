@@ -179,12 +179,15 @@ function isRequestId(value: unknown): value is string | number {
   return typeof value === "string" || typeof value === "number";
 }
 
-/** Đọc tối đa `limit` byte của một luồng; trả `null` nếu vượt trần. */
+/** Body không về đủ trong hạn: khác với "vượt trần", client này đang giữ kết nối và không được chuyển tiếp. */
+const PEEK_TIMEOUT = Symbol("peek-timeout");
+
+/** Đọc tối đa `limit` byte của một luồng; trả `null` nếu vượt trần, `PEEK_TIMEOUT` nếu quá hạn. */
 async function readLimited(
   stream: ReadableStream<Uint8Array>,
   limit: number,
   timeoutMs: number,
-): Promise<Uint8Array | null> {
+): Promise<Uint8Array | null | typeof PEEK_TIMEOUT> {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -196,7 +199,7 @@ async function readLimited(
   try {
     while (true) {
       const { done, value } = await reader.read();
-      if (timedOut) return null;
+      if (timedOut) return PEEK_TIMEOUT;
       if (done) break;
       total += value.byteLength;
       if (total > limit) {
@@ -229,7 +232,7 @@ async function peekRpc(
   maxBodyBytes: number,
   budget: ReturnType<typeof createByteBudget>,
   timeoutMs: number,
-): Promise<PeekedRpc | typeof PEEK_BUSY | null> {
+): Promise<PeekedRpc | typeof PEEK_BUSY | typeof PEEK_TIMEOUT | null> {
   if (request.method !== "POST" || request.body === null) return null;
   let pathname: string;
   try {
@@ -256,6 +259,7 @@ async function peekRpc(
       maxBodyBytes,
       timeoutMs,
     );
+    if (bytes === PEEK_TIMEOUT) return PEEK_TIMEOUT;
     if (bytes === null) return null;
     const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
     if (!isRecord(parsed) || typeof parsed.method !== "string") return null;
@@ -594,6 +598,29 @@ export function createEventsAdapter(
             new Headers({
               "Content-Type": "application/json",
               "Retry-After": "1",
+              "MCP-Protocol-Version": PROTOCOL_VERSION,
+            }),
+          ),
+        },
+      );
+    }
+    if (rpc === PEEK_TIMEOUT) {
+      // Body không về đủ trong hạn: không chuyển cho handler gốc, vì nó sẽ treo chờ phần còn lại sau khi
+      // chỗ peek đã được trả, và kẻ gửi body dở có thể chất đống handler vượt trần. Trả lỗi có giới hạn.
+      log("events rpc refused request body timed out");
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: null,
+          error: { code: -32600, message: "Request body timed out" },
+        }),
+        {
+          status: 408,
+          headers: mergeHeaders(
+            await corsHeadersFor(request),
+            new Headers({
+              "Content-Type": "application/json",
+              "Connection": "close",
               "MCP-Protocol-Version": PROTOCOL_VERSION,
             }),
           ),

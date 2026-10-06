@@ -915,8 +915,12 @@ Deno.test("tiny declared bodies that are withheld cannot hold more than maxPeeks
   assertEquals(third.status, 503);
   assertEquals(third.headers.get("Retry-After"), "1");
   await third.body?.cancel();
-  // Hết hạn peek thì hai chỗ được trả lại và request kế tiếp lại được xem.
-  await new Promise((resolve) => setTimeout(resolve, 600));
+  // Hết hạn peek thì hai chỗ được trả lại, hai request treo bị từ chối 408 (không chuyển cho handler gốc)
+  // và request kế tiếp lại được xem.
+  const timedOut = await first;
+  assertEquals(timedOut.status, 408);
+  assertEquals((await json(timedOut)).error.code, -32600);
+  assertEquals((await second).status, 408);
   const after = await handler(
     await withLength(rpc("events/subscribe", SUBSCRIBE_PARAMS)),
   );
