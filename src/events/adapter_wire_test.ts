@@ -939,6 +939,8 @@ Deno.test("tiny declared bodies that are withheld cannot hold more than maxPeeks
   const third = await handler(stalled());
   assertEquals(third.status, 503);
   assertEquals(third.headers.get("Retry-After"), "1");
+  // Body của request bị từ chối chưa được đọc: phải đóng kết nối để kẻ gửi nhỏ giọt không giữ được socket.
+  assertEquals(third.headers.get("Connection"), "close");
   await third.body?.cancel();
   // Hết hạn peek thì hai chỗ được trả lại, hai request treo bị từ chối 408 (không chuyển cho handler gốc)
   // và request kế tiếp lại được xem.

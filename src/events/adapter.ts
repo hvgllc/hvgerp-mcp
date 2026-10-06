@@ -613,6 +613,9 @@ export function createEventsAdapter(
             new Headers({
               "Content-Type": "application/json",
               "Retry-After": "1",
+              // Body chưa đọc của request bị từ chối vì hết ngân sách peek: đóng kết nối để runtime không giữ socket chờ phần
+              // còn lại (kẻ gửi body nhỏ giọt sẽ chất đống socket vượt trần).
+              "Connection": "close",
               "MCP-Protocol-Version": PROTOCOL_VERSION,
             }),
           ),
