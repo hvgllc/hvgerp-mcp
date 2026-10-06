@@ -319,8 +319,20 @@ function isNullableOf(
   return value === null || (typeof value === "string" && check(value));
 }
 
+/** Ngày lịch liền trước của `YYYY-MM-DD` (đầu vào đã qua `isRealDate`). */
+function previousDate(date: string): string {
+  const moment = new Date(`${date}T00:00:00Z`);
+  moment.setUTCDate(moment.getUTCDate() - 1);
+  return moment.toISOString().slice(0, 10);
+}
+
+/**
+ * `firstDate` là ngày sớm nhất mà lần diễn ra đầu tiên có thể rơi vào theo lịch của cuộc họp. `until` là ngày theo múi giờ
+ * của cuộc họp nên không được đứng trước ngày đó, nếu không chuỗi đã kết thúc trước khi bắt đầu.
+ */
 function validateRecurrence(
   recurrence: Record<string, unknown>,
+  firstDate: string,
 ): Record<string, unknown> {
   const picked = pickKeys(recurrence, RECURRENCE_KEYS);
   assertShape(
@@ -330,6 +342,7 @@ function validateRecurrence(
   assertShape(
     !Object.hasOwn(picked, "until") || isNullableOf(picked.until, isRealDate),
   );
+  assertShape(typeof picked.until !== "string" || picked.until >= firstDate);
   assertShape(
     !Object.hasOwn(picked, "weekdays") ||
       (Array.isArray(picked.weekdays) &&
@@ -347,7 +360,7 @@ function validateOccurrence(
   eventId: string,
 ): Record<string, unknown> {
   const picked = pickKeys(item, OCCURRENCE_KEYS);
-  assertShape(typeof picked.zone === "string");
+  assertShape(typeof picked.zone === "string" && picked.zone !== "");
   // Mỗi lần diễn ra phải thuộc đúng chuỗi của cuộc họp được hỏi, nếu không người gọi nhận lịch của Event khác.
   assertShape(picked.series_id === eventId);
   // Cuộc họp cả ngày phát ngày (`YYYY-MM-DD`), cuộc họp có giờ phát thời điểm UTC (`...Z`).
@@ -387,7 +400,7 @@ function pickMeetingFields(
   assertShape(!Object.hasOwn(picked, "deleted") || picked.deleted === false);
   assertShape(typeof picked.status === "string");
   assertShape(typeof picked.all_day === "boolean");
-  assertShape(typeof picked.time_zone === "string");
+  assertShape(typeof picked.time_zone === "string" && picked.time_zone !== "");
   assertShape(typeof picked.has_more === "boolean");
   for (const key of ["starts_at", "ends_at"]) {
     assertShape(
@@ -423,7 +436,11 @@ function pickMeetingFields(
     );
   }
   if (isRecord(result.recurrence)) {
-    picked.recurrence = validateRecurrence(result.recurrence);
+    // Cuộc họp có giờ: ngày UTC có thể lệch tới một ngày so với ngày theo múi giờ của cuộc họp, nên chừa biên một ngày.
+    const firstDate = picked.all_day
+      ? picked.start_date as string
+      : previousDate((picked.starts_at as string).slice(0, 10));
+    picked.recurrence = validateRecurrence(result.recurrence, firstDate);
   } else if (Object.hasOwn(result, "recurrence")) {
     // Chỉ `null` thật mới nghĩa là "không lặp": giá trị hỏng mà bị đổi thành null sẽ làm người gọi bỏ lỡ các lần sau.
     assertShape(result.recurrence === null);

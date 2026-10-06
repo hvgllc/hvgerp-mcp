@@ -320,7 +320,8 @@ export function parseSubscribeParams(params: unknown): SubscribeRequest {
 
   if (params.ttlMs !== undefined) {
     const ttl = params.ttlMs;
-    if (ttl !== null && !(Number.isSafeInteger(ttl) && (ttl as number) > 0)) {
+    // TTL chỉ là gợi ý: server nâng giá trị quá ngắn lên mức tối thiểu của nó, nên 0 hợp lệ và không bị từ chối.
+    if (ttl !== null && !(Number.isSafeInteger(ttl) && (ttl as number) >= 0)) {
       throw invalid("ttlMs");
     }
     request.ttlMs = ttl as number | null;

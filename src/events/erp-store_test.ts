@@ -543,6 +543,27 @@ Deno.test("fetchMeeting rejects a successful result whose values have the wrong 
     ["object status", { status: { note: "private" } }],
     ["string all_day", { all_day: "false" }],
     ["object time_zone", { time_zone: { x: 1 } }],
+    ["empty time_zone", { time_zone: "" }],
+    ["empty occurrence zone", {
+      occurrences: [{
+        series_id: "EVT-1",
+        occurrence_start: "2030-05-01T10:00:00Z",
+        occurrence_end: "2030-05-01T11:00:00Z",
+        zone: "",
+        schedule_revision: 4,
+      }],
+    }],
+    ["timed recurrence ending two days before the meeting", {
+      recurrence: { frequency: "Weekly", until: "2030-04-29" },
+    }],
+    ["all-day recurrence ending before the meeting", {
+      all_day: true,
+      starts_at: null,
+      ends_at: null,
+      start_date: "2030-05-10",
+      end_date_exclusive: "2030-05-11",
+      recurrence: { frequency: "Weekly", until: "2030-05-01" },
+    }],
     ["object starts_at", { starts_at: { x: 1 } }],
     ["number ends_at", { ends_at: 5 }],
     ["array start_date", { start_date: ["2030-05-01"] }],

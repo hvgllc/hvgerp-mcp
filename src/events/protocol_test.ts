@@ -292,6 +292,8 @@ Deno.test("subscribe: ttlMs and cursor keep the difference between absent and nu
     parseSubscribeParams({ ...BASE_SUBSCRIBE, ttlMs: 60_000 }).ttlMs,
     60_000,
   );
+  // TTL chỉ là gợi ý: 0 được chuyển đi để server nâng lên mức tối thiểu, không bị coi là sai dạng.
+  assertEquals(parseSubscribeParams({ ...BASE_SUBSCRIBE, ttlMs: 0 }).ttlMs, 0);
 });
 
 Deno.test("subscribe: invalid shapes map to the right Events error code", () => {
@@ -332,7 +334,7 @@ Deno.test("subscribe: invalid shapes map to the right Events error code", () => 
     [{ ...BASE_SUBSCRIBE, arguments: "x" }, -32602],
     [{ ...BASE_SUBSCRIBE, arguments: { event_id: 7 } }, -32602],
     [{ ...BASE_SUBSCRIBE, arguments: { user_id: "x@y.z" } }, -32602],
-    [{ ...BASE_SUBSCRIBE, ttlMs: 0 }, -32602],
+    [{ ...BASE_SUBSCRIBE, ttlMs: -1 }, -32602],
     [{ ...BASE_SUBSCRIBE, ttlMs: "5" }, -32602],
     [{ ...BASE_SUBSCRIBE, ttlMs: Number.MAX_SAFE_INTEGER + 2 }, -32602],
     [{ ...BASE_SUBSCRIBE, cursor: 12 }, -32602],
