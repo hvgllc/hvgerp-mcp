@@ -759,6 +759,77 @@ Deno.test("backend calls are bounded by maxConcurrent and the overflow is refuse
   assertEquals(peak, 2);
 });
 
+Deno.test("a queued request whose client disconnects never reaches the store and frees its queue slot", async () => {
+  let started = 0;
+  const gates: Array<() => void> = [];
+  const { handler, logs } = await buildFixture({
+    maxConcurrent: 1,
+    maxQueued: 1,
+    store: {
+      subscribe() {
+        started++;
+        return new Promise((resolve) => {
+          gates.push(() =>
+            resolve({
+              id: "sub_x",
+              refreshBefore: "2030-01-01T00:00:00Z",
+              cursor: null,
+              truncated: false,
+            })
+          );
+        });
+      },
+    },
+  });
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+  const first = handler(rpc("events/subscribe", SUBSCRIBE_PARAMS));
+  await settle();
+  assertEquals(started, 1);
+
+  // Request thứ hai xếp hàng rồi bị client huỷ: không được chạm store.
+  const controller = new AbortController();
+  const queued = handler(
+    new Request(rpc("events/subscribe", SUBSCRIBE_PARAMS), {
+      signal: controller.signal,
+    }),
+  );
+  await settle();
+  controller.abort();
+  const cancelled = await queued;
+  assertEquals(cancelled.status, 499);
+  await cancelled.body?.cancel();
+  assertEquals(started, 1);
+  assertEquals(
+    logs.some((line) => line.includes("events rpc dropped cancelled")),
+    true,
+  );
+
+  // Slot hàng đợi đã được trả: request kế tiếp xếp hàng được thay vì bị 503.
+  const third = handler(rpc("events/subscribe", SUBSCRIBE_PARAMS));
+  await settle();
+  assertEquals(started, 1);
+  gates.shift()?.();
+  await settle();
+  assertEquals(started, 2);
+  gates.shift()?.();
+  assertEquals((await first).status, 200);
+  assertEquals((await third).status, 200);
+  assertEquals(started, 2);
+
+  // Huỷ trước khi bắt đầu thì bị từ chối ngay, không chạm store.
+  const preAborted = new AbortController();
+  preAborted.abort();
+  const early = await handler(
+    new Request(rpc("events/subscribe", SUBSCRIBE_PARAMS), {
+      signal: preAborted.signal,
+    }),
+  );
+  assertEquals(early.status, 499);
+  await early.body?.cancel();
+  assertEquals(started, 2);
+});
+
 // ── Ngân sách đệm trước khi vào SDK ─────────────────────────────────────────
 
 async function withLength(request: Request): Promise<Request> {

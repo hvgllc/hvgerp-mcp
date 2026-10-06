@@ -20,6 +20,7 @@ import {
   getFrappeClient,
 } from "../api/frappe-client.ts";
 import {
+  compareUtcInstants,
   EventsErrorCode,
   EventsProtocolError,
   isRealDate,
@@ -286,12 +287,12 @@ function assertShape(ok: boolean): void {
 
 /**
  * Kết thúc phải sau bắt đầu. Ngày chỉ có dạng `YYYY-MM-DD` nên so chuỗi cũng là so thời gian; thời điểm UTC
- * được so theo mili giây. `exclusive` là mốc kết thúc loại trừ của cuộc họp cả ngày, nơi bằng nhau nghĩa là
+ * được so đủ mọi chữ số thập phân của giây. `exclusive` là mốc kết thúc loại trừ của cuộc họp cả ngày, nơi bằng nhau nghĩa là
  * khoảng rỗng. Cuộc họp có giờ cho phép độ dài 0.
  */
 function endFollowsStart(start: string, end: string, allDay: boolean): boolean {
   if (allDay) return end > start;
-  return Date.parse(end) >= Date.parse(start);
+  return compareUtcInstants(end, start) >= 0;
 }
 
 /** Giá trị là chuỗi hợp lệ theo `check` hoặc `null`; mọi thứ khác là lỗi backend. */

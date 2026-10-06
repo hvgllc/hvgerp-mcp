@@ -651,6 +651,19 @@ Deno.test("fetchMeeting rejects a successful result whose values have the wrong 
         schedule_revision: 4,
       }],
     }],
+    ["timed meeting ending before it starts by sub-millisecond digits", {
+      starts_at: "2030-05-01T10:00:00.9999Z",
+      ends_at: "2030-05-01T10:00:00.9990Z",
+    }],
+    ["timed occurrence ending before it starts by sub-millisecond digits", {
+      occurrences: [{
+        series_id: "EVT-1",
+        occurrence_start: "2030-05-01T10:00:00.9999Z",
+        occurrence_end: "2030-05-01T10:00:00.9990Z",
+        zone: "Asia/Ho_Chi_Minh",
+        schedule_revision: 4,
+      }],
+    }],
     ["truthy non-boolean deleted", { deleted: "yes" }],
     ["object frequency", { recurrence: { frequency: { a: 1 }, until: null } }],
     ["object until", { recurrence: { frequency: "Weekly", until: { a: 1 } } }],

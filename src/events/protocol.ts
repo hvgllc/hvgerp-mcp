@@ -294,7 +294,11 @@ function rejectUnknownKeys(
   allowed: readonly string[],
 ): void {
   for (const key of Object.keys(params)) {
-    if (!allowed.includes(key)) throw invalid(`params.${key.slice(0, 64)}`);
+    // Tên khoá lạ là dữ liệu do client gửi: chỉ phản chiếu khi nó trông như một tên trường an toàn, nếu không
+    // (URL callback, secret hay ký tự điều khiển lọt vào tên khoá) thì chỉ báo chung là `params`.
+    if (!allowed.includes(key)) {
+      throw invalid(SAFE_FIELD_PATTERN.test(key) ? `params.${key}` : "params");
+    }
   }
 }
 
@@ -381,6 +385,26 @@ export function isRealUtcInstant(value: string): boolean {
     moment.getUTCMonth() === month - 1 && moment.getUTCDate() === day &&
     moment.getUTCHours() === hour && moment.getUTCMinutes() === minute &&
     moment.getUTCSeconds() === second;
+}
+
+/**
+ * So hai thời điểm ISO UTC đã qua `isRealUtcInstant`: âm nếu `a` đứng trước `b`, 0 nếu bằng nhau, dương nếu sau.
+ * Phần thập phân được so đủ mọi chữ số (`Date.parse` cắt ở mili giây nên `.9999` và `.9990` sẽ bị coi là bằng nhau).
+ */
+export function compareUtcInstants(a: string, b: string): number {
+  const secondsA = Date.parse(`${a.slice(0, 19)}Z`);
+  const secondsB = Date.parse(`${b.slice(0, 19)}Z`);
+  if (secondsA !== secondsB) return secondsA < secondsB ? -1 : 1;
+  return compareFractions(a.slice(20, -1), b.slice(20, -1));
+}
+
+/** So hai phần thập phân của giây (chỉ các chữ số) như số thực: `5` bằng `50`, `9999` lớn hơn `999`. */
+export function compareFractions(a: string, b: string): number {
+  const width = Math.max(a.length, b.length);
+  const left = a.padEnd(width, "0");
+  const right = b.padEnd(width, "0");
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
 }
 
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;

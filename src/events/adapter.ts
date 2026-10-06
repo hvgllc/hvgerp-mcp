@@ -108,24 +108,53 @@ function createByteBudget(total: number, maxCount: number) {
 /** Hàng đợi đã đầy: adapter từ chối việc mới thay vì gom thêm vào bộ nhớ. */
 class EventsBusyError extends Error {}
 
-/** Giới hạn số tác vụ chạy đồng thời, các tác vụ dư xếp hàng tới `maxQueued` rồi bị từ chối. */
+/** Client đã ngắt kết nối khi việc còn đang xếp hàng: việc đó bị bỏ, không bao giờ chạm tới ERP. */
+class EventsCancelledError extends Error {}
+
+/**
+ * Giới hạn số tác vụ chạy đồng thời, các tác vụ dư xếp hàng tới `maxQueued` rồi bị từ chối.
+ * `signal` là tín hiệu hủy của request: người gọi đã ngắt khi còn chờ slot thì bị rút khỏi hàng đợi, vì một
+ * lệnh ghi (subscribe/unsubscribe) chạy sau khi client đã bỏ đi sẽ tạo hoặc xóa subscription ngoài ý muốn.
+ */
 function createLimiter(maxActive: number, maxQueued: number) {
   let active = 0;
   const waiting: Array<() => void> = [];
-  return async function run<T>(task: () => Promise<T>): Promise<T> {
+  const release = () => {
+    const next = waiting.shift();
+    if (next) next();
+    else active--;
+  };
+  return async function run<T>(
+    task: () => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    if (signal?.aborted) throw new EventsCancelledError();
     if (active >= maxActive) {
       if (waiting.length >= maxQueued) throw new EventsBusyError();
       // Slot được chuyển thẳng cho người đứng đầu hàng nên `active` không đổi.
-      await new Promise<void>((resolve) => waiting.push(resolve));
+      await new Promise<void>((resolve, reject) => {
+        const grant = () => {
+          signal?.removeEventListener("abort", abandon);
+          resolve();
+        };
+        const abandon = () => {
+          const index = waiting.indexOf(grant);
+          if (index === -1) return; // Đã được cấp slot: nhánh kiểm tra sau `await` xử lý.
+          waiting.splice(index, 1);
+          reject(new EventsCancelledError());
+        };
+        waiting.push(grant);
+        signal?.addEventListener("abort", abandon, { once: true });
+      });
     } else {
       active++;
     }
     try {
+      // Hủy xảy ra giữa lúc slot được cấp và lúc tác vụ bắt đầu thì vẫn không chạy.
+      if (signal?.aborted) throw new EventsCancelledError();
       return await task();
     } finally {
-      const next = waiting.shift();
-      if (next) next();
-      else active--;
+      release();
     }
   };
 }
@@ -424,11 +453,22 @@ export function createEventsAdapter(
       // events/list chỉ đọc danh mục trong bộ nhớ; chỉ việc gọi ERP mới cần giới hạn.
       const result = rpc.method === "events/list"
         ? await run()
-        : await limit(run);
+        : await limit(run, request.signal);
       log(`events rpc ok method=${rpc.method}`);
       return jsonRpc(baseResponse, { id: rpc.id, result: stamp(result) }, 200);
     } catch (error) {
       if (error instanceof EventsAuthError) return unauthorized(baseResponse);
+      if (error instanceof EventsCancelledError) {
+        // Client đã đi: không ai đọc phản hồi này, chỉ cần trả một Response hợp lệ.
+        log(`events rpc dropped cancelled method=${rpc.method}`);
+        return jsonRpc(baseResponse, {
+          id: rpc.id,
+          error: {
+            code: EventsErrorCode.InternalError,
+            message: "Request cancelled",
+          },
+        }, 499);
+      }
       if (error instanceof EventsBusyError) {
         log(`events rpc refused busy method=${rpc.method}`);
         return jsonRpc(baseResponse, {

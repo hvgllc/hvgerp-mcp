@@ -9,6 +9,7 @@
  */
 
 import { fetchMeeting, type MeetingGetArgs } from "../events/erp-store.ts";
+import { compareFractions } from "../events/protocol.ts";
 import type { ErpNextTool } from "./types.ts";
 
 /** Tên các tool chỉ tồn tại khi bật cờ Events. `ErpNextToolsClient` dùng để lọc ra. */
@@ -42,12 +43,19 @@ function isRealTemporal(value: string): boolean {
     moment.getUTCMonth() === month - 1 && moment.getUTCDate() === day;
 }
 
+/** Một mốc thời gian: số mili giây UTC của giây nguyên cộng với phần thập phân của giây, giữ nguyên mọi chữ số. */
+interface TemporalInstant {
+  seconds: number;
+  fraction: string;
+}
+
 /**
- * Mốc thời gian (ms UTC) của một chuỗi đã qua `isRealTemporal`. Chuỗi không có múi giờ tính là UTC,
+ * Mốc thời gian của một chuỗi đã qua `isRealTemporal`. Chuỗi không có múi giờ tính là UTC,
  * và ngày trơn ở đầu mút `end` nghĩa là hết ngày đó, để `window_end: "2030-05-01"` không bị coi là
- * đứng trước `window_start: "2030-05-01T10:00"`.
+ * đứng trước `window_start: "2030-05-01T10:00"`. Phần thập phân không bị cắt ở mili giây: hai mốc chỉ khác
+ * nhau ở chữ số thứ tư trở đi vẫn được sắp đúng thứ tự.
  */
-function temporalMillis(value: string, endOfDay: boolean): number {
+function temporalInstant(value: string, endOfDay: boolean): TemporalInstant {
   const parts = value.match(
     /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.(\d+))?(?:(Z)|([+-])(\d{2}):?(\d{2}))?)?$/,
   )!;
@@ -57,11 +65,12 @@ function temporalMillis(value: string, endOfDay: boolean): number {
     Number(parts[3]),
   ];
   if (parts[4] === undefined) {
-    return Date.UTC(year, month - 1, day) + (endOfDay ? 86_400_000 - 1 : 0);
+    // Hết ngày là mọi thời điểm của ngày đó, kể cả `23:59:59.999...` với số chữ số tùy ý.
+    return {
+      seconds: Date.UTC(year, month - 1, day) + (endOfDay ? 86_399_000 : 0),
+      fraction: endOfDay ? "9".repeat(TEMPORAL_MAX_LENGTH) : "",
+    };
   }
-  const fraction = parts[7] === undefined
-    ? 0
-    : Math.floor(Number(`0.${parts[7]}`) * 1000);
   const local = Date.UTC(
     year,
     month - 1,
@@ -69,11 +78,20 @@ function temporalMillis(value: string, endOfDay: boolean): number {
     Number(parts[4]),
     Number(parts[5]),
     Number(parts[6] ?? 0),
-    fraction,
   );
-  if (parts[9] === undefined) return local;
+  const fraction = parts[7] ?? "";
+  if (parts[9] === undefined) return { seconds: local, fraction };
   const offset = (Number(parts[10]) * 60 + Number(parts[11])) * 60_000;
-  return parts[9] === "+" ? local - offset : local + offset;
+  return {
+    seconds: parts[9] === "+" ? local - offset : local + offset,
+    fraction,
+  };
+}
+
+/** Âm nếu `a` đứng trước `b`, 0 nếu bằng nhau, dương nếu đứng sau. */
+function compareInstants(a: TemporalInstant, b: TemporalInstant): number {
+  if (a.seconds !== b.seconds) return a.seconds < b.seconds ? -1 : 1;
+  return compareFractions(a.fraction, b.fraction);
 }
 
 function readTemporal(
@@ -154,8 +172,10 @@ export const calendarTools: ErpNextTool[] = [
       }
       if (
         args.window_start !== undefined && args.window_end !== undefined &&
-        temporalMillis(args.window_start, false) >
-          temporalMillis(args.window_end, true)
+        compareInstants(
+            temporalInstant(args.window_start, false),
+            temporalInstant(args.window_end, true),
+          ) > 0
       ) {
         throw new Error(
           "Invalid window: window_start must not be after window_end",

@@ -13,6 +13,7 @@ import {
 } from "./json-schema.ts";
 import {
   CHANGE_BY_EVENT,
+  compareUtcInstants,
   eventCatalog,
   EventsErrorCode,
   EventsProtocolError,
@@ -605,6 +606,48 @@ Deno.test("error HTTP statuses follow the documented mapping", () => {
   assertThrows(() => {
     throw new EventsProtocolError(EventsErrorCode.Forbidden);
   }, EventsProtocolError);
+});
+
+Deno.test("an unknown top-level key is only echoed when it looks like a safe field name", () => {
+  const hostile = [
+    "https://hooks.example.com/callback?token=abc",
+    "whsec_aGVsbG8gd29ybGQ=",
+    "line\nbreak",
+    "x".repeat(41),
+    "has space",
+  ];
+  for (const key of hostile) {
+    const error = assertThrows(
+      () => parseSubscribeParams({ ...BASE_SUBSCRIBE, [key]: 1 }),
+      EventsProtocolError,
+    );
+    assertEquals(error.code, EventsErrorCode.InvalidParams);
+    assertEquals(error.toJsonRpcError().data, { field: "params" });
+  }
+});
+
+Deno.test("compareUtcInstants orders instants by every fractional digit", () => {
+  assertEquals(
+    compareUtcInstants("2030-05-01T10:00:00Z", "2030-05-01T10:00:00.000Z"),
+    0,
+  );
+  assertEquals(
+    compareUtcInstants("2030-05-01T10:00:00.5Z", "2030-05-01T10:00:00.50Z"),
+    0,
+  );
+  assertEquals(
+    compareUtcInstants(
+      "2030-05-01T10:00:00.9999Z",
+      "2030-05-01T10:00:00.9990Z",
+    ) >
+      0,
+    true,
+  );
+  assertEquals(
+    compareUtcInstants("2030-05-01T10:00:00.0000001Z", "2030-05-01T10:00:01Z") <
+      0,
+    true,
+  );
 });
 
 Deno.test("subscribe and unsubscribe reject unknown top-level keys instead of defaulting them", () => {
