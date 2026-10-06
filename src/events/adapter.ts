@@ -165,6 +165,12 @@ const NAMED_METHODS = new Set<string>([
   "events/unsubscribe",
 ]);
 
+/** Method mà adapter có thể tự xử lý hoặc bọc phản hồi, nên cần đọc body để phân loại. */
+function isPeekedMethod(method: string): boolean {
+  return method === "server/discover" || method === "initialize" ||
+    isEventsMethod(method);
+}
+
 interface PeekedRpc {
   method: string;
   id: unknown;
@@ -241,6 +247,11 @@ async function peekRpc(
     return null;
   }
   if (!MCP_PATHS.has(pathname)) return null;
+  // `Mcp-Method` là header bắt buộc của binding HTTP: method không thuộc adapter thì chuyển thẳng cho handler gốc mà không
+  // đệm body, nên một request thường (`tools/call`...) có body đến chậm không bị 408 chỉ vì Events được bật. Header lệch body
+  // vẫn bị handler gốc từ chối, và adapter không bao giờ xử lý Events mà không đọc body. Thiếu header thì vẫn phải xem body.
+  const declaredMethod = request.headers.get("Mcp-Method");
+  if (declaredMethod !== null && !isPeekedMethod(declaredMethod)) return null;
   // Body khai báo quá trần thì không đệm: SDK sẽ tự từ chối. Không khai báo (chunked) thì giữ chỗ
   // theo trần, vì chưa biết sẽ đọc bao nhiêu.
   const declared = request.headers.get("content-length");
@@ -294,14 +305,18 @@ async function isMethodNotFound(response: Response): Promise<boolean> {
   }
 }
 
-/** `Mcp-Name` phải có mặt và đúng bằng `params.name` (tên sự kiện luôn là ASCII). */
+/**
+ * Binding HTTP 2026-07-28 chỉ bắt `Mcp-Name` cho `tools/call`, `resources/read` và `prompts/get`, nên client chuẩn có thể
+ * không gửi nó cho `events/subscribe` hay `events/unsubscribe`. Vắng mặt thì hợp lệ; có mặt mà lệch `params.name` thì từ chối.
+ */
 function nameHeaderMatches(request: Request, rpc: PeekedRpc): boolean {
   if (!isRecord(rpc.params) || typeof rpc.params.name !== "string") {
     // Thiếu tên thì parser tham số trả -32602 đúng hơn một lỗi header.
     return true;
   }
   if (!/^[\x20-\x7e]*$/.test(rpc.params.name)) return true;
-  return request.headers.get("Mcp-Name") === rpc.params.name;
+  const header = request.headers.get("Mcp-Name");
+  return header === null || header === rpc.params.name;
 }
 
 /** Dấu hiệu nội bộ: verifier ném ngoại lệ (khác với trả `null` cho token sai). */

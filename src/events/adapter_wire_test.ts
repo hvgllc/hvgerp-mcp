@@ -688,12 +688,12 @@ for (
     ["events/unsubscribe", UNSUBSCRIBE_PARAMS],
   ] as const
 ) {
-  Deno.test(`${method} without Mcp-Name is a header mismatch`, async () => {
+  Deno.test(`${method} without Mcp-Name is accepted, as the transport binding does not require it`, async () => {
     const { handler, calls } = await buildFixture();
     const res = await handler(rpc(method, params, { omitName: true }));
-    assertEquals(res.status, 400);
-    assertEquals((await json(res)).error.code, EventsErrorCode.HeaderMismatch);
-    assertEquals(calls.length, 0);
+    assertEquals(res.status, 200);
+    await res.body?.cancel();
+    assertEquals(calls.length, 1);
   });
 
   Deno.test(`${method} with a conflicting Mcp-Name is a header mismatch`, async () => {
@@ -713,6 +713,31 @@ Deno.test("an unauthenticated events call without Mcp-Name is still a 401", asyn
     rpc("events/subscribe", SUBSCRIBE_PARAMS, { token: null, omitName: true }),
   );
   assertEquals(res.status, 401);
+});
+
+Deno.test("an ordinary request whose body arrives slowly is not peeked and not refused with 408", async () => {
+  const { handler } = await buildFixture({ peekTimeoutMs: 100 });
+  const template = rpc("tools/call", { name: "ping", arguments: {} }, {
+    headers: { "Mcp-Name": "ping" },
+  });
+  const bytes = new TextEncoder().encode(await template.text());
+  const slow = new Request(template.url, {
+    method: "POST",
+    headers: new Headers(
+      [...template.headers].filter(([name]) => name !== "content-length"),
+    ),
+    body: new ReadableStream<Uint8Array>({
+      async start(controller) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        controller.enqueue(bytes);
+        controller.close();
+      },
+    }),
+    duplex: "half",
+  } as RequestInit);
+  const res = await handler(slow);
+  assertEquals(res.status, 200);
+  assertEquals((await json(res)).result.content[0].text, "pong");
 });
 
 // ── Giới hạn đồng thời ──────────────────────────────────────────────────────
