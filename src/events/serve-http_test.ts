@@ -96,6 +96,36 @@ Deno.test("node serveHttp answers 400 to a malformed Host header and keeps servi
   });
 });
 
+Deno.test("node serveHttp drains the body of a request whose Host header is malformed", async () => {
+  await withNodeServer(() => new Response("ok"), async (port) => {
+    const conn = await Deno.connect({ hostname: "127.0.0.1", port });
+    try {
+      const total = 8 * 1024 * 1024;
+      await conn.write(new TextEncoder().encode(
+        `POST / HTTP/1.1\r\nHost: ]\r\nContent-Length: ${total}\r\n\r\n`,
+      ));
+      const chunk = new Uint8Array(64 * 1024);
+      let sent = 0;
+      const sender = (async () => {
+        while (sent < total) {
+          sent += await conn.write(
+            chunk.subarray(0, Math.min(chunk.length, total - sent)),
+          );
+        }
+      })().catch(() => {});
+      const deadline = Date.now() + 3000;
+      while (sent < total && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      // Socket không bị tạm dừng sau 400: toàn bộ body đã được xả.
+      assertEquals(sent, total);
+      await sender;
+    } finally {
+      conn.close();
+    }
+  });
+});
+
 Deno.test("node serveHttp survives data sent after the handler canceled the body", async () => {
   await withNodeServer(async (request) => {
     // Bên xử lý hủy body sớm, như khi từ chối body quá lớn.

@@ -66,6 +66,11 @@ export interface EventsAdapterOptions {
    * sách thì request đi thẳng vào SDK mà không xem. Mặc định 16 MiB.
    */
   maxPeekBytes?: number;
+  /**
+   * Số request được xem method cùng lúc, độc lập với dung lượng khai báo: body khai báo 1 byte rồi
+   * giữ lại vẫn chiếm một chỗ cho tới hạn `peekTimeoutMs`. Hết chỗ thì trả 503. Mặc định 256.
+   */
+  maxPeeks?: number;
   /** Thời gian tối đa chờ body để xem method, quá hạn thì đi thẳng vào SDK. Mặc định 5000 ms. */
   peekTimeoutMs?: number;
   /** Chỉ nhận thông điệp không nhạy cảm (tên method, mã lỗi). */
@@ -76,18 +81,26 @@ const DEFAULT_MAX_CONCURRENT = 10;
 const DEFAULT_MAX_QUEUED = 50;
 const DEFAULT_MAX_PEEK_BYTES = 16 * 1024 * 1024;
 const DEFAULT_PEEK_TIMEOUT_MS = 5000;
+const DEFAULT_MAX_PEEKS = 256;
 
-/** Ngân sách byte dùng chung: `take` giữ chỗ trước khi đọc, `give` trả lại khi xong. */
-function createByteBudget(total: number) {
+/**
+ * Ngân sách dùng chung cho các lần xem body: `take` giữ chỗ trước khi đọc, `give` trả lại khi xong.
+ * Giới hạn cả tổng byte lẫn số lần xem đồng thời, vì body khai báo rất nhỏ mà bị giữ lại sẽ không
+ * làm cạn byte nhưng vẫn chiếm socket và promise.
+ */
+function createByteBudget(total: number, maxCount: number) {
   let used = 0;
+  let count = 0;
   return {
     take(bytes: number): boolean {
-      if (used + bytes > total) return false;
+      if (count >= maxCount || used + bytes > total) return false;
       used += bytes;
+      count++;
       return true;
     },
     give(bytes: number): void {
       used -= bytes;
+      count--;
     },
   };
 }
@@ -266,6 +279,7 @@ export function createEventsAdapter(
   const log = options.log ?? (() => {});
   const peekBudget = createByteBudget(
     options.maxPeekBytes ?? DEFAULT_MAX_PEEK_BYTES,
+    options.maxPeeks ?? DEFAULT_MAX_PEEKS,
   );
   const peekTimeoutMs = options.peekTimeoutMs ?? DEFAULT_PEEK_TIMEOUT_MS;
   const limit = createLimiter(

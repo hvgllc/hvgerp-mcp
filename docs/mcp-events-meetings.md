@@ -114,17 +114,26 @@ never stored, logged or echoed back.
 ERPNext answers every method with HTTP 200 and `{ok, result}` or
 `{ok:false, error}`. Only `error` is mapped to JSON-RPC, and only through fixed
 messages and allowlisted `data`: raw ERPNext text is never reflected. An ERPNext
-rejection of the caller token (HTTP 401) becomes HTTP 401 to the client. An ERPNext
-403 (the token is valid but the user lacks permission) becomes `-32012` with HTTP 403.
+rejection of the caller token (HTTP 401) becomes HTTP 401 to the client. An
+ERPNext 403 (the token is valid but the user lacks permission) becomes `-32012`
+with HTTP 403.
 
 Subscribe and unsubscribe calls to ERPNext run through an adapter-owned limiter:
 at most 10 at once with up to 50 waiting (`maxConcurrent` / `maxQueued` options
 of `createEventsAdapter`). It is separate from the SDK's own request limit,
 which only covers the preliminary pass that finds the method unknown. Beyond the
-queue the adapter answers 503 `Server busy`. The same 503 (with `Retry-After: 1`)
-is returned when the pre-read byte budget for MCP POST bodies (`maxPeekBytes`,
-16 MiB by default) is exhausted, instead of forwarding an unread request to the
-SDK, where an authenticated Events call would surface as `-32601`.
+queue the adapter answers 503 `Server busy`. The same 503 (with
+`Retry-After: 1`) is returned when the pre-read budget for MCP POST bodies is
+exhausted, instead of forwarding an unread request to the SDK, where an
+authenticated Events call would surface as `-32601`. The budget bounds both the
+bytes held (`maxPeekBytes`, 16 MiB by default) and the number of simultaneous
+peeks (`maxPeeks`, 256 by default), because a tiny declared body that is never
+sent costs one byte but still holds a socket until `peekTimeoutMs`.
+
+`events/subscribe` and `events/unsubscribe` reject unknown top-level parameters
+with `-32602` (`field: "params.<key>"`) so a misspelt `arguments` cannot become
+an unfiltered subscription. `_meta` is accepted, and `maxAgeMs` on subscribe is
+accepted and ignored.
 
 ## ERPNext contract used
 

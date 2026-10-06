@@ -272,8 +272,33 @@ function parseDelivery(
   return value;
 }
 
+const SUBSCRIBE_KEYS = [
+  "name",
+  "arguments",
+  "delivery",
+  "ttlMs",
+  "cursor",
+  "maxAgeMs", // Được chấp nhận và bỏ qua: cửa sổ replay do server quyết định.
+  "_meta",
+] as const;
+const UNSUBSCRIBE_KEYS = ["name", "arguments", "delivery", "_meta"] as const;
+
+/**
+ * Từ chối khoá cấp cao lạ: một lỗi gõ như `argumnts` sẽ bị coi là thiếu `arguments` và thành đăng ký
+ * không lọc (hoặc hủy nhầm đối tượng khác) thay vì lỗi -32602.
+ */
+function rejectUnknownKeys(
+  params: Record<string, unknown>,
+  allowed: readonly string[],
+): void {
+  for (const key of Object.keys(params)) {
+    if (!allowed.includes(key)) throw invalid(`params.${key.slice(0, 64)}`);
+  }
+}
+
 export function parseSubscribeParams(params: unknown): SubscribeRequest {
   if (!isRecord(params)) throw invalid("params");
+  rejectUnknownKeys(params, SUBSCRIBE_KEYS);
   const name = parseEventName(params.name);
   const delivery = parseDelivery(params.delivery, ["mode", "url", "secret"]);
   const deliveryUrl = parseCallbackUrl(delivery.url);
@@ -310,6 +335,7 @@ export function parseSubscribeParams(params: unknown): SubscribeRequest {
 
 export function parseUnsubscribeParams(params: unknown): UnsubscribeRequest {
   if (!isRecord(params)) throw invalid("params");
+  rejectUnknownKeys(params, UNSUBSCRIBE_KEYS);
   const name = parseEventName(params.name);
   // `secret` được chấp nhận nhưng bị bỏ qua: hủy không cần secret và secret không được đi tiếp.
   // Hủy chỉ cần `url`: `mode` có thể vắng (client tuân thủ không bắt buộc gửi), nhưng nếu có thì

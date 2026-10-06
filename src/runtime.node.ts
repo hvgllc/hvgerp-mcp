@@ -171,6 +171,9 @@ export function serveHttp(
             : {}),
         } as RequestInit);
       } catch {
+        // Stream body đã gắn listener lên `incoming` trước khi `new Request` ném lỗi: gỡ và xả phần body
+        // còn lại, nếu không `onData` sẽ tạm dừng socket vĩnh viễn và kết nối keep-alive bị treo.
+        detachBody();
         outgoing.statusCode = 400;
         outgoing.end();
         return;

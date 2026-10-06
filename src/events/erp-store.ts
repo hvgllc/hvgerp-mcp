@@ -244,6 +244,7 @@ const MEETING_KEYS = [
   "end_date_exclusive",
   "has_more",
 ] as const;
+const TOMBSTONE_KEYS = ["event_id", "revision", "deleted"] as const;
 const RECURRENCE_KEYS = ["frequency", "until", "weekdays"] as const;
 const OCCURRENCE_KEYS = [
   "series_id",
@@ -271,12 +272,20 @@ function pickKeys(
 function pickMeetingFields(
   result: Record<string, unknown>,
 ): Record<string, unknown> {
+  // Cuộc họp đã xóa chỉ trả đúng ba trường của tombstone, kể cả khi ERP (lệch phiên bản) còn kèm lịch cũ.
+  if (result.deleted === true) return pickKeys(result, TOMBSTONE_KEYS);
   const picked = pickKeys(result, MEETING_KEYS);
   if (isRecord(result.recurrence)) {
     picked.recurrence = pickKeys(result.recurrence, RECURRENCE_KEYS);
   } else if (Object.hasOwn(result, "recurrence")) picked.recurrence = null;
-  if (Array.isArray(result.occurrences)) {
-    picked.occurrences = result.occurrences.filter(isRecord).map((item) =>
+  if (Object.hasOwn(result, "occurrences")) {
+    // Một phần tử hỏng không được lặng lẽ bị bỏ: người gọi sẽ tưởng lịch đã đủ và bỏ lỡ cuộc họp.
+    if (
+      !Array.isArray(result.occurrences) || !result.occurrences.every(isRecord)
+    ) {
+      throw new Error("Events backend error");
+    }
+    picked.occurrences = result.occurrences.map((item) =>
       pickKeys(item, OCCURRENCE_KEYS)
     );
   }

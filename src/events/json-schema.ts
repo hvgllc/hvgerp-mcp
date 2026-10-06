@@ -73,11 +73,26 @@ function isRealDate(value: string): boolean {
     parsed.toISOString().startsWith(value);
 }
 
+/** Chuỗi date-time đã khớp hình dạng RFC 3339 và mọi thành phần là giá trị có thật (không ngày 30/02, giờ 24). */
+function isRealDateTime(value: string): boolean {
+  if (!DATE_TIME_PATTERN.test(value)) return false;
+  const parts = value.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/,
+  );
+  if (!parts) return false;
+  const [year, month, day, hour, minute, second, offsetHour, offsetMinute] =
+    parts.slice(1).map((part) => (part === undefined ? 0 : Number(part)));
+  if (hour > 23 || minute > 59 || second > 59) return false;
+  if (offsetHour > 23 || offsetMinute > 59) return false;
+  const moment = new Date(Date.UTC(year, month - 1, day));
+  return moment.getUTCFullYear() === year &&
+    moment.getUTCMonth() === month - 1 && moment.getUTCDate() === day;
+}
+
 function formatMatches(format: string, value: string): boolean {
   if (format === "date") return isRealDate(value);
   if (format === "date-time") {
-    return DATE_TIME_PATTERN.test(value) &&
-      !Number.isNaN(new Date(value).getTime());
+    return isRealDateTime(value);
   }
   // Định dạng lạ thì không phán xét, theo đúng tinh thần "format là chú thích".
   return true;

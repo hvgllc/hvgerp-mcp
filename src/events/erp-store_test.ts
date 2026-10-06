@@ -471,3 +471,34 @@ Deno.test("fetchMeeting reports ERP throttling without mentioning subscription l
     "ERP is rate limiting requests, try again later",
   );
 });
+
+Deno.test("fetchMeeting reduces a deleted meeting to the three tombstone fields", async () => {
+  const { client } = fakeClient(() => ({
+    ok: true,
+    result: {
+      ...MEETING,
+      deleted: true,
+      recurrence: { frequency: "Weekly", until: null, weekdays: ["monday"] },
+      occurrences: [{ series_id: "EVT-1", occurrence_start: "2030-05-01" }],
+    },
+  }));
+  assertEquals(await fetchMeeting(client, { event_id: "EVT-1" }), {
+    event_id: "EVT-1",
+    revision: 4,
+    deleted: true,
+  });
+});
+
+Deno.test("fetchMeeting fails on a malformed occurrence instead of dropping it", async () => {
+  for (const occurrences of [[null], ["x"], [1, {}], {}, "none"]) {
+    const { client } = fakeClient(() => ({
+      ok: true,
+      result: { ...MEETING, occurrences },
+    }));
+    await assertRejects(
+      () => fetchMeeting(client, { event_id: "EVT-1" }),
+      Error,
+      "Events backend error",
+    );
+  }
+});

@@ -155,6 +155,10 @@ Deno.test("payload: structural violations are rejected", () => {
     ["bad instant", { ...TIMED, starts_at: "2030-05-01 02:00" }],
     ["bad date", { ...ALL_DAY, start_date: "2030-02-30" }],
     ["empty event id", { ...TIMED, event_id: "" }],
+    ["impossible date-time", { ...TIMED, starts_at: "2030-02-30T00:00:00Z" }],
+    ["hour 24", { ...TIMED, starts_at: "2030-05-01T24:00:00Z" }],
+    ["minute 61", { ...TIMED, ends_at: "2030-05-01T10:61:00Z" }],
+    ["offset +99:99", { ...TIMED, ends_at: "2030-05-01T10:00:00+99:99" }],
   ];
   for (const [label, payload] of bad) {
     assert(
@@ -566,4 +570,32 @@ Deno.test("error HTTP statuses follow the documented mapping", () => {
   assertThrows(() => {
     throw new EventsProtocolError(EventsErrorCode.Forbidden);
   }, EventsProtocolError);
+});
+
+Deno.test("subscribe and unsubscribe reject unknown top-level keys instead of defaulting them", () => {
+  const unsubscribe = {
+    name: "meeting.created",
+    delivery: { mode: "webhook", url: CALLBACK },
+  };
+  for (
+    const [parse, base] of [
+      [parseSubscribeParams, BASE_SUBSCRIBE],
+      [parseUnsubscribeParams, unsubscribe],
+    ] as const
+  ) {
+    const error = assertThrows(
+      () => parse({ ...base, argumnts: { event_id: "EVT-1" } }),
+      EventsProtocolError,
+    );
+    assertEquals(error.code, EventsErrorCode.InvalidParams);
+    assertEquals(error.toJsonRpcError().data, { field: "params.argumnts" });
+    // Các khoá giao thức đã công bố vẫn được nhận.
+    parse({ ...base, _meta: { trace: "x" } });
+  }
+  parseSubscribeParams({
+    ...BASE_SUBSCRIBE,
+    maxAgeMs: 1000,
+    ttlMs: null,
+    cursor: null,
+  });
 });

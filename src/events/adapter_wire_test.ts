@@ -131,6 +131,7 @@ async function buildFixture(
     maxConcurrent?: number;
     maxQueued?: number;
     maxPeekBytes?: number;
+    maxPeeks?: number;
     peekTimeoutMs?: number;
   } = {},
 ): Promise<Fixture> {
@@ -167,6 +168,7 @@ async function buildFixture(
     maxConcurrent: options.maxConcurrent,
     maxQueued: options.maxQueued,
     maxPeekBytes: options.maxPeekBytes,
+    maxPeeks: options.maxPeeks,
     peekTimeoutMs: options.peekTimeoutMs,
     log: (message) => logs.push(message),
   });
@@ -716,6 +718,46 @@ Deno.test("an exhausted peek budget is a bounded 503, never a -32601 from the SD
   assertEquals(res.headers.get("Retry-After"), "1");
   assertEquals(body.error.code, EventsErrorCode.InternalError);
   assertEquals(calls.length, 0);
+});
+
+Deno.test("tiny declared bodies that are withheld cannot hold more than maxPeeks peeks at once", async () => {
+  const { handler } = await buildFixture({
+    maxPeeks: 2,
+    peekTimeoutMs: 400,
+  });
+  // Body khai báo 1 byte nhưng không bao giờ tới: chỉ tốn 1 byte ngân sách, phải bị giới hạn bằng số lượng.
+  const controllers: ReadableStreamDefaultController<Uint8Array>[] = [];
+  const stalled = () => {
+    const request = rpc("events/subscribe", SUBSCRIBE_PARAMS);
+    return new Request(request.url, {
+      method: "POST",
+      headers: new Headers({
+        ...Object.fromEntries(request.headers),
+        "content-length": "1",
+      }),
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controllers.push(controller);
+        },
+      }),
+      duplex: "half",
+    } as RequestInit);
+  };
+  const first = handler(stalled());
+  const second = handler(stalled());
+  const third = await handler(stalled());
+  assertEquals(third.status, 503);
+  assertEquals(third.headers.get("Retry-After"), "1");
+  await third.body?.cancel();
+  // Hết hạn peek thì hai chỗ được trả lại và request kế tiếp lại được xem.
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  const after = await handler(
+    await withLength(rpc("events/subscribe", SUBSCRIBE_PARAMS)),
+  );
+  assertEquals(after.status, 200);
+  await after.body?.cancel();
+  for (const controller of controllers) controller.error(new Error("done"));
+  await Promise.allSettled([first, second]);
 });
 
 Deno.test("the peek budget is returned once a request has been read", async () => {
