@@ -178,13 +178,16 @@ async function readLimited(
   return joined;
 }
 
+/** Ngân sách đệm đã cạn: không thể xem method, nên không được phép chuyển tiếp như thể "không phải Events". */
+const PEEK_BUSY = Symbol("peek-busy");
+
 /** Xem method của một POST tới endpoint MCP mà không tiêu thụ body của request gốc. */
 async function peekRpc(
   request: Request,
   maxBodyBytes: number,
   budget: ReturnType<typeof createByteBudget>,
   timeoutMs: number,
-): Promise<PeekedRpc | null> {
+): Promise<PeekedRpc | typeof PEEK_BUSY | null> {
   if (request.method !== "POST" || request.body === null) return null;
   let pathname: string;
   try {
@@ -202,7 +205,9 @@ async function peekRpc(
     reserve = Number(declared);
     if (reserve > maxBodyBytes) return null;
   }
-  if (!budget.take(reserve)) return null;
+  // Cạn ngân sách thì từ chối có giới hạn. Chuyển thẳng cho SDK sẽ biến một request Events đã xác
+  // thực thành -32601 chỉ vì kẻ khác đang giữ chỗ bằng các body chunked chưa xác thực.
+  if (!budget.take(reserve)) return PEEK_BUSY;
   try {
     const bytes = await readLimited(
       request.clone().body!,
@@ -444,6 +449,27 @@ export function createEventsAdapter(
 
   return async (request) => {
     const rpc = await peekRpc(request, maxBodyBytes, peekBudget, peekTimeoutMs);
+    if (rpc === PEEK_BUSY) {
+      log("events rpc refused busy peek budget exhausted");
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: null,
+          error: {
+            code: EventsErrorCode.InternalError,
+            message: "Server busy",
+          },
+        }),
+        {
+          status: 503,
+          headers: {
+            "Content-Type": "application/json",
+            "Retry-After": "1",
+            "MCP-Protocol-Version": PROTOCOL_VERSION,
+          },
+        },
+      );
+    }
     if (rpc === null) return await base(request);
 
     if (rpc.method === "server/discover" || rpc.method === "initialize") {

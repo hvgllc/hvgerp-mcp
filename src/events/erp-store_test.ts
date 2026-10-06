@@ -240,10 +240,13 @@ Deno.test("a malformed envelope or result is a backend error", async () => {
   }
 });
 
-Deno.test("transport errors: 401/403 are auth failures, 429 is quota, everything else is backend", async () => {
+Deno.test("transport errors: 401 is an auth failure, 403 is forbidden, 429 is quota, everything else is backend", async () => {
   const cases: Array<[unknown, "auth" | number]> = [
     [new FrappeAPIError("Not permitted token=abc", 401, null), "auth"],
-    [new FrappeAPIError("PermissionError", 403, null), "auth"],
+    [
+      new FrappeAPIError("PermissionError", 403, null),
+      EventsErrorCode.Forbidden,
+    ],
     [new FrappeAPIError("slow down", 429, null), EventsErrorCode.QuotaExceeded],
     [
       new FrappeAPIError("Traceback: password=hunter2", 500, null),

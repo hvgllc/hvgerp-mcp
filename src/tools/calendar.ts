@@ -26,6 +26,20 @@ const TEMPORAL_PATTERN =
   /^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
 const TEMPORAL_MAX_LENGTH = 64;
 
+/** Chuỗi khớp hình dạng ISO và mọi thành phần là giá trị có thật (không có ngày 30/02 hay giờ 25). */
+function isRealTemporal(value: string): boolean {
+  const parts = value.match(
+    /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?/,
+  );
+  if (!parts) return false;
+  const [year, month, day, hour = 0, minute = 0, second = 0] = parts.slice(1)
+    .map((part) => (part === undefined ? 0 : Number(part)));
+  if (hour > 23 || minute > 59 || second > 59) return false;
+  const moment = new Date(Date.UTC(year, month - 1, day));
+  return moment.getUTCFullYear() === year &&
+    moment.getUTCMonth() === month - 1 && moment.getUTCDate() === day;
+}
+
 function readTemporal(
   input: Record<string, unknown>,
   key: string,
@@ -34,7 +48,7 @@ function readTemporal(
   if (value === undefined) return undefined;
   if (
     typeof value !== "string" || value.length > TEMPORAL_MAX_LENGTH ||
-    !TEMPORAL_PATTERN.test(value)
+    !TEMPORAL_PATTERN.test(value) || !isRealTemporal(value)
   ) {
     throw new Error(`Invalid ${key}: expected an ISO date or date-time`);
   }

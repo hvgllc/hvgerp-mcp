@@ -706,12 +706,15 @@ Deno.test("a declared body over the cap is not buffered by the adapter", async (
   assertEquals(calls.length, 0);
 });
 
-Deno.test("an exhausted peek budget sends the request straight to the SDK", async () => {
+Deno.test("an exhausted peek budget is a bounded 503, never a -32601 from the SDK", async () => {
   const { handler, calls } = await buildFixture({ maxPeekBytes: 10 });
   const res = await handler(
     await withLength(rpc("events/subscribe", SUBSCRIBE_PARAMS)),
   );
-  await res.body?.cancel();
+  const body = await json(res);
+  assertEquals(res.status, 503);
+  assertEquals(res.headers.get("Retry-After"), "1");
+  assertEquals(body.error.code, EventsErrorCode.InternalError);
   assertEquals(calls.length, 0);
 });
 

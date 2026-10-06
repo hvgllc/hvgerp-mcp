@@ -7,7 +7,8 @@
  *
  * Hợp đồng với ERP: mọi method trả HTTP 200 với `message` là `{ok:true,result}` hoặc
  * `{ok:false,error:{code,message,data}}`. Lỗi xác thực là ngoại lệ: ERP raise PermissionError
- * (HTTP 401/403) và ở đây nó trở thành `EventsAuthError` để adapter trả HTTP 401 cho client.
+ * (HTTP 401 khi token bị từ chối, 403 khi người gọi không đủ quyền). 401 trở thành `EventsAuthError` để
+ * adapter trả HTTP 401 cho client; 403 trở thành lỗi giao thức Forbidden (-32012), vì token vẫn hợp lệ.
  *
  * @module lib/erpnext/src/events/erp-store
  */
@@ -34,7 +35,7 @@ export const ERP_EVENTS_METHODS = {
   meetingGet: "hvg_workspace.mcp_events.api.meeting_get",
 } as const;
 
-/** ERP từ chối bearer của request (HTTP 401/403). Adapter đổi thành HTTP 401 cho client. */
+/** ERP từ chối bearer của request (HTTP 401). Adapter đổi thành HTTP 401 cho client. */
 export class EventsAuthError extends Error {
   constructor() {
     super("ERP rejected the caller token");
@@ -66,12 +67,14 @@ export function unwrapErpEnvelope(message: unknown): ErpEnvelope {
 
 /**
  * Đổi lỗi truyền tải của Frappe thành lỗi của giao thức Events. Không phản chiếu body của ERP.
- * 401/403 là lỗi xác thực; 429 là giới hạn tốc độ; phần còn lại là backend không dùng được.
+ * 401 là lỗi xác thực; 403 là người gọi không đủ quyền (token vẫn đúng); 429 là giới hạn tốc độ;
+ * phần còn lại là backend không dùng được.
  */
 export function classifyTransportError(error: unknown): Error {
   if (error instanceof FrappeAPIError) {
-    if (error.status === 401 || error.status === 403) {
-      return new EventsAuthError();
+    if (error.status === 401) return new EventsAuthError();
+    if (error.status === 403) {
+      return new EventsProtocolError(EventsErrorCode.Forbidden);
     }
     if (error.status === 429) {
       return new EventsProtocolError(EventsErrorCode.QuotaExceeded);
@@ -177,7 +180,12 @@ export async function fetchMeeting(
     });
   } catch (error) {
     const mapped = classifyTransportError(error);
-    if (mapped instanceof EventsAuthError) {
+    // Tool đọc cuộc họp không có HTTP 401 để trả: cả token bị từ chối lẫn thiếu quyền đều là một câu.
+    if (
+      mapped instanceof EventsAuthError ||
+      (mapped instanceof EventsProtocolError &&
+        mapped.code === EventsErrorCode.Forbidden)
+    ) {
       throw new Error("Not authorized to read this meeting");
     }
     throw new Error(
