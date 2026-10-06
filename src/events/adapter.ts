@@ -57,9 +57,47 @@ export interface EventsAdapterOptions {
   store: EventsStore;
   /** Trần dung lượng body adapter chịu đọc để xem method. Mặc định 1 MiB, bằng trần của SDK. */
   maxBodyBytes?: number;
+  /** Số subscribe/unsubscribe được gọi ERP cùng lúc. Mặc định 10, bằng `maxConcurrent` của SDK. */
+  maxConcurrent?: number;
+  /** Số lệnh được xếp hàng chờ khi đã đủ `maxConcurrent`; quá số này trả 503. Mặc định 50. */
+  maxQueued?: number;
   /** Chỉ nhận thông điệp không nhạy cảm (tên method, mã lỗi). */
   log?: (message: string) => void;
 }
+
+const DEFAULT_MAX_CONCURRENT = 10;
+const DEFAULT_MAX_QUEUED = 50;
+
+/** Hàng đợi đã đầy: adapter từ chối việc mới thay vì gom thêm vào bộ nhớ. */
+class EventsBusyError extends Error {}
+
+/** Giới hạn số tác vụ chạy đồng thời, các tác vụ dư xếp hàng tới `maxQueued` rồi bị từ chối. */
+function createLimiter(maxActive: number, maxQueued: number) {
+  let active = 0;
+  const waiting: Array<() => void> = [];
+  return async function run<T>(task: () => Promise<T>): Promise<T> {
+    if (active >= maxActive) {
+      if (waiting.length >= maxQueued) throw new EventsBusyError();
+      // Slot được chuyển thẳng cho người đứng đầu hàng nên `active` không đổi.
+      await new Promise<void>((resolve) => waiting.push(resolve));
+    } else {
+      active++;
+    }
+    try {
+      return await task();
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else active--;
+    }
+  };
+}
+
+/** Methods mà `params.name` định danh một đối tượng nên HTTP binding bắt `Mcp-Name` khớp. */
+const NAMED_METHODS = new Set<string>([
+  "events/subscribe",
+  "events/unsubscribe",
+]);
 
 interface PeekedRpc {
   method: string;
@@ -89,7 +127,9 @@ async function readLimited(
       if (done) break;
       total += value.byteLength;
       if (total > limit) {
-        await reader.cancel();
+        // Không `await`: hủy một nhánh của `clone()` chỉ xong khi nhánh còn lại cũng được
+        // tiêu thụ hoặc hủy, mà request gốc chưa tới tay handler gốc cho tới khi hàm này trả về.
+        void reader.cancel().catch(() => {});
         return null;
       }
       chunks.push(value);
@@ -153,12 +193,26 @@ async function isMethodNotFound(
   }
 }
 
+/** `Mcp-Name` phải có mặt và đúng bằng `params.name` (tên sự kiện luôn là ASCII). */
+function nameHeaderMatches(request: Request, rpc: PeekedRpc): boolean {
+  if (!isRecord(rpc.params) || typeof rpc.params.name !== "string") {
+    // Thiếu tên thì parser tham số trả -32602 đúng hơn một lỗi header.
+    return true;
+  }
+  if (!/^[\x20-\x7e]*$/.test(rpc.params.name)) return true;
+  return request.headers.get("Mcp-Name") === rpc.params.name;
+}
+
 export function createEventsAdapter(
   options: EventsAdapterOptions,
 ): FetchHandler {
   const { base, authProvider, serverInfo, store } = options;
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
   const log = options.log ?? (() => {});
+  const limit = createLimiter(
+    options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
+    options.maxQueued ?? DEFAULT_MAX_QUEUED,
+  );
 
   async function verify(request: Request) {
     const token = extractBearerToken(request);
@@ -262,15 +316,35 @@ export function createEventsAdapter(
       );
     }
 
-    try {
-      const result = await runWithCaller(
-        identity,
-        () => dispatch(rpc.method, rpc.params),
+    if (NAMED_METHODS.has(rpc.method) && !nameHeaderMatches(request, rpc)) {
+      return failure(
+        baseResponse,
+        rpc.id,
+        new EventsProtocolError(EventsErrorCode.HeaderMismatch),
       );
+    }
+
+    try {
+      const run = () =>
+        runWithCaller(identity, () => dispatch(rpc.method, rpc.params));
+      // events/list chỉ đọc danh mục trong bộ nhớ; chỉ việc gọi ERP mới cần giới hạn.
+      const result = rpc.method === "events/list"
+        ? await run()
+        : await limit(run);
       log(`events rpc ok method=${rpc.method}`);
       return jsonRpc(baseResponse, { id: rpc.id, result: stamp(result) }, 200);
     } catch (error) {
       if (error instanceof EventsAuthError) return unauthorized(baseResponse);
+      if (error instanceof EventsBusyError) {
+        log(`events rpc refused busy method=${rpc.method}`);
+        return jsonRpc(baseResponse, {
+          id: rpc.id,
+          error: {
+            code: EventsErrorCode.InternalError,
+            message: "Server busy",
+          },
+        }, 503);
+      }
       if (error instanceof EventsProtocolError) {
         return failure(baseResponse, rpc.id, error);
       }

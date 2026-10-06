@@ -119,6 +119,8 @@ const NAME_SOURCE: Readonly<Record<string, "name" | "uri" | "taskId">> = {
   "tasks/get": "taskId",
   "tasks/update": "taskId",
   "tasks/cancel": "taskId",
+  "events/subscribe": "name",
+  "events/unsubscribe": "name",
 };
 
 /**

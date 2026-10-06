@@ -32,6 +32,7 @@ export function isEventsMethod(value: unknown): value is EventsMethod {
 
 /** Mã lỗi Events (theo draft của MCP Events) cộng hai mã JSON-RPC lõi mà module này dùng. */
 export const EventsErrorCode = {
+  HeaderMismatch: -32020,
   InvalidParams: -32602,
   InternalError: -32603,
   EventNotFound: -32011,
@@ -45,6 +46,7 @@ export type EventsErrorCodeValue =
 
 /** Thông điệp cố định theo mã. Không bao giờ ghép giá trị của người gọi vào đây. */
 const ERROR_MESSAGES: Record<EventsErrorCodeValue, string> = {
+  [EventsErrorCode.HeaderMismatch]: "Header mismatch",
   [EventsErrorCode.InvalidParams]: "Invalid params",
   [EventsErrorCode.InternalError]: "Events backend error",
   [EventsErrorCode.EventNotFound]: "Unknown event name",
@@ -55,6 +57,7 @@ const ERROR_MESSAGES: Record<EventsErrorCodeValue, string> = {
 };
 
 const ERROR_HTTP_STATUS: Record<EventsErrorCodeValue, number> = {
+  [EventsErrorCode.HeaderMismatch]: 400,
   [EventsErrorCode.InvalidParams]: 400,
   [EventsErrorCode.InternalError]: 502,
   [EventsErrorCode.EventNotFound]: 404,
@@ -334,6 +337,18 @@ export interface SubscribeResult {
 
 const ISO_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 
+/** Chuỗi khớp hình dạng ISO UTC và là một thời điểm có thật (không có tháng 99 hay ngày 31/02). */
+function isRealUtcInstant(value: string): boolean {
+  if (!ISO_UTC_PATTERN.test(value)) return false;
+  const [year, month, day, hour, minute, second] = value.slice(0, 19)
+    .split(/[-T:]/).map(Number);
+  const moment = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  return moment.getUTCFullYear() === year &&
+    moment.getUTCMonth() === month - 1 && moment.getUTCDate() === day &&
+    moment.getUTCHours() === hour && moment.getUTCMinutes() === minute &&
+    moment.getUTCSeconds() === second;
+}
+
 function malformedBackend(): EventsProtocolError {
   return new EventsProtocolError(EventsErrorCode.InternalError);
 }
@@ -346,7 +361,7 @@ export function toSubscribeResult(raw: unknown): SubscribeResult {
     throw malformedBackend();
   }
   if (
-    typeof refresh_before !== "string" || !ISO_UTC_PATTERN.test(refresh_before)
+    typeof refresh_before !== "string" || !isRealUtcInstant(refresh_before)
   ) {
     throw malformedBackend();
   }

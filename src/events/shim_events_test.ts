@@ -122,6 +122,13 @@ function modernRequest(
     "MCP-Protocol-Version": PROTO_VERSION,
     "Mcp-Method": method,
   };
+  // HTTP binding: method nhắm vào đối tượng có tên phải gửi `Mcp-Name` khớp `params.name`.
+  if (
+    (method === "events/subscribe" || method === "events/unsubscribe") &&
+    typeof params.name === "string"
+  ) {
+    headers["Mcp-Name"] = params.name;
+  }
   if (token !== null) headers.Authorization = `Bearer ${token}`;
   return new Request("https://erp.example/mcp", {
     method: "POST",
@@ -258,6 +265,35 @@ Deno.test("legacy-shaped events requests are translated by the shim and still hi
       undefined,
       "legacy clients do not get resultType",
     );
+  } finally {
+    await upstream.stop();
+  }
+});
+
+Deno.test("legacy-shaped events/subscribe gets a mirrored Mcp-Name from the shim", async () => {
+  const upstream = await startEventsUpstream();
+  try {
+    const res = await handleShimRequest(
+      new Request("https://erp.example/mcp", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+          Authorization: `Bearer ${TOKEN}`,
+          "X-Anthropic-Client": "Cowork",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 8,
+          method: "events/subscribe",
+          params: SUBSCRIBE_PARAMS,
+        }),
+      }),
+      { upstream: upstream.url },
+    );
+    assertEquals(res.status, 200);
+    assertEquals((await res.json()).result.id, "sub_1");
+    assertEquals(upstream.subscribed.length, 1);
   } finally {
     await upstream.stop();
   }

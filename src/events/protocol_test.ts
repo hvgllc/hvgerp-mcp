@@ -452,6 +452,18 @@ Deno.test("toSubscribeResult maps snake_case to the wire shape and validates it"
       cursor: null,
       truncated: false,
     },
+    ...[
+      "2026-99-99T99:99:99Z",
+      "2026-02-30T00:00:00Z",
+      "2026-13-01T00:00:00Z",
+      "2026-01-01T24:00:00Z",
+      "2026-01-01T00:60:00Z",
+    ].map((refresh_before) => ({
+      id: "s",
+      refresh_before,
+      cursor: null,
+      truncated: false,
+    })),
     {
       id: "s",
       refresh_before: "2030-01-01T00:00:00Z",

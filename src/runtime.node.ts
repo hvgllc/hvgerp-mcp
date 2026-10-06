@@ -180,13 +180,31 @@ export function serveHttp(
           return;
         }
         const reader = response.body.getReader();
+        let finished = false;
         try {
           while (true) {
             const { done, value } = await reader.read();
-            if (done) break;
-            outgoing.write(value);
+            if (done) {
+              finished = true;
+              break;
+            }
+            if (outgoing.destroyed) break;
+            // Bộ đệm đầy thì dừng đọc luồng Fetch cho tới khi socket xả xong (hoặc đóng).
+            if (!outgoing.write(value)) {
+              await new Promise<void>((resolve) => {
+                const settle = () => {
+                  outgoing.off("drain", settle);
+                  outgoing.off("close", settle);
+                  resolve();
+                };
+                outgoing.once("drain", settle);
+                outgoing.once("close", settle);
+              });
+            }
           }
         } finally {
+          // Client bỏ đi giữa chừng: hủy nguồn để không tiếp tục sinh dữ liệu vô ích.
+          if (!finished) void reader.cancel().catch(() => {});
           outgoing.end();
         }
       }).catch(() => {

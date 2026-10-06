@@ -128,6 +128,8 @@ async function buildFixture(
     store?: Partial<EventsStore>;
     cors?: boolean;
     maxBodyBytes?: number;
+    maxConcurrent?: number;
+    maxQueued?: number;
   } = {},
 ): Promise<Fixture> {
   const provider = new MixedProvider();
@@ -160,6 +162,8 @@ async function buildFixture(
     serverInfo: SERVER_INFO,
     store,
     maxBodyBytes: options.maxBodyBytes,
+    maxConcurrent: options.maxConcurrent,
+    maxQueued: options.maxQueued,
     log: (message) => logs.push(message),
   });
   return { base, handler, calls, logs };
@@ -174,6 +178,8 @@ function rpc(
     meta?: Record<string, unknown>;
     id?: number | string;
     path?: string;
+    /** Bỏ `Mcp-Name` tự sinh để thử request thiếu header. */
+    omitName?: boolean;
   } = {},
 ): Request {
   const headers: Record<string, string> = {
@@ -183,6 +189,14 @@ function rpc(
     "Mcp-Method": method,
     ...options.headers,
   };
+  // Method nhắm vào một đối tượng có tên thì HTTP binding bắt `Mcp-Name` soi gương `params.name`.
+  if (
+    !options.omitName && !("Mcp-Name" in headers) &&
+    (method === "events/subscribe" || method === "events/unsubscribe") &&
+    typeof params.name === "string"
+  ) {
+    headers["Mcp-Name"] = params.name;
+  }
   const token = options.token === undefined ? TOKEN_A : options.token;
   if (token !== null) headers.Authorization = `Bearer ${token}`;
   return new Request(`http://localhost${options.path ?? "/mcp"}`, {
@@ -560,6 +574,114 @@ Deno.test("A3 an oversized body is left to the base handler's own limit", async 
   // Adapter không đọc nổi body nên không nhận việc; base trả 404 vì không biết method.
   assertEquals(res.status, 404);
   assertEquals(calls.length, 0);
+});
+
+Deno.test("A3 an oversized streamed body does not hang the adapter", async () => {
+  const { handler, calls } = await buildFixture({ maxBodyBytes: 256 });
+  const encoder = new TextEncoder();
+  const chunk = encoder.encode("x".repeat(200));
+  const request = new Request("http://localhost/mcp", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      "MCP-Protocol-Version": PROTO_VERSION,
+      "Mcp-Method": "events/subscribe",
+      Authorization: `Bearer ${TOKEN_A}`,
+    },
+    body: new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(chunk);
+      },
+    }),
+    duplex: "half",
+  } as RequestInit);
+  const timeout = new Promise<"hung">((resolve) =>
+    setTimeout(() => resolve("hung"), 3000)
+  );
+  const outcome = await Promise.race([handler(request), timeout]);
+  assert(outcome !== "hung", "adapter must hand the request to base, not wait");
+  assertEquals(calls.length, 0);
+  await (outcome as Response).body?.cancel();
+});
+
+// ── Mcp-Name ────────────────────────────────────────────────────────────────
+
+for (
+  const [method, params] of [
+    ["events/subscribe", SUBSCRIBE_PARAMS],
+    ["events/unsubscribe", UNSUBSCRIBE_PARAMS],
+  ] as const
+) {
+  Deno.test(`${method} without Mcp-Name is a header mismatch`, async () => {
+    const { handler, calls } = await buildFixture();
+    const res = await handler(rpc(method, params, { omitName: true }));
+    assertEquals(res.status, 400);
+    assertEquals((await json(res)).error.code, EventsErrorCode.HeaderMismatch);
+    assertEquals(calls.length, 0);
+  });
+
+  Deno.test(`${method} with a conflicting Mcp-Name is a header mismatch`, async () => {
+    const { handler, calls } = await buildFixture();
+    const res = await handler(
+      rpc(method, params, { headers: { "Mcp-Name": "meeting.created" } }),
+    );
+    assertEquals(res.status, 400);
+    assertEquals((await json(res)).error.code, EventsErrorCode.HeaderMismatch);
+    assertEquals(calls.length, 0);
+  });
+}
+
+Deno.test("an unauthenticated events call without Mcp-Name is still a 401", async () => {
+  const { handler } = await buildFixture();
+  const res = await handler(
+    rpc("events/subscribe", SUBSCRIBE_PARAMS, { token: null, omitName: true }),
+  );
+  assertEquals(res.status, 401);
+});
+
+// ── Giới hạn đồng thời ──────────────────────────────────────────────────────
+
+Deno.test("backend calls are bounded by maxConcurrent and the overflow is refused", async () => {
+  let running = 0;
+  let peak = 0;
+  const gates: Array<() => void> = [];
+  const { handler } = await buildFixture({
+    maxConcurrent: 2,
+    maxQueued: 1,
+    store: {
+      subscribe() {
+        running++;
+        peak = Math.max(peak, running);
+        return new Promise((resolve) => {
+          gates.push(() => {
+            running--;
+            resolve({
+              id: "sub_x",
+              refreshBefore: "2030-01-01T00:00:00Z",
+              cursor: null,
+              truncated: false,
+            });
+          });
+        });
+      },
+    },
+  });
+  const pending = [1, 2, 3].map(() =>
+    handler(rpc("events/subscribe", SUBSCRIBE_PARAMS))
+  );
+  const refused = await handler(rpc("events/subscribe", SUBSCRIBE_PARAMS));
+  assertEquals(refused.status, 503);
+  await refused.body?.cancel();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assertEquals(peak, 2);
+  while (gates.length > 0 || running > 0) {
+    gates.shift()?.();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  const settled = await Promise.all(pending);
+  assertEquals(settled.map((res) => res.status), [200, 200, 200]);
+  assertEquals(peak, 2);
 });
 
 // ── Kiểm tra schema (-32602, -32011, -32014) ────────────────────────────────
