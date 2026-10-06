@@ -8,7 +8,12 @@ import { assert, assertEquals, assertRejects } from "@std/assert";
 import { ErpNextToolsClient } from "../client.ts";
 import { FrappeAPIError, type FrappeClient } from "../api/frappe-client.ts";
 import { calendarTools, EVENTS_TOOL_NAMES } from "./calendar.ts";
-import { allTools, toolsByCategory } from "./mod.ts";
+import {
+  allTools,
+  getToolByName,
+  getToolsByCategory,
+  toolsByCategory,
+} from "./mod.ts";
 import type { ErpNextToolContext } from "./types.ts";
 
 const TOOL_NAME = "erpnext_meeting_get";
@@ -191,10 +196,19 @@ Deno.test("erpnext_meeting_get turns ERP failures into fixed messages", async ()
   }
 });
 
-Deno.test("the tool is registered in the real registry under operations", () => {
-  assert(allTools.some((tool) => tool.name === TOOL_NAME));
-  assert(toolsByCategory.operations.some((tool) => tool.name === TOOL_NAME));
+Deno.test("the tool stays out of every public default registry", () => {
+  assert(!allTools.some((tool) => tool.name === TOOL_NAME));
+  for (const tools of Object.values(toolsByCategory)) {
+    assert(!tools.some((tool) => tool.name === TOOL_NAME));
+  }
+  for (const category of Object.keys(toolsByCategory)) {
+    assert(
+      !getToolsByCategory(category).some((tool) => tool.name === TOOL_NAME),
+    );
+  }
+  assertEquals(getToolByName(TOOL_NAME), undefined);
   assertEquals([...EVENTS_TOOL_NAMES], [TOOL_NAME]);
+  assertEquals(calendarTools.map((tool) => tool.name), [TOOL_NAME]);
 });
 
 Deno.test("ErpNextToolsClient hides the events tool unless the flag option is set", () => {

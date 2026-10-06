@@ -25,7 +25,7 @@ import type {
   ToolHandlerContext,
 } from "@casys/mcp-server";
 import { getFrappeClient } from "./api/frappe-client.ts";
-import { EVENTS_TOOL_NAMES } from "./tools/calendar.ts";
+import { calendarTools } from "./tools/calendar.ts";
 import { runWithLinkDisambiguation } from "./mrtr/link-disambiguation.ts";
 import { withUiRefreshRequest } from "./tools/ui-refresh.ts";
 import {
@@ -147,24 +147,14 @@ export class ErpNextToolsClient {
       this.tools = whoami && !selected.some((t) => t.name === WHOAMI_TOOL_NAME)
         ? [whoami, ...selected]
         : selected;
-      // Khi bật Events, sự kiện chỉ mang con trỏ nên bên nhận phải gọi `erpnext_meeting_get` để
-      // đọc lại. Bộ lọc category (ví dụ `--categories=sales` loại `operations`) không được phép
-      // gỡ tool đồng hành này khỏi `tools/list` trong khi adapter vẫn quảng bá capability Events.
-      // Thêm ĐÚNG các tool Events, không kéo cả category `operations` vào.
-      if (options.includeEventsTools) {
-        const missing = [...EVENTS_TOOL_NAMES]
-          .filter((name) => !this.tools.some((t) => t.name === name))
-          .map((name) => getToolByName(name))
-          .filter((tool): tool is ErpNextTool => tool !== undefined);
-        this.tools = [...this.tools, ...missing];
-      }
     } else {
       this.tools = allTools;
     }
-    if (!options?.includeEventsTools) {
-      this.tools = this.tools.filter((tool) =>
-        !EVENTS_TOOL_NAMES.has(tool.name)
-      );
+    // Tool Events không nằm trong registry công khai (xem `tools/mod.ts`), nên chỉ được thêm ở đây và chỉ
+    // khi bật cờ. Bộ lọc category (ví dụ `--categories=sales`) vì vậy không bao giờ gỡ được tool đồng hành
+    // này khi adapter vẫn quảng bá capability Events, và tắt cờ thì bề mặt tool giữ nguyên như trước.
+    if (options?.includeEventsTools) {
+      this.tools = [...this.tools, ...calendarTools];
     }
   }
 

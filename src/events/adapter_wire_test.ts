@@ -397,7 +397,7 @@ for (const [method, params] of EVENTS_CALLS) {
   });
 }
 
-Deno.test("A2 a bearer that passed the gate but fails the second verification is a 401", async () => {
+Deno.test("A2 a verifier that throws on the second verification is a bounded 502, not an invalid token", async () => {
   // Provider không ổn định: lần đầu cho qua, lần hai (adapter xác minh lại) báo token hỏng.
   let verifications = 0;
   const flaky = new (class extends FakeOidcProvider {
@@ -419,6 +419,40 @@ Deno.test("A2 a bearer that passed the gate but fails the second verification is
   const handler = createEventsAdapter({
     base,
     authProvider: flaky,
+    serverInfo: SERVER_INFO,
+    store,
+  });
+  const res = await handler(rpc("events/list"));
+  assertEquals(res.status, 502);
+  assertEquals(res.headers.get("www-authenticate"), null);
+  const body = await res.json();
+  assertEquals(body.error.code, -32603);
+  assertEquals(body.error.message, "Events backend error");
+  assertEquals(JSON.stringify(body).includes("jwks"), false);
+  assertEquals(calls.length, 0);
+});
+
+Deno.test("A2 a second verification that returns null is still a 401", async () => {
+  let verifications = 0;
+  const revoking = new (class extends FakeOidcProvider {
+    override verifyToken(token: string) {
+      verifications += 1;
+      return verifications === 1
+        ? super.verifyToken(token)
+        : Promise.resolve(null);
+    }
+  })();
+  const app = new McpApp({
+    name: SERVER_INFO.name,
+    version: SERVER_INFO.version,
+    transport: "stateless",
+    auth: { provider: revoking },
+  });
+  const base = await app.getFetchHandler({ cors: false });
+  const { store, calls } = makeStore();
+  const handler = createEventsAdapter({
+    base,
+    authProvider: revoking,
     serverInfo: SERVER_INFO,
     store,
   });

@@ -271,6 +271,9 @@ function nameHeaderMatches(request: Request, rpc: PeekedRpc): boolean {
   return request.headers.get("Mcp-Name") === rpc.params.name;
 }
 
+/** Dấu hiệu nội bộ: verifier ném ngoại lệ (khác với trả `null` cho token sai). */
+const VERIFIER_UNAVAILABLE = Symbol("verifier-unavailable");
+
 export function createEventsAdapter(
   options: EventsAdapterOptions,
 ): FetchHandler {
@@ -290,10 +293,21 @@ export function createEventsAdapter(
   async function verify(request: Request) {
     const token = extractBearerToken(request);
     if (!token) return null;
+    // `null` là "token không hợp lệ". Ngoại lệ của verifier (ví dụ JWKS tạm thời không tải được) là lỗi
+    // vận hành, không phải lỗi của credential, nên để nó nổi lên cho caller đổi thành 5xx có giới hạn
+    // thay vì ép client đăng nhập lại.
+    return await authProvider.verifyToken(token);
+  }
+
+  /** Như `verify` nhưng ngoại lệ của verifier thành `VerifierUnavailable` (không bao giờ kèm nội dung lỗi). */
+  async function verifyOrUnavailable(
+    request: Request,
+  ): Promise<Awaited<ReturnType<typeof verify>> | typeof VERIFIER_UNAVAILABLE> {
     try {
-      return await authProvider.verifyToken(token);
+      return await verify(request);
     } catch {
-      return null;
+      log("events verifier unavailable");
+      return VERIFIER_UNAVAILABLE;
     }
   }
 
@@ -377,7 +391,14 @@ export function createEventsAdapter(
     // Chỉ nhận việc khi handler gốc đã cho qua mọi cổng và chỉ còn thiếu method.
     if (!await isMethodNotFound(baseResponse, rpc.method)) return baseResponse;
 
-    const authInfo = await verify(request);
+    const authInfo = await verifyOrUnavailable(request);
+    if (authInfo === VERIFIER_UNAVAILABLE) {
+      return failure(
+        baseResponse,
+        rpc.id,
+        new EventsProtocolError(EventsErrorCode.InternalError),
+      );
+    }
     if (!authInfo) return unauthorized(baseResponse);
 
     const identity = resolveCallerIdentity(authInfo, request.headers);
@@ -435,7 +456,16 @@ export function createEventsAdapter(
     response: Response,
   ): Promise<Response> {
     if (response.status !== 200) return response;
-    const authInfo = await verify(request);
+    const authInfo = await verifyOrUnavailable(request);
+    if (authInfo === VERIFIER_UNAVAILABLE) {
+      return jsonRpc(response, {
+        id: null,
+        error: {
+          code: EventsErrorCode.InternalError,
+          message: "Events backend error",
+        },
+      }, 502);
+    }
     if (!authInfo || !resolveCallerIdentity(authInfo, request.headers)) {
       return response;
     }

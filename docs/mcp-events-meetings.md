@@ -99,18 +99,18 @@ never stored, logged or echoed back.
 
 ### Errors
 
-| Code     | HTTP | Meaning                                                                                                                                                     |
-| -------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-32020` | 400  | `Mcp-Method` / `MCP-Protocol-Version` mismatch (SDK), or `Mcp-Name` missing or different from `params.name` on `events/subscribe` and `events/unsubscribe`. |
-| `-32022` | 400  | `_meta` protocol version problem (SDK).                                                                                                                     |
-| `-32602` | 400  | Invalid params. Names the offending field, never its value.                                                                                                 |
-| `-32011` | 404  | Unknown event name.                                                                                                                                         |
-| `-32012` | 403  | No user identity, or ERPNext refused the user.                                                                                                              |
-| `-32013` | 429  | Subscription limit reached.                                                                                                                                 |
-| `-32014` | 400  | Unsupported delivery (not `webhook`, or an unusable URL).                                                                                                   |
-| `-32015` | 502  | Callback verification failed (reason from a fixed list).                                                                                                    |
-| `-32603` | 502  | ERPNext unavailable or returned an unexpected shape.                                                                                                        |
-| `-32603` | 503  | Too many subscribe/unsubscribe calls in flight (see below).                                                                                                 |
+| Code     | HTTP | Meaning                                                                                                                                                                     |
+| -------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-32020` | 400  | `Mcp-Method` / `MCP-Protocol-Version` mismatch (SDK), or `Mcp-Name` missing or different from `params.name` on `events/subscribe` and `events/unsubscribe`.                 |
+| `-32022` | 400  | `_meta` protocol version problem (SDK).                                                                                                                                     |
+| `-32602` | 400  | Invalid params. Names the offending field, never its value.                                                                                                                 |
+| `-32011` | 404  | Unknown event name.                                                                                                                                                         |
+| `-32012` | 403  | No user identity, or ERPNext refused the user.                                                                                                                              |
+| `-32013` | 429  | Subscription limit reached.                                                                                                                                                 |
+| `-32014` | 400  | Unsupported delivery (not `webhook`, or an unusable URL).                                                                                                                   |
+| `-32015` | 502  | Callback verification failed (reason from a fixed list).                                                                                                                    |
+| `-32603` | 502  | ERPNext unavailable, throttling the request (transport HTTP 429, not a subscription quota), or returned an unexpected shape; also the token verifier failing operationally. |
+| `-32603` | 503  | Too many subscribe/unsubscribe calls in flight (see below).                                                                                                                 |
 
 ERPNext answers every method with HTTP 200 and `{ok, result}` or
 `{ok:false, error}`. Only `error` is mapped to JSON-RPC, and only through fixed

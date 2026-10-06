@@ -81,8 +81,8 @@ export function unwrapErpEnvelope(message: unknown): ErpEnvelope {
 
 /**
  * Đổi lỗi truyền tải của Frappe thành lỗi của giao thức Events. Không phản chiếu body của ERP.
- * 401 là lỗi xác thực; 403 là người gọi không đủ quyền (token vẫn đúng); 429 là giới hạn tốc độ;
- * phần còn lại là backend không dùng được.
+ * 401 là lỗi xác thực; 403 là người gọi không đủ quyền (token vẫn đúng); phần còn lại (kể cả 429 giới
+ * hạn tốc độ) là backend không dùng được.
  */
 export function classifyTransportError(error: unknown): Error {
   if (error instanceof FrappeAPIError) {
@@ -90,9 +90,9 @@ export function classifyTransportError(error: unknown): Error {
     if (error.status === 403) {
       return new EventsProtocolError(EventsErrorCode.Forbidden);
     }
-    if (error.status === 429) {
-      return new EventsProtocolError(EventsErrorCode.QuotaExceeded);
-    }
+    // 429 ở tầng truyền tải là Frappe giới hạn tốc độ request, không phải hạn mức subscription (hạn mức
+    // đi qua phong bì lỗi HTTP 200). Báo -32013 sẽ khiến client dừng hẳn thay vì thử lại, nên đây là
+    // lỗi backend trung tính.
     return new EventsProtocolError(EventsErrorCode.InternalError);
   }
   if (
@@ -284,6 +284,16 @@ function assertShape(ok: boolean): void {
   if (!ok) throw new Error(BACKEND_ERROR);
 }
 
+/**
+ * Kết thúc phải sau bắt đầu. Ngày chỉ có dạng `YYYY-MM-DD` nên so chuỗi cũng là so thời gian; thời điểm UTC
+ * được so theo mili giây. `exclusive` là mốc kết thúc loại trừ của cuộc họp cả ngày, nơi bằng nhau nghĩa là
+ * khoảng rỗng. Cuộc họp có giờ cho phép độ dài 0.
+ */
+function endFollowsStart(start: string, end: string, allDay: boolean): boolean {
+  if (allDay) return end > start;
+  return Date.parse(end) >= Date.parse(start);
+}
+
 /** Giá trị là chuỗi hợp lệ theo `check` hoặc `null`; mọi thứ khác là lỗi backend. */
 function isNullableOf(
   value: unknown,
@@ -324,6 +334,13 @@ function validateOccurrence(
         (allDay ? isRealDate(value) : isRealUtcInstant(value)),
     );
   }
+  assertShape(
+    endFollowsStart(
+      picked.occurrence_start as string,
+      picked.occurrence_end as string,
+      allDay,
+    ),
+  );
   assertShape(isRevision(picked.schedule_revision));
   return picked;
 }
@@ -368,6 +385,19 @@ function pickMeetingFields(
     assertShape(typeof picked[key] === "string" && picked[key] !== "");
   }
   for (const key of forbidden) assertShape(picked[key] == null);
+  // Mỗi mốc kết thúc có mặt phải đứng sau mốc bắt đầu tương ứng, nếu không lịch là bất khả thi.
+  const [startKey, endKey] = picked.all_day
+    ? ["start_date", "end_date_exclusive"]
+    : ["starts_at", "ends_at"];
+  if (typeof picked[endKey] === "string") {
+    assertShape(
+      endFollowsStart(
+        picked[startKey] as string,
+        picked[endKey] as string,
+        picked.all_day as boolean,
+      ),
+    );
+  }
   if (isRecord(result.recurrence)) {
     picked.recurrence = validateRecurrence(result.recurrence);
   } else if (Object.hasOwn(result, "recurrence")) {

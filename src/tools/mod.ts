@@ -47,6 +47,11 @@ export {
 };
 export type { ErpNextTool, ErpNextToolCategory };
 
+// `calendarTools` (tool đồng hành của MCP Events) cố ý KHÔNG nằm trong `toolsByCategory`, `allTools`,
+// `getToolsByCategory` hay `getToolByName`. Cờ `MCP_EVENTS_ENABLED` chỉ được áp ở `server.ts`, nên nếu tool
+// nằm trong các registry công khai thì người dùng thư viện sẽ đăng ký và chạy được nó dưới credential dịch vụ
+// kể cả khi Events tắt. `ErpNextToolsClient` thêm nó riêng khi `includeEventsTools` bật.
+
 /** All tools grouped by category */
 export const toolsByCategory: Record<string, ErpNextTool[]> = {
   identity: identityTools,
@@ -60,7 +65,7 @@ export const toolsByCategory: Record<string, ErpNextTool[]> = {
   manufacturing: manufacturingTools,
   crm: crmTools,
   assets: assetsTools,
-  operations: [...operationsTools, ...calendarTools],
+  operations: operationsTools,
   setup: setupTools,
   analytics: analyticsTools,
   kanban: kanbanTools,
@@ -81,7 +86,6 @@ export const allTools: ErpNextTool[] = [
   ...crmTools,
   ...assetsTools,
   ...operationsTools,
-  ...calendarTools,
   ...setupTools,
   ...analyticsTools,
   ...kanbanTools,

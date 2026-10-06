@@ -249,14 +249,14 @@ Deno.test("a malformed envelope or result is a backend error", async () => {
   }
 });
 
-Deno.test("transport errors: 401 is an auth failure, 403 is forbidden, 429 is quota, everything else is backend", async () => {
+Deno.test("transport errors: 401 is an auth failure, 403 is forbidden, 429 throttling is a neutral backend error, everything else is backend", async () => {
   const cases: Array<[unknown, "auth" | number]> = [
     [new FrappeAPIError("Not permitted token=abc", 401, null), "auth"],
     [
       new FrappeAPIError("PermissionError", 403, null),
       EventsErrorCode.Forbidden,
     ],
-    [new FrappeAPIError("slow down", 429, null), EventsErrorCode.QuotaExceeded],
+    [new FrappeAPIError("slow down", 429, null), EventsErrorCode.InternalError],
     [
       new FrappeAPIError("Traceback: password=hunter2", 500, null),
       EventsErrorCode.InternalError,
@@ -605,6 +605,33 @@ Deno.test("fetchMeeting rejects a successful result whose values have the wrong 
       all_day: true,
       start_date: "2030-05-01",
       end_date_exclusive: "2030-05-02",
+    }],
+    ["timed meeting ending before it starts", {
+      starts_at: "2030-05-02T02:00:00Z",
+      ends_at: "2030-05-01T02:00:00Z",
+    }],
+    ["all-day meeting whose exclusive end is before its start", {
+      all_day: true,
+      starts_at: null,
+      ends_at: null,
+      start_date: "2030-05-02",
+      end_date_exclusive: "2030-05-01",
+    }],
+    ["all-day meeting with an empty range", {
+      all_day: true,
+      starts_at: null,
+      ends_at: null,
+      start_date: "2030-05-02",
+      end_date_exclusive: "2030-05-02",
+    }],
+    ["timed occurrence ending before it starts", {
+      occurrences: [{
+        series_id: "EVT-1",
+        occurrence_start: "2030-05-01T03:00:00Z",
+        occurrence_end: "2030-05-01T02:00:00Z",
+        zone: "Asia/Ho_Chi_Minh",
+        schedule_revision: 4,
+      }],
     }],
     ["truthy non-boolean deleted", { deleted: "yes" }],
     ["object frequency", { recurrence: { frequency: { a: 1 }, until: null } }],
