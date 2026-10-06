@@ -128,10 +128,10 @@ exhausted, instead of forwarding an unread request to the SDK, where an
 authenticated Events call would surface as `-32601`. The budget bounds both the
 bytes held (`maxPeekBytes`, 16 MiB by default) and the number of simultaneous
 peeks (`maxPeeks`, 256 by default), because a tiny declared body that is never
-sent costs one byte but still holds a socket until `peekTimeoutMs`.
-The 503 carries the base handler's CORS headers (taken from an `OPTIONS` probe
-that never touches the request body) and exposes `Retry-After`, so a browser
-client can read and retry it.
+sent costs one byte but still holds a socket until `peekTimeoutMs`. The 503
+carries the base handler's CORS headers (taken from an `OPTIONS` probe that
+never touches the request body) and exposes `Retry-After`, so a browser client
+can read and retry it.
 
 `events/subscribe` and `events/unsubscribe` reject unknown top-level parameters
 with `-32602` (`field: "params.<key>"`) so a misspelt `arguments` cannot become
