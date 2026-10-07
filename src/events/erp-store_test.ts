@@ -1000,6 +1000,36 @@ Deno.test("fetchMeeting rejects an occurrence that does not touch the requested 
   }
 });
 
+Deno.test("fetchMeeting treats a timed occurrence ending at midnight of the requested day as not touching it", async () => {
+  const endsAtMidnight = {
+    ...TIMED_OCCURRENCE,
+    zone: "UTC",
+    occurrence_start: "2030-05-01T23:00:00Z",
+    occurrence_end: "2030-05-02T00:00:00Z",
+  };
+  // Lần diễn ra kết thúc đúng 00:00 ngày 02/05 chỉ chạm ngày 01/05, không được nhận là lần diễn ra của ngày 02/05.
+  await assertRejects(
+    () => readOccurrences("2030-05-02", endsAtMidnight),
+    Error,
+    "Events backend error",
+  );
+  assertEquals(
+    ((await readOccurrences("2030-05-01", endsAtMidnight))
+      .occurrences as unknown[]).length,
+    1,
+  );
+  // Chỉ cần kéo dài qua mốc nửa đêm là chạm cả ngày sau.
+  const pastMidnight = {
+    ...endsAtMidnight,
+    occurrence_end: "2030-05-02T00:00:00.001Z",
+  };
+  assertEquals(
+    ((await readOccurrences("2030-05-02", pastMidnight))
+      .occurrences as unknown[]).length,
+    1,
+  );
+});
+
 Deno.test("fetchMeeting binds all-day occurrences to the requested day with an exclusive end", async () => {
   const meeting = {
     all_day: true,

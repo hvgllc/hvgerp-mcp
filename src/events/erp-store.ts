@@ -463,7 +463,9 @@ function assertTouchesDay(
     return;
   }
   const startDay = localDay(Date.parse(start), zone);
-  const endDay = localDay(Date.parse(end), zone);
+  // Mốc kết thúc là mốc loại trừ: lần diễn ra kết thúc đúng 00:00 của ngày được hỏi không chạm ngày đó (lần có độ dài 0 vẫn tính ở mốc bắt đầu).
+  const endMs = Math.max(Date.parse(end) - 1, Date.parse(start));
+  const endDay = localDay(endMs, zone);
   assertShape(
     startDay !== null && endDay !== null && startDay <= day && endDay >= day,
   );
