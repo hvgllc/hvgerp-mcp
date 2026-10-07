@@ -463,9 +463,18 @@ function assertTouchesDay(
     return;
   }
   const startDay = localDay(Date.parse(start), zone);
-  // Mốc kết thúc là mốc loại trừ: lần diễn ra kết thúc đúng 00:00 của ngày được hỏi không chạm ngày đó (lần có độ dài 0 vẫn tính ở mốc bắt đầu).
-  const endMs = Math.max(Date.parse(end) - 1, Date.parse(start));
-  const endDay = localDay(endMs, zone);
+  // Mốc kết thúc là mốc loại trừ: lần diễn ra kết thúc đúng 00:00 của một ngày không chạm ngày đó. "Đúng" nghĩa là mọi chữ số
+  // thập phân đều bằng 0 (`Date.parse` cắt ở mili giây nên `.0001` sẽ bị coi nhầm là nửa đêm). Lần có độ dài 0 vẫn tính ở ngày bắt đầu.
+  const endMs = Date.parse(end);
+  const exactlyOnTheSecond = /^0*$/.test(end.slice(20, -1));
+  const endsAtLocalMidnight = exactlyOnTheSecond &&
+    localDay(endMs - 1, zone) !== localDay(endMs, zone);
+  const endDay = localDay(
+    endsAtLocalMidnight && compareUtcInstants(end, start) > 0
+      ? endMs - 1
+      : endMs,
+    zone,
+  );
   assertShape(
     startDay !== null && endDay !== null && startDay <= day && endDay >= day,
   );

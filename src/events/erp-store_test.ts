@@ -1018,15 +1018,30 @@ Deno.test("fetchMeeting treats a timed occurrence ending at midnight of the requ
       .occurrences as unknown[]).length,
     1,
   );
-  // Chỉ cần kéo dài qua mốc nửa đêm là chạm cả ngày sau.
-  const pastMidnight = {
-    ...endsAtMidnight,
-    occurrence_end: "2030-05-02T00:00:00.001Z",
-  };
-  assertEquals(
-    ((await readOccurrences("2030-05-02", pastMidnight))
-      .occurrences as unknown[]).length,
-    1,
+  // Chỉ cần kéo dài qua mốc nửa đêm là chạm cả ngày sau, kể cả khi chỉ vượt dưới một mili giây.
+  for (
+    const occurrenceEnd of [
+      "2030-05-02T00:00:00.001Z",
+      "2030-05-02T00:00:00.0001Z",
+    ]
+  ) {
+    const pastMidnight = { ...endsAtMidnight, occurrence_end: occurrenceEnd };
+    assertEquals(
+      ((await readOccurrences("2030-05-02", pastMidnight))
+        .occurrences as unknown[]).length,
+      1,
+      occurrenceEnd,
+    );
+  }
+  // Phần thập phân toàn số 0 vẫn là đúng nửa đêm.
+  await assertRejects(
+    () =>
+      readOccurrences("2030-05-02", {
+        ...endsAtMidnight,
+        occurrence_end: "2030-05-02T00:00:00.000000Z",
+      }),
+    Error,
+    "Events backend error",
   );
 });
 
