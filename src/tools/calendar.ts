@@ -197,7 +197,11 @@ export const calendarTools: ErpNextTool[] = [
         const value = readTemporal(input, key);
         if (value !== undefined) args[key] = value;
       }
-      if (args.window_start !== undefined && args.window_end !== undefined) {
+      // Có `occurrence_start` thì ERP bỏ qua cửa sổ (và `fetchMeeting` cũng vậy), nên cửa sổ cũ còn sót lại không được chặn lần đọc.
+      if (
+        args.occurrence_start === undefined &&
+        args.window_start !== undefined && args.window_end !== undefined
+      ) {
         const start = temporalInstant(args.window_start, false);
         const end = temporalInstant(args.window_end, true);
         if (canOrder(start, end) && compareInstants(start, end) > 0) {

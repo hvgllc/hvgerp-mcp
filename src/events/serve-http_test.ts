@@ -157,33 +157,29 @@ Deno.test("node serveHttp survives data sent after the handler canceled the body
   });
 });
 
-Deno.test("node serveHttp drains a body the handler never read once it has responded", async () => {
+Deno.test("node serveHttp closes the connection of a request whose body the handler never read", async () => {
   await withNodeServer(
     // Từ chối ngay, không đọc body (như khi xác thực thất bại).
     () => new Response("denied", { status: 401 }),
     async (port) => {
       const conn = await Deno.connect({ hostname: "127.0.0.1", port });
       try {
-        const total = 8 * 1024 * 1024;
+        // Khai báo 8 MB nhưng chỉ gửi một phần: server không được giữ kết nối để xả phần còn lại cho client nhỏ giọt.
         await conn.write(new TextEncoder().encode(
-          `POST / HTTP/1.1\r\nHost: x\r\nContent-Length: ${total}\r\n\r\n`,
+          `POST / HTTP/1.1\r\nHost: x\r\nContent-Length: ${
+            8 * 1024 * 1024
+          }\r\n\r\npartial`,
         ));
-        const chunk = new Uint8Array(64 * 1024);
-        let sent = 0;
-        const sender = (async () => {
-          while (sent < total) {
-            sent += await conn.write(
-              chunk.subarray(0, Math.min(chunk.length, total - sent)),
-            );
-          }
-        })().catch(() => {});
-        const deadline = Date.now() + 3000;
-        while (sent < total && Date.now() < deadline) {
-          await new Promise((resolve) => setTimeout(resolve, 50));
+        const chunks: string[] = [];
+        const buffer = new Uint8Array(4096);
+        while (true) {
+          const read = await conn.read(buffer);
+          if (read === null) break;
+          chunks.push(new TextDecoder().decode(buffer.subarray(0, read)));
         }
-        // Server không còn giữ socket ở trạng thái tạm dừng: toàn bộ body đã được xả.
-        assertEquals(sent, total);
-        await sender;
+        const reply = chunks.join("");
+        assert(reply.startsWith("HTTP/1.1 401"), reply);
+        assert(/connection: close/i.test(reply), reply);
       } finally {
         conn.close();
       }

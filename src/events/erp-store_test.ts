@@ -525,6 +525,32 @@ Deno.test("fetchMeeting reduces a deleted meeting to the three tombstone fields"
   });
 });
 
+Deno.test("fetchMeeting accepts every native Event recurrence frequency", async () => {
+  for (
+    const frequency of [
+      "Daily",
+      "Weekly",
+      "Monthly",
+      "Quarterly",
+      "Half Yearly",
+      "Yearly",
+    ]
+  ) {
+    const { client } = fakeClient(() => ({
+      ok: true,
+      result: {
+        ...MEETING,
+        recurrence: { frequency, until: null, weekdays: [] },
+      },
+    }));
+    const result = await fetchMeeting(client, { event_id: "EVT-1" });
+    assertEquals(
+      (result.recurrence as { frequency: string }).frequency,
+      frequency,
+    );
+  }
+});
+
 Deno.test("fetchMeeting fails on a malformed occurrence instead of dropping it", async () => {
   for (const occurrences of [[null], ["x"], [1, {}], {}, "none"]) {
     const { client } = fakeClient(() => ({

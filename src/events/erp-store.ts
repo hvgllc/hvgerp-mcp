@@ -270,6 +270,8 @@ const RECURRENCE_FREQUENCIES: ReadonlySet<string> = new Set([
   "Daily",
   "Weekly",
   "Monthly",
+  "Quarterly",
+  "Half Yearly",
   "Yearly",
 ]);
 const WEEKDAY_NAMES: ReadonlySet<string> = new Set([

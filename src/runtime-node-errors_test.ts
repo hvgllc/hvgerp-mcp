@@ -177,3 +177,35 @@ Deno.test("serveHttp closes the connection after rejecting a malformed Host with
   assertEquals(/connection: close/i.test(text), true);
   assertEquals(handled, false);
 });
+
+Deno.test("serveHttp closes the connection when the handler answers before the declared body arrives", async () => {
+  const stop = new AbortController();
+  const ready = Promise.withResolvers<{ port: number }>();
+  const finished = serveHttp({
+    port: 0,
+    hostname: "127.0.0.1",
+    signal: stop.signal,
+    onListen: (info) => ready.resolve({ port: info.port }),
+  }, () => new Response(null, { status: 204 }));
+  const { port } = await ready.promise;
+  const connection = await Deno.connect({ hostname: "127.0.0.1", port });
+  // Handler trả lời ngay mà không đọc body 1 MB khai báo (chỉ tới một phần): kết nối vẫn phải đóng sau phản hồi.
+  await connection.write(
+    new TextEncoder().encode(
+      "OPTIONS /mcp HTTP/1.1\r\nHost: x\r\nContent-Length: 1048576\r\n\r\npartial",
+    ),
+  );
+  const chunks: string[] = [];
+  const buffer = new Uint8Array(4096);
+  while (true) {
+    const read = await connection.read(buffer);
+    if (read === null) break;
+    chunks.push(new TextDecoder().decode(buffer.subarray(0, read)));
+  }
+  connection.close();
+  stop.abort();
+  await finished;
+  const text = chunks.join("");
+  assertEquals(text.startsWith("HTTP/1.1 204"), true);
+  assertEquals(/connection: close/i.test(text), true);
+});

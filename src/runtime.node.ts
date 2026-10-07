@@ -216,6 +216,12 @@ export function serveHttp(
         detachBody();
       });
 
+      // Phản hồi sớm khi body chưa tới đủ (handler từ chối trước khi đọc): xả body cho kết nối keep-alive tái dùng sẽ để
+      // client nhỏ giọt phần còn lại giữ socket ngoài `maxPeeks` và hạn peek của adapter, nên đóng kết nối thay vì xả.
+      const closeWhenBodyPending = () => {
+        if (!incoming.complete) outgoing.setHeader("Connection", "close");
+      };
+
       // Bọc trong Promise để handler ném ĐỒNG BỘ cũng rơi vào `.catch` bên dưới (trả 500) thay vì thoát khỏi callback.
       new Promise<Response>((resolve) => resolve(handler(request))).then(
         async (response) => {
@@ -223,6 +229,7 @@ export function serveHttp(
           response.headers.forEach((value, name) =>
             outgoing.setHeader(name, value)
           );
+          closeWhenBodyPending();
           if (response.body === null) {
             outgoing.end();
             return;
@@ -284,6 +291,7 @@ export function serveHttp(
           outgoing.removeHeader(name);
         }
         outgoing.statusCode = 500;
+        closeWhenBodyPending();
         outgoing.end();
       });
     });

@@ -143,6 +143,18 @@ Deno.test("erpnext_meeting_get rejects a reversed occurrence window without call
   assertEquals(calls.length, 0);
 });
 
+Deno.test("erpnext_meeting_get ignores a reversed window when occurrence_start is given", async () => {
+  // ERP bỏ qua cửa sổ khi có `occurrence_start`, nên cửa sổ cũ bị ngược không được chặn lần đọc.
+  const { ctx, calls } = makeClient(() => ({ ok: true, result: MEETING }));
+  await getTool().handler({
+    event_id: "EVT-1",
+    occurrence_start: "2030-05-01T02:00:00Z",
+    window_start: "2030-06-01",
+    window_end: "2030-05-01",
+  }, ctx);
+  assertEquals(calls.length, 1);
+});
+
 Deno.test("erpnext_meeting_get accepts equal and same-day window bounds", async () => {
   const { ctx, calls } = makeClient(() => ({ ok: true, result: MEETING }));
   const tool = getTool();
