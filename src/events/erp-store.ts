@@ -534,10 +534,14 @@ function validateOccurrence(
   item: Record<string, unknown>,
   allDay: boolean,
   eventId: string,
+  meetingZone: string,
   args: MeetingGetArgs,
 ): Record<string, unknown> {
   const picked = pickKeys(item, OCCURRENCE_KEYS);
   assertShape(isTimeZone(picked.zone));
+  // ERP phát cả hai từ cùng múi giờ của site. Một `zone` hợp lệ nhưng khác múi giờ cuộc họp sẽ dịch ranh giới ngày và để một lần
+  // diễn ra giả danh ngày được hỏi, nên coi là phản hồi lệch phiên bản.
+  assertShape(picked.zone === meetingZone);
   // Mỗi lần diễn ra phải thuộc đúng chuỗi của cuộc họp được hỏi, nếu không người gọi nhận lịch của Event khác.
   assertShape(picked.series_id === eventId);
   // Cuộc họp cả ngày phát ngày (`YYYY-MM-DD`), cuộc họp có giờ phát thời điểm UTC (`...Z`).
@@ -652,6 +656,7 @@ function pickMeetingFields(
         item,
         picked.all_day as boolean,
         result.event_id as string,
+        picked.time_zone as string,
         args,
       )
     );

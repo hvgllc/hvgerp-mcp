@@ -966,6 +966,8 @@ const TIMED_OCCURRENCE = {
   schedule_revision: 4,
 };
 
+const UTC_MEETING = { time_zone: "UTC" };
+
 async function readOccurrences(
   requested: string,
   occurrence: Record<string, unknown>,
@@ -1035,12 +1037,12 @@ Deno.test("fetchMeeting treats a timed occurrence ending at midnight of the requ
   };
   // Lần diễn ra kết thúc đúng 00:00 ngày 02/05 chỉ chạm ngày 01/05, không được nhận là lần diễn ra của ngày 02/05.
   await assertRejects(
-    () => readOccurrences("2030-05-02", endsAtMidnight),
+    () => readOccurrences("2030-05-02", endsAtMidnight, UTC_MEETING),
     Error,
     "Events backend error",
   );
   assertEquals(
-    ((await readOccurrences("2030-05-01", endsAtMidnight))
+    ((await readOccurrences("2030-05-01", endsAtMidnight, UTC_MEETING))
       .occurrences as unknown[]).length,
     1,
   );
@@ -1053,7 +1055,7 @@ Deno.test("fetchMeeting treats a timed occurrence ending at midnight of the requ
   ) {
     const pastMidnight = { ...endsAtMidnight, occurrence_end: occurrenceEnd };
     assertEquals(
-      ((await readOccurrences("2030-05-02", pastMidnight))
+      ((await readOccurrences("2030-05-02", pastMidnight, UTC_MEETING))
         .occurrences as unknown[]).length,
       1,
       occurrenceEnd,
@@ -1065,7 +1067,36 @@ Deno.test("fetchMeeting treats a timed occurrence ending at midnight of the requ
       readOccurrences("2030-05-02", {
         ...endsAtMidnight,
         occurrence_end: "2030-05-02T00:00:00.000000Z",
-      }),
+      }, UTC_MEETING),
+    Error,
+    "Events backend error",
+  );
+});
+
+Deno.test("fetchMeeting rejects an occurrence whose zone differs from the meeting zone", async () => {
+  // Lần diễn ra 01/05 23:00Z của cuộc họp UTC không được giả danh ngày 02/05 bằng cách mang `zone` Asia/Tokyo hợp lệ.
+  const masquerading = {
+    ...TIMED_OCCURRENCE,
+    zone: "Asia/Tokyo",
+    occurrence_start: "2030-05-01T23:00:00Z",
+    occurrence_end: "2030-05-01T23:30:00Z",
+  };
+  await assertRejects(
+    () => readOccurrences("2030-05-02", masquerading, UTC_MEETING),
+    Error,
+    "Events backend error",
+  );
+  // Cùng múi giờ với cuộc họp thì vẫn được nhận như trước.
+  assertEquals(
+    ((await readOccurrences("2030-05-01", {
+      ...masquerading,
+      zone: "UTC",
+    }, UTC_MEETING)).occurrences as unknown[]).length,
+    1,
+  );
+  // Cửa sổ thời gian cũng phải đi qua cùng kiểm tra.
+  await assertRejects(
+    () => readWindow({}, { ...TIMED_OCCURRENCE, zone: "Asia/Tokyo" }),
     Error,
     "Events backend error",
   );
@@ -1124,14 +1155,14 @@ Deno.test("fetchMeeting builds local days from date parts, not from locale-forma
   try {
     for (const requested of ["2030-12-31", "2031-01-01"]) {
       assertEquals(
-        ((await readOccurrences(requested, spanningYear))
+        ((await readOccurrences(requested, spanningYear, UTC_MEETING))
           .occurrences as unknown[]).length,
         1,
         requested,
       );
     }
     await assertRejects(
-      () => readOccurrences("2031-01-02", spanningYear),
+      () => readOccurrences("2031-01-02", spanningYear, UTC_MEETING),
       Error,
       "Events backend error",
     );
