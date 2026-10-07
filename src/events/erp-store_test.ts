@@ -1071,6 +1071,75 @@ Deno.test("fetchMeeting treats a timed occurrence ending at midnight of the requ
   );
 });
 
+Deno.test("fetchMeeting keeps sub-millisecond overlaps at the window floor", async () => {
+  const window = { window_start: "2030-05-02T00:00:00Z" };
+  const endingAt = (occurrenceEnd: string) => ({
+    ...TIMED_OCCURRENCE,
+    occurrence_start: "2030-04-30T23:00:00Z",
+    occurrence_end: occurrenceEnd,
+  });
+  // Kết thúc sau biên dưới (một ngày trước cửa sổ) dù chỉ dưới một mili giây vẫn chồng lên vùng được nhận.
+  for (const occurrenceEnd of ["2030-05-01T00:00:00.0001Z"]) {
+    assertEquals(
+      ((await readWindow(window, endingAt(occurrenceEnd)))
+        .occurrences as unknown[]).length,
+      1,
+      occurrenceEnd,
+    );
+  }
+  // Kết thúc đúng tại biên dưới thì không chồng.
+  for (
+    const occurrenceEnd of [
+      "2030-05-01T00:00:00Z",
+      "2030-05-01T00:00:00.0000Z",
+    ]
+  ) {
+    await assertRejects(
+      () => readWindow(window, endingAt(occurrenceEnd)),
+      Error,
+      "Events backend error",
+      occurrenceEnd,
+    );
+  }
+});
+
+Deno.test("fetchMeeting builds local days from date parts, not from locale-formatted text", async () => {
+  const RealFormat = Intl.DateTimeFormat;
+  // Mô phỏng ICU rút gọn: `format()` trả `MM/DD/YYYY` thay vì `YYYY-MM-DD`.
+  class ReducedFormat extends RealFormat {
+    override format(date?: Date | number): string {
+      const parts = this.formatToParts(date);
+      const pick = (type: string) =>
+        parts.find((part) => part.type === type)?.value;
+      return `${pick("month")}/${pick("day")}/${pick("year")}`;
+    }
+  }
+  const spanningYear = {
+    ...TIMED_OCCURRENCE,
+    zone: "UTC",
+    occurrence_start: "2030-12-31T20:00:00Z",
+    occurrence_end: "2031-01-01T02:00:00Z",
+  };
+  (Intl as { DateTimeFormat: unknown }).DateTimeFormat = ReducedFormat;
+  try {
+    for (const requested of ["2030-12-31", "2031-01-01"]) {
+      assertEquals(
+        ((await readOccurrences(requested, spanningYear))
+          .occurrences as unknown[]).length,
+        1,
+        requested,
+      );
+    }
+    await assertRejects(
+      () => readOccurrences("2031-01-02", spanningYear),
+      Error,
+      "Events backend error",
+    );
+  } finally {
+    (Intl as { DateTimeFormat: unknown }).DateTimeFormat = RealFormat;
+  }
+});
+
 Deno.test("fetchMeeting binds all-day occurrences to the requested day with an exclusive end", async () => {
   const meeting = {
     all_day: true,

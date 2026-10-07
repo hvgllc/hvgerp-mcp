@@ -20,6 +20,7 @@ import {
   getFrappeClient,
 } from "../api/frappe-client.ts";
 import {
+  compareFractions,
   compareUtcInstants,
   EventsErrorCode,
   EventsProtocolError,
@@ -377,12 +378,20 @@ function isTimeZone(zone: unknown): zone is string {
 /** Ngày lịch (`YYYY-MM-DD`) của một thời điểm theo múi giờ `zone`; `null` khi thời điểm hay múi giờ không hợp lệ. */
 function localDay(instantMs: number, zone: string): string | null {
   try {
-    return new Intl.DateTimeFormat("en-CA", {
+    // Tự ghép `YYYY-MM-DD` từ các phần: thứ tự và dấu phân cách của `format()` phụ thuộc locale và dữ liệu ICU của bản Node.
+    const parts = new Intl.DateTimeFormat("en-US", {
       timeZone: zone,
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
-    }).format(new Date(instantMs));
+    }).formatToParts(new Date(instantMs));
+    const pick = (type: string) =>
+      parts.find((part) => part.type === type)?.value;
+    const year = pick("year");
+    const month = pick("month");
+    const day = pick("day");
+    if (!year || !month || !day) return null;
+    return `${year.padStart(4, "0")}-${month}-${day}`;
   } catch {
     return null;
   }
@@ -407,7 +416,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * Mốc (ms UTC) của một biên cửa sổ và cờ cho biết biên đó chỉ là NGÀY; mốc không offset coi như UTC vì dưới đây đã chừa biên
  * một ngày. `null` nếu không đọc được.
  */
-function boundMs(bound: string): { ms: number; dateOnly: boolean } | null {
+function boundMs(
+  bound: string,
+): { ms: number; dateOnly: boolean; fraction: string } | null {
   const text = bound.trim();
   let parsed: number;
   if (DATE_ONLY.test(text)) parsed = Date.parse(`${text}T00:00:00Z`);
@@ -416,9 +427,11 @@ function boundMs(bound: string): { ms: number; dateOnly: boolean } | null {
   } else if (NAIVE_DATE_TIME.test(text)) {
     parsed = Date.parse(`${text.replace(" ", "T")}Z`);
   } else return null;
-  return Number.isNaN(parsed)
-    ? null
-    : { ms: parsed, dateOnly: DATE_ONLY.test(text) };
+  return Number.isNaN(parsed) ? null : {
+    ms: parsed,
+    dateOnly: DATE_ONLY.test(text),
+    fraction: subMillisecondDigits(text),
+  };
 }
 
 /**
@@ -434,16 +447,51 @@ function assertWithinWindow(
 ): void {
   const toMs = (value: unknown) =>
     Date.parse(allDay ? `${value as string}T00:00:00Z` : value as string);
+  const fractionOf = (value: unknown) =>
+    allDay ? "" : subMillisecondDigits(value as string);
   const start = toMs(occurrence.occurrence_start);
   const end = toMs(occurrence.occurrence_end);
   const lower = windowStart === undefined ? null : boundMs(windowStart);
   const upper = windowEnd === undefined ? null : boundMs(windowEnd);
-  if (lower !== null) assertShape(end > lower.ms - DAY_MS);
+  // `Date.parse` cắt ở mili giây nên phần dưới mili giây được so riêng, nếu không lần diễn ra chỉ vượt biên một chút sẽ bị loại nhầm.
+  if (lower !== null) {
+    assertShape(
+      isAfter(
+        end,
+        fractionOf(occurrence.occurrence_end),
+        lower.ms - DAY_MS,
+        lower.fraction,
+      ),
+    );
+  }
   if (upper !== null) {
     // Biên cuối chỉ có ngày nghĩa là hết ngày đó (thêm một ngày), còn mốc có giờ thì không; cả hai cùng chừa một ngày múi giờ.
     const endOfBound = upper.dateOnly ? upper.ms + DAY_MS : upper.ms;
-    assertShape(start < endOfBound + DAY_MS);
+    assertShape(
+      isAfter(
+        endOfBound + DAY_MS,
+        upper.fraction,
+        start,
+        fractionOf(occurrence.occurrence_start),
+      ),
+    );
   }
+}
+
+/** Các chữ số thập phân của giây từ vị trí thứ tư trở đi (phần mà `Date.parse` đã cắt); rỗng nếu không có. */
+function subMillisecondDigits(text: string): string {
+  return /:\d{2}\.(\d+)/.exec(text)?.[1].slice(3) ?? "";
+}
+
+/** `(aMs, aFraction)` đứng sau `(bMs, bFraction)` chặt chẽ, với phần dưới mili giây so đủ mọi chữ số. */
+function isAfter(
+  aMs: number,
+  aFraction: string,
+  bMs: number,
+  bFraction: string,
+): boolean {
+  if (aMs !== bMs) return aMs > bMs;
+  return compareFractions(aFraction, bFraction) > 0;
 }
 
 /**
