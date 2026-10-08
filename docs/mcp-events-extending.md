@@ -201,33 +201,44 @@ implementation detail.
    `additionalProperties: false` and every field bounded. Otherwise a misspelled
    argument could become an unfiltered subscription, or a payload could carry
    undeclared content. "Bounded" is a checked rule for every new contract: a
-   string has `maxLength`, `enum` or `const`, or a `format` the validator
-   implements; an `integer` or `number` has both `minimum` and `maximum`, finite
-   and inside the safe-integer range (`-9007199254740991` to
-   `9007199254740991`), because `Number.isInteger` accepts larger values that no
-   longer round-trip exactly and two revisions could then compare equal; an
-   array has `maxItems` (not yet in `SUPPORTED_KEYWORDS`, so the first contract
-   with an array adds it through step 3) and bounded `items`; a nested object is
-   closed the same way. `format` is limited to the values `formatMatches` in
-   `json-schema.ts` really checks (`date` and `date-time` today), because it
-   returns `true` for any other format; a new format is implemented and tested
-   there first. The frozen `meeting-events.v1.json` predates this rule
-   (`time_zone` has no `maxLength`, `changed_fields` no item limit, `revision`
-   no `maximum`) and is the only exemption. The exemption is bound to the entry,
-   not to a string: it applies only to the `CONTRACTS` entry whose family is
-   `meeting` and whose file is the object imported from that exact file, and
-   `buildRegistry` rejects duplicate contract ids and any other file that claims
-   the id `meeting-events.v1`. Subscription arguments are identity-only: the
-   family's id filter and, for a multi-doctype family, its `source_doctype`,
-   given together or not at all (a lone doctype is not an identity). The id
-   field is declared, never guessed: each `CONTRACTS` entry names it as
-   `identityField` (`event_id` for meetings; candidates use different
-   conventions such as `task_id`, `leave_id` or `doc_id`), and every effective
-   input schema of the family must declare exactly that property, plus
-   `source_doctype` for a multi-doctype family, and nothing else. ERP persists
-   and matches only that identity, so any other argument would either be refused
-   there or silently ignored, which widens the subscription. A new kind of
-   filter is a design change that ERP ships first (normalise, persist, match in
+   string has `maxLength`, `enum` or `const`, or `format: date` (fixed length);
+   `format: date-time` is not a bound on its own, because its pattern accepts
+   any number of fractional-second digits, so a date-time field also needs
+   `maxLength` (35 covers nanoseconds with an offset); an `integer` or `number`
+   has both `minimum` and `maximum`, finite and inside the safe-integer range
+   (`-9007199254740991` to `9007199254740991`), because `Number.isInteger`
+   accepts larger values that no longer round-trip exactly and two revisions
+   could then compare equal; an array has `maxItems` (not yet in
+   `SUPPORTED_KEYWORDS`, so the first contract with an array adds it through
+   step 3) and bounded `items`; a nested object is closed the same way. `format`
+   is limited to the values `formatMatches` in `json-schema.ts` really checks
+   (`date` and `date-time` today), because it returns `true` for any other
+   format; a new format is implemented and tested there first. The frozen
+   `meeting-events.v1.json` predates this rule (`time_zone` has no `maxLength`,
+   `changed_fields` no item limit, `revision` no `maximum`) and is the only
+   exemption. The exemption is bound to the entry, not to a string: it applies
+   only to the `CONTRACTS` entry whose family is `meeting` and whose file is the
+   object imported from that exact file, and `buildRegistry` rejects duplicate
+   contract ids and any other file that claims the id `meeting-events.v1`.
+   Subscription arguments are identity-only: the family's id filter and, for a
+   multi-doctype family, its `source_doctype`, given together or not at all (a
+   lone doctype is not an identity). The id field is declared, never guessed:
+   each `CONTRACTS` entry names it as `identityField` (`event_id` for meetings;
+   candidates use different conventions such as `task_id`, `leave_id` or
+   `doc_id`), and every effective input schema of the family must declare
+   exactly that property, plus `source_doctype` for a multi-doctype family, and
+   nothing else. Whether a family is multi-doctype is declared the same way: the
+   entry lists its closed doctype set as `sourceDoctypes`, and only when that
+   set is present does every effective input and payload schema carry
+   `source_doctype` with an `enum` equal to it, so an override that drops the
+   property cannot turn the family single-doctype for one event. Every effective
+   payload schema also requires the canonical pointer fields: the
+   `identityField`, `revision`, `change` and, for a multi-doctype family,
+   `source_doctype`; without them a webhook could not name the record to re-read
+   or take part in revision ordering. ERP persists and matches only that
+   identity, so any other argument would either be refused there or silently
+   ignored, which widens the subscription. A new kind of filter is a design
+   change that ERP ships first (normalise, persist, match in
    `_fan_out_matches`).
 4. **Payload stays a pointer.** Ids, revision, change, changed field names and
    the minimum scheduling or status data needed to decide whether to re-read.
@@ -250,7 +261,13 @@ implementation detail.
    family's tool and ERP method when the read-back shape is unchanged; if it
    needs a different shape, its tool is `erpnext_<family>_v<G>_event_get` and
    its ERP method `<family>_v<G>_get` (the slug, decision 2), registered and
-   tested the same way.
+   tested the same way. The dependency is recorded, not implied: each
+   `CONTRACTS` entry names its `readBackTool`, and a test asserts that every
+   entry's tool is in `EVENTS_TOOL_NAMES` and its method in
+   `ERP_EVENTS_METHODS`. A shared tool and method therefore stay registered
+   until the last family that names them is retired; removing the base family
+   while `<family>.v<G>` still points at its tool fails that test instead of
+   leaving v<G> events without a re-read path.
 6. **The journal records the family and the source doctype.** ERP adds two
    columns: `family` (drives the event name and matching) and `source_doctype`
    (identifies the record; one family can span several doctypes, such as `Task`
@@ -347,11 +364,18 @@ interface ContractFile {
 interface ContractEntry {
   family: string;
   identityField: string; // the only id property subscription arguments may use
+  sourceDoctypes?: readonly string[]; // present only for a multi-doctype family
+  readBackTool: string; // shared by <family>.v<G> when the shape is unchanged
   file: ContractFile;
 }
 
 export const CONTRACTS: readonly ContractEntry[] = [
-  { family: "meeting", identityField: "event_id", file: meetingContract },
+  {
+    family: "meeting",
+    identityField: "event_id",
+    readBackTool: "erpnext_meeting_get",
+    file: meetingContract,
+  },
 ];
 
 interface RegisteredEvent {
@@ -378,10 +402,13 @@ on a name missing from `changeByEvent`, on an effective input or payload schema
 that is not `type: object` with `additionalProperties: false`, on an unbounded
 field (string, number, integer or array), on a `format` outside the implemented
 set, on an effective input schema whose properties are not exactly the entry's
-`identityField` (plus `source_doctype` for a multi-doctype family) (all decision
-3, with the meeting entry exempt only from the bound rule), on a duplicate
-contract id or a reuse of `meeting-events.v1` by another file, or on a
-`protocolVersion` other than the one this server speaks. Then:
+`identityField` (plus `source_doctype` for a multi-doctype family), on a
+`source_doctype` present without `sourceDoctypes` on the entry, missing with it,
+or with an `enum` different from it, on an effective payload schema that does
+not require every canonical pointer field (all decision 3, with the meeting
+entry exempt only from the bound rule), on a duplicate contract id or a reuse of
+`meeting-events.v1` by another file, or on a `protocolVersion` other than the
+one this server speaks. Then:
 
 - `parseEventName` checks `REGISTRY.has(name)`.
 - `parseArguments(name, value)` validates against
@@ -427,14 +454,16 @@ Create `src/events/contract/<family_slug>-events.v1.json` with `family`,
 `contract`, `protocolVersion: "2026-07-28"`, `changeByEvent`, `inputSchema`,
 `payloadSchema` (`additionalProperties: false`, every field bounded), and
 `events` with one sentence of description each. Add it to `CONTRACTS` with its
-`identityField`. Give `revision` an explicit range such as
+`identityField`, `readBackTool` and, for a multi-doctype family,
+`sourceDoctypes`. Give `revision` an explicit range such as
 `{ "type": "integer", "minimum": 1, "maximum": 9007199254740991 }`. Write the
-payload as a pointer (decision 4). Typical required set: `<id>`, `revision`,
-`change`, `changed_fields`, `deleted`, plus `source_doctype` for a multi-doctype
-family. For such a family the `inputSchema` requires the id and `source_doctype`
-together or neither: two `if`/`then` clauses with `required`, one in each
-direction (keywords the validator already supports). Test both lone cases as
-invalid arguments.
+payload as a pointer (decision 4). The required set always includes the
+canonical pointer fields (`<id>`, `revision`, `change`, plus `source_doctype`
+for a multi-doctype family), which the registry enforces; `changed_fields` and
+`deleted` are the usual additions. For such a family the `inputSchema` requires
+the id and `source_doctype` together or neither: two `if`/`then` clauses with
+`required`, one in each direction (keywords the validator already supports).
+Test both lone cases as invalid arguments.
 
 ### Step 5. ERP method names
 
@@ -455,6 +484,10 @@ would otherwise let a library user run it under service credentials with Events
 off. Add a `fetch<Family>()` and a `pick<Family>Fields()` in `erp-store.ts`,
 modelled on `fetchMeeting` / `pickMeetingFields`:
 
+- derive the identity part of the tool's input schema (the id's `minLength` and
+  `maxLength`, the `source_doctype` enum) from the family's contract entry
+  instead of restating it, so every identity a webhook can carry is one the tool
+  accepts;
 - check `result.<id> === args.<id>` before anything else, and for a
   multi-doctype family also `result.source_doctype === args.source_doctype`,
   since `Task` and `ToDo` can share an id;
@@ -465,13 +498,13 @@ modelled on `fetchMeeting` / `pickMeetingFields`:
 
 ### Step 7. Tests
 
-| File                        | Add                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `protocol_test.ts`          | Registry builds. One negative test per module-load rejection in step 1: duplicate name, duplicate family, family outside the grammar, shared slug, file `family` differing from its entry, event name not `<family>.<change>`, name missing from `changeByEvent`, open effective schema, unbounded string, unbounded number (missing `minimum` or `maximum`, or a limit outside the safe-integer range), unbounded array, unknown `format`, non-identity input property, an override whose id property differs from the entry's `identityField`, duplicate contract id, another file claiming `meeting-events.v1`, wrong `protocolVersion`; and that the meeting contract still loads under its exemption. Then catalog lists the new descriptors with their own schemas, arguments validated per event, `validateEventPayload` for valid and invalid fixtures of each new event, and an unknown-property fixture (argument and payload) for every event with an override. |
-| `adapter_wire_test.ts`      | `events/list` over HTTP returns the new names; `events/subscribe` with a new name reaches the store with `name` and `arguments` unchanged; unknown name still `-32011`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `erp-store_test.ts`         | The new fetch: id mismatch, doctype mismatch for a multi-doctype family, extra keys dropped, every shape violation is `Events backend error`, 401 / 403 / 429 mapping.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `contract_test.ts`          | Covered by step 2.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| tool test (`src/tools/...`) | Happy path: the handler, called with a caller-scoped client, makes exactly one GET to the read-back method with the expected arguments and returns the picked result. Then unknown argument refused with the fixed message, shared client refused, input bounds, and no duplicate name in the combined tool list. Gating, for every name in `EVENTS_TOOL_NAMES` (extend the existing `erpnext_meeting_get` assertions): absent from `toolsByCategory`, `allTools` and `getToolByName`, absent from `ErpNextToolsClient` when `includeEventsTools` is false, present when it is true.                                                                                                                                                                                                                                                                                                                                                                                       |
+| File                        | Add                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `protocol_test.ts`          | Registry builds. One negative test per module-load rejection in step 1: duplicate name, duplicate family, family outside the grammar, shared slug, file `family` differing from its entry, event name not `<family>.<change>`, name missing from `changeByEvent`, open effective schema, unbounded string, `date-time` without `maxLength`, unbounded number (missing `minimum` or `maximum`, or a limit outside the safe-integer range), unbounded array, unknown `format`, non-identity input property, an override whose id property differs from the entry's `identityField`, `source_doctype` without `sourceDoctypes` and the reverse, an override dropping `source_doctype` or changing its enum, a payload missing each canonical pointer field in turn, duplicate contract id, another file claiming `meeting-events.v1`, wrong `protocolVersion`; and that the meeting contract still loads under its exemption. Then catalog lists the new descriptors with their own schemas, arguments validated per event, `validateEventPayload` for valid and invalid fixtures of each new event, and an unknown-property fixture (argument and payload) for every event with an override. |
+| `adapter_wire_test.ts`      | `events/list` over HTTP returns the new names; `events/subscribe` with a new name reaches the store with `name` and `arguments` unchanged; unknown name still `-32011`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `erp-store_test.ts`         | The new fetch: id mismatch, doctype mismatch for a multi-doctype family, extra keys dropped, every shape violation is `Events backend error`, 401 / 403 / 429 mapping.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `contract_test.ts`          | Covered by step 2.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| tool test (`src/tools/...`) | Happy path: the handler, called with a caller-scoped client, makes exactly one GET to the read-back method with the expected arguments and returns the picked result. Then unknown argument refused with the fixed message, shared client refused, input bounds, parity with the contract (an id at the contract's `minLength` and `maxLength` and every `sourceDoctypes` value accepted, one past each limit refused), and no duplicate name in the combined tool list. Gating, for every name in `EVENTS_TOOL_NAMES` (extend the existing `erpnext_meeting_get` assertions): absent from `toolsByCategory`, `allTools` and `getToolByName`, absent from `ErpNextToolsClient` when `includeEventsTools` is false, present when it is true. Dependency: every `CONTRACTS` entry's `readBackTool` is in `EVENTS_TOOL_NAMES` and its ERP method in `ERP_EVENTS_METHODS` (a test, not a module-load check, so `protocol.ts` does not import the tools).                                                                                                                                                                                                                                       |
 
 Run `deno task pre-commit` and `deno task test`, then `deno task release:check`:
 a new family adds a contract import and a tool, which changes the published
