@@ -287,6 +287,18 @@ another endpoint.
 }
 ```
 
+### Flag-gated: `erpnext_meeting_get`
+
+`erpnext_meeting_get` exists only when `MCP_EVENTS_ENABLED` is on, so it is not
+counted in the totals above and does not appear in `tools/list` by default. It
+re-reads one calendar meeting from ERPNext on every call (no cache) and returns
+its schedule, recurrence and occurrences in a window. It never returns a title,
+description, participants or links. A deleted meeting returns only `event_id`,
+`revision` and `deleted: true`. Arguments: `event_id` (required) and the
+optional ISO dates `occurrence_start`, `window_start`, `window_end`. The caller
+is always the bearer token's user; a `user_id` argument is rejected. See
+[mcp-events-meetings.md](./mcp-events-meetings.md).
+
 ## Discovery (1)
 
 | Tool                     | DocType | Operations                                  |

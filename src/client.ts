@@ -25,6 +25,7 @@ import type {
   ToolHandlerContext,
 } from "@casys/mcp-server";
 import { getFrappeClient } from "./api/frappe-client.ts";
+import { calendarTools } from "./tools/calendar.ts";
 import { runWithLinkDisambiguation } from "./mrtr/link-disambiguation.ts";
 import { withUiRefreshRequest } from "./tools/ui-refresh.ts";
 import {
@@ -105,6 +106,11 @@ export interface ErpNextToolsClientOptions {
    * that knows which ones exist.
    */
   servableViewerUris?: readonly string[];
+  /**
+   * Nạp các tool của MCP Events (`erpnext_meeting_get`). Mặc định false: tool này chỉ có nghĩa khi
+   * server bật cờ Events, nên tắt cờ thì bề mặt tool giữ nguyên như trước.
+   */
+  includeEventsTools?: boolean;
 }
 
 /**
@@ -143,6 +149,12 @@ export class ErpNextToolsClient {
         : selected;
     } else {
       this.tools = allTools;
+    }
+    // Tool Events không nằm trong registry công khai (xem `tools/mod.ts`), nên chỉ được thêm ở đây và chỉ
+    // khi bật cờ. Bộ lọc category (ví dụ `--categories=sales`) vì vậy không bao giờ gỡ được tool đồng hành
+    // này khi adapter vẫn quảng bá capability Events, và tắt cờ thì bề mặt tool giữ nguyên như trước.
+    if (options?.includeEventsTools) {
+      this.tools = [...this.tools, ...calendarTools];
     }
   }
 

@@ -1,0 +1,665 @@
+/**
+ * Adapter MCP Events bao quanh `getFetchHandler` của SDK.
+ *
+ * SDK 0.25 không có `registerEvent`/`registerMethod` và `buildServerCapabilities` là private, nên
+ * Events được thêm ở tầng HTTP, KHÔNG gọi field private nào:
+ *
+ *  1. Mọi request MCP thường được chuyển nguyên trạng cho handler gốc.
+ *  2. `server/discover` và `initialize`: handler gốc xử lý trước. Chỉ khi nó trả 200 VÀ request
+ *     mang danh tính người dùng hợp lệ thì adapter mới thêm `capabilities.events`.
+ *  3. `events/list|subscribe|unsubscribe`: request GỐC vẫn đi qua handler gốc để nó làm hết phần
+ *     xác thực, kiểm header (`Mcp-Method`, `MCP-Protocol-Version`) và kiểm `_meta` (-32020, -32022,
+ *     -32602, 401 kèm `WWW-Authenticate`, 429...). Handler gốc chỉ trả 404 kèm -32601 "Method not
+ *     found: <method>" khi mọi cổng đó đã qua, và CHỈ khi thấy tín hiệu đó adapter mới nhận việc.
+ *     Mọi phản hồi khác được trả nguyên. Nhờ vậy adapter không nhân bản logic xác thực, và nếu
+ *     một bản SDK tương lai tự hỗ trợ `events/*` thì tín hiệu biến mất và adapter nhường đường.
+ *
+ * Danh tính: adapter xác minh lại bearer bằng `authProvider.verifyToken` (cùng provider đã nạp vào
+ * `McpApp`) và dùng đúng `resolveCallerIdentity` mà middleware của tool dùng. Không có danh tính
+ * người dùng (ví dụ bearer tĩnh dùng chung) thì bị từ chối bằng -32012.
+ *
+ * Adapter không lưu gì và không log token, secret, callback, tiêu đề hay email.
+ *
+ * @module lib/erpnext/src/events/adapter
+ */
+
+import {
+  type AuthProvider,
+  createUnauthorizedResponse,
+  extractBearerToken,
+  type FetchHandler,
+} from "@casys/mcp-server";
+import { runWithCaller } from "../api/caller-context.ts";
+import { resolveCallerIdentity } from "../auth/caller-middleware.ts";
+import { EventsAuthError, type EventsStore } from "./erp-store.ts";
+import {
+  EventsErrorCode,
+  type EventsMethod,
+  EventsProtocolError,
+  handleEventsList,
+  isEventsMethod,
+  parseSubscribeParams,
+  parseUnsubscribeParams,
+} from "./protocol.ts";
+
+const SERVER_INFO_KEY = "io.modelcontextprotocol/serverInfo";
+const PROTOCOL_VERSION = "2026-07-28";
+const MCP_PATHS = new Set(["/mcp", "/"]);
+const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
+
+export interface EventsAdapterOptions {
+  /** Handler gốc từ `McpApp.getFetchHandler`. */
+  base: FetchHandler;
+  /** Đúng provider đã nạp vào `McpApp`, dùng để xác minh lại bearer. */
+  authProvider: AuthProvider;
+  /** Danh tính server, đóng dấu vào `_meta` của mọi kết quả Events giống như lõi. */
+  serverInfo: { name: string; version: string };
+  store: EventsStore;
+  /** Trần dung lượng body adapter chịu đọc để xem method. Mặc định 1 MiB, bằng trần của SDK. */
+  maxBodyBytes?: number;
+  /** Số subscribe/unsubscribe được gọi ERP cùng lúc. Mặc định 10, bằng `maxConcurrent` của SDK. */
+  maxConcurrent?: number;
+  /** Số lệnh được xếp hàng chờ khi đã đủ `maxConcurrent`; quá số này trả 503. Mặc định 50. */
+  maxQueued?: number;
+  /**
+   * Tổng byte adapter được giữ trong bộ nhớ cùng lúc để xem method trước khi vào SDK. Hết ngân
+   * sách thì request đi thẳng vào SDK mà không xem. Mặc định 16 MiB.
+   */
+  maxPeekBytes?: number;
+  /**
+   * Số request được xem method cùng lúc, độc lập với dung lượng khai báo: body khai báo 1 byte rồi
+   * giữ lại vẫn chiếm một chỗ cho tới hạn `peekTimeoutMs`. Hết chỗ thì trả 503. Mặc định 256.
+   */
+  maxPeeks?: number;
+  /** Thời gian tối đa chờ body để xem method, quá hạn thì đi thẳng vào SDK. Mặc định 5000 ms. */
+  peekTimeoutMs?: number;
+  /** Chỉ nhận thông điệp không nhạy cảm (tên method, mã lỗi). */
+  log?: (message: string) => void;
+}
+
+const DEFAULT_MAX_CONCURRENT = 10;
+const DEFAULT_MAX_QUEUED = 50;
+const DEFAULT_MAX_PEEK_BYTES = 16 * 1024 * 1024;
+const DEFAULT_PEEK_TIMEOUT_MS = 5000;
+const DEFAULT_MAX_PEEKS = 256;
+
+/**
+ * Ngân sách dùng chung cho các lần xem body: `take` giữ chỗ trước khi đọc, `give` trả lại khi xong.
+ * Giới hạn cả tổng byte lẫn số lần xem đồng thời, vì body khai báo rất nhỏ mà bị giữ lại sẽ không
+ * làm cạn byte nhưng vẫn chiếm socket và promise.
+ */
+function createByteBudget(total: number, maxCount: number) {
+  let used = 0;
+  let count = 0;
+  return {
+    take(bytes: number): boolean {
+      if (count >= maxCount || used + bytes > total) return false;
+      used += bytes;
+      count++;
+      return true;
+    },
+    give(bytes: number): void {
+      used -= bytes;
+      count--;
+    },
+  };
+}
+
+/** Hàng đợi đã đầy: adapter từ chối việc mới thay vì gom thêm vào bộ nhớ. */
+class EventsBusyError extends Error {}
+
+/** Client đã ngắt kết nối khi việc còn đang xếp hàng: việc đó bị bỏ, không bao giờ chạm tới ERP. */
+class EventsCancelledError extends Error {}
+
+/**
+ * Giới hạn số tác vụ chạy đồng thời, các tác vụ dư xếp hàng tới `maxQueued` rồi bị từ chối.
+ * `signal` là tín hiệu hủy của request: người gọi đã ngắt khi còn chờ slot thì bị rút khỏi hàng đợi, vì một
+ * lệnh ghi (subscribe/unsubscribe) chạy sau khi client đã bỏ đi sẽ tạo hoặc xóa subscription ngoài ý muốn.
+ */
+function createLimiter(maxActive: number, maxQueued: number) {
+  let active = 0;
+  const waiting: Array<() => void> = [];
+  const release = () => {
+    const next = waiting.shift();
+    if (next) next();
+    else active--;
+  };
+  return async function run<T>(
+    task: () => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    if (signal?.aborted) throw new EventsCancelledError();
+    if (active >= maxActive) {
+      if (waiting.length >= maxQueued) throw new EventsBusyError();
+      // Slot được chuyển thẳng cho người đứng đầu hàng nên `active` không đổi.
+      await new Promise<void>((resolve, reject) => {
+        const grant = () => {
+          signal?.removeEventListener("abort", abandon);
+          resolve();
+        };
+        const abandon = () => {
+          const index = waiting.indexOf(grant);
+          if (index === -1) return; // Đã được cấp slot: nhánh kiểm tra sau `await` xử lý.
+          waiting.splice(index, 1);
+          reject(new EventsCancelledError());
+        };
+        waiting.push(grant);
+        signal?.addEventListener("abort", abandon, { once: true });
+      });
+    } else {
+      active++;
+    }
+    try {
+      // Hủy xảy ra giữa lúc slot được cấp và lúc tác vụ bắt đầu thì vẫn không chạy.
+      if (signal?.aborted) throw new EventsCancelledError();
+      return await task();
+    } finally {
+      release();
+    }
+  };
+}
+
+/** Methods mà `params.name` định danh một đối tượng nên HTTP binding bắt `Mcp-Name` khớp. */
+const NAMED_METHODS = new Set<string>([
+  "events/subscribe",
+  "events/unsubscribe",
+]);
+
+/** Method mà adapter có thể tự xử lý hoặc bọc phản hồi, nên cần đọc body để phân loại. */
+function isPeekedMethod(method: string): boolean {
+  return method === "server/discover" || method === "initialize" ||
+    isEventsMethod(method);
+}
+
+interface PeekedRpc {
+  method: string;
+  id: unknown;
+  params: unknown;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isRequestId(value: unknown): value is string | number {
+  return typeof value === "string" || typeof value === "number";
+}
+
+/** Body không về đủ trong hạn: khác với "vượt trần", client này đang giữ kết nối và không được chuyển tiếp. */
+const PEEK_TIMEOUT = Symbol("peek-timeout");
+
+/** Đọc tối đa `limit` byte của một luồng; trả `null` nếu vượt trần, `PEEK_TIMEOUT` nếu quá hạn. */
+async function readLimited(
+  stream: ReadableStream<Uint8Array>,
+  limit: number,
+  timeoutMs: number,
+): Promise<Uint8Array | null | typeof PEEK_TIMEOUT> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    void reader.cancel().catch(() => {});
+  }, timeoutMs);
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (timedOut) return PEEK_TIMEOUT;
+      if (done) break;
+      total += value.byteLength;
+      if (total > limit) {
+        // Không `await`: hủy một nhánh của `clone()` chỉ xong khi nhánh còn lại cũng được
+        // tiêu thụ hoặc hủy, mà request gốc chưa tới tay handler gốc cho tới khi hàm này trả về.
+        void reader.cancel().catch(() => {});
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    clearTimeout(timer);
+    reader.releaseLock();
+  }
+  const joined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return joined;
+}
+
+/** Ngân sách đệm đã cạn: không thể xem method, nên không được phép chuyển tiếp như thể "không phải Events". */
+const PEEK_BUSY = Symbol("peek-busy");
+
+/** Xem method của một POST tới endpoint MCP mà không tiêu thụ body của request gốc. */
+async function peekRpc(
+  request: Request,
+  maxBodyBytes: number,
+  budget: ReturnType<typeof createByteBudget>,
+  timeoutMs: number,
+): Promise<PeekedRpc | typeof PEEK_BUSY | typeof PEEK_TIMEOUT | null> {
+  if (request.method !== "POST" || request.body === null) return null;
+  let pathname: string;
+  try {
+    pathname = new URL(request.url).pathname;
+  } catch {
+    return null;
+  }
+  if (!MCP_PATHS.has(pathname)) return null;
+  // `Mcp-Method` là header bắt buộc của binding HTTP: method không thuộc adapter thì chuyển thẳng cho handler gốc mà không
+  // đệm body, nên một request thường (`tools/call`...) có body đến chậm không bị 408 chỉ vì Events được bật. Header lệch body
+  // vẫn bị handler gốc từ chối, và adapter không bao giờ xử lý Events mà không đọc body. Thiếu header thì vẫn phải xem body.
+  const declaredMethod = request.headers.get("Mcp-Method");
+  if (declaredMethod !== null && !isPeekedMethod(declaredMethod)) return null;
+  // Body khai báo quá trần thì không đệm: SDK sẽ tự từ chối. Không khai báo (chunked) thì giữ chỗ
+  // theo trần, vì chưa biết sẽ đọc bao nhiêu.
+  const declared = request.headers.get("content-length");
+  let reserve = maxBodyBytes;
+  if (declared !== null) {
+    if (!/^\d+$/.test(declared)) return null;
+    reserve = Number(declared);
+    if (reserve > maxBodyBytes) return null;
+  }
+  // Cạn ngân sách thì từ chối có giới hạn. Chuyển thẳng cho SDK sẽ biến một request Events đã xác
+  // thực thành -32601 chỉ vì kẻ khác đang giữ chỗ bằng các body chunked chưa xác thực.
+  if (!budget.take(reserve)) return PEEK_BUSY;
+  try {
+    const bytes = await readLimited(
+      request.clone().body!,
+      maxBodyBytes,
+      timeoutMs,
+    );
+    if (bytes === PEEK_TIMEOUT) return PEEK_TIMEOUT;
+    if (bytes === null) return null;
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
+    if (!isRecord(parsed) || typeof parsed.method !== "string") return null;
+    return { method: parsed.method, id: parsed.id, params: parsed.params };
+  } catch {
+    return null;
+  } finally {
+    budget.give(reserve);
+  }
+}
+
+/** Header của handler gốc (CORS...) cộng header của phản hồi do adapter tự dựng. */
+function mergeHeaders(baseHeaders: Headers, own: Headers): Headers {
+  const merged = new Headers(baseHeaders);
+  merged.delete("content-length");
+  for (const [name, value] of own) merged.set(name, value);
+  return merged;
+}
+
+/**
+ * Phản hồi 404 mang mã JSON-RPC -32601 là tín hiệu ổn định; câu chữ của `message` thuộc về SDK và có thể đổi
+ * giữa các bản vá nên không dùng để nhận diện.
+ */
+async function isMethodNotFound(response: Response): Promise<boolean> {
+  if (response.status !== 404) return false;
+  try {
+    const body: unknown = await response.clone().json();
+    if (!isRecord(body) || !isRecord(body.error)) return false;
+    return body.error.code === -32601;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Binding HTTP 2026-07-28 chỉ bắt `Mcp-Name` cho `tools/call`, `resources/read` và `prompts/get`, nên client chuẩn có thể
+ * không gửi nó cho `events/subscribe` hay `events/unsubscribe`. Vắng mặt thì hợp lệ; có mặt mà lệch `params.name` thì từ chối.
+ */
+function nameHeaderMatches(request: Request, rpc: PeekedRpc): boolean {
+  if (!isRecord(rpc.params) || typeof rpc.params.name !== "string") {
+    // Thiếu tên thì parser tham số trả -32602 đúng hơn một lỗi header.
+    return true;
+  }
+  if (!/^[\x20-\x7e]*$/.test(rpc.params.name)) return true;
+  const header = request.headers.get("Mcp-Name");
+  return header === null || header === rpc.params.name;
+}
+
+/** Dấu hiệu nội bộ: verifier ném ngoại lệ (khác với trả `null` cho token sai). */
+const VERIFIER_UNAVAILABLE = Symbol("verifier-unavailable");
+
+export function createEventsAdapter(
+  options: EventsAdapterOptions,
+): FetchHandler {
+  const { base, authProvider, serverInfo, store } = options;
+  const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+  const log = options.log ?? (() => {});
+  const peekBudget = createByteBudget(
+    options.maxPeekBytes ?? DEFAULT_MAX_PEEK_BYTES,
+    options.maxPeeks ?? DEFAULT_MAX_PEEKS,
+  );
+  const peekTimeoutMs = options.peekTimeoutMs ?? DEFAULT_PEEK_TIMEOUT_MS;
+  const limit = createLimiter(
+    options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
+    options.maxQueued ?? DEFAULT_MAX_QUEUED,
+  );
+
+  async function verify(request: Request) {
+    const token = extractBearerToken(request);
+    if (!token) return null;
+    // `null` là "token không hợp lệ". Ngoại lệ của verifier (ví dụ JWKS tạm thời không tải được) là lỗi
+    // vận hành, không phải lỗi của credential, nên để nó nổi lên cho caller đổi thành 5xx có giới hạn
+    // thay vì ép client đăng nhập lại.
+    return await authProvider.verifyToken(token);
+  }
+
+  /** Như `verify` nhưng ngoại lệ của verifier thành `VerifierUnavailable` (không bao giờ kèm nội dung lỗi). */
+  async function verifyOrUnavailable(
+    request: Request,
+  ): Promise<Awaited<ReturnType<typeof verify>> | typeof VERIFIER_UNAVAILABLE> {
+    try {
+      return await verify(request);
+    } catch {
+      log("events verifier unavailable");
+      return VERIFIER_UNAVAILABLE;
+    }
+  }
+
+  function unauthorized(baseResponse: Response): Response {
+    const metadata = authProvider.getResourceMetadata();
+    const denied = createUnauthorizedResponse(
+      metadata.resource_metadata_url,
+      "invalid_token",
+      "Invalid or expired token",
+    );
+    return new Response(denied.body, {
+      status: denied.status,
+      headers: mergeHeaders(baseResponse.headers, denied.headers),
+    });
+  }
+
+  function jsonRpc(
+    baseResponse: Response,
+    payload: Record<string, unknown>,
+    status: number,
+  ): Response {
+    return new Response(JSON.stringify({ jsonrpc: "2.0", ...payload }), {
+      status,
+      headers: mergeHeaders(
+        baseResponse.headers,
+        new Headers({
+          "Content-Type": "application/json",
+          "MCP-Protocol-Version": PROTOCOL_VERSION,
+        }),
+      ),
+    });
+  }
+
+  function failure(
+    baseResponse: Response,
+    id: string | number,
+    error: EventsProtocolError,
+  ): Response {
+    log(`events rpc refused code=${error.code}`);
+    return jsonRpc(
+      baseResponse,
+      { id, error: error.toJsonRpcError() },
+      error.httpStatus,
+    );
+  }
+
+  /** Cùng phong bì mà `stampResult` của lõi đóng: `resultType` cộng serverInfo trong `_meta`. */
+  function stamp(result: Record<string, unknown>): Record<string, unknown> {
+    const existingMeta = isRecord(result._meta) ? result._meta : undefined;
+    return {
+      ...result,
+      resultType: "complete",
+      _meta: { ...existingMeta, [SERVER_INFO_KEY]: { ...serverInfo } },
+    };
+  }
+
+  async function dispatch(
+    method: EventsMethod,
+    params: unknown,
+  ): Promise<Record<string, unknown>> {
+    if (method === "events/list") {
+      const listParams = params === undefined ? {} : params;
+      if (!isRecord(listParams)) {
+        throw new EventsProtocolError(EventsErrorCode.InvalidParams, {
+          field: "params",
+        });
+      }
+      return { ...handleEventsList(listParams) };
+    }
+    if (method === "events/subscribe") {
+      return { ...await store.subscribe(parseSubscribeParams(params)) };
+    }
+    return { ...await store.unsubscribe(parseUnsubscribeParams(params)) };
+  }
+
+  async function handleEvents(
+    request: Request,
+    rpc: PeekedRpc & { method: EventsMethod; id: string | number },
+  ): Promise<Response> {
+    const baseResponse = await base(request);
+    // Chỉ nhận việc khi handler gốc đã cho qua mọi cổng và chỉ còn thiếu method.
+    if (!await isMethodNotFound(baseResponse)) return baseResponse;
+
+    const authInfo = await verifyOrUnavailable(request);
+    if (authInfo === VERIFIER_UNAVAILABLE) {
+      return failure(
+        baseResponse,
+        rpc.id,
+        new EventsProtocolError(EventsErrorCode.InternalError),
+      );
+    }
+    if (!authInfo) return unauthorized(baseResponse);
+
+    const identity = resolveCallerIdentity(authInfo, request.headers);
+    if (!identity) {
+      return failure(
+        baseResponse,
+        rpc.id,
+        new EventsProtocolError(EventsErrorCode.Forbidden),
+      );
+    }
+
+    if (NAMED_METHODS.has(rpc.method) && !nameHeaderMatches(request, rpc)) {
+      return failure(
+        baseResponse,
+        rpc.id,
+        new EventsProtocolError(EventsErrorCode.HeaderMismatch),
+      );
+    }
+
+    try {
+      const run = () =>
+        runWithCaller(identity, () => dispatch(rpc.method, rpc.params));
+      // events/list chỉ đọc danh mục trong bộ nhớ; chỉ việc gọi ERP mới cần giới hạn.
+      const result = rpc.method === "events/list"
+        ? await run()
+        : await limit(run, request.signal);
+      log(`events rpc ok method=${rpc.method}`);
+      return jsonRpc(baseResponse, { id: rpc.id, result: stamp(result) }, 200);
+    } catch (error) {
+      if (error instanceof EventsAuthError) return unauthorized(baseResponse);
+      if (error instanceof EventsCancelledError) {
+        // Client đã đi: không ai đọc phản hồi này, chỉ cần trả một Response hợp lệ.
+        log(`events rpc dropped cancelled method=${rpc.method}`);
+        return jsonRpc(baseResponse, {
+          id: rpc.id,
+          error: {
+            code: EventsErrorCode.InternalError,
+            message: "Request cancelled",
+          },
+        }, 499);
+      }
+      if (error instanceof EventsBusyError) {
+        log(`events rpc refused busy method=${rpc.method}`);
+        return jsonRpc(baseResponse, {
+          id: rpc.id,
+          error: {
+            code: EventsErrorCode.InternalError,
+            message: "Server busy",
+          },
+        }, 503);
+      }
+      if (error instanceof EventsProtocolError) {
+        return failure(baseResponse, rpc.id, error);
+      }
+      return failure(
+        baseResponse,
+        rpc.id,
+        new EventsProtocolError(EventsErrorCode.InternalError),
+      );
+    }
+  }
+
+  /** Thêm `capabilities.events` vào kết quả discover/initialize đã thành công của handler gốc. */
+  async function withEventsCapability(
+    request: Request,
+    response: Response,
+    id: unknown,
+  ): Promise<Response> {
+    if (response.status !== 200) return response;
+    const authInfo = await verifyOrUnavailable(request);
+    if (authInfo === VERIFIER_UNAVAILABLE) {
+      // Client cần id gốc để ghép lỗi với request; chỉ khi request không có id hợp lệ mới dùng null.
+      return jsonRpc(response, {
+        id: isRequestId(id) ? id : null,
+        error: {
+          code: EventsErrorCode.InternalError,
+          message: "Events backend error",
+        },
+      }, 502);
+    }
+    if (!authInfo || !resolveCallerIdentity(authInfo, request.headers)) {
+      return response;
+    }
+    let body: unknown;
+    try {
+      body = await response.clone().json();
+    } catch {
+      return response;
+    }
+    if (!isRecord(body) || !isRecord(body.result)) return response;
+    const capabilities = body.result.capabilities;
+    if (!isRecord(capabilities)) return response;
+    const merged = {
+      ...body,
+      result: {
+        ...body.result,
+        capabilities: { ...capabilities, events: capabilities.events ?? {} },
+      },
+    };
+    return new Response(JSON.stringify(merged), {
+      status: response.status,
+      headers: mergeHeaders(response.headers, new Headers()),
+    });
+  }
+
+  /**
+   * Header CORS của handler gốc cho một request mà ta không được phép chuyển tiếp (body chưa đọc). Hỏi
+   * handler bằng một request OPTIONS không body: nó rẻ, không đụng tới body thật, và trả đúng chính sách
+   * CORS đã cấu hình (rỗng khi CORS tắt). Lỗi thì không kèm header nào, vì phản hồi 503 vẫn phải đi được.
+   */
+  async function corsHeadersFor(request: Request): Promise<Headers> {
+    const origin = request.headers.get("origin");
+    if (origin === null) return new Headers();
+    try {
+      const probe = await base(
+        new Request(request.url, {
+          method: "OPTIONS",
+          headers: {
+            Origin: origin,
+            "Access-Control-Request-Method": "POST",
+          },
+        }),
+      );
+      await probe.body?.cancel();
+      const headers = new Headers();
+      for (const [name, value] of probe.headers) {
+        if (
+          name.toLowerCase().startsWith("access-control-") || name === "vary"
+        ) {
+          headers.set(name, value);
+        }
+      }
+      // Trình duyệt chỉ cho script đọc `Retry-After` khi nó nằm trong danh sách expose.
+      if (headers.has("access-control-allow-origin")) {
+        const exposed = headers.get("access-control-expose-headers");
+        headers.set(
+          "access-control-expose-headers",
+          exposed ? `${exposed}, Retry-After` : "Retry-After",
+        );
+      }
+      return headers;
+    } catch {
+      return new Headers();
+    }
+  }
+
+  return async (request) => {
+    const rpc = await peekRpc(request, maxBodyBytes, peekBudget, peekTimeoutMs);
+    if (rpc === PEEK_BUSY) {
+      log("events rpc refused busy peek budget exhausted");
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: null,
+          error: {
+            code: EventsErrorCode.InternalError,
+            message: "Server busy",
+          },
+        }),
+        {
+          status: 503,
+          headers: mergeHeaders(
+            await corsHeadersFor(request),
+            new Headers({
+              "Content-Type": "application/json",
+              "Retry-After": "1",
+              // Body chưa đọc của request bị từ chối vì hết ngân sách peek: đóng kết nối để runtime không giữ socket chờ phần
+              // còn lại (kẻ gửi body nhỏ giọt sẽ chất đống socket vượt trần).
+              "Connection": "close",
+              "MCP-Protocol-Version": PROTOCOL_VERSION,
+            }),
+          ),
+        },
+      );
+    }
+    if (rpc === PEEK_TIMEOUT) {
+      // Body không về đủ trong hạn: không chuyển cho handler gốc, vì nó sẽ treo chờ phần còn lại sau khi
+      // chỗ peek đã được trả, và kẻ gửi body dở có thể chất đống handler vượt trần. Trả lỗi có giới hạn.
+      log("events rpc refused request body timed out");
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: null,
+          error: { code: -32600, message: "Request body timed out" },
+        }),
+        {
+          status: 408,
+          headers: mergeHeaders(
+            await corsHeadersFor(request),
+            new Headers({
+              "Content-Type": "application/json",
+              "Connection": "close",
+              "MCP-Protocol-Version": PROTOCOL_VERSION,
+            }),
+          ),
+        },
+      );
+    }
+    if (rpc === null) return await base(request);
+
+    if (rpc.method === "server/discover" || rpc.method === "initialize") {
+      return await withEventsCapability(
+        request,
+        await base(request),
+        rpc.id,
+      );
+    }
+    if (isEventsMethod(rpc.method) && isRequestId(rpc.id)) {
+      return await handleEvents(
+        request,
+        { ...rpc, method: rpc.method, id: rpc.id },
+      );
+    }
+    return await base(request);
+  };
+}

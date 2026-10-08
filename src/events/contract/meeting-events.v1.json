@@ -1,0 +1,143 @@
+{
+  "contract": "meeting-events.v1",
+  "protocolVersion": "2026-07-28",
+  "changeByEvent": {
+    "meeting.created": "created",
+    "meeting.updated": "updated",
+    "meeting.cancelled": "cancelled"
+  },
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "event_id": { "type": "string", "minLength": 1, "maxLength": 140 }
+    },
+    "additionalProperties": false
+  },
+  "payloadSchema": {
+    "type": "object",
+    "properties": {
+      "event_id": { "type": "string", "minLength": 1, "maxLength": 140 },
+      "revision": { "type": "integer", "minimum": 1 },
+      "change": {
+        "type": "string",
+        "enum": ["created", "updated", "cancelled"]
+      },
+      "changed_fields": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "starts_on",
+            "ends_on",
+            "all_day",
+            "status",
+            "event_category",
+            "participants",
+            "rsvp",
+            "co_host",
+            "recurrence",
+            "room",
+            "link",
+            "access"
+          ]
+        }
+      },
+      "deleted": { "type": "boolean" },
+      "series_changed": { "type": "boolean" },
+      "all_day": { "type": "boolean" },
+      "time_zone": { "type": "string", "minLength": 1 },
+      "starts_at": { "type": "string", "format": "date-time" },
+      "ends_at": { "type": "string", "format": "date-time" },
+      "start_date": { "type": "string", "format": "date" },
+      "end_date_exclusive": { "type": "string", "format": "date" }
+    },
+    "required": [
+      "event_id",
+      "revision",
+      "change",
+      "changed_fields",
+      "deleted",
+      "series_changed"
+    ],
+    "additionalProperties": false,
+    "allOf": [
+      {
+        "if": {
+          "properties": { "deleted": { "const": true } },
+          "required": ["deleted"]
+        },
+        "then": {
+          "properties": { "change": { "const": "cancelled" } },
+          "not": {
+            "anyOf": [
+              { "required": ["all_day"] },
+              { "required": ["time_zone"] },
+              { "required": ["starts_at"] },
+              { "required": ["ends_at"] },
+              { "required": ["start_date"] },
+              { "required": ["end_date_exclusive"] }
+            ]
+          }
+        }
+      },
+      {
+        "if": {
+          "required": ["all_day"],
+          "properties": { "all_day": { "const": true } }
+        },
+        "then": {
+          "required": ["start_date", "end_date_exclusive"],
+          "not": {
+            "anyOf": [
+              { "required": ["starts_at"] },
+              { "required": ["ends_at"] }
+            ]
+          }
+        }
+      },
+      {
+        "if": {
+          "required": ["all_day"],
+          "properties": { "all_day": { "const": false } }
+        },
+        "then": {
+          "required": ["time_zone", "starts_at"],
+          "not": {
+            "anyOf": [
+              { "required": ["start_date"] },
+              { "required": ["end_date_exclusive"] }
+            ]
+          }
+        }
+      },
+      {
+        "if": { "not": { "required": ["all_day"] } },
+        "then": {
+          "not": {
+            "anyOf": [
+              { "required": ["time_zone"] },
+              { "required": ["starts_at"] },
+              { "required": ["ends_at"] },
+              { "required": ["start_date"] },
+              { "required": ["end_date_exclusive"] }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "events": [
+    {
+      "name": "meeting.created",
+      "description": "A meeting relevant to the connected account was created."
+    },
+    {
+      "name": "meeting.updated",
+      "description": "Changes to meetings relevant to the connected account."
+    },
+    {
+      "name": "meeting.cancelled",
+      "description": "A meeting relevant to the connected account was cancelled or removed."
+    }
+  ]
+}

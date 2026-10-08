@@ -20,3 +20,18 @@ export interface ContextStore<T> {
   /** The value for the call tree in progress, or `undefined` outside one. */
   current(): T | undefined;
 }
+
+/** Tuỳ chọn mở cổng HTTP của {@link HttpServeHandler}. */
+export interface ServeHttpOptions {
+  port: number;
+  hostname: string;
+  /** Gọi một lần khi cổng đã mở, với địa chỉ thực tế đang lắng nghe. */
+  onListen?: (info: { hostname: string; port: number }) => void;
+  /** Huỷ tín hiệu này thì đóng cổng và hoàn tất promise. Dùng cho tắt êm và cho test. */
+  signal?: AbortSignal;
+}
+
+/** Hàm xử lý theo chuẩn Fetch, cùng hình dạng với `FetchHandler` của SDK. */
+export type HttpServeHandler = (
+  request: Request,
+) => Response | Promise<Response>;

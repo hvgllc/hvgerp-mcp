@@ -50,6 +50,18 @@ Two consequences of `required` worth knowing before enabling it:
 
 ---
 
+## MCP Events (HTTP only)
+
+| Variable             | Type                                            | Default | Required | Notes                                                                                                                                           |
+| -------------------- | ----------------------------------------------- | ------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MCP_EVENTS_ENABLED` | `1`/`true`/`yes`/`on` or `0`/`false`/`no`/`off` | off     | No       | Turns on `events/list`, `events/subscribe`, `events/unsubscribe` and the `erpnext_meeting_get` tool. An unrecognised value is fatal at startup. |
+
+When on, startup fails unless `--http` is used, `MCP_CALLER_IDENTITY` resolves
+to `required` and OAuth JWT verification (`MCP_OAUTH_JWKS_URL`) is configured.
+See [mcp-events-meetings.md](./mcp-events-meetings.md).
+
+---
+
 ## Whitelisted method calls
 
 Read lazily, on each `erpnext_method_call` invocation, so it can be changed

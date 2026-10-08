@@ -12,7 +12,12 @@
 import { readdirSync, statSync as fsStatSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { ContextStore } from "./runtime-types.ts";
+import { createServer } from "node:http";
+import type {
+  ContextStore,
+  HttpServeHandler,
+  ServeHttpOptions,
+} from "./runtime-types.ts";
 
 // ─── Environment ─────────────────────────────────────────
 
@@ -72,4 +77,241 @@ export function createContextStore<T>(): ContextStore<T> {
     run: <R>(value: T, fn: () => R): R => storage.run(value, fn),
     current: (): T | undefined => storage.getStore(),
   };
+}
+
+// ─── HTTP listener ───────────────────────────────────────
+
+/**
+ * Mở một cổng HTTP và giao mọi request cho `handler`, đổi `IncomingMessage` sang `Request` và
+ * `Response` sang `ServerResponse` (phát trực tiếp từng khối, không gom cả body vào bộ nhớ).
+ * Promise chỉ hoàn tất khi server đóng.
+ */
+export function serveHttp(
+  options: ServeHttpOptions,
+  handler: HttpServeHandler,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const server = createServer((incoming, outgoing) => {
+      const abort = new AbortController();
+      outgoing.on("close", () => abort.abort());
+      const headers = new Headers();
+      for (const [name, value] of Object.entries(incoming.headers)) {
+        if (value === undefined) continue;
+        if (Array.isArray(value)) {
+          for (const item of value) headers.append(name, item);
+        } else headers.set(name, value);
+      }
+      const method = incoming.method ?? "GET";
+      const hasBody = method !== "GET" && method !== "HEAD";
+      // GET/HEAD không có route nào đọc body, nên một request vẫn khai báo body (Content-Length khác 0 hoặc Transfer-Encoding) là
+      // bất thường: client có thể nhỏ giọt phần body để giữ socket sau khi phản hồi đã gửi. Từ chối ngay và đóng kết nối
+      // (`Connection: close`) thay vì chờ xả body ngoài mọi giới hạn của adapter.
+      if (!hasBody) {
+        const declaredLength = incoming.headers["content-length"];
+        if (
+          incoming.headers["transfer-encoding"] !== undefined ||
+          (declaredLength !== undefined && declaredLength.trim() !== "0")
+        ) {
+          outgoing.statusCode = 400;
+          outgoing.setHeader("Connection", "close");
+          outgoing.end();
+          return;
+        }
+      }
+      const url = `http://${
+        incoming.headers.host ?? `${options.hostname}:${options.port}`
+      }${incoming.url ?? "/"}`;
+      // Header `Host` sai cú pháp (ví dụ `]`) làm `new Request` ném đồng bộ. Ngoài khối try này,
+      // lỗi đó sẽ thoát khỏi callback của `createServer` và làm sập cả tiến trình.
+      let request: Request;
+      let detachBody = () => {};
+      try {
+        request = new Request(url, {
+          method,
+          headers,
+          signal: abort.signal,
+          ...(hasBody
+            ? {
+              body: new ReadableStream<Uint8Array>({
+                start(controller) {
+                  let finished = false;
+                  const onData = (chunk: Uint8Array) => {
+                    if (finished) return;
+                    try {
+                      controller.enqueue(chunk);
+                      // Hàng đợi đầy: tạm dừng socket tới khi bên đọc gọi `pull`.
+                      if ((controller.desiredSize ?? 0) <= 0) incoming.pause();
+                    } catch {
+                      finished = true;
+                    }
+                  };
+                  const onEnd = () => {
+                    if (finished) return;
+                    finished = true;
+                    try {
+                      controller.close();
+                    } catch { /* stream đã bị hủy */ }
+                  };
+                  const onError = (error: Error) => {
+                    if (finished) return;
+                    finished = true;
+                    try {
+                      controller.error(error);
+                    } catch { /* stream đã bị hủy */ }
+                  };
+                  detachBody = () => {
+                    // Client ngắt giữa chừng khi body chưa đủ: bên đọc (`request.text()`) đang chờ phải được báo lỗi,
+                    // nếu không promise của nó treo mãi sau khi listener bị gỡ. Stream đã đóng thì `error` ném và bị bỏ qua.
+                    if (!finished) {
+                      try {
+                        controller.error(new Error("Request body aborted"));
+                      } catch { /* stream đã đóng hoặc đã bị hủy */ }
+                    }
+                    finished = true;
+                    incoming.off("data", onData);
+                    incoming.off("end", onEnd);
+                    incoming.off("error", onError);
+                    // Bỏ phần body còn lại để phản hồi vẫn gửi được qua cùng kết nối.
+                    incoming.on("error", () => {});
+                    incoming.resume();
+                  };
+                  incoming.on("data", onData);
+                  incoming.on("end", onEnd);
+                  incoming.on("error", onError);
+                },
+                // Bên đọc cần thêm dữ liệu: nhả lại socket đang bị tạm dừng.
+                pull() {
+                  incoming.resume();
+                },
+                // Bên đọc hủy sớm (ví dụ body quá lớn): ngừng nhét chunk vào stream đã đóng.
+                cancel() {
+                  detachBody();
+                },
+              }),
+              duplex: "half",
+            }
+            : {}),
+        } as RequestInit);
+      } catch {
+        // Stream body đã gắn listener lên `incoming` trước khi `new Request` ném lỗi: gỡ và xả phần body
+        // còn lại, nếu không `onData` sẽ tạm dừng socket vĩnh viễn và kết nối keep-alive bị treo.
+        detachBody();
+        // Đóng kết nối thay vì giữ keep-alive: request sai `Host` đứng ngoài `maxPeeks` và hạn peek của adapter, nên
+        // client nhỏ giọt phần body còn lại sẽ giữ được socket vô hạn nếu ta chỉ xả nó.
+        outgoing.statusCode = 400;
+        outgoing.setHeader("Connection", "close");
+        outgoing.end();
+        return;
+      }
+
+      // Phản hồi xong mà body chưa đọc hết (handler từ chối sớm): `onData` có thể đã tạm dừng socket
+      // và hook `cancel()` không bao giờ được gọi. Gỡ listener và xả phần body còn lại để socket
+      // không bị treo ở trạng thái tạm dừng và kết nối vẫn dùng lại được.
+      // Cờ đóng được ghi từ lúc nhận request: client có thể ngắt kết nối trước khi handler trả Response, khi đó
+      // sự kiện `close` đã phát và listener đăng ký sau (lúc đọc body) sẽ không bao giờ được gọi.
+      let outgoingClosed = false;
+      outgoing.once("finish", () => detachBody());
+      outgoing.once("close", () => {
+        outgoingClosed = true;
+        detachBody();
+      });
+
+      // Phản hồi sớm khi body chưa tới đủ (handler từ chối trước khi đọc): xả body cho kết nối keep-alive tái dùng sẽ để
+      // client nhỏ giọt phần còn lại giữ socket ngoài `maxPeeks` và hạn peek của adapter, nên đóng kết nối thay vì xả.
+      const closeWhenBodyPending = () => {
+        if (!incoming.complete) outgoing.setHeader("Connection", "close");
+      };
+
+      // Bọc trong Promise để handler ném ĐỒNG BỘ cũng rơi vào `.catch` bên dưới (trả 500) thay vì thoát khỏi callback.
+      new Promise<Response>((resolve) => resolve(handler(request))).then(
+        async (response) => {
+          outgoing.statusCode = response.status;
+          response.headers.forEach((value, name) =>
+            outgoing.setHeader(name, value)
+          );
+          closeWhenBodyPending();
+          if (response.body === null) {
+            outgoing.end();
+            return;
+          }
+          const reader = response.body.getReader();
+          // Client đã đi trước khi handler xong: hủy nguồn ngay thay vì treo ở `read()` đầu tiên của một luồng chậm.
+          if (outgoingClosed || outgoing.destroyed) {
+            void reader.cancel().catch(() => {});
+            return;
+          }
+          let finished = false;
+          // Luồng nguồn lỗi giữa chừng: không được kết thúc như một phản hồi hợp lệ, để `catch` bên dưới quyết định.
+          let failed = false;
+          // Client đóng kết nối khi `reader.read()` đang treo (SSE hoặc luồng chậm): kiểm `destroyed` sau read sẽ
+          // không bao giờ chạy, nên hủy nguồn ngay từ sự kiện `close` để read treo kết thúc và producer dừng.
+          const onClose = () => {
+            if (!finished) void reader.cancel().catch(() => {});
+          };
+          outgoing.once("close", onClose);
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) {
+                finished = true;
+                break;
+              }
+              if (outgoing.destroyed) break;
+              // Bộ đệm đầy thì dừng đọc luồng Fetch cho tới khi socket xả xong (hoặc đóng).
+              if (!outgoing.write(value)) {
+                await new Promise<void>((resolve) => {
+                  const settle = () => {
+                    outgoing.off("drain", settle);
+                    outgoing.off("close", settle);
+                    resolve();
+                  };
+                  outgoing.once("drain", settle);
+                  outgoing.once("close", settle);
+                });
+              }
+            }
+          } catch (error) {
+            failed = true;
+            throw error;
+          } finally {
+            outgoing.off("close", onClose);
+            // Client bỏ đi giữa chừng: hủy nguồn để không tiếp tục sinh dữ liệu vô ích.
+            if (!finished) void reader.cancel().catch(() => {});
+            if (!failed) outgoing.end();
+          }
+        },
+      ).catch(() => {
+        if (outgoing.headersSent) {
+          // Đã có byte đi ra: không thể đổi status, nên cắt kết nối để client thấy phản hồi bị đứt thay vì tưởng đủ.
+          outgoing.destroy();
+          return;
+        }
+        // Header của phản hồi hỏng (content-length, content-type...) không còn đúng với thân lỗi rỗng.
+        for (const name of outgoing.getHeaderNames()) {
+          outgoing.removeHeader(name);
+        }
+        outgoing.statusCode = 500;
+        closeWhenBodyPending();
+        outgoing.end();
+      });
+    });
+    server.on("error", reject);
+    server.on("close", () => resolve());
+    // `abort` không được phát lại cho listener đăng ký muộn: tín hiệu đã hủy từ trước thì không mở cổng.
+    if (options.signal?.aborted) {
+      resolve();
+      return;
+    }
+    options.signal?.addEventListener("abort", () => {
+      server.close();
+      server.closeAllConnections();
+    }, { once: true });
+    server.listen(options.port, options.hostname, () => {
+      const address = server.address();
+      const port = typeof address === "object" && address !== null
+        ? address.port
+        : options.port;
+      options.onListen?.({ hostname: options.hostname, port });
+    });
+  });
 }

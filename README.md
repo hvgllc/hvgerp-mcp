@@ -286,6 +286,7 @@ Full per-tool reference with parameters: [`docs/tools.md`](docs/tools.md).
 | `ERPNEXT_API_KEY`          | stdio    | API Key from User Settings. Over HTTP, leave it unset and let each caller's own token decide who the server acts as (see _Caller identity_)                              |
 | `ERPNEXT_API_SECRET`       | stdio    | API Secret from User Settings                                                                                                                                            |
 | `MCP_CALLER_IDENTITY`      | No       | `required` \| `optional` \| `off`. HTTP only. Defaults to `required` when no API key/secret is set, `off` when they are                                                  |
+| `MCP_EVENTS_ENABLED`       | No       | Off by default. Turns on MCP Events for calendar meetings (HTTP, per-user OAuth only). See [docs/mcp-events-meetings.md](docs/mcp-events-meetings.md)                    |
 | `ERPNEXT_MAX_UPLOAD_BYTES` | No       | Maximum decoded file-upload size in bytes (positive integer; default: 10 MiB)                                                                                            |
 | `ERPNEXT_METHOD_ALLOWLIST` | No       | Comma-separated dotted paths or `prefix.*` patterns that `erpnext_method_call` may invoke. Unset means no extra restriction beyond the API key's own ERPNext permissions |
 | `MCP_MRTR_SIGNING_KEY`     | No       | Exactly 64 lowercase hex characters; enables signed ambiguous-link elicitation. **Single-instance deployments only** — see below                                         |
