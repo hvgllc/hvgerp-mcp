@@ -807,13 +807,19 @@ read-back tool has two frozen schema files in `src/events/read-back/`:
 `<tool>.input.v<N>.json`, its complete `inputSchema` (the tool test asserts the
 registered tool's `inputSchema` deeply equals the live file), and
 `<tool>.result.v<N>.json`, a closed, bounded JSON Schema for both shapes it
-returns, written as a top-level `anyOf` of two closed object schemas, the record
-and the tombstone. Result schemas follow the decision 3 rules (the meeting
-`result.v1` exempt from the bound rule only, above) with one addition, because a
-returned field may be null where a contract field never is (`title`,
-`meeting_url`, `recurrence` and the schedule fields of the meeting result): a
-nullable field is written exactly as
-`{ "anyOf": [{ "type": "null" }, <schema>] }`, with no other keyword beside
+returns, written as an object-rooted schema whose only keys are `type: "object"`
+and an `anyOf` of two closed object schemas, the record and the tombstone. The
+root keeps `type: "object"` because protocol revisions before 2026-07-28 require
+an object `outputSchema`, and the legacy shim forwards `tools/list` unchanged to
+those clients, so a root-level `anyOf` alone could be rejected by a strict
+pre-2026 client and turn this minor release into a breaking one; the tool test
+asserts the root keys are exactly `type` and `anyOf`, and a legacy-shim test
+asserts the `outputSchema` a pre-2026 client receives has `type: "object"`.
+Result schemas follow the decision 3 rules (the meeting `result.v1` exempt from
+the bound rule only, above) with one addition, because a returned field may be
+null where a contract field never is (`title`, `meeting_url`, `recurrence` and
+the schedule fields of the meeting result): a nullable field is written exactly
+as `{ "anyOf": [{ "type": "null" }, <schema>] }`, with no other keyword beside
 `anyOf` and `<schema>` itself following the single-type rule. These two `anyOf`
 forms are the only ones a result schema may use; `checkSchemaShape` enforces
 that, and fixtures cover the nullable form (null accepted, a bounded value
