@@ -187,11 +187,14 @@ format characters. Anything else is a backend error. The tool returns the link
 in the WHATWG serialized form of the URL it validated (`href`), not the raw
 string, so forms a parser normalizes (backslashes, `https:host`, an upper-case
 host, an explicit `:443`, a missing `/` path) reach the client already
-canonical. ERP sends `null` rather than inventing a value: it reads the link
-from `Event.custom_meeting_url`, falling back to `Event.google_meet_link`, and
-turns a non-`https` or over-long link into `null`. Both keys sit at the meeting
-level, never inside `occurrences`. The webhook payload is unchanged and still
-carries no title or link.
+canonical. The returned link is never longer than 2048 characters: percent
+encoding can make the serialized form of a valid non-ASCII link longer than
+that, and such a link is returned as `null` (as ERP does for an over-long link)
+rather than failing the read. ERP sends `null` rather than inventing a value: it
+reads the link from `Event.custom_meeting_url`, falling back to
+`Event.google_meet_link`, and turns a non-`https` or over-long link into `null`.
+Both keys sit at the meeting level, never inside `occurrences`. The webhook
+payload is unchanged and still carries no title or link.
 
 `title` is the value at read time and is not tied to `revision`: a change of
 link is a schedule-relevant change that sends `meeting.updated` and bumps the

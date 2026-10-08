@@ -363,9 +363,11 @@ function isMeetingTitle(value: string): boolean {
  * Link cuộc họp chỉ nhận URL `https` tuyệt đối, không kèm thông tin đăng nhập: scheme khác (`javascript:`, `http:`) hay
  * `user:pass@` đều là dữ liệu hỏng hoặc nguy hiểm khi client hiển thị thành link bấm được. Trả về dạng chuẩn `href` của
  * chính URL đã kiểm (dấu `\`, `https:host`, chữ hoa ở host, cổng 443 đều được chuẩn hoá), không phải chuỗi gốc, để thứ
- * client nhận luôn là thứ đã qua kiểm tra. `undefined` nghĩa là giá trị không hợp lệ.
+ * client nhận luôn là thứ đã qua kiểm tra. `undefined` nghĩa là giá trị không hợp lệ (ERP lệch hợp đồng). `null` nghĩa là
+ * link hợp lệ nhưng dạng chuẩn dài quá giới hạn vì mã hoá phần trăm ký tự ngoài ASCII: ERP không làm gì sai, nên link bị
+ * bỏ như ERP vẫn làm với link quá dài, thay vì làm hỏng cả lần đọc.
  */
-function canonicalMeetingUrl(value: string): string | undefined {
+function canonicalMeetingUrl(value: string): string | null | undefined {
   // Giới hạn đếm theo code point như `len()` của ERP. Một code point chiếm tối đa hai đơn vị UTF-16, nên chuỗi dài hơn
   // gấp đôi giới hạn bị loại ngay mà không cần đếm.
   if (value.length > MEETING_URL_MAX_LENGTH * 2) return undefined;
@@ -380,7 +382,9 @@ function canonicalMeetingUrl(value: string): string | undefined {
   }
   const valid = parsed.protocol === "https:" && parsed.hostname !== "" &&
     parsed.username === "" && parsed.password === "";
-  return valid ? parsed.href : undefined;
+  if (!valid) return undefined;
+  // `href` chỉ gồm ASCII nên `length` cũng là số code point.
+  return parsed.href.length <= MEETING_URL_MAX_LENGTH ? parsed.href : null;
 }
 
 /**

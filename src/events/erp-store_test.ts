@@ -553,15 +553,16 @@ Deno.test("fetchMeeting returns the meeting link in the form it validated", asyn
 
 Deno.test("fetchMeeting counts the meeting link limit in code points, like the ERP", async () => {
   const prefix = "https://meet.example.com/";
-  // 2048 code point nhưng 4071 đơn vị UTF-16: ERP (Python `len`) coi là hợp lệ.
+  // 2048 code point nhưng 4071 đơn vị UTF-16: ERP (Python `len`) coi là hợp lệ, nên không phải lỗi backend.
   const atLimit = prefix + "😀".repeat(2048 - prefix.length);
   const { client } = fakeClient(() => ({
     ok: true,
     result: { ...MEETING, meeting_url: atLimit },
   }));
+  // Dạng chuẩn mã hoá phần trăm từng emoji nên dài hơn 2048 ký tự: link bị bỏ (null), lần đọc vẫn thành công.
   assertEquals(
     (await fetchMeeting(client, { event_id: "EVT-1" })).meeting_url,
-    new URL(atLimit).href,
+    null,
   );
   const overLimit = fakeClient(() => ({
     ok: true,
@@ -572,6 +573,30 @@ Deno.test("fetchMeeting counts the meeting link limit in code points, like the E
     Error,
     "Events backend error",
   );
+});
+
+Deno.test("fetchMeeting never returns a meeting link longer than the limit", async () => {
+  const prefix = "https://meet.example.com/";
+  const cases: Array<[string, string | null]> = [
+    // ASCII đúng 2048 ký tự: dạng chuẩn trùng chuỗi gốc nên được giữ.
+    [
+      prefix + "a".repeat(2048 - prefix.length),
+      prefix + "a".repeat(2048 - prefix.length),
+    ],
+    // Link ngắn có ký tự ngoài ASCII: mã hoá phần trăm vẫn trong giới hạn.
+    [prefix + "phòng-họp", new URL(prefix + "phòng-họp").href],
+    // 1000 chữ "ọ" chỉ 1025 code point, nhưng mỗi chữ thành `%E1%BB%8D` nên dạng chuẩn vượt 2048.
+    [prefix + "ọ".repeat(1000), null],
+  ];
+  for (const [raw, expected] of cases) {
+    const { client } = fakeClient(() => ({
+      ok: true,
+      result: { ...MEETING, meeting_url: raw },
+    }));
+    const url = (await fetchMeeting(client, { event_id: "EVT-1" })).meeting_url;
+    assertEquals(url, expected, raw.slice(0, 40));
+    if (typeof url === "string") assert(url.length <= 2048);
+  }
 });
 
 Deno.test("fetchMeeting maps every failure to a fixed message", async () => {
