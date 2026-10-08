@@ -157,30 +157,40 @@ ERPNext (`hvg_workspace/mcp_events/`):
 These are the recommended rules. Changing one of them is a design change, not an
 implementation detail.
 
-1. **One contract file per family, versioned on its own.** Add
-   `src/events/contract/<family>-events.v1.json` (for example
-   `task-events.v1.json`). A released contract file is frozen: never edit it in
-   place, its hash is the agreement between the two repositories. Clients
-   validate payloads with `additionalProperties: false`, so any change to an
-   existing event's schema, even one added optional field, breaks a client that
-   still holds the old schema. Two kinds of release follow from that:
-   - **New events only.** `<family>-events.vN+1.json` keeps every existing event
-     with a byte-for-byte identical effective schema and adds new event names.
-     It replaces vN in `CONTRACTS`; the vN file stays in the repository (step 2
-     keeps testing it). Old clients see no difference for the events they
-     already use.
-   - **Any schema change to an existing event.** New event names
-     `<family>.vN.<change>` in `<family>-events.vN.json`, loaded as a separate
-     family (`<family>.vN`) next to the old one until clients move. ERP journals
-     each change once per loaded family (decision 6). Version 1 names never
-     carry a version segment.
+1. **One contract lineage per family, versioned on its own.** A family's
+   contract files are `src/events/contract/<family_slug>-events.v<K>.json`,
+   where `K` counts the revisions of that family alone and starts at 1 (for
+   example `task-events.v1.json`). A released contract file is frozen: never
+   edit it in place, its hash is the agreement between the two repositories.
+   Clients validate payloads with `additionalProperties: false`, so any change
+   to an existing event's schema, even one added optional field, breaks a client
+   that still holds the old schema. Two kinds of release follow from that:
+   - **New events only.** `<family_slug>-events.v<K+1>.json` keeps every
+     existing event with a byte-for-byte identical effective schema and adds new
+     event names. It replaces `v<K>` in `CONTRACTS`; the old file stays in the
+     repository (step 2 keeps testing it). Old clients see no difference for the
+     events they already use.
+   - **Any schema change to an existing event.** A new parallel family
+     `<family>.v<G>`, where `G` is the next generation (2, 3, ...), with event
+     names `<family>.v<G>.<change>`. It starts its own lineage under its own
+     slug: `task.v2` begins at `task_v2-events.v1.json`. The base family keeps
+     its lineage, so both can still gain events independently and their file
+     names never collide. Both are loaded until clients move, and ERP journals
+     each change once per loaded family (decision 6). The first generation never
+     carries a version segment.
 2. **Event names are `<family>.<change>` and globally unique** across all loaded
    contracts. The registry must refuse to start if two loaded contracts declare
    the same name or the same family. Keep the `change` enum inside each family.
-   Where a family appears inside an identifier (tool name, ERP method, flag),
-   use its slug: the family with `.` replaced by `_`, so `task.v2` becomes
-   `task_v2`. Frappe reads dots in a method path as module separators, and tool
-   names must stay snake_case.
+   Family names follow a fixed grammar: a base family is lowercase letters and
+   digits starting with a letter (`^[a-z][a-z0-9]*$`, so no `_`, `-` or `.`),
+   and a parallel family adds one generation suffix
+   (`^[a-z][a-z0-9]*\.v([2-9]|[1-9][0-9]+)$`). Where a family appears inside an
+   identifier (file name, tool name, ERP method, flag), use its slug: the family
+   with `.` replaced by `_`, so `task.v2` becomes `task_v2`. Frappe reads dots
+   in a method path as module separators, and tool names must stay snake_case.
+   Under the grammar the slug is snake_case and one-to-one; the registry still
+   rejects any family that breaks the grammar and any two families with the same
+   slug.
 3. **Per-event schemas.** Each contract keeps a shared `inputSchema` and
    `payloadSchema` as the default, and an event entry may override either. The
    catalog descriptor exposes the effective schemas. `parseSubscribeParams`
@@ -203,11 +213,11 @@ implementation detail.
    run under shared credentials too), and a second tool with the same name would
    be listed twice by `toMCPFormat` and overwrite the first in
    `buildHandlersMap`. Add a test that the combined tool list has no duplicate
-   name. A versioned family `<family>.vN` (decision 1) reuses the base family's
-   tool and ERP method when the read-back shape is unchanged; if it needs a
-   different shape, its tool is `erpnext_<family>_v<N>_event_get` and its ERP
-   method `<family>_v<N>_get` (the slug, decision 2), registered and tested the
-   same way.
+   name. A versioned family `<family>.v<G>` (decision 1) reuses the base
+   family's tool and ERP method when the read-back shape is unchanged; if it
+   needs a different shape, its tool is `erpnext_<family>_v<G>_event_get` and
+   its ERP method `<family>_v<G>_get` (the slug, decision 2), registered and
+   tested the same way.
 6. **The journal records the family and the source doctype.** ERP adds two
    columns: `family` (drives the event name and matching) and `source_doctype`
    (identifies the record; one family can span several doctypes, such as `Task`
@@ -230,9 +240,13 @@ implementation detail.
    the global flags alone, so an upgrade that adds the gates cannot switch
    meetings off on a site where they already run. The gates give the rollout
    states:
-   - **shadow**: journal on, subscribe off. Rows are written and measured, but
-     `events/subscribe` for the family answers `-32012`, so no subscription
-     exists and nothing can be delivered.
+   - **shadow**: journal on, subscribe off and dispatch off. Rows are written
+     and measured; `events/subscribe` for the family answers `-32012`. Dispatch
+     must be off explicitly: turning subscribe off does not remove subscriptions
+     already stored in ERPNext (they expire on their own TTL, see the rollback
+     section of [mcp-events-meetings.md](mcp-events-meetings.md)), so a family
+     rolled back to shadow with dispatch still on would deliver its new rows to
+     them.
    - **subscribe on, dispatch off**: subscriptions are accepted; deliveries are
      created and stay pending (paused), never dropped or marked skipped, and go
      out once dispatch is on, as long as they are still inside the delivery
@@ -243,8 +257,8 @@ implementation detail.
    production, otherwise clients see events that always fail with `-32012`.
    `capabilities.events` stays `{}`.
 9. **Semver.** Adding a family, adding events to a family (decision 1, first
-   case) or adding a `<family>.vN` family is a minor release. Removing any
-   event, family or `<family>.vN` family is a major release.
+   case) or adding a `<family>.v<G>` family is a minor release. Removing any
+   event, family or `<family>.v<G>` family is a major release.
 
 ## 5. Recipe: this repository
 
@@ -298,13 +312,15 @@ const REGISTRY: ReadonlyMap<string, RegisteredEvent> = buildRegistry(CONTRACTS);
 The family is explicit: each entry of `CONTRACTS` names it, and every new
 contract file also carries a top-level `family` that must equal it (the frozen
 `meeting-events.v1.json` has none, which is why the entry holds it). Never
-derive the family from the file name, the contract id or the first event:
-`task-events.v2.json` can be a replacement of family `task` or the parallel
-family `task.v2`. `buildRegistry` throws at module load on a duplicate name, on
-two entries for the same family (decision 1), on a file `family` that differs
-from its entry, on any event whose name is not exactly
-`<family>.<changeByEvent[name]>`, on a name missing from `changeByEvent`, or on
-a `protocolVersion` other than the one this server speaks. Then:
+derive the family from the file name, the contract id or the first event: a file
+name says nothing about which of two parallel families it belongs to, and a
+mistyped prefix on a later event must not move it into another family's gates.
+`buildRegistry` throws at module load on a duplicate name, on two entries for
+the same family (decision 1), on a family name outside the grammar or a slug
+shared by two families (decision 2), on a file `family` that differs from its
+entry, on any event whose name is not exactly `<family>.<changeByEvent[name]>`,
+on a name missing from `changeByEvent`, or on a `protocolVersion` other than the
+one this server speaks. Then:
 
 - `parseEventName` checks `REGISTRY.has(name)`.
 - `parseArguments(name, value)` validates against
@@ -328,11 +344,12 @@ list, and run `collectKeywords` over every schema, including per-event
 overrides. Also assert that every entry of `CONTRACTS` is one of the discovered
 files.
 
-When a release replaces vN with vN+1 in `CONTRACTS` (decision 1, new events
-only), add a cross-version test: every event of vN exists in vN+1 with a deeply
-equal effective `inputSchema` and `payloadSchema` and the same `changeByEvent`
-entry. Keep that test for as long as vN is in the repository. Without it, a
-changed schema with a freshly recorded hash would pass every other check.
+When a release replaces `v<K>` with `v<K+1>` in `CONTRACTS` (decision 1, new
+events only), add a cross-version test: every event of `v<K>` exists in `v<K+1>`
+with a deeply equal effective `inputSchema` and `payloadSchema` and the same
+`changeByEvent` entry. Keep that test for as long as `v<K>` is in the
+repository. Without it, a changed schema with a freshly recorded hash would pass
+every other check.
 
 ### Step 3. Schema keywords (only when needed)
 
@@ -343,15 +360,15 @@ value. Prefer a schema that avoids the keyword over growing the validator.
 
 ### Step 4. Write the contract
 
-Create `src/events/contract/<family>-events.v1.json` with `family`, `contract`,
-`protocolVersion: "2026-07-28"`, `changeByEvent`, `inputSchema`, `payloadSchema`
-(`additionalProperties: false`, every field bounded), and `events` with one
-sentence of description each. Add it to `CONTRACTS`. Write the payload as a
-pointer (decision 4). Typical required set: `<id>`, `revision`, `change`,
-`changed_fields`, `deleted`, plus `source_doctype` for a multi-doctype family.
-For such a family the `inputSchema` also requires `source_doctype` whenever the
-id filter is supplied (an `if`/`then` with `required`, keywords the validator
-already supports).
+Create `src/events/contract/<family_slug>-events.v1.json` with `family`,
+`contract`, `protocolVersion: "2026-07-28"`, `changeByEvent`, `inputSchema`,
+`payloadSchema` (`additionalProperties: false`, every field bounded), and
+`events` with one sentence of description each. Add it to `CONTRACTS`. Write the
+payload as a pointer (decision 4). Typical required set: `<id>`, `revision`,
+`change`, `changed_fields`, `deleted`, plus `source_doctype` for a multi-doctype
+family. For such a family the `inputSchema` also requires `source_doctype`
+whenever the id filter is supplied (an `if`/`then` with `required`, keywords the
+validator already supports).
 
 ### Step 5. ERP method names
 
@@ -445,9 +462,9 @@ Listed here so both sides agree on the order; the ERP team implements it.
    off, each also gated by the global flag (decision 7). Meetings keep the
    global flags only. Subscribe off answers `-32012`; dispatch off leaves
    deliveries pending, never dropped.
-9. **Rollout**: shadow mode (journal on, subscribe off) in production, measure
-   row volume and hook latency, then subscribe on with dispatch off, check that
-   deliveries queue as pending, then dispatch on.
+9. **Rollout**: shadow mode (journal on, subscribe and dispatch off) in
+   production, measure row volume and hook latency, then subscribe on with
+   dispatch off, check that deliveries queue as pending, then dispatch on.
 
 ## 7. Invariants that must not break
 
