@@ -200,7 +200,21 @@ implementation detail.
    payload schema, override or not, is `type: object` with
    `additionalProperties: false` and every field bounded. Otherwise a misspelled
    argument could become an unfiltered subscription, or a payload could carry
-   undeclared content.
+   undeclared content. "Bounded" is a checked rule for every new contract: a
+   string has `maxLength`, `enum` or `const`, or a `format` the validator
+   implements; an array has `maxItems` (not yet in `SUPPORTED_KEYWORDS`, so the
+   first contract with an array adds it through step 3) and bounded `items`; a
+   nested object is closed the same way. `format` is limited to the values
+   `formatMatches` in `json-schema.ts` really checks (`date` and `date-time`
+   today), because it returns `true` for any other format; a new format is
+   implemented and tested there first. The frozen `meeting-events.v1.json`
+   predates this rule (`time_zone` has no `maxLength`, `changed_fields` no item
+   limit) and is the only exemption, named by its contract id. Subscription
+   arguments are identity-only: the family's id filter and, for a multi-doctype
+   family, its `source_doctype`. ERP persists and matches only that identity, so
+   any other argument would either be refused there or silently ignored, which
+   widens the subscription. A new kind of filter is a design change that ERP
+   ships first (normalise, persist, match in `_fan_out_matches`).
 4. **Payload stays a pointer.** Ids, revision, change, changed field names and
    the minimum scheduling or status data needed to decide whether to re-read.
    Never titles, descriptions, amounts, emails, names of people or free text.
@@ -332,8 +346,11 @@ the same family (decision 1), on a family name outside the grammar or a slug
 shared by two families (decision 2), on a file `family` that differs from its
 entry, on any event whose name is not exactly `<family>.<changeByEvent[name]>`,
 on a name missing from `changeByEvent`, on an effective input or payload schema
-that is not `type: object` with `additionalProperties: false` (decision 3), or
-on a `protocolVersion` other than the one this server speaks. Then:
+that is not `type: object` with `additionalProperties: false`, on an unbounded
+field, on a `format` outside the implemented set, on an input property other
+than the identity filter (all decision 3, with the meeting contract exempt only
+from the bound rule), or on a `protocolVersion` other than the one this server
+speaks. Then:
 
 - `parseEventName` checks `REGISTRY.has(name)`.
 - `parseArguments(name, value)` validates against
@@ -366,10 +383,12 @@ every other check.
 
 ### Step 3. Schema keywords (only when needed)
 
-If a new contract needs a keyword that `SUPPORTED_KEYWORDS` lacks, add it to
-`json-schema.ts` with tests first (valid, invalid, error message without the
-value). Error messages must keep carrying only the path and keyword, never the
-value. Prefer a schema that avoids the keyword over growing the validator.
+If a new contract needs a keyword that `SUPPORTED_KEYWORDS` lacks, or a `format`
+value that `formatMatches` does not implement, add it to `json-schema.ts` with
+tests first (valid, invalid, error message without the value). A keyword in the
+list is not enough for `format`: each format value needs its own check. Error
+messages must keep carrying only the path and keyword, never the value. Prefer a
+schema that avoids the keyword over growing the validator.
 
 ### Step 4. Write the contract
 
@@ -412,13 +431,13 @@ modelled on `fetchMeeting` / `pickMeetingFields`:
 
 ### Step 7. Tests
 
-| File                        | Add                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `protocol_test.ts`          | Registry builds. One negative test per module-load rejection in step 1: duplicate name, duplicate family, family outside the grammar, shared slug, file `family` differing from its entry, event name not `<family>.<change>`, name missing from `changeByEvent`, open effective schema, wrong `protocolVersion`. Then catalog lists the new descriptors with their own schemas, arguments validated per event, `validateEventPayload` for valid and invalid fixtures of each new event, and an unknown-property fixture (argument and payload) for every event with an override. |
-| `adapter_wire_test.ts`      | `events/list` over HTTP returns the new names; `events/subscribe` with a new name reaches the store with `name` and `arguments` unchanged; unknown name still `-32011`.                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `erp-store_test.ts`         | The new fetch: id mismatch, doctype mismatch for a multi-doctype family, extra keys dropped, every shape violation is `Events backend error`, 401 / 403 / 429 mapping.                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `contract_test.ts`          | Covered by step 2.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| tool test (`src/tools/...`) | Happy path: the handler, called with a caller-scoped client, makes exactly one GET to the read-back method with the expected arguments and returns the picked result. Then unknown argument refused with the fixed message, shared client refused, input bounds, and no duplicate name in the combined tool list.                                                                                                                                                                                                                                                                 |
+| File                        | Add                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `protocol_test.ts`          | Registry builds. One negative test per module-load rejection in step 1: duplicate name, duplicate family, family outside the grammar, shared slug, file `family` differing from its entry, event name not `<family>.<change>`, name missing from `changeByEvent`, open effective schema, unbounded string, unbounded array, unknown `format`, non-identity input property, wrong `protocolVersion`; and that the meeting contract still loads under its exemption. Then catalog lists the new descriptors with their own schemas, arguments validated per event, `validateEventPayload` for valid and invalid fixtures of each new event, and an unknown-property fixture (argument and payload) for every event with an override. |
+| `adapter_wire_test.ts`      | `events/list` over HTTP returns the new names; `events/subscribe` with a new name reaches the store with `name` and `arguments` unchanged; unknown name still `-32011`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `erp-store_test.ts`         | The new fetch: id mismatch, doctype mismatch for a multi-doctype family, extra keys dropped, every shape violation is `Events backend error`, 401 / 403 / 429 mapping.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `contract_test.ts`          | Covered by step 2.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| tool test (`src/tools/...`) | Happy path: the handler, called with a caller-scoped client, makes exactly one GET to the read-back method with the expected arguments and returns the picked result. Then unknown argument refused with the fixed message, shared client refused, input bounds, and no duplicate name in the combined tool list.                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 Run `deno task pre-commit` and `deno task test`, then `deno task release:check`:
 a new family adds a contract import and a tool, which changes the published
@@ -464,7 +483,8 @@ Listed here so both sides agree on the order; the ERP team implements it.
    identity, like `event_identity` for meetings. For a multi-doctype family the
    filter is the pair `(source_doctype, id)`: refuse an id without its doctype,
    persist and match the pair, and test two records with equal ids in both
-   doctypes.
+   doctypes. Arguments are identity-only (decision 3); refuse any other argument
+   rather than ignoring it.
 6. **Dispatch**: `envelope()` takes the name from the row's `family`;
    `_fan_out_matches` compares family as well as change.
 7. **Read-back**: `api.<family_slug>_get` with the fixed `{ok,result|error}`
