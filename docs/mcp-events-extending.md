@@ -235,11 +235,17 @@ implementation detail.
    payload schema also requires the canonical pointer fields: the
    `identityField`, `revision`, `change` and, for a multi-doctype family,
    `source_doctype`; without them a webhook could not name the record to re-read
-   or take part in revision ordering. ERP persists and matches only that
-   identity, so any other argument would either be refused there or silently
-   ignored, which widens the subscription. A new kind of filter is a design
-   change that ERP ships first (normalise, persist, match in
-   `_fan_out_matches`).
+   or take part in revision ordering. Two of those fields have one canonical
+   schema per family. The identity property (and `source_doctype`) must be
+   deeply equal in every effective input and payload schema of the family, so an
+   override cannot let a payload carry an id longer than the input, and the
+   re-read tool, accept. `revision` must be `type: integer` with `minimum` of at
+   least 1 and a `maximum` no higher than `9007199254740991`; a bounded `number`
+   would let a fractional revision validate that no journal counter, fence or
+   read-back validator can produce. ERP persists and matches only that identity,
+   so any other argument would either be refused there or silently ignored,
+   which widens the subscription. A new kind of filter is a design change that
+   ERP ships first (normalise, persist, match in `_fan_out_matches`).
 4. **Payload stays a pointer.** Ids, revision, change, changed field names and
    the minimum scheduling or status data needed to decide whether to re-read.
    Never titles, descriptions, amounts, emails, names of people or free text.
@@ -262,12 +268,15 @@ implementation detail.
    needs a different shape, its tool is `erpnext_<family>_v<G>_event_get` and
    its ERP method `<family>_v<G>_get` (the slug, decision 2), registered and
    tested the same way. The dependency is recorded, not implied: each
-   `CONTRACTS` entry names its `readBackTool`, and a test asserts that every
-   entry's tool is in `EVENTS_TOOL_NAMES` and its method in
-   `ERP_EVENTS_METHODS`. A shared tool and method therefore stay registered
-   until the last family that names them is retired; removing the base family
-   while `<family>.v<G>` still points at its tool fails that test instead of
-   leaving v<G> events without a re-read path.
+   `CONTRACTS` entry names both its `readBackTool` and its `readBackMethod` (the
+   key in `ERP_EVENTS_METHODS`), and a test asserts that every entry's tool is
+   in `EVENTS_TOOL_NAMES`, its method in `ERP_EVENTS_METHODS`, and that every
+   tool there and every read-back method there (all keys but `subscribe` and
+   `unsubscribe`) is named by at least one entry, so no endpoint is left unused.
+   A shared tool and method therefore stay registered until the last family that
+   names them is retired; removing the base family while `<family>.v<G>` still
+   points at its tool fails that test instead of leaving v<G> events without a
+   re-read path.
 6. **The journal records the family and the source doctype.** ERP adds two
    columns: `family` (drives the event name and matching) and `source_doctype`
    (identifies the record; one family can span several doctypes, such as `Task`
@@ -300,9 +309,11 @@ implementation detail.
    client never discards a newer event because the base family counted
    differently. `_fan_out_matches` compares `family` as well as change, and
    `envelope()` builds `name` from `family`. Existing rows are backfilled as
-   family `meeting`, doctype `Event`. This is the largest and riskiest change of
-   the whole extension and must ship, migrate and be verified before any new
-   family writes a row.
+   family `meeting`, doctype `Event`, and the legacy per-source fence is copied
+   into the new `meeting` fence in the same migration, so a source whose old
+   rows were already pruned keeps rejecting stale revisions. This is the largest
+   and riskiest change of the whole extension and must ship, migrate and be
+   verified before any new family writes a row.
 7. **Each new family gets its own ERP gates**, each also gated by the matching
    global flag: `mcp_events_<family_slug>_journal_enabled`,
    `mcp_events_<family_slug>_subscribe_enabled` and
@@ -366,6 +377,7 @@ interface ContractEntry {
   identityField: string; // the only id property subscription arguments may use
   sourceDoctypes?: readonly string[]; // present only for a multi-doctype family
   readBackTool: string; // shared by <family>.v<G> when the shape is unchanged
+  readBackMethod: string; // key in ERP_EVENTS_METHODS, shared the same way
   file: ContractFile;
 }
 
@@ -374,6 +386,7 @@ export const CONTRACTS: readonly ContractEntry[] = [
     family: "meeting",
     identityField: "event_id",
     readBackTool: "erpnext_meeting_get",
+    readBackMethod: "meetingGet",
     file: meetingContract,
   },
 ];
@@ -405,10 +418,12 @@ set, on an effective input schema whose properties are not exactly the entry's
 `identityField` (plus `source_doctype` for a multi-doctype family), on a
 `source_doctype` present without `sourceDoctypes` on the entry, missing with it,
 or with an `enum` different from it, on an effective payload schema that does
-not require every canonical pointer field (all decision 3, with the meeting
-entry exempt only from the bound rule), on a duplicate contract id or a reuse of
-`meeting-events.v1` by another file, or on a `protocolVersion` other than the
-one this server speaks. Then:
+not require every canonical pointer field, on an identity or `source_doctype`
+schema that differs between any two effective schemas of the family, on a
+`revision` that is not an integer with `minimum` of at least 1 (all decision 3,
+with the meeting entry exempt only from the bound rule), on a duplicate contract
+id or a reuse of `meeting-events.v1` by another file, or on a `protocolVersion`
+other than the one this server speaks. Then:
 
 - `parseEventName` checks `REGISTRY.has(name)`.
 - `parseArguments(name, value)` validates against
@@ -430,7 +445,11 @@ it must fail. For each file, hash it and compare with its own
 (`docs/mcp-events-<family>.md` keeps one line per version), assert the event
 list, and run `collectKeywords` over every schema, including per-event
 overrides. Also assert that every entry of `CONTRACTS` is one of the discovered
-files.
+files, and that across the whole discovered set, retired files included, every
+`contract` id is unique and equals its file name without `.json` (so
+`task-events.v2.json` holds `task-events.v2`): `buildRegistry` sees only the
+live entries, and without this check a successor could reuse a retired version's
+id.
 
 When a release replaces `v<K>` with `v<K+1>` in `CONTRACTS` (decision 1, new
 events only), add a cross-version test: every event of `v<K>` exists in `v<K+1>`
@@ -454,8 +473,8 @@ Create `src/events/contract/<family_slug>-events.v1.json` with `family`,
 `contract`, `protocolVersion: "2026-07-28"`, `changeByEvent`, `inputSchema`,
 `payloadSchema` (`additionalProperties: false`, every field bounded), and
 `events` with one sentence of description each. Add it to `CONTRACTS` with its
-`identityField`, `readBackTool` and, for a multi-doctype family,
-`sourceDoctypes`. Give `revision` an explicit range such as
+`identityField`, `readBackTool`, `readBackMethod` and, for a multi-doctype
+family, `sourceDoctypes`. Give `revision` an explicit range such as
 `{ "type": "integer", "minimum": 1, "maximum": 9007199254740991 }`. Write the
 payload as a pointer (decision 4). The required set always includes the
 canonical pointer fields (`<id>`, `revision`, `change`, plus `source_doctype`
@@ -467,10 +486,13 @@ Test both lone cases as invalid arguments.
 
 ### Step 5. ERP method names
 
-Add the read-back method to `ERP_EVENTS_METHODS` in `erp-store.ts`
-(`hvg_workspace.mcp_events.api.<family_slug>_get`, using the slug from decision
-2, so `task.v2` maps to `api.task_v2_get`, never `api.task.v2_get`). Subscribe
-and unsubscribe stay the same methods for every family.
+A family with its own read-back shape adds its method to `ERP_EVENTS_METHODS` in
+`erp-store.ts` (`hvg_workspace.mcp_events.api.<family_slug>_get`, using the slug
+from decision 2, so `task.v2` maps to `api.task_v2_get`, never
+`api.task.v2_get`) and names that key as its `readBackMethod`. A `<family>.v<G>`
+that keeps the base shape adds nothing here and names the base family's key
+instead (decision 5). Subscribe and unsubscribe stay the same methods for every
+family.
 
 ### Step 6. Re-read tool
 
@@ -498,13 +520,13 @@ modelled on `fetchMeeting` / `pickMeetingFields`:
 
 ### Step 7. Tests
 
-| File                        | Add                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `protocol_test.ts`          | Registry builds. One negative test per module-load rejection in step 1: duplicate name, duplicate family, family outside the grammar, shared slug, file `family` differing from its entry, event name not `<family>.<change>`, name missing from `changeByEvent`, open effective schema, unbounded string, `date-time` without `maxLength`, unbounded number (missing `minimum` or `maximum`, or a limit outside the safe-integer range), unbounded array, unknown `format`, non-identity input property, an override whose id property differs from the entry's `identityField`, `source_doctype` without `sourceDoctypes` and the reverse, an override dropping `source_doctype` or changing its enum, a payload missing each canonical pointer field in turn, duplicate contract id, another file claiming `meeting-events.v1`, wrong `protocolVersion`; and that the meeting contract still loads under its exemption. Then catalog lists the new descriptors with their own schemas, arguments validated per event, `validateEventPayload` for valid and invalid fixtures of each new event, and an unknown-property fixture (argument and payload) for every event with an override. |
-| `adapter_wire_test.ts`      | `events/list` over HTTP returns the new names; `events/subscribe` with a new name reaches the store with `name` and `arguments` unchanged; unknown name still `-32011`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `erp-store_test.ts`         | The new fetch: id mismatch, doctype mismatch for a multi-doctype family, extra keys dropped, every shape violation is `Events backend error`, 401 / 403 / 429 mapping.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `contract_test.ts`          | Covered by step 2.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| tool test (`src/tools/...`) | Happy path: the handler, called with a caller-scoped client, makes exactly one GET to the read-back method with the expected arguments and returns the picked result. Then unknown argument refused with the fixed message, shared client refused, input bounds, parity with the contract (an id at the contract's `minLength` and `maxLength` and every `sourceDoctypes` value accepted, one past each limit refused), and no duplicate name in the combined tool list. Gating, for every name in `EVENTS_TOOL_NAMES` (extend the existing `erpnext_meeting_get` assertions): absent from `toolsByCategory`, `allTools` and `getToolByName`, absent from `ErpNextToolsClient` when `includeEventsTools` is false, present when it is true. Dependency: every `CONTRACTS` entry's `readBackTool` is in `EVENTS_TOOL_NAMES` and its ERP method in `ERP_EVENTS_METHODS` (a test, not a module-load check, so `protocol.ts` does not import the tools).                                                                                                                                                                                                                                       |
+| File                        | Add                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `protocol_test.ts`          | Registry builds. One negative test per module-load rejection in step 1: duplicate name, duplicate family, family outside the grammar, shared slug, file `family` differing from its entry, event name not `<family>.<change>`, name missing from `changeByEvent`, open effective schema, unbounded string, `date-time` without `maxLength`, unbounded number (missing `minimum` or `maximum`, or a limit outside the safe-integer range), unbounded array, unknown `format`, non-identity input property, an override whose id property differs from the entry's `identityField`, `source_doctype` without `sourceDoctypes` and the reverse, an override dropping `source_doctype` or changing its enum, a payload missing each canonical pointer field in turn, an identity or `source_doctype` schema differing between the input and a payload override, a `revision` typed `number` and one with `minimum: 0`, duplicate contract id, another file claiming `meeting-events.v1`, wrong `protocolVersion`; and that the meeting contract still loads under its exemption. Then catalog lists the new descriptors with their own schemas, arguments validated per event, `validateEventPayload` for valid and invalid fixtures of each new event, and an unknown-property fixture (argument and payload) for every event with an override. |
+| `adapter_wire_test.ts`      | `events/list` over HTTP returns the new names; `events/subscribe` with a new name reaches the store with `name` and `arguments` unchanged; unknown name still `-32011`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `erp-store_test.ts`         | The new fetch: id mismatch, doctype mismatch for a multi-doctype family, extra keys dropped, every shape violation is `Events backend error`, 401 / 403 / 429 mapping.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `contract_test.ts`          | Covered by step 2.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| tool test (`src/tools/...`) | Happy path: the handler, called with a caller-scoped client, makes exactly one GET to the read-back method with the expected arguments and returns the picked result. Then unknown argument refused with the fixed message, shared client refused, input bounds, parity with the contract (an id at the contract's `minLength` and `maxLength` and every `sourceDoctypes` value accepted, one past each limit refused), and no duplicate name in the combined tool list. Gating, for every name in `EVENTS_TOOL_NAMES` (extend the existing `erpnext_meeting_get` assertions): absent from `toolsByCategory`, `allTools` and `getToolByName`, absent from `ErpNextToolsClient` when `includeEventsTools` is false, present when it is true. Dependency: every `CONTRACTS` entry's `readBackTool` is in `EVENTS_TOOL_NAMES` and its `readBackMethod` in `ERP_EVENTS_METHODS`, and every name in `EVENTS_TOOL_NAMES` and every read-back key in `ERP_EVENTS_METHODS` (all but `subscribe` and `unsubscribe`) is used by at least one entry (a test, not a module-load check, so `protocol.ts` does not import the tools).                                                                                                                                                                                                                      |
 
 Run `deno task pre-commit` and `deno task test`, then `deno task release:check`:
 a new family adds a contract import and a tool, which changes the published
@@ -534,16 +556,22 @@ Listed here so both sides agree on the order; the ERP team implements it.
    migration, backfill, the new unique index in `install.ensure_indexes()` with
    the legacy `(source_name, revision)` unique index dropped in the same
    migration, the new `source_change_id` for new rows only (backfilled rows keep
-   theirs) and the fence key (both including `family`), the source-global
-   revision counter seeded atomically, in the same migration, from the highest
-   revision already journaled or fenced for each source, and allocated with an
-   atomic increment or row lock in the source transaction. Tests prove: meeting
-   rows, cursors and replays are unchanged; a pre-migration row replayed after
-   the migration carries the same `eventId` as before; the legacy index is gone
-   and two families can journal the same source revision; the first meeting
-   change after the migration gets a revision above the last one before it; and
-   two concurrent transactions on the same source get distinct revisions and
-   both keep their journal rows.
+   theirs) and the fence key (both including `family`), the new meeting fence
+   `(meeting, Event, source_name)` seeded atomically from the legacy per-source
+   fence and any retained rows (a source whose old rows were pruned still has
+   its fence, and an empty new fence would let a stale pre-migration revision
+   through under a new `eventId`), the source-global revision counter seeded
+   atomically, in the same migration, from the highest revision already
+   journaled or fenced for each source, and allocated with an atomic increment
+   or row lock in the source transaction. Tests prove: meeting rows, cursors and
+   replays are unchanged; a pre-migration row replayed after the migration
+   carries the same `eventId` as before; the legacy index is gone and two
+   families can journal the same source revision; the first meeting change after
+   the migration gets a revision above the last one before it; and two
+   concurrent transactions on the same source get distinct revisions and both
+   keep their journal rows; and for a source whose journal rows were pruned
+   before the migration, a stale revision at or below its legacy fence is still
+   rejected after it.
 2. **Contract loading**: copy the new contract file verbatim next to
    `meeting-events.v1.json`, generalise `contract.py` to a registry with the
    same explicit family and name rules as `buildRegistry` here, and add a digest
