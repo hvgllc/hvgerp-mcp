@@ -185,7 +185,10 @@ implementation detail.
 4. **Payload stays a pointer.** Ids, revision, change, changed field names and
    the minimum scheduling or status data needed to decide whether to re-read.
    Never titles, descriptions, amounts, emails, names of people or free text.
-   Content belongs in the re-read tool, behind a live permission check.
+   Content belongs in the re-read tool, behind a live permission check. When a
+   family spans several doctypes (decision 6), the pointer carries
+   `source_doctype` as a closed enum next to the id, and the re-read tool takes
+   both, because two doctypes can hold records with the same `name`.
 5. **Each family has exactly one re-read tool**, `erpnext_<family>_event_get`,
    built like `erpnext_meeting_get`: strict argument allowlist,
    `actsAs === "caller"`, fresh GET with no cache, output passed through an
@@ -196,7 +199,10 @@ implementation detail.
    run under shared credentials too), and a second tool with the same name would
    be listed twice by `toMCPFormat` and overwrite the first in
    `buildHandlersMap`. Add a test that the combined tool list has no duplicate
-   name.
+   name. A versioned family `<family>.vN` (decision 1) reuses the base family's
+   tool when the read-back shape is unchanged; if it needs a different shape,
+   its tool is `erpnext_<family>_v<N>_event_get` (the dot becomes an underscore,
+   so the name stays snake_case), registered and tested the same way.
 6. **The journal records the family and the source doctype.** ERP adds two
    columns: `family` (drives the event name and matching) and `source_doctype`
    (identifies the record; one family can span several doctypes, such as `Task`
@@ -350,8 +356,11 @@ modelled on `fetchMeeting` / `pickMeetingFields`:
 | `contract_test.ts`          | Covered by step 2.                                                                                                                                                                                                                                                                                                |
 | tool test (`src/tools/...`) | Happy path: the handler, called with a caller-scoped client, makes exactly one GET to the read-back method with the expected arguments and returns the picked result. Then unknown argument refused with the fixed message, shared client refused, input bounds, and no duplicate name in the combined tool list. |
 
-Run `deno task pre-commit` and `deno task test`. CI on a branch runs only on
-manual dispatch: `gh workflow run Test --ref <branch>`.
+Run `deno task pre-commit` and `deno task test`, then `deno task release:check`:
+a new family adds a contract import and a tool, which changes the published
+surfaces, and only that task runs `scripts/build-node.sh` to prove the npm
+bundle still builds. CI on a branch runs only on manual dispatch:
+`gh workflow run Test --ref <branch>`, so it cannot replace the local check.
 
 ### Step 8. Documentation
 
@@ -419,10 +428,11 @@ Listed here so both sides agree on the order; the ERP team implements it.
 - Delivery is at least once. The generic dedupe key is the envelope `eventId`,
   unique per journal row across all families once `family` and `source_doctype`
   are part of `source_change_id` (decision 6). Ordering is per record: compare
-  `revision` only between events of the same family and the same source id, and
-  a lower revision never overrides a higher one. Clients must tolerate replays
-  and out-of-order arrival. The meetings rule "dedupe on `(event_id, revision)`"
-  is that family's instance of this rule.
+  `revision` only between events of the same family and the same source
+  (`source_doctype` and id when the family spans several doctypes), and a lower
+  revision never overrides a higher one. Clients must tolerate replays and
+  out-of-order arrival. The meetings rule "dedupe on `(event_id, revision)`" is
+  that family's instance of this rule.
 - A user who loses access stops receiving events and gets the same answer for
   "no permission" as for "does not exist".
 - A contract file never changes after release; its hash is the agreement between
@@ -477,11 +487,11 @@ Listed here so both sides agree on the order; the ERP team implements it.
 Not decided. Listed with the pointer each would carry, to help pick the next
 one.
 
-| Family     | ERPNext doctype      | Events                                                | Pointer fields                                                              | Re-read tool                                                                  |
-| ---------- | -------------------- | ----------------------------------------------------- | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `task`     | `Task`, `ToDo`       | `task.assigned`, `task.updated`, `task.closed`        | `task_id`, `revision`, `change`, `changed_fields`, `status`, `exp_end_date` | `erpnext_task_event_get` (not `erpnext_task_get`, which exists)               |
-| `leave`    | `Leave Application`  | `leave.submitted`, `leave.approved`, `leave.rejected` | `leave_id`, `revision`, `change`, `status`, `from_date`, `to_date`          | `erpnext_leave_event_get` (not `erpnext_leave_application_get`, which exists) |
-| `approval` | Workflow transitions | `approval.requested`, `approval.decided`              | `doctype`, `doc_id`, `revision`, `change`, `workflow_state`                 | `erpnext_approval_event_get`, taking `doctype` and `doc_id`                   |
+| Family     | ERPNext doctype      | Events                                                | Pointer fields                                                                                                   | Re-read tool                                                                                           |
+| ---------- | -------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `task`     | `Task`, `ToDo`       | `task.assigned`, `task.updated`, `task.closed`        | `source_doctype` (`Task` or `ToDo`), `task_id`, `revision`, `change`, `changed_fields`, `status`, `exp_end_date` | `erpnext_task_event_get`, taking `source_doctype` and `task_id` (not `erpnext_task_get`, which exists) |
+| `leave`    | `Leave Application`  | `leave.submitted`, `leave.approved`, `leave.rejected` | `leave_id`, `revision`, `change`, `status`, `from_date`, `to_date`                                               | `erpnext_leave_event_get` (not `erpnext_leave_application_get`, which exists)                          |
+| `approval` | Workflow transitions | `approval.requested`, `approval.decided`              | `doctype`, `doc_id`, `revision`, `change`, `workflow_state`                                                      | `erpnext_approval_event_get`, taking `doctype` and `doc_id`                                            |
 
 Prefer a family where the audience rule is simple (assignee and owner) for the
 first extension, since the access proof is the hardest part to get right.
