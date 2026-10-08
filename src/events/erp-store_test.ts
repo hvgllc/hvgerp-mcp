@@ -418,6 +418,187 @@ Deno.test("fetchMeeting returns only the advertised fields, even if ERP adds mor
   assertEquals((result.occurrences as unknown[]).length, 1);
 });
 
+Deno.test("fetchMeeting returns the title and meeting link of a live meeting", async () => {
+  const { client } = fakeClient(() => ({
+    ok: true,
+    result: {
+      ...MEETING,
+      title: "Họp giao ban",
+      meeting_url: "https://meet.google.com/abc-defg-hij",
+    },
+  }));
+  const result = await fetchMeeting(client, { event_id: "EVT-1" });
+  assertEquals(result.title, "Họp giao ban");
+  assertEquals(result.meeting_url, "https://meet.google.com/abc-defg-hij");
+});
+
+Deno.test("fetchMeeting keeps a null title or meeting link and omits the keys an older ERP does not send", async () => {
+  // ERP trả `null` khi không có tên hay link thay vì bịa giá trị (ví dụ dùng event_id làm tên).
+  const withoutLink = fakeClient(() => ({
+    ok: true,
+    result: { ...MEETING, title: null, meeting_url: null },
+  }));
+  const linkless = await fetchMeeting(withoutLink.client, {
+    event_id: "EVT-1",
+  });
+  assertEquals(linkless.title, null);
+  assertEquals(linkless.meeting_url, null);
+  // ERP chưa nâng cấp không gửi hai khoá này: MCP vẫn trả lịch như cũ, không tự bịa giá trị.
+  const legacy = fakeClient(() => ({ ok: true, result: MEETING }));
+  const old = await fetchMeeting(legacy.client, { event_id: "EVT-1" });
+  assert(!Object.hasOwn(old, "title"));
+  assert(!Object.hasOwn(old, "meeting_url"));
+});
+
+Deno.test("fetchMeeting never adds a title or link to a tombstone", async () => {
+  const { client } = fakeClient(() => ({
+    ok: true,
+    result: {
+      event_id: "EVT-1",
+      revision: 9,
+      deleted: true,
+      title: "Salary review",
+      meeting_url: "https://meet.example.com/x",
+    },
+  }));
+  assertEquals(await fetchMeeting(client, { event_id: "EVT-1" }), {
+    event_id: "EVT-1",
+    revision: 9,
+    deleted: true,
+  });
+});
+
+Deno.test("fetchMeeting rejects a malformed title or meeting link", async () => {
+  const bad: Array<Record<string, unknown>> = [
+    { title: "" },
+    { title: "   " },
+    { title: 42 },
+    { title: ["Standup"] },
+    { title: "x".repeat(501) },
+    // Chỉ gồm ký tự định dạng vô hình: `trim()` không bỏ chúng nhưng người đọc vẫn thấy một tên trống.
+    { title: "​​" },
+    { title: "​ ⁠﻿" },
+    // Dấu kết hợp đứng một mình và ký tự gốc nhưng hiển thị trống (Hangul filler, ô chữ nổi trống).
+    { title: "͏️" },
+    { title: "́́" },
+    { title: "ㅤᅟ" },
+    { title: "⠀ ⠀" },
+    { meeting_url: "" },
+    // `new URL()` lặng lẽ bỏ khoảng trắng hai đầu và tab/xuống dòng, nên chuỗi gốc khác chuỗi đã được kiểm.
+    { meeting_url: " https://meet.example.com/x" },
+    { meeting_url: "https://meet.example.com/x\n" },
+    { meeting_url: "https://meet.example.com/\tx" },
+    { meeting_url: "https://meet.example.com/a b" },
+    { meeting_url: "https://meet.example.com/‮x" },
+    { meeting_url: 7 },
+    { meeting_url: "http://meet.example.com/x" },
+    { meeting_url: "javascript:alert(1)" },
+    { meeting_url: "meet.google.com/abc" },
+    { meeting_url: "https://user:pass@meet.example.com/x" },
+    { meeting_url: `https://meet.example.com/${"a".repeat(2048)}` },
+  ];
+  for (const extra of bad) {
+    const { client } = fakeClient(() => ({
+      ok: true,
+      result: { ...MEETING, title: "Standup", ...extra },
+    }));
+    const error = await assertRejects(() =>
+      fetchMeeting(client, { event_id: "EVT-1" })
+    );
+    assertEquals(
+      (error as Error).message,
+      "Events backend error",
+      JSON.stringify(extra).slice(0, 80),
+    );
+  }
+});
+
+Deno.test("fetchMeeting accepts a title of exactly 500 code points, counted by code point", async () => {
+  const title = "😀".repeat(500);
+  const { client } = fakeClient(() => ({
+    ok: true,
+    result: { ...MEETING, title },
+  }));
+  assertEquals(
+    (await fetchMeeting(client, { event_id: "EVT-1" })).title,
+    title,
+  );
+});
+
+Deno.test("fetchMeeting returns the meeting link in the form it validated", async () => {
+  // Bộ phân tích URL chuẩn hoá các dạng này; trả chuỗi gốc thì client không chuẩn hoá có thể không nhận ra link.
+  const cases: Array<[string, string]> = [
+    [
+      "https://meet.google.com/abc-defg-hij",
+      "https://meet.google.com/abc-defg-hij",
+    ],
+    ["https:\\\\meet.example.com\\room", "https://meet.example.com/room"],
+    ["https:meet.example.com/room", "https://meet.example.com/room"],
+    ["HTTPS://Meet.Example.COM/room", "https://meet.example.com/room"],
+    ["https://meet.example.com:443/r", "https://meet.example.com/r"],
+    ["https://meet.example.com", "https://meet.example.com/"],
+  ];
+  for (const [raw, expected] of cases) {
+    const { client } = fakeClient(() => ({
+      ok: true,
+      result: { ...MEETING, meeting_url: raw },
+    }));
+    assertEquals(
+      (await fetchMeeting(client, { event_id: "EVT-1" })).meeting_url,
+      expected,
+      raw,
+    );
+  }
+});
+
+Deno.test("fetchMeeting counts the meeting link limit in code points, like the ERP", async () => {
+  const prefix = "https://meet.example.com/";
+  // 2048 code point nhưng 4071 đơn vị UTF-16: ERP (Python `len`) coi là hợp lệ, nên không phải lỗi backend.
+  const atLimit = prefix + "😀".repeat(2048 - prefix.length);
+  const { client } = fakeClient(() => ({
+    ok: true,
+    result: { ...MEETING, meeting_url: atLimit },
+  }));
+  // Dạng chuẩn mã hoá phần trăm từng emoji nên dài hơn 2048 ký tự: link bị bỏ (null), lần đọc vẫn thành công.
+  assertEquals(
+    (await fetchMeeting(client, { event_id: "EVT-1" })).meeting_url,
+    null,
+  );
+  const overLimit = fakeClient(() => ({
+    ok: true,
+    result: { ...MEETING, meeting_url: atLimit + "a" },
+  }));
+  await assertRejects(
+    () => fetchMeeting(overLimit.client, { event_id: "EVT-1" }),
+    Error,
+    "Events backend error",
+  );
+});
+
+Deno.test("fetchMeeting never returns a meeting link longer than the limit", async () => {
+  const prefix = "https://meet.example.com/";
+  const cases: Array<[string, string | null]> = [
+    // ASCII đúng 2048 ký tự: dạng chuẩn trùng chuỗi gốc nên được giữ.
+    [
+      prefix + "a".repeat(2048 - prefix.length),
+      prefix + "a".repeat(2048 - prefix.length),
+    ],
+    // Link ngắn có ký tự ngoài ASCII: mã hoá phần trăm vẫn trong giới hạn.
+    [prefix + "phòng-họp", new URL(prefix + "phòng-họp").href],
+    // 1000 chữ "ọ" chỉ 1025 code point, nhưng mỗi chữ thành `%E1%BB%8D` nên dạng chuẩn vượt 2048.
+    [prefix + "ọ".repeat(1000), null],
+  ];
+  for (const [raw, expected] of cases) {
+    const { client } = fakeClient(() => ({
+      ok: true,
+      result: { ...MEETING, meeting_url: raw },
+    }));
+    const url = (await fetchMeeting(client, { event_id: "EVT-1" })).meeting_url;
+    assertEquals(url, expected, raw.slice(0, 40));
+    if (typeof url === "string") assert(url.length <= 2048);
+  }
+});
+
 Deno.test("fetchMeeting maps every failure to a fixed message", async () => {
   const cases: Array<[() => unknown, string]> = [
     [

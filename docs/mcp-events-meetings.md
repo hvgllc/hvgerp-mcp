@@ -94,6 +94,13 @@ events carry only a pointer to be re-read with `erpnext_meeting_get`.
 `events/unsubscribe` takes `delivery.url`; `delivery.mode` may be omitted but,
 when present, must be `webhook`.
 
+Delivery is at least once. ERPNext sends each webhook straight to the client's
+callback (this server is not on that path), and a retry or a resubscribe can
+deliver an event that was already delivered. A client must treat
+`(event_id, revision)` as the identity of an event and ignore one it has already
+handled. Re-reading with `erpnext_meeting_get` is safe to repeat, so a duplicate
+only costs one extra read.
+
 The webhook signing secret is `whsec_` followed by base64 of 24 to 64 random
 bytes. It is validated and forwarded to ERPNext in the `subscribe` call; it is
 never stored, logged or echoed back.
@@ -163,10 +170,36 @@ a recurrence object or `null`, and the occurrences it returns for an
 ## erpnext_meeting_get
 
 Registered only when the flag is on. Each call is a fresh GET (no cache) made as
-the bearer's user. It returns the schedule, recurrence, occurrences in a window
-and `has_more`, never a title, description, participants or links. A deleted
-meeting is `{ event_id, revision, deleted: true }`. It rejects any argument it
-does not declare, including `user_id`.
+the bearer's user. It returns the `title`, the `meeting_url`, the schedule,
+recurrence, occurrences in a window and `has_more`, never a description or
+participants. A deleted meeting is `{ event_id, revision, deleted: true }`. It
+rejects any argument it does not declare, including `user_id`.
+
+`title` and `meeting_url` are optional in the ERP response, so an ERP that
+predates them still works and the keys are simply absent. When present, `title`
+must be `null` or a string of at most 500 code points with at least one visible
+base character: a letter, digit, punctuation mark or symbol that is not a
+default-ignorable code point (such as U+3164) or U+2800. Whitespace, format
+characters such as U+200B and lone combining marks such as U+034F or U+FE0F do
+not count. `meeting_url` must be `null` or an absolute `https` URL of at most
+2048 code points with no user name or password and no whitespace, control or
+format characters. Anything else is a backend error. The tool returns the link
+in the WHATWG serialized form of the URL it validated (`href`), not the raw
+string, so forms a parser normalizes (backslashes, `https:host`, an upper-case
+host, an explicit `:443`, a missing `/` path) reach the client already
+canonical. The returned link is never longer than 2048 characters: percent
+encoding can make the serialized form of a valid non-ASCII link longer than
+that, and such a link is returned as `null` (as ERP does for an over-long link)
+rather than failing the read. ERP sends `null` rather than inventing a value: it
+reads the link from `Event.custom_meeting_url`, falling back to
+`Event.google_meet_link`, and turns a non-`https` or over-long link into `null`.
+Both keys sit at the meeting level, never inside `occurrences`. The webhook
+payload is unchanged and still carries no title or link.
+
+`title` is the value at read time and is not tied to `revision`: a change of
+link is a schedule-relevant change that sends `meeting.updated` and bumps the
+revision, but a rename alone sends no event and keeps the revision. Do not cache
+a title by revision.
 
 ## Authentication lease
 

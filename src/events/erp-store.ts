@@ -32,6 +32,7 @@ import {
   toSubscribeResult,
   type UnsubscribeRequest,
 } from "./protocol.ts";
+import { codePointLength } from "./json-schema.ts";
 
 export const ERP_EVENTS_METHODS = {
   subscribe: "hvg_workspace.mcp_events.api.subscribe",
@@ -336,6 +337,56 @@ function isNullableOf(
   return value === null || (typeof value === "string" && check(value));
 }
 
+const MEETING_TITLE_MAX_CODE_POINTS = 500;
+const MEETING_URL_MAX_LENGTH = 2048;
+
+/**
+ * Một ký tự gốc người đọc thấy được: chữ, số, dấu câu hoặc ký hiệu (gồm emoji). Dấu kết hợp đứng một mình (U+0301,
+ * U+034F, U+FE0F), ký tự định dạng (U+200B) và khoảng trắng không phải ký tự gốc. Ký tự mặc định bị bỏ qua khi hiển thị
+ * (Hangul filler U+3164...) và ô chữ nổi trống U+2800 tuy là chữ hay ký hiệu nhưng vẫn vẽ ra khoảng trống, nên cũng bị loại.
+ */
+const VISIBLE_CHARACTER =
+  /(?![\p{Default_Ignorable_Code_Point}⠀])[\p{L}\p{N}\p{P}\p{S}]/u;
+/** Khoảng trắng, ký tự điều khiển hay ký tự định dạng: `new URL()` bỏ hoặc mã hoá chúng nên URL đã kiểm khác chuỗi gốc. */
+const URL_HIDDEN_CHARACTER = /[\s\p{Cc}\p{Cf}]/u;
+
+/**
+ * Tiêu đề là chuỗi có ít nhất một ký tự thấy được, tối đa 500 code point. Không có tên thì ERP gửi `null` chứ không gửi
+ * chuỗi rỗng, nên chuỗi rỗng, chỉ khoảng trắng hay chỉ ký tự vô hình là lệch hợp đồng.
+ */
+function isMeetingTitle(value: string): boolean {
+  return VISIBLE_CHARACTER.test(value) &&
+    codePointLength(value) <= MEETING_TITLE_MAX_CODE_POINTS;
+}
+
+/**
+ * Link cuộc họp chỉ nhận URL `https` tuyệt đối, không kèm thông tin đăng nhập: scheme khác (`javascript:`, `http:`) hay
+ * `user:pass@` đều là dữ liệu hỏng hoặc nguy hiểm khi client hiển thị thành link bấm được. Trả về dạng chuẩn `href` của
+ * chính URL đã kiểm (dấu `\`, `https:host`, chữ hoa ở host, cổng 443 đều được chuẩn hoá), không phải chuỗi gốc, để thứ
+ * client nhận luôn là thứ đã qua kiểm tra. `undefined` nghĩa là giá trị không hợp lệ (ERP lệch hợp đồng). `null` nghĩa là
+ * link hợp lệ nhưng dạng chuẩn dài quá giới hạn vì mã hoá phần trăm ký tự ngoài ASCII: ERP không làm gì sai, nên link bị
+ * bỏ như ERP vẫn làm với link quá dài, thay vì làm hỏng cả lần đọc.
+ */
+function canonicalMeetingUrl(value: string): string | null | undefined {
+  // Giới hạn đếm theo code point như `len()` của ERP. Một code point chiếm tối đa hai đơn vị UTF-16, nên chuỗi dài hơn
+  // gấp đôi giới hạn bị loại ngay mà không cần đếm.
+  if (value.length > MEETING_URL_MAX_LENGTH * 2) return undefined;
+  if (codePointLength(value) > MEETING_URL_MAX_LENGTH) return undefined;
+  // Khoảng trắng hay ký tự ẩn trong link là dữ liệu hỏng (hoặc giả mạo hướng chữ), không phải thứ nên âm thầm sửa.
+  if (URL_HIDDEN_CHARACTER.test(value)) return undefined;
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return undefined;
+  }
+  const valid = parsed.protocol === "https:" && parsed.hostname !== "" &&
+    parsed.username === "" && parsed.password === "";
+  if (!valid) return undefined;
+  // `href` chỉ gồm ASCII nên `length` cũng là số code point.
+  return parsed.href.length <= MEETING_URL_MAX_LENGTH ? parsed.href : null;
+}
+
 /**
  * `firstDate` là ngày sớm nhất mà lần diễn ra đầu tiên có thể rơi vào theo lịch của cuộc họp. `until` là ngày theo múi giờ
  * của cuộc họp nên không được đứng trước ngày đó, nếu không chuỗi đã kết thúc trước khi bắt đầu.
@@ -612,6 +663,22 @@ function pickMeetingFields(
     assertShape(typeof picked[key] === "string" && picked[key] !== "");
   }
   for (const key of forbidden) assertShape(picked[key] == null);
+  // Tiêu đề và link là khoá tuỳ chọn: ERP chưa nâng cấp không gửi thì bỏ qua, có gửi thì phải đúng hình dạng.
+  if (Object.hasOwn(result, "title")) {
+    assertShape(isNullableOf(result.title, isMeetingTitle));
+    picked.title = result.title;
+  }
+  if (Object.hasOwn(result, "meeting_url")) {
+    const raw = result.meeting_url;
+    if (raw === null) {
+      picked.meeting_url = null;
+    } else {
+      assertShape(typeof raw === "string");
+      const url = canonicalMeetingUrl(raw as string);
+      assertShape(url !== undefined);
+      picked.meeting_url = url;
+    }
+  }
   // Mỗi mốc kết thúc có mặt phải đứng sau mốc bắt đầu tương ứng, nếu không lịch là bất khả thi.
   const [startKey, endKey] = picked.all_day
     ? ["start_date", "end_date_exclusive"]
