@@ -130,11 +130,12 @@ export const calendarTools: ErpNextTool[] = [
   {
     name: "erpnext_meeting_get",
     description:
-      "Freshly read one calendar meeting from ERPNext: title, meeting link (meeting_url, null " +
-      "when there is none), schedule, recurrence and occurrences in a window. Use it after a " +
-      "meeting event to fetch the current state and name the meeting in your reply. Returns no " +
-      "description or participants. A deleted meeting returns only event_id, revision and " +
-      "deleted=true. Always reads live data; results are never cached.",
+      "Freshly read one calendar meeting from ERPNext: schedule, recurrence and occurrences in a " +
+      "window, plus the title and meeting link (meeting_url) when ERPNext provides them; either " +
+      "may be null or absent. Use it after a meeting event to fetch the current state. Name the " +
+      "meeting only from a non-null title and share a link only from a non-null meeting_url; " +
+      "never invent either. Returns no description or participants. A deleted meeting returns " +
+      "only event_id, revision and deleted=true. Always reads live data; results are never cached.",
     category: "operations",
     inputSchema: {
       type: "object",

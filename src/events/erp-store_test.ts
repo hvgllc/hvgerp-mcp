@@ -525,6 +525,32 @@ Deno.test("fetchMeeting accepts a title of exactly 500 code points, counted by c
   );
 });
 
+Deno.test("fetchMeeting returns the meeting link in the form it validated", async () => {
+  // Bộ phân tích URL chuẩn hoá các dạng này; trả chuỗi gốc thì client không chuẩn hoá có thể không nhận ra link.
+  const cases: Array<[string, string]> = [
+    [
+      "https://meet.google.com/abc-defg-hij",
+      "https://meet.google.com/abc-defg-hij",
+    ],
+    ["https:\\\\meet.example.com\\room", "https://meet.example.com/room"],
+    ["https:meet.example.com/room", "https://meet.example.com/room"],
+    ["HTTPS://Meet.Example.COM/room", "https://meet.example.com/room"],
+    ["https://meet.example.com:443/r", "https://meet.example.com/r"],
+    ["https://meet.example.com", "https://meet.example.com/"],
+  ];
+  for (const [raw, expected] of cases) {
+    const { client } = fakeClient(() => ({
+      ok: true,
+      result: { ...MEETING, meeting_url: raw },
+    }));
+    assertEquals(
+      (await fetchMeeting(client, { event_id: "EVT-1" })).meeting_url,
+      expected,
+      raw,
+    );
+  }
+});
+
 Deno.test("fetchMeeting counts the meeting link limit in code points, like the ERP", async () => {
   const prefix = "https://meet.example.com/";
   // 2048 code point nhưng 4071 đơn vị UTF-16: ERP (Python `len`) coi là hợp lệ.
@@ -535,7 +561,7 @@ Deno.test("fetchMeeting counts the meeting link limit in code points, like the E
   }));
   assertEquals(
     (await fetchMeeting(client, { event_id: "EVT-1" })).meeting_url,
-    atLimit,
+    new URL(atLimit).href,
   );
   const overLimit = fakeClient(() => ({
     ok: true,

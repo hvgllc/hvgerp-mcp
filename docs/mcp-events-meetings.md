@@ -183,13 +183,15 @@ default-ignorable code point (such as U+3164) or U+2800. Whitespace, format
 characters such as U+200B and lone combining marks such as U+034F or U+FE0F do
 not count. `meeting_url` must be `null` or an absolute `https` URL of at most
 2048 code points with no user name or password and no whitespace, control or
-format characters (the link is returned verbatim, so it must already be in the
-form a URL parser would keep). Anything else is a backend error. ERP sends
-`null` rather than inventing a value: it reads the link from
-`Event.custom_meeting_url`, falling back to `Event.google_meet_link`, and turns
-a non-`https` or over-long link into `null`. Both keys sit at the meeting level,
-never inside `occurrences`. The webhook payload is unchanged and still carries
-no title or link.
+format characters. Anything else is a backend error. The tool returns the link
+in the WHATWG serialized form of the URL it validated (`href`), not the raw
+string, so forms a parser normalizes (backslashes, `https:host`, an upper-case
+host, an explicit `:443`, a missing `/` path) reach the client already
+canonical. ERP sends `null` rather than inventing a value: it reads the link
+from `Event.custom_meeting_url`, falling back to `Event.google_meet_link`, and
+turns a non-`https` or over-long link into `null`. Both keys sit at the meeting
+level, never inside `occurrences`. The webhook payload is unchanged and still
+carries no title or link.
 
 `title` is the value at read time and is not tied to `revision`: a change of
 link is a schedule-relevant change that sends `meeting.updated` and bumps the

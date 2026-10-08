@@ -361,23 +361,26 @@ function isMeetingTitle(value: string): boolean {
 
 /**
  * Link cuộc họp chỉ nhận URL `https` tuyệt đối, không kèm thông tin đăng nhập: scheme khác (`javascript:`, `http:`) hay
- * `user:pass@` đều là dữ liệu hỏng hoặc nguy hiểm khi client hiển thị thành link bấm được. Chuỗi gốc được trả nguyên văn,
- * nên nó không được chứa ký tự mà bộ phân tích URL lặng lẽ bỏ đi hay mã hoá lại.
+ * `user:pass@` đều là dữ liệu hỏng hoặc nguy hiểm khi client hiển thị thành link bấm được. Trả về dạng chuẩn `href` của
+ * chính URL đã kiểm (dấu `\`, `https:host`, chữ hoa ở host, cổng 443 đều được chuẩn hoá), không phải chuỗi gốc, để thứ
+ * client nhận luôn là thứ đã qua kiểm tra. `undefined` nghĩa là giá trị không hợp lệ.
  */
-function isMeetingUrl(value: string): boolean {
+function canonicalMeetingUrl(value: string): string | undefined {
   // Giới hạn đếm theo code point như `len()` của ERP. Một code point chiếm tối đa hai đơn vị UTF-16, nên chuỗi dài hơn
   // gấp đôi giới hạn bị loại ngay mà không cần đếm.
-  if (value.length > MEETING_URL_MAX_LENGTH * 2) return false;
-  if (codePointLength(value) > MEETING_URL_MAX_LENGTH) return false;
-  if (URL_HIDDEN_CHARACTER.test(value)) return false;
+  if (value.length > MEETING_URL_MAX_LENGTH * 2) return undefined;
+  if (codePointLength(value) > MEETING_URL_MAX_LENGTH) return undefined;
+  // Khoảng trắng hay ký tự ẩn trong link là dữ liệu hỏng (hoặc giả mạo hướng chữ), không phải thứ nên âm thầm sửa.
+  if (URL_HIDDEN_CHARACTER.test(value)) return undefined;
   let parsed: URL;
   try {
     parsed = new URL(value);
   } catch {
-    return false;
+    return undefined;
   }
-  return parsed.protocol === "https:" && parsed.hostname !== "" &&
+  const valid = parsed.protocol === "https:" && parsed.hostname !== "" &&
     parsed.username === "" && parsed.password === "";
+  return valid ? parsed.href : undefined;
 }
 
 /**
@@ -662,8 +665,15 @@ function pickMeetingFields(
     picked.title = result.title;
   }
   if (Object.hasOwn(result, "meeting_url")) {
-    assertShape(isNullableOf(result.meeting_url, isMeetingUrl));
-    picked.meeting_url = result.meeting_url;
+    const raw = result.meeting_url;
+    if (raw === null) {
+      picked.meeting_url = null;
+    } else {
+      assertShape(typeof raw === "string");
+      const url = canonicalMeetingUrl(raw as string);
+      assertShape(url !== undefined);
+      picked.meeting_url = url;
+    }
   }
   // Mỗi mốc kết thúc có mặt phải đứng sau mốc bắt đầu tương ứng, nếu không lịch là bất khả thi.
   const [startKey, endKey] = picked.all_day
