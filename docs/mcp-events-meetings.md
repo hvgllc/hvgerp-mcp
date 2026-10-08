@@ -163,10 +163,26 @@ a recurrence object or `null`, and the occurrences it returns for an
 ## erpnext_meeting_get
 
 Registered only when the flag is on. Each call is a fresh GET (no cache) made as
-the bearer's user. It returns the schedule, recurrence, occurrences in a window
-and `has_more`, never a title, description, participants or links. A deleted
-meeting is `{ event_id, revision, deleted: true }`. It rejects any argument it
-does not declare, including `user_id`.
+the bearer's user. It returns the `title`, the `meeting_url`, the schedule,
+recurrence, occurrences in a window and `has_more`, never a description or
+participants. A deleted meeting is `{ event_id, revision, deleted: true }`. It
+rejects any argument it does not declare, including `user_id`.
+
+`title` and `meeting_url` are optional in the ERP response, so an ERP that
+predates them still works and the keys are simply absent. When present, `title`
+must be `null` or a string with visible text of at most 500 code points, and
+`meeting_url` must be `null` or an absolute `https` URL of at most 2048
+characters with no user name or password. Anything else is a backend error. ERP
+sends `null` rather than inventing a value: it reads the link from
+`Event.custom_meeting_url`, falling back to `Event.google_meet_link`, and turns
+a non-`https` or over-long link into `null`. Both keys sit at the meeting level,
+never inside `occurrences`. The webhook payload is unchanged and still carries
+no title or link.
+
+`title` is the value at read time and is not tied to `revision`: a change of
+link is a schedule-relevant change that sends `meeting.updated` and bumps the
+revision, but a rename alone sends no event and keeps the revision. Do not cache
+a title by revision.
 
 ## Authentication lease
 

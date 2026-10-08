@@ -418,6 +418,99 @@ Deno.test("fetchMeeting returns only the advertised fields, even if ERP adds mor
   assertEquals((result.occurrences as unknown[]).length, 1);
 });
 
+Deno.test("fetchMeeting returns the title and meeting link of a live meeting", async () => {
+  const { client } = fakeClient(() => ({
+    ok: true,
+    result: {
+      ...MEETING,
+      title: "Họp giao ban",
+      meeting_url: "https://meet.google.com/abc-defg-hij",
+    },
+  }));
+  const result = await fetchMeeting(client, { event_id: "EVT-1" });
+  assertEquals(result.title, "Họp giao ban");
+  assertEquals(result.meeting_url, "https://meet.google.com/abc-defg-hij");
+});
+
+Deno.test("fetchMeeting keeps a null title or meeting link and omits the keys an older ERP does not send", async () => {
+  // ERP trả `null` khi không có tên hay link thay vì bịa giá trị (ví dụ dùng event_id làm tên).
+  const withoutLink = fakeClient(() => ({
+    ok: true,
+    result: { ...MEETING, title: null, meeting_url: null },
+  }));
+  const linkless = await fetchMeeting(withoutLink.client, {
+    event_id: "EVT-1",
+  });
+  assertEquals(linkless.title, null);
+  assertEquals(linkless.meeting_url, null);
+  // ERP chưa nâng cấp không gửi hai khoá này: MCP vẫn trả lịch như cũ, không tự bịa giá trị.
+  const legacy = fakeClient(() => ({ ok: true, result: MEETING }));
+  const old = await fetchMeeting(legacy.client, { event_id: "EVT-1" });
+  assert(!Object.hasOwn(old, "title"));
+  assert(!Object.hasOwn(old, "meeting_url"));
+});
+
+Deno.test("fetchMeeting never adds a title or link to a tombstone", async () => {
+  const { client } = fakeClient(() => ({
+    ok: true,
+    result: {
+      event_id: "EVT-1",
+      revision: 9,
+      deleted: true,
+      title: "Salary review",
+      meeting_url: "https://meet.example.com/x",
+    },
+  }));
+  assertEquals(await fetchMeeting(client, { event_id: "EVT-1" }), {
+    event_id: "EVT-1",
+    revision: 9,
+    deleted: true,
+  });
+});
+
+Deno.test("fetchMeeting rejects a malformed title or meeting link", async () => {
+  const bad: Array<Record<string, unknown>> = [
+    { title: "" },
+    { title: "   " },
+    { title: 42 },
+    { title: ["Standup"] },
+    { title: "x".repeat(501) },
+    { meeting_url: "" },
+    { meeting_url: 7 },
+    { meeting_url: "http://meet.example.com/x" },
+    { meeting_url: "javascript:alert(1)" },
+    { meeting_url: "meet.google.com/abc" },
+    { meeting_url: "https://user:pass@meet.example.com/x" },
+    { meeting_url: `https://meet.example.com/${"a".repeat(2048)}` },
+  ];
+  for (const extra of bad) {
+    const { client } = fakeClient(() => ({
+      ok: true,
+      result: { ...MEETING, title: "Standup", ...extra },
+    }));
+    const error = await assertRejects(() =>
+      fetchMeeting(client, { event_id: "EVT-1" })
+    );
+    assertEquals(
+      (error as Error).message,
+      "Events backend error",
+      JSON.stringify(extra).slice(0, 80),
+    );
+  }
+});
+
+Deno.test("fetchMeeting accepts a title of exactly 500 code points, counted by code point", async () => {
+  const title = "😀".repeat(500);
+  const { client } = fakeClient(() => ({
+    ok: true,
+    result: { ...MEETING, title },
+  }));
+  assertEquals(
+    (await fetchMeeting(client, { event_id: "EVT-1" })).title,
+    title,
+  );
+});
+
 Deno.test("fetchMeeting maps every failure to a fixed message", async () => {
   const cases: Array<[() => unknown, string]> = [
     [

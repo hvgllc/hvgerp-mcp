@@ -32,6 +32,7 @@ import {
   toSubscribeResult,
   type UnsubscribeRequest,
 } from "./protocol.ts";
+import { codePointLength } from "./json-schema.ts";
 
 export const ERP_EVENTS_METHODS = {
   subscribe: "hvg_workspace.mcp_events.api.subscribe",
@@ -336,6 +337,34 @@ function isNullableOf(
   return value === null || (typeof value === "string" && check(value));
 }
 
+const MEETING_TITLE_MAX_CODE_POINTS = 500;
+const MEETING_URL_MAX_LENGTH = 2048;
+
+/**
+ * Tiêu đề là chuỗi có chữ (không chỉ khoảng trắng), tối đa 500 code point. Không có tên thì ERP gửi `null` chứ không gửi
+ * chuỗi rỗng, nên chuỗi rỗng là lệch hợp đồng.
+ */
+function isMeetingTitle(value: string): boolean {
+  return value.trim() !== "" &&
+    codePointLength(value) <= MEETING_TITLE_MAX_CODE_POINTS;
+}
+
+/**
+ * Link cuộc họp chỉ nhận URL `https` tuyệt đối, không kèm thông tin đăng nhập: scheme khác (`javascript:`, `http:`) hay
+ * `user:pass@` đều là dữ liệu hỏng hoặc nguy hiểm khi client hiển thị thành link bấm được.
+ */
+function isMeetingUrl(value: string): boolean {
+  if (value.length > MEETING_URL_MAX_LENGTH) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+  return parsed.protocol === "https:" && parsed.hostname !== "" &&
+    parsed.username === "" && parsed.password === "";
+}
+
 /**
  * `firstDate` là ngày sớm nhất mà lần diễn ra đầu tiên có thể rơi vào theo lịch của cuộc họp. `until` là ngày theo múi giờ
  * của cuộc họp nên không được đứng trước ngày đó, nếu không chuỗi đã kết thúc trước khi bắt đầu.
@@ -612,6 +641,15 @@ function pickMeetingFields(
     assertShape(typeof picked[key] === "string" && picked[key] !== "");
   }
   for (const key of forbidden) assertShape(picked[key] == null);
+  // Tiêu đề và link là khoá tuỳ chọn: ERP chưa nâng cấp không gửi thì bỏ qua, có gửi thì phải đúng hình dạng.
+  if (Object.hasOwn(result, "title")) {
+    assertShape(isNullableOf(result.title, isMeetingTitle));
+    picked.title = result.title;
+  }
+  if (Object.hasOwn(result, "meeting_url")) {
+    assertShape(isNullableOf(result.meeting_url, isMeetingUrl));
+    picked.meeting_url = result.meeting_url;
+  }
   // Mỗi mốc kết thúc có mặt phải đứng sau mốc bắt đầu tương ứng, nếu không lịch là bất khả thi.
   const [startKey, endKey] = picked.all_day
     ? ["start_date", "end_date_exclusive"]
