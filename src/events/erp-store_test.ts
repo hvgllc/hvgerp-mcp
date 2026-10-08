@@ -475,7 +475,16 @@ Deno.test("fetchMeeting rejects a malformed title or meeting link", async () => 
     { title: 42 },
     { title: ["Standup"] },
     { title: "x".repeat(501) },
+    // Chỉ gồm ký tự định dạng vô hình: `trim()` không bỏ chúng nhưng người đọc vẫn thấy một tên trống.
+    { title: "​​" },
+    { title: "​ ⁠﻿" },
     { meeting_url: "" },
+    // `new URL()` lặng lẽ bỏ khoảng trắng hai đầu và tab/xuống dòng, nên chuỗi gốc khác chuỗi đã được kiểm.
+    { meeting_url: " https://meet.example.com/x" },
+    { meeting_url: "https://meet.example.com/x\n" },
+    { meeting_url: "https://meet.example.com/\tx" },
+    { meeting_url: "https://meet.example.com/a b" },
+    { meeting_url: "https://meet.example.com/‮x" },
     { meeting_url: 7 },
     { meeting_url: "http://meet.example.com/x" },
     { meeting_url: "javascript:alert(1)" },

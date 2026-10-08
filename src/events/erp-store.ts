@@ -340,21 +340,28 @@ function isNullableOf(
 const MEETING_TITLE_MAX_CODE_POINTS = 500;
 const MEETING_URL_MAX_LENGTH = 2048;
 
+/** Một ký tự người đọc thấy được: không phải khoảng trắng, ký tự điều khiển hay ký tự định dạng vô hình (U+200B...). */
+const VISIBLE_CHARACTER = /[^\s\p{Cc}\p{Cf}\p{Z}]/u;
+/** Khoảng trắng, ký tự điều khiển hay ký tự định dạng: `new URL()` bỏ hoặc mã hoá chúng nên URL đã kiểm khác chuỗi gốc. */
+const URL_HIDDEN_CHARACTER = /[\s\p{Cc}\p{Cf}]/u;
+
 /**
- * Tiêu đề là chuỗi có chữ (không chỉ khoảng trắng), tối đa 500 code point. Không có tên thì ERP gửi `null` chứ không gửi
- * chuỗi rỗng, nên chuỗi rỗng là lệch hợp đồng.
+ * Tiêu đề là chuỗi có ít nhất một ký tự thấy được, tối đa 500 code point. Không có tên thì ERP gửi `null` chứ không gửi
+ * chuỗi rỗng, nên chuỗi rỗng, chỉ khoảng trắng hay chỉ ký tự vô hình là lệch hợp đồng.
  */
 function isMeetingTitle(value: string): boolean {
-  return value.trim() !== "" &&
+  return VISIBLE_CHARACTER.test(value) &&
     codePointLength(value) <= MEETING_TITLE_MAX_CODE_POINTS;
 }
 
 /**
  * Link cuộc họp chỉ nhận URL `https` tuyệt đối, không kèm thông tin đăng nhập: scheme khác (`javascript:`, `http:`) hay
- * `user:pass@` đều là dữ liệu hỏng hoặc nguy hiểm khi client hiển thị thành link bấm được.
+ * `user:pass@` đều là dữ liệu hỏng hoặc nguy hiểm khi client hiển thị thành link bấm được. Chuỗi gốc được trả nguyên văn,
+ * nên nó không được chứa ký tự mà bộ phân tích URL lặng lẽ bỏ đi hay mã hoá lại.
  */
 function isMeetingUrl(value: string): boolean {
   if (value.length > MEETING_URL_MAX_LENGTH) return false;
+  if (URL_HIDDEN_CHARACTER.test(value)) return false;
   let parsed: URL;
   try {
     parsed = new URL(value);

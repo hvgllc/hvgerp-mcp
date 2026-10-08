@@ -170,10 +170,13 @@ rejects any argument it does not declare, including `user_id`.
 
 `title` and `meeting_url` are optional in the ERP response, so an ERP that
 predates them still works and the keys are simply absent. When present, `title`
-must be `null` or a string with visible text of at most 500 code points, and
-`meeting_url` must be `null` or an absolute `https` URL of at most 2048
-characters with no user name or password. Anything else is a backend error. ERP
-sends `null` rather than inventing a value: it reads the link from
+must be `null` or a string with at least one visible character (not only
+whitespace or invisible format characters such as U+200B) of at most 500 code
+points, and `meeting_url` must be `null` or an absolute `https` URL of at most
+2048 characters with no user name or password and no whitespace, control or
+format characters (the link is returned verbatim, so it must already be in the
+form a URL parser would keep). Anything else is a backend error. ERP sends
+`null` rather than inventing a value: it reads the link from
 `Event.custom_meeting_url`, falling back to `Event.google_meet_link`, and turns
 a non-`https` or over-long link into `null`. Both keys sit at the meeting level,
 never inside `occurrences`. The webhook payload is unchanged and still carries
