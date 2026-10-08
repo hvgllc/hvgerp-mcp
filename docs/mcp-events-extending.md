@@ -225,58 +225,83 @@ implementation detail.
    type, and `const` is a value of the declared type (a string field's `const`
    is a string, so `{ "type": "string", "const": 7 }` is rejected rather than
    left as a field no value can ever satisfy). `maxLength: "140"` is therefore
-   an unbounded string. `format` is limited to the values `formatMatches` in
-   `json-schema.ts` really checks (`date` and `date-time` today), because it
-   returns `true` for any other format; a new format is implemented and tested
-   there first. The frozen `meeting-events.v1.json` predates this rule
-   (`time_zone` has no `maxLength`, `changed_fields` no item limit, `revision`
-   no `maximum`) and is the only exemption. The exemption is bound to the entry,
-   not to a string: it applies only to the `CONTRACTS` entry whose family is
-   `meeting` and whose file is the object imported from that exact file, and
-   `buildRegistry` rejects duplicate contract ids and any other file that claims
-   the id `meeting-events.v1`. Subscription arguments are identity-only: the
-   family's id filter and, for a multi-doctype family, its `source_doctype`,
-   given together or not at all (a lone doctype is not an identity). The filter
-   is optional for every family: `{}` is a valid, unfiltered subscription, so no
-   effective input schema may require the identity. The id field is declared,
-   never guessed: each `CONTRACTS` entry names it as `identityField` (`event_id`
-   for meetings; candidates use different conventions such as `task_id`,
-   `leave_id` or `doc_id`), and every effective input schema of the family must
-   declare exactly that property, plus `source_doctype` for a multi-doctype
-   family, and nothing else. Whether a family is multi-doctype is declared the
-   same way: the entry lists its closed doctype set as `sourceDoctypes`, and
-   only when that set is present does every effective input and payload schema
-   carry `source_doctype` with an `enum` equal to it, so an override that drops
-   the property cannot turn the family single-doctype for one event. Every
-   effective payload schema also requires the canonical pointer fields: the
-   `identityField`, `revision`, `change` and, for a multi-doctype family,
-   `source_doctype`; without them a webhook could not name the record to re-read
-   or take part in revision ordering. Two of those fields have one canonical
-   schema per family. The identity property (and `source_doctype`) must be
-   deeply equal in every effective input and payload schema of the family, so an
-   override cannot let a payload carry an id longer than the input, and the
-   re-read tool, accept. That identity schema is always exactly `type: string`
-   with an explicit `minLength` of at least 1 and a `maxLength`, and no other
-   keyword, never an integer, boolean, an `enum`/`const` string or one narrowed
-   by `pattern` or `not`: ERP document names are strings, the re-read tool
-   derives its argument bounds from those two keywords, and its strict id
-   comparison against ERP's string value would fail on anything else. `revision`
-   must be `type: integer` with exactly `minimum: 1` and
-   `maximum: 9007199254740991`, the full range the source-global allocator can
-   emit: a bounded `number` would let a fractional revision validate that no
-   journal counter, fence or read-back validator can produce, and a narrower
-   range (`minimum: 2`, `maximum: 100`) would reject legitimate rows the
-   allocator does produce. ERP persists and matches only that identity, so any
-   other argument would either be refused there or silently ignored, which
-   widens the subscription. A new kind of filter is a design change that ERP
-   ships first (normalise, persist, match in `_fan_out_matches`).
+   an unbounded string. The same holds for every other supported keyword, since
+   the validator also skips a control keyword of the wrong container type
+   (`required: "field"` is never enforced, an object-valued `allOf` is never
+   applied): `checkSchemaShape` in `json-schema.ts` walks every schema and
+   requires `type` and `format` and `description` to be strings, `properties` an
+   object whose values are schemas, `required` an array of distinct strings (at
+   the top level of an effective schema, each also a declared property),
+   `additionalProperties` a boolean, `items` one schema, `allOf` and `anyOf`
+   non-empty arrays of schemas, `not`, `if`, `then` and `else` schemas, and
+   `then` or `else` only beside an `if`. `buildRegistry` runs it on every
+   effective schema, the meeting contract included (it already passes), and the
+   test fixtures cover each malformed shape. `format` is limited to the values
+   `formatMatches` in `json-schema.ts` really checks (`date` and `date-time`
+   today), because it returns `true` for any other format; a new format is
+   implemented and tested there first. The frozen `meeting-events.v1.json`
+   predates this rule (`time_zone` has no `maxLength`, `changed_fields` no item
+   limit, `revision` no `maximum`) and is the only exemption. The exemption is
+   bound to the entry, not to a string: it applies only to the `CONTRACTS` entry
+   whose family is `meeting` and whose file is the object imported from that
+   exact file, and `buildRegistry` rejects duplicate contract ids and any other
+   file that claims the id `meeting-events.v1`. Subscription arguments are
+   identity-only: the family's id filter and, for a multi-doctype family, its
+   `source_doctype`, given together or not at all (a lone doctype is not an
+   identity). The filter is optional for every family: `{}` is a valid,
+   unfiltered subscription, so no effective input schema may require the
+   identity. The id field is declared, never guessed: each `CONTRACTS` entry
+   names it as `identityField` (`event_id` for meetings; candidates use
+   different conventions such as `task_id`, `leave_id` or `doc_id`), and every
+   effective input schema of the family must declare exactly that property, plus
+   `source_doctype` for a multi-doctype family, and nothing else. Whether a
+   family is multi-doctype is declared the same way: the entry lists its closed
+   doctype set as `sourceDoctypes`, and only when that set is present does every
+   effective input and payload schema carry `source_doctype` with an `enum`
+   equal to it, so an override that drops the property cannot turn the family
+   single-doctype for one event. Every effective payload schema also requires
+   the canonical pointer fields: the `identityField`, `revision`, `change` and,
+   for a multi-doctype family, `source_doctype`; without them a webhook could
+   not name the record to re-read or take part in revision ordering. Two of
+   those fields have one canonical schema per family. The identity property (and
+   `source_doctype`) must be deeply equal in every effective input and payload
+   schema of the family, so an override cannot let a payload carry an id longer
+   than the input, and the re-read tool, accept. That identity schema is always
+   exactly `type: string` with an explicit `minLength` of at least 1 and a
+   `maxLength`, and no other keyword, never an integer, boolean, an
+   `enum`/`const` string or one narrowed by `pattern` or `not`: ERP document
+   names are strings, the re-read tool derives its argument bounds from those
+   two keywords, and its strict id comparison against ERP's string value would
+   fail on anything else. `revision` must be `type: integer` with exactly
+   `minimum: 1` and `maximum: 9007199254740991`, the full range the
+   source-global allocator can emit: a bounded `number` would let a fractional
+   revision validate that no journal counter, fence or read-back validator can
+   produce, and a narrower range (`minimum: 2`, `maximum: 100`) would reject
+   legitimate rows the allocator does produce. ERP persists and matches only
+   that identity, so any other argument would either be refused there or
+   silently ignored, which widens the subscription. A new kind of filter is a
+   design change that ERP ships first (normalise, persist, match in
+   `_fan_out_matches`).
 4. **Payload stays a pointer.** Ids, revision, change, changed field names and
    the minimum scheduling or status data needed to decide whether to re-read.
    Never titles, descriptions, amounts, emails, names of people or free text.
-   Content belongs in the re-read tool, behind a live permission check. When a
-   family spans several doctypes (decision 6), the pointer carries
-   `source_doctype` as a closed enum next to the id, and the re-read tool takes
-   both, because two doctypes can hold records with the same `name`.
+   Content belongs in the re-read tool, behind a live permission check. This is
+   enforced, not left to the author: `protocol.ts` keeps
+   `PAYLOAD_FIELD_ALLOWLIST`, the closed list of payload property names any
+   family may use (today the meeting payload's: `revision`, `change`,
+   `changed_fields`, `deleted`, `series_changed`, `all_day`, `time_zone`,
+   `starts_at`, `ends_at`, `start_date`, `end_date_exclusive`, plus
+   `source_doctype`), and `buildRegistry` rejects any effective payload property
+   that is neither in it nor the entry's `identityField`. The shape is checked
+   too: apart from the identity and `time_zone`, a payload string must be an
+   `enum` or `const` or carry `format: date` or `date-time`, so a listed name
+   cannot be reused for free text, and arrays hold only such strings. Adding a
+   name to the allowlist is its own reviewed pull request, with a comment saying
+   why the field is routing or scheduling metadata and not content, never a line
+   slipped into a family's pull request. When a family spans several doctypes
+   (decision 6), the pointer carries `source_doctype` as a closed enum next to
+   the id, and the re-read tool takes both, because two doctypes can hold
+   records with the same `name`.
 5. **Each family has exactly one re-read tool**,
    `erpnext_<family_slug>_event_get`, built like `erpnext_meeting_get`: strict
    argument allowlist, `actsAs === "caller"`, fresh GET with no cache, output
@@ -547,60 +572,82 @@ Each row holds the `contract` id, its SHA-256, its `family`, the `readBackTool`
 and `readBackMethod` it shipped with, and `readBackPath`, the Frappe path that
 key resolved to (`hvg_workspace.mcp_events.api.meeting_get` for meetings): a key
 alone would let a later release keep the key and point `ERP_EVENTS_METHODS[key]`
-at another endpoint. Each row also records `readBackResult`: the id and SHA-256
-of the result schema the tool returned when that version shipped (below). Rows
-are append-only: a row is never edited or removed, and a major release that
-retires a version marks it `retired` without touching the other fields. Before
-resolving any row, `contract_test.ts` asserts that the ledger holds at most one
-row per `contract` id, so a second row appended for a released id cannot carry a
-new tool, method or path past the tag check, which only sees that the first row
-is unchanged. It then asserts that every discovered file has exactly one row
-with its exact digest, and that every live `CONTRACTS` entry names the
-`readBackTool` and `readBackMethod` of its row and that
-`ERP_EVENTS_METHODS[readBackMethod]` equals the row's `readBackPath`, so a minor
-release cannot rename the tool, switch the method or re-point its path for a
-version that is still live. What makes the ledger itself immutable is the
-release tag: a test in `release:check` (step 9) reads the ledger and every
-contract file at the newest `v*` tag with `git show <tag>:<path>` and fails if
-any row present there changed (other than gaining `retired` in a major release)
-or disappeared, or if any contract file present there is not byte-identical now.
-A tag cannot be edited, so a released schema or binding cannot be blessed again
-by rewriting the ledger in the same commit. The one-time registry pull request
-creates the ledger with the `meeting-events.v1` row (family `meeting`, tool
-`erpnext_meeting_get`, method `meetingGet`, path
-`hvg_workspace.mcp_events.api.meeting_get`, result
-`erpnext_meeting_get.result.v1`); until a tag carries the ledger, the tag check
-compares the contract files only.
+at another endpoint. Each row also records `readBackInput` and `readBackResult`:
+the id and SHA-256 of the input schema the tool accepted and of the result
+schema it returned when that version shipped (below). Rows are append-only: a
+row is never edited or removed, and a major release that retires a version marks
+it `retired` without touching the other fields. Before resolving any row,
+`contract_test.ts` asserts that the ledger holds at most one row per `contract`
+id, so a second row appended for a released id cannot carry a new tool, method
+or path past the tag check, which only sees that the first row is unchanged. It
+then asserts that every discovered file has exactly one row with its exact
+digest, and that every live `CONTRACTS` entry names the `readBackTool` and
+`readBackMethod` of its row and that `ERP_EVENTS_METHODS[readBackMethod]` equals
+the row's `readBackPath`, so a minor release cannot rename the tool, switch the
+method or re-point its path for a version that is still live. What makes the
+ledger itself immutable is the release tag: a test in `release:check` (step 9)
+reads the ledger and every contract file at the newest `v*` tag with
+`git show <tag>:<path>` and fails if any row present there changed (other than
+gaining `retired` in a major release) or disappeared, or if any contract file
+present there is not byte-identical now. A tag cannot be edited, so a released
+schema or binding cannot be blessed again by rewriting the ledger in the same
+commit. The one-time registry pull request creates the ledger with the
+`meeting-events.v1` row (family `meeting`, tool `erpnext_meeting_get`, method
+`meetingGet`, path `hvg_workspace.mcp_events.api.meeting_get`, input
+`erpnext_meeting_get.input.v1`, result `erpnext_meeting_get.result.v1`); until a
+tag carries the ledger, the tag check compares the contract files only.
 
-The tool's response is pinned the same way, because a binding is not the whole
-promise: a release could keep the tool, method and path and still drop or
-reinterpret a field in `pick<Family>Fields()`. Each read-back tool has a frozen
-result schema, `src/events/read-back/<tool>.result.v<N>.json`: a closed, bounded
-JSON Schema (the decision 3 rules) for both shapes it returns, the record and
-the tombstone. The tool test validates every happy-path and tombstone output
-against the tool's live result schema, and asserts that the pick function cannot
-emit a key outside it. Result schema files are immutable like contract files:
-the tag check also requires every result schema present at the tag to be
-byte-identical now. A release that only adds optional output fields writes
-`v<N+1>`, and a test asserts that the live result schema of every live entry's
-tool equals the schema named by its row's `readBackResult` or keeps every
-property of it with a deeply equal schema and adds no required key; removing or
-changing a returned field is a major release (decision 9). The one-time registry
-pull request writes `erpnext_meeting_get.result.v1.json` from what
-`pickMeetingFields` returns today.
+The tool's own interface is pinned the same way, because a binding is not the
+whole promise: a release could keep the tool, method and path and still drop an
+argument (`erpnext_meeting_get` also takes `occurrence_start`, `window_start`
+and `window_end`) or drop or reinterpret a field in `pick<Family>Fields()`. Each
+read-back tool has two frozen schema files in `src/events/read-back/`:
+`<tool>.input.v<N>.json`, its complete `inputSchema` (the tool test asserts the
+registered tool's `inputSchema` deeply equals the live file), and
+`<tool>.result.v<N>.json`, a closed, bounded JSON Schema for both shapes it
+returns, written as a top-level `anyOf` of two closed object schemas, the record
+and the tombstone. Result schemas follow the decision 3 rules with one addition,
+because a returned field may be null where a contract field never is (`title`,
+`meeting_url`, `recurrence` and the schedule fields of the meeting result): a
+nullable field is written exactly as
+`{ "anyOf": [{ "type": "null" }, <schema>] }`, with no other keyword beside
+`anyOf` and `<schema>` itself following the single-type rule. These two `anyOf`
+forms are the only ones a result schema may use; `checkSchemaShape` enforces
+that, and fixtures cover the nullable form (null accepted, a bounded value
+accepted, an over-long value and another type refused). Cross-field rules the
+picker enforces (for meetings, which schedule fields `all_day` requires or
+forbids) are written with `if`/`then`, so the samples below are checked against
+them. The tool test validates every happy-path and tombstone output against the
+live result schema, and asserts that the pick function cannot emit a key outside
+it.
+
+Both kinds of file are immutable like contract files: the tag check also
+requires every one present at the tag to be byte-identical now, and the ledger
+row records `readBackInput` and `readBackResult`, the id and SHA-256 of each as
+that version shipped. A release that only adds an optional argument or an
+optional output field writes `v<N+1>` of that file, and a test asserts that each
+live file of every live entry's tool equals the one its row names or keeps every
+property of it with a deeply equal schema, adds no required key and stays
+closed; removing or changing an argument or a returned field is a major release
+(decision 9). The one-time registry pull request writes both meeting files from
+what `erpnext_meeting_get` accepts and `pickMeetingFields` returns today.
 
 Validation alone cannot catch a pick function that stops copying an optional
-field: every output still validates and still has no unknown key. So each result
-schema has a full sample beside it,
-`src/events/read-back/<tool>.result.v<N>.sample.json`: one record and one
-tombstone that validate against that schema and, between them, set every
-property it declares, nested ones included (a test fails if any declared
-property is missing from both). The tool test feeds each sample to the handler
-as the ERP response through the fake client and asserts the output deeply equals
-the sample, for the live result schema and for the one named by every live row's
-`readBackResult`, so a field the schema still promises cannot be dropped by
-editing only the happy-path expectation. Samples are immutable like the schemas
-and checked against the tag the same way.
+field or stops passing one variant of a field: every output still validates. So
+each result schema has a sample set beside it,
+`src/events/read-back/<tool>.result.v<N>.samples.json`: an array of
+`{ "arguments": ..., "result": ... }` cases, where `result` validates against
+the schema and is already in the form the picker emits (a meeting URL already
+canonical). The tool test calls the handler with each case's `arguments`, has
+the fake client return `result` as the ERP response, and asserts that the output
+deeply equals `result`. Coverage is derived from the schema, not left to the
+author: a test fails unless every declared property, nested ones included, is
+set by some case, every `anyOf` branch (record and tombstone, null and non-null
+of each nullable field) is taken by some case, and every `if` holds in one case
+and fails in another. This runs for the live result schema and for the one named
+by every live row's `readBackResult`, so a field or variant the schema still
+promises cannot be dropped by editing only the happy-path expectation. Sample
+sets are immutable like the schemas and checked against the tag the same way.
 
 `deno.json` `publish.include` lists only `src/**/*.ts` and
 `src/events/contract/*.json` today, so the one-time registry pull request adds
@@ -616,13 +663,13 @@ events only), add a cross-version test: every event of `v<K>` exists in `v<K+1>`
 with a deeply equal effective `inputSchema` and `payloadSchema` and the same
 `changeByEvent` entry, the `v<K+1>` entry names the `readBackTool` and
 `readBackMethod` of the `v<K>` ledger row, `ERP_EVENTS_METHODS[readBackMethod]`
-still equals that row's `readBackPath`, and the `v<K+1>` row's `readBackResult`
-is that of `v<K>` or a successor that keeps it (as above): events already
-announced must keep re-reading through the same public tool, the same ERP
-endpoint and the same fields, so changing any of these is a major release
-(decision 9), never a side effect of adding events. Keep that test for as long
-as `v<K>` is in the repository. Without it, a changed schema with a freshly
-recorded hash would pass every other check.
+still equals that row's `readBackPath`, and the `v<K+1>` row's `readBackInput`
+and `readBackResult` are each that of `v<K>` or a successor that keeps it (as
+above): events already announced must keep re-reading through the same public
+tool, the same arguments, the same ERP endpoint and the same fields, so changing
+any of these is a major release (decision 9), never a side effect of adding
+events. Keep that test for as long as `v<K>` is in the repository. Without it, a
+changed schema with a freshly recorded hash would pass every other check.
 
 ### Step 3. Schema keywords (only when needed)
 
@@ -693,13 +740,13 @@ modelled on `fetchMeeting` / `pickMeetingFields`:
 
 ### Step 7. Tests
 
-| File                        | Add                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `protocol_test.ts`          | Registry builds. One negative test per module-load rejection in step 1: duplicate name, duplicate family, family outside the grammar, shared slug, file `family` differing from its entry, event name not `<family>.<change>`, name missing from `changeByEvent`, a `changeByEvent` key with no event, a field with no `type` (`{ "maxLength": 140 }`) and one with a `type` list, open effective schema, unbounded string, `date-time` without `maxLength`, unbounded number (missing `minimum` or `maximum`, or a limit outside the safe-integer range), unbounded array, malformed bounds (`maxLength: "140"`, a negative or fractional `maxLength`, `minLength` above `maxLength`, `minimum` above `maximum`, an empty `enum`, a string field with `const: 7`), unknown `format`, non-identity input property, an override whose id property differs from the entry's `identityField`, `source_doctype` without `sourceDoctypes` and the reverse, an override dropping `source_doctype` or changing its enum, an input override of a multi-doctype family that drops either `if`/`then` pair clause (each lone probe accepted), an input override that lists the identity in `required` (so `{}` is refused), an input override that passes every probe yet refuses one doctype through `not`/`const`, an identity schema carrying `pattern` or `not`, a payload missing each canonical pointer field in turn, an identity or `source_doctype` schema differing between the input and a payload override, an identity typed `integer`, one that is an `enum`-only string and one without `maxLength`, a `revision` typed `number`, one with `minimum: 0`, one with `minimum: 2` and one with `maximum: 100`, duplicate contract id, another file claiming `meeting-events.v1`, wrong `protocolVersion`; and that the meeting contract still loads under its exemption. Then catalog lists the new descriptors with their own schemas, arguments validated per event, `validateEventPayload` for valid and invalid fixtures of each new event, and an unknown-property fixture (argument and payload) for every event with an override. With a fixture `RETIRED_EVENTS` entry: subscribe with the retired name is `-32011`, unsubscribe with it reaches the store with its arguments validated against the retained schema, and a retired name that is also in the registry fails at module load. |
-| `adapter_wire_test.ts`      | `events/list` over HTTP returns the new names; `events/subscribe` with a new name reaches the store with `name` and `arguments` unchanged; unknown name still `-32011`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `erp-store_test.ts`         | The new fetch: id mismatch, doctype mismatch for a multi-doctype family, extra keys dropped, every shape violation is `Events backend error`, 401 / 403 / 429 mapping.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `contract_test.ts`          | Covered by step 2, including the ledger: two rows for one `contract` id, a file whose digest differs from its row, a file with no row, and a live entry whose `readBackTool` or `readBackMethod` differs from its row, or whose `ERP_EVENTS_METHODS` path differs from the row's `readBackPath`, all fail; in `release:check`, an edited or removed row and an edited released file fail against the newest tag.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| tool test (`src/tools/...`) | Happy path: the handler, called with a caller-scoped client, makes exactly one GET to the read-back method with the expected arguments and returns the picked result. Every happy-path and tombstone output validates against the tool's live result schema, and a live result schema that drops a property of its row's `readBackResult`, changes one or adds a required key fails. Each result schema's sample sets every declared property, and the handler returns it deeply equal (a pick function that drops an optional field fails). Then unknown argument refused with the fixed message, shared client refused, input bounds, parity with the contract (an id at the contract's `minLength` and `maxLength` and every `sourceDoctypes` value accepted, one past each limit refused, the same at `maxLength` with an id made only of characters outside the Basic Multilingual Plane, such as `"😀".repeat(maxLength)`, accepted and one more refused), and no duplicate name in the combined tool list. Gating, for every name in `EVENTS_TOOL_NAMES` (extend the existing `erpnext_meeting_get` assertions): absent from `toolsByCategory`, `allTools` and `getToolByName`, absent from `ErpNextToolsClient` when `includeEventsTools` is false, present when it is true. Dependency: every `CONTRACTS` entry's `readBackTool` is in `EVENTS_TOOL_NAMES` and its `readBackMethod` in `ERP_EVENTS_METHODS` and never `subscribe` or `unsubscribe` (an entry naming either fails), and every name in `EVENTS_TOOL_NAMES` and every read-back key in `ERP_EVENTS_METHODS` (all but `subscribe` and `unsubscribe`) is used by at least one entry, and all entries naming the same `readBackTool` name the same `readBackMethod`, all entries naming the same `readBackMethod` name the same `readBackTool` (two tools sharing one method fail), and every such group shares the same `identityField`, a deeply equal identity schema and the same `sourceDoctypes` (a test, not a module-load check, so `protocol.ts` does not import the tools).                                                                                                                                                                                                                                                                                                                                             |
+| File                        | Add                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `protocol_test.ts`          | Registry builds. One negative test per module-load rejection in step 1: duplicate name, duplicate family, family outside the grammar, shared slug, file `family` differing from its entry, event name not `<family>.<change>`, name missing from `changeByEvent`, a `changeByEvent` key with no event, a field with no `type` (`{ "maxLength": 140 }`) and one with a `type` list, open effective schema, unbounded string, `date-time` without `maxLength`, unbounded number (missing `minimum` or `maximum`, or a limit outside the safe-integer range), unbounded array, malformed bounds (`maxLength: "140"`, a negative or fractional `maxLength`, `minLength` above `maxLength`, `minimum` above `maximum`, an empty `enum`, a string field with `const: 7`), malformed control keywords (`required: "field"`, an object-valued `allOf`, a non-schema `if`, a `then` with no `if`, `properties` holding a non-schema), a payload property outside `PAYLOAD_FIELD_ALLOWLIST` (`title`, `amount`), a listed payload name typed as a free `maxLength` string, unknown `format`, non-identity input property, an override whose id property differs from the entry's `identityField`, `source_doctype` without `sourceDoctypes` and the reverse, an override dropping `source_doctype` or changing its enum, an input override of a multi-doctype family that drops either `if`/`then` pair clause (each lone probe accepted), an input override that lists the identity in `required` (so `{}` is refused), an input override that passes every probe yet refuses one doctype through `not`/`const`, an identity schema carrying `pattern` or `not`, a payload missing each canonical pointer field in turn, an identity or `source_doctype` schema differing between the input and a payload override, an identity typed `integer`, one that is an `enum`-only string and one without `maxLength`, a `revision` typed `number`, one with `minimum: 0`, one with `minimum: 2` and one with `maximum: 100`, duplicate contract id, another file claiming `meeting-events.v1`, wrong `protocolVersion`; and that the meeting contract still loads under its exemption. Then catalog lists the new descriptors with their own schemas, arguments validated per event, `validateEventPayload` for valid and invalid fixtures of each new event, and an unknown-property fixture (argument and payload) for every event with an override. With a fixture `RETIRED_EVENTS` entry: subscribe with the retired name is `-32011`, unsubscribe with it reaches the store with its arguments validated against the retained schema, and a retired name that is also in the registry fails at module load. |
+| `adapter_wire_test.ts`      | `events/list` over HTTP returns the new names; `events/subscribe` with a new name reaches the store with `name` and `arguments` unchanged; unknown name still `-32011`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `erp-store_test.ts`         | The new fetch: id mismatch, doctype mismatch for a multi-doctype family, extra keys dropped, every shape violation is `Events backend error`, 401 / 403 / 429 mapping.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `contract_test.ts`          | Covered by step 2, including the ledger: two rows for one `contract` id, a file whose digest differs from its row, a file with no row, and a live entry whose `readBackTool` or `readBackMethod` differs from its row, or whose `ERP_EVENTS_METHODS` path differs from the row's `readBackPath`, all fail; in `release:check`, an edited or removed row and an edited released file fail against the newest tag.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| tool test (`src/tools/...`) | Happy path: the handler, called with a caller-scoped client, makes exactly one GET to the read-back method with the expected arguments and returns the picked result. The registered `inputSchema` deeply equals the live input file. Every happy-path and tombstone output validates against the tool's live result schema, and a live input or result file that drops a property of its row's `readBackInput` or `readBackResult`, changes one or adds a required key fails. Every sample case returns its `result` deeply equal (a pick function that drops an optional field or refuses one nullable branch fails), and a sample set missing a declared property, an `anyOf` branch or either side of an `if` fails. Then unknown argument refused with the fixed message, shared client refused, input bounds, parity with the contract (an id at the contract's `minLength` and `maxLength` and every `sourceDoctypes` value accepted, one past each limit refused, the same at `maxLength` with an id made only of characters outside the Basic Multilingual Plane, such as `"😀".repeat(maxLength)`, accepted and one more refused), and no duplicate name in the combined tool list. Gating, for every name in `EVENTS_TOOL_NAMES` (extend the existing `erpnext_meeting_get` assertions): absent from `toolsByCategory`, `allTools` and `getToolByName`, absent from `ErpNextToolsClient` when `includeEventsTools` is false, present when it is true. Dependency: every `CONTRACTS` entry's `readBackTool` is in `EVENTS_TOOL_NAMES` and its `readBackMethod` in `ERP_EVENTS_METHODS` and never `subscribe` or `unsubscribe` (an entry naming either fails), and every name in `EVENTS_TOOL_NAMES` and every read-back key in `ERP_EVENTS_METHODS` (all but `subscribe` and `unsubscribe`) is used by at least one entry, and all entries naming the same `readBackTool` name the same `readBackMethod`, all entries naming the same `readBackMethod` name the same `readBackTool` (two tools sharing one method fail), and every such group shares the same `identityField`, a deeply equal identity schema and the same `sourceDoctypes` (a test, not a module-load check, so `protocol.ts` does not import the tools).                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 Run `deno task pre-commit` and `deno task test`, then `deno task release:check`:
 a new family adds a contract import and a tool, which changes the published
