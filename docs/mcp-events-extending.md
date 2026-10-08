@@ -498,21 +498,24 @@ implementation detail.
    `inputSchema` of the retired contract file that last shipped it (retired
    files stay in `src/events/contract/`, step 2). The schema is not written by
    hand: `RETIRED_EVENTS` is built at module load from the `from` contract of
-   each ledger retirement record that has no end record, and a test asserts that
-   every entry deeply equals that event's effective `inputSchema` there,
-   override included. `events/subscribe` with a retired name answers `-32011`
-   like any unknown name, while an authenticated `events/unsubscribe` still
-   accepts it, validates `arguments` against that retained schema and forwards
-   the request to ERP, which stays idempotent. ERP must still recognise the name
-   at that point, although its active contract no longer lists it: its contract
-   registry keeps each retired name with its argument schema in a retired list
-   that only the unsubscribe path accepts, until the MCP release that drops the
-   name from `RETIRED_EVENTS` (ERP recipe, step 2). Waiting out the leases is
-   not enough, because a subscription can have no expiry, so ERP deletes every
-   stored subscription for the retired names with a migration once subscribe is
-   refused. A name leaves `RETIRED_EVENTS` only in a later major release, after
-   ERP reports zero stored subscriptions for it, and it leaves by an end record,
-   not by deleting history: that release appends
+   each ledger retirement record that has no end record, read through the
+   runtime archive of step 2 (`CONTRACT_FILES` and the statically imported
+   ledger), because a retired file is no longer in `CONTRACTS` and the test-only
+   discovery of step 2 is not part of the published module graph, and a test
+   asserts that every entry deeply equals that event's effective `inputSchema`
+   there, override included. `events/subscribe` with a retired name answers
+   `-32011` like any unknown name, while an authenticated `events/unsubscribe`
+   still accepts it, validates `arguments` against that retained schema and
+   forwards the request to ERP, which stays idempotent. ERP must still recognise
+   the name at that point, although its active contract no longer lists it: its
+   contract registry keeps each retired name with its argument schema in a
+   retired list that only the unsubscribe path accepts, until the MCP release
+   that drops the name from `RETIRED_EVENTS` (ERP recipe, step 2). Waiting out
+   the leases is not enough, because a subscription can have no expiry, so ERP
+   deletes every stored subscription for the retired names with a migration once
+   subscribe is refused. A name leaves `RETIRED_EVENTS` only in a later major
+   release, after ERP reports zero stored subscriptions for it, and it leaves by
+   an end record, not by deleting history: that release appends
    `{ "event": ..., "release": ... }` to an append-only `retirementEnds` array
    in the ledger, checked against the tag like the rest and accepted only when
    its `release` is the version in `deno.json` and that version is a major
@@ -677,6 +680,18 @@ and its row while `CONTRACTS` stays on `v1`: `buildRegistry` sees only the live
 entries, and without this check a successor could reuse a retired version's id,
 or a file named `task-event.v1.json` could be frozen into the ledger outside the
 lineage that successor discovery and the cross-version test rely on.
+
+Discovery is a test-time check, not how the server reads contracts: the
+published JSR module and the single-file Node bundle contain only what the
+production module graph imports. So `src/events/contract/archive.ts` statically
+imports every contract file, retired ones included, as `CONTRACT_FILES`, a map
+from `contract` id to the parsed file, and `protocol.ts` builds `CONTRACTS` and
+`RETIRED_EVENTS` from it and from a static import of the ledger, never from the
+filesystem. `contract_test.ts` asserts that the keys of `CONTRACT_FILES` equal
+the discovered set exactly and that each value deeply equals its file, and a
+bundle test loads the built Node bundle and asserts that `RETIRED_EVENTS` there
+equals the one under Deno, so a retired file or the ledger missing from the
+bundle fails before release.
 
 The doc hash alone does not freeze a released file: a commit that edits the JSON
 and the hash line together passes it. So every contract version is also pinned
@@ -854,19 +869,25 @@ the code that decides these things is frozen. The registry pull request moves
 every handler-only argument rule, the mapping from arguments to the ERP call,
 every response guard and the picker that maps a valid ERP result to the returned
 object of a read-back tool into one self-contained module,
-`src/events/read-back/<tool>.checks.ts`, with no `import` (a test asserts that):
-named predicates `MEETING_ARGUMENT_RULES` and `MEETING_GUARDS`, and
-`meetingErpCall(arguments)`, which returns the method path and parameters, and
-`pickMeetingFields(result)`, which returns either `{ output }` or `{ guard }`
-naming the first guard the result breaks. The orchestration is frozen with them,
-because a handler that decides which values reach a rule or guard could feed one
-an altered value for an unrecorded input: the module's
-`meetingReadBack(arguments, erpGet)` checks the arguments, builds the call with
-`meetingErpCall`, calls the injected `erpGet` once, maps the transport outcome,
-applies the guards and `pickMeetingFields`, and returns `{ output }`,
-`{ argumentError }` or `{ backendError }` with the fixed messages. `erpGet`
-returns the raw HTTP status and body, or the network error, without interpreting
-them. The handler is one generic adapter shared by every read-back tool,
+`src/events/read-back/<tool>.checks.ts`, whose only imports are its family's
+contract file (immutable and pinned by its ledger digest, so the identity bounds
+and the `source_doctype` enum it derives from that file are frozen with it) and
+`src/events/read-back/code-points.ts`, which exports `codePointLength` and
+imports nothing (`json-schema.ts` imports it from there, so the validator and
+the tool count the same way); a test parses each checks module and asserts its
+import list equals exactly that allowlist: named predicates
+`MEETING_ARGUMENT_RULES` and `MEETING_GUARDS`, and `meetingErpCall(arguments)`,
+which returns the method path and parameters, and `pickMeetingFields(result)`,
+which returns either `{ output }` or `{ guard }` naming the first guard the
+result breaks. The orchestration is frozen with them, because a handler that
+decides which values reach a rule or guard could feed one an altered value for
+an unrecorded input: the module's `meetingReadBack(arguments, erpGet)` checks
+the arguments, builds the call with `meetingErpCall`, calls the injected
+`erpGet` once, maps the transport outcome, applies the guards and
+`pickMeetingFields`, and returns `{ output }`, `{ argumentError }` or
+`{ backendError }` with the fixed messages. `erpGet` returns the raw HTTP status
+and body, or the network error, without interpreting them. The handler is one
+generic adapter shared by every read-back tool,
 `runReadBack(entry, arguments, client)` in `src/events/read-back/run.ts`, which
 passes the caller's `arguments` object unchanged and a GET bound to the
 caller-scoped client, and turns the three outcomes into the return value, the
@@ -875,10 +896,10 @@ argument error and the backend error; the tool's handler is exactly
 asserts that the registered handler calls `runReadBack` once with that entry
 point and the very same `arguments` object. `run.ts` has no import other than
 the error classes, and `readBackChecks` covers it together with the checks
-module. Tests fail if an argument error or a response-shape backend error is
-thrown any other way, if the names in `MEETING_ARGUMENT_RULES` differ from the
-case set's `rules` or those in `MEETING_GUARDS` from the sample set's `guards`,
-or if the parameters the fake client receives differ from
+module and `code-points.ts`. Tests fail if an argument error or a response-shape
+backend error is thrown any other way, if the names in `MEETING_ARGUMENT_RULES`
+differ from the case set's `rules` or those in `MEETING_GUARDS` from the sample
+set's `guards`, or if the parameters the fake client receives differ from
 `meetingErpCall(arguments)` for any recorded case or for a fixed-seed run of
 generated valid arguments (every temporal form, fractional seconds of every
 length, each argument present and absent), or if the handler's output differs
@@ -893,13 +914,14 @@ sample set pins those in a separate `transport` array, each
 failure, HTTP 429, 401, 403, 500) or a raw message that is not a valid
 `{ ok, result | error }` envelope, and `error` the fixed message the handler
 must throw for it; it is immutable like the rest of the sample set. The ledger
-row records `readBackChecks`, the SHA-256 of the checks module and `run.ts`
-together as the version shipped, and the tag check requires it byte-identical
-for every live row. Adding, removing, tightening or loosening a rule or guard,
-changing how an argument is forwarded or how a result field is mapped, is
-therefore a new checks module, and so a major release under a new tool name or
-contract version, like any other change to what the tool accepts, sends or
-returns.
+row records `readBackChecks`, the SHA-256 of the checks module, `run.ts` and
+`code-points.ts` together as the version shipped (the contract file the module
+imports is pinned by its own ledger digest), and the tag check requires it
+byte-identical for every live row. Adding, removing, tightening or loosening a
+rule or guard, changing how an argument is forwarded or how a result field is
+mapped, is therefore a new checks module, and so a major release under a new
+tool name or contract version, like any other change to what the tool accepts,
+sends or returns.
 
 Validation alone cannot catch a pick function that stops copying an optional
 field or stops passing one variant of a field: every output still validates. So
@@ -1064,13 +1086,13 @@ point; the handler is exactly
 method names of step 5. Inside the checks module:
 
 - derive the identity part of the tool's input schema (the id's `minLength` and
-  `maxLength`, the `source_doctype` enum) from the family's contract entry
-  instead of restating it, so every identity a webhook can carry is one the tool
-  accepts, and measure the id with `codePointLength` from `json-schema.ts`, as
-  `erpnext_meeting_get` does, never with `string.length`: JSON Schema counts
-  code points, `length` counts UTF-16 units, and a name with characters outside
-  the Basic Multilingual Plane would otherwise pass the contract and be refused
-  by the tool;
+  `maxLength`, the `source_doctype` enum) from the family's contract file,
+  imported by the checks module, instead of restating it, so every identity a
+  webhook can carry is one the tool accepts, and measure the id with
+  `codePointLength` from `code-points.ts`, as `erpnext_meeting_get` does, never
+  with `string.length`: JSON Schema counts code points, `length` counts UTF-16
+  units, and a name with characters outside the Basic Multilingual Plane would
+  otherwise pass the contract and be refused by the tool;
 - unlike the contract's input schema, where `{}` is a valid unfiltered
   subscription, the tool's complete `inputSchema` lists the id in `required`,
   plus `source_doctype` for a multi-doctype family (`erpnext_meeting_get` has
