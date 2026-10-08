@@ -525,6 +525,29 @@ Deno.test("fetchMeeting accepts a title of exactly 500 code points, counted by c
   );
 });
 
+Deno.test("fetchMeeting counts the meeting link limit in code points, like the ERP", async () => {
+  const prefix = "https://meet.example.com/";
+  // 2048 code point nhưng 4071 đơn vị UTF-16: ERP (Python `len`) coi là hợp lệ.
+  const atLimit = prefix + "😀".repeat(2048 - prefix.length);
+  const { client } = fakeClient(() => ({
+    ok: true,
+    result: { ...MEETING, meeting_url: atLimit },
+  }));
+  assertEquals(
+    (await fetchMeeting(client, { event_id: "EVT-1" })).meeting_url,
+    atLimit,
+  );
+  const overLimit = fakeClient(() => ({
+    ok: true,
+    result: { ...MEETING, meeting_url: atLimit + "a" },
+  }));
+  await assertRejects(
+    () => fetchMeeting(overLimit.client, { event_id: "EVT-1" }),
+    Error,
+    "Events backend error",
+  );
+});
+
 Deno.test("fetchMeeting maps every failure to a fixed message", async () => {
   const cases: Array<[() => unknown, string]> = [
     [

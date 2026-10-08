@@ -365,7 +365,10 @@ function isMeetingTitle(value: string): boolean {
  * nên nó không được chứa ký tự mà bộ phân tích URL lặng lẽ bỏ đi hay mã hoá lại.
  */
 function isMeetingUrl(value: string): boolean {
-  if (value.length > MEETING_URL_MAX_LENGTH) return false;
+  // Giới hạn đếm theo code point như `len()` của ERP. Một code point chiếm tối đa hai đơn vị UTF-16, nên chuỗi dài hơn
+  // gấp đôi giới hạn bị loại ngay mà không cần đếm.
+  if (value.length > MEETING_URL_MAX_LENGTH * 2) return false;
+  if (codePointLength(value) > MEETING_URL_MAX_LENGTH) return false;
   if (URL_HIDDEN_CHARACTER.test(value)) return false;
   let parsed: URL;
   try {

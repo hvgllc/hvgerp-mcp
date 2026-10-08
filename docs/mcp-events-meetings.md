@@ -182,7 +182,7 @@ base character: a letter, digit, punctuation mark or symbol that is not a
 default-ignorable code point (such as U+3164) or U+2800. Whitespace, format
 characters such as U+200B and lone combining marks such as U+034F or U+FE0F do
 not count. `meeting_url` must be `null` or an absolute `https` URL of at most
-2048 characters with no user name or password and no whitespace, control or
+2048 code points with no user name or password and no whitespace, control or
 format characters (the link is returned verbatim, so it must already be in the
 form a URL parser would keep). Anything else is a backend error. ERP sends
 `null` rather than inventing a value: it reads the link from
