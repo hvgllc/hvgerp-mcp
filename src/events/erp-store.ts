@@ -340,8 +340,13 @@ function isNullableOf(
 const MEETING_TITLE_MAX_CODE_POINTS = 500;
 const MEETING_URL_MAX_LENGTH = 2048;
 
-/** Một ký tự người đọc thấy được: không phải khoảng trắng, ký tự điều khiển hay ký tự định dạng vô hình (U+200B...). */
-const VISIBLE_CHARACTER = /[^\s\p{Cc}\p{Cf}\p{Z}]/u;
+/**
+ * Một ký tự gốc người đọc thấy được: chữ, số, dấu câu hoặc ký hiệu (gồm emoji). Dấu kết hợp đứng một mình (U+0301,
+ * U+034F, U+FE0F), ký tự định dạng (U+200B) và khoảng trắng không phải ký tự gốc. Ký tự mặc định bị bỏ qua khi hiển thị
+ * (Hangul filler U+3164...) và ô chữ nổi trống U+2800 tuy là chữ hay ký hiệu nhưng vẫn vẽ ra khoảng trống, nên cũng bị loại.
+ */
+const VISIBLE_CHARACTER =
+  /(?![\p{Default_Ignorable_Code_Point}⠀])[\p{L}\p{N}\p{P}\p{S}]/u;
 /** Khoảng trắng, ký tự điều khiển hay ký tự định dạng: `new URL()` bỏ hoặc mã hoá chúng nên URL đã kiểm khác chuỗi gốc. */
 const URL_HIDDEN_CHARACTER = /[\s\p{Cc}\p{Cf}]/u;
 

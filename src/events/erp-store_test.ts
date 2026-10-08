@@ -478,6 +478,11 @@ Deno.test("fetchMeeting rejects a malformed title or meeting link", async () => 
     // Chỉ gồm ký tự định dạng vô hình: `trim()` không bỏ chúng nhưng người đọc vẫn thấy một tên trống.
     { title: "​​" },
     { title: "​ ⁠﻿" },
+    // Dấu kết hợp đứng một mình và ký tự gốc nhưng hiển thị trống (Hangul filler, ô chữ nổi trống).
+    { title: "͏️" },
+    { title: "́́" },
+    { title: "ㅤᅟ" },
+    { title: "⠀ ⠀" },
     { meeting_url: "" },
     // `new URL()` lặng lẽ bỏ khoảng trắng hai đầu và tab/xuống dòng, nên chuỗi gốc khác chuỗi đã được kiểm.
     { meeting_url: " https://meet.example.com/x" },
