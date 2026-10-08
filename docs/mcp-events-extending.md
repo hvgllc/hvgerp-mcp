@@ -177,6 +177,10 @@ implementation detail.
 2. **Event names are `<family>.<change>` and globally unique** across all loaded
    contracts. The registry must refuse to start if two loaded contracts declare
    the same name or the same family. Keep the `change` enum inside each family.
+   Where a family appears inside an identifier (tool name, ERP method, flag),
+   use its slug: the family with `.` replaced by `_`, so `task.v2` becomes
+   `task_v2`. Frappe reads dots in a method path as module separators, and tool
+   names must stay snake_case.
 3. **Per-event schemas.** Each contract keeps a shared `inputSchema` and
    `payloadSchema` as the default, and an event entry may override either. The
    catalog descriptor exposes the effective schemas. `parseSubscribeParams`
@@ -189,20 +193,21 @@ implementation detail.
    family spans several doctypes (decision 6), the pointer carries
    `source_doctype` as a closed enum next to the id, and the re-read tool takes
    both, because two doctypes can hold records with the same `name`.
-5. **Each family has exactly one re-read tool**, `erpnext_<family>_event_get`,
-   built like `erpnext_meeting_get`: strict argument allowlist,
-   `actsAs === "caller"`, fresh GET with no cache, output passed through an
-   allowlist validator that checks every value's shape, fixed error messages, a
-   deleted record returns only the tombstone keys. The name must not collide
-   with any existing tool: `erpnext_task_get` and
+5. **Each family has exactly one re-read tool**,
+   `erpnext_<family_slug>_event_get`, built like `erpnext_meeting_get`: strict
+   argument allowlist, `actsAs === "caller"`, fresh GET with no cache, output
+   passed through an allowlist validator that checks every value's shape, fixed
+   error messages, a deleted record returns only the tombstone keys. The name
+   must not collide with any existing tool: `erpnext_task_get` and
    `erpnext_leave_application_get` already exist with different semantics (they
    run under shared credentials too), and a second tool with the same name would
    be listed twice by `toMCPFormat` and overwrite the first in
    `buildHandlersMap`. Add a test that the combined tool list has no duplicate
    name. A versioned family `<family>.vN` (decision 1) reuses the base family's
-   tool when the read-back shape is unchanged; if it needs a different shape,
-   its tool is `erpnext_<family>_v<N>_event_get` (the dot becomes an underscore,
-   so the name stays snake_case), registered and tested the same way.
+   tool and ERP method when the read-back shape is unchanged; if it needs a
+   different shape, its tool is `erpnext_<family>_v<N>_event_get` and its ERP
+   method `<family>_v<N>_get` (the slug, decision 2), registered and tested the
+   same way.
 6. **The journal records the family and the source doctype.** ERP adds two
    columns: `family` (drives the event name and matching) and `source_doctype`
    (identifies the record; one family can span several doctypes, such as `Task`
@@ -218,12 +223,13 @@ implementation detail.
    This is the largest and riskiest change of the whole extension and must ship,
    migrate and be verified before any new family writes a row.
 7. **Each new family gets its own ERP gates**, each also gated by the matching
-   global flag: `mcp_events_<family>_journal_enabled`,
-   `mcp_events_<family>_subscribe_enabled` and
-   `mcp_events_<family>_dispatch_enabled`, all default off (a missing key reads
-   as off). The meeting family has no per-family keys and keeps following the
-   global flags alone, so an upgrade that adds the gates cannot switch meetings
-   off on a site where they already run. The gates give the rollout states:
+   global flag: `mcp_events_<family_slug>_journal_enabled`,
+   `mcp_events_<family_slug>_subscribe_enabled` and
+   `mcp_events_<family_slug>_dispatch_enabled`, all default off (a missing key
+   reads as off). The meeting family has no per-family keys and keeps following
+   the global flags alone, so an upgrade that adds the gates cannot switch
+   meetings off on a site where they already run. The gates give the rollout
+   states:
    - **shadow**: journal on, subscribe off. Rows are written and measured, but
      `events/subscribe` for the family answers `-32012`, so no subscription
      exists and nothing can be delivered.
@@ -256,6 +262,7 @@ import meetingContract from "./contract/meeting-events.v1.json" with {
 };
 
 interface ContractFile {
+  family?: string; // required in every new file; meeting-events.v1 predates it
   contract: string;
   protocolVersion: string;
   changeByEvent: Record<string, string>;
@@ -269,9 +276,17 @@ interface ContractFile {
   }[];
 }
 
-export const CONTRACTS: readonly ContractFile[] = [meetingContract];
+interface ContractEntry {
+  family: string;
+  file: ContractFile;
+}
+
+export const CONTRACTS: readonly ContractEntry[] = [
+  { family: "meeting", file: meetingContract },
+];
 
 interface RegisteredEvent {
+  family: string;
   contract: string;
   change: string;
   descriptor: EventDescriptor;
@@ -280,9 +295,16 @@ interface RegisteredEvent {
 const REGISTRY: ReadonlyMap<string, RegisteredEvent> = buildRegistry(CONTRACTS);
 ```
 
-`buildRegistry` throws at module load on a duplicate name, on two contracts for
-the same family (decision 1), on a name missing from `changeByEvent`, or on a
-`protocolVersion` other than the one this server speaks. Then:
+The family is explicit: each entry of `CONTRACTS` names it, and every new
+contract file also carries a top-level `family` that must equal it (the frozen
+`meeting-events.v1.json` has none, which is why the entry holds it). Never
+derive the family from the file name, the contract id or the first event:
+`task-events.v2.json` can be a replacement of family `task` or the parallel
+family `task.v2`. `buildRegistry` throws at module load on a duplicate name, on
+two entries for the same family (decision 1), on a file `family` that differs
+from its entry, on any event whose name is not exactly
+`<family>.<changeByEvent[name]>`, on a name missing from `changeByEvent`, or on
+a `protocolVersion` other than the one this server speaks. Then:
 
 - `parseEventName` checks `REGISTRY.has(name)`.
 - `parseArguments(name, value)` validates against
@@ -306,6 +328,12 @@ list, and run `collectKeywords` over every schema, including per-event
 overrides. Also assert that every entry of `CONTRACTS` is one of the discovered
 files.
 
+When a release replaces vN with vN+1 in `CONTRACTS` (decision 1, new events
+only), add a cross-version test: every event of vN exists in vN+1 with a deeply
+equal effective `inputSchema` and `payloadSchema` and the same `changeByEvent`
+entry. Keep that test for as long as vN is in the repository. Without it, a
+changed schema with a freshly recorded hash would pass every other check.
+
 ### Step 3. Schema keywords (only when needed)
 
 If a new contract needs a keyword that `SUPPORTED_KEYWORDS` lacks, add it to
@@ -315,24 +343,28 @@ value. Prefer a schema that avoids the keyword over growing the validator.
 
 ### Step 4. Write the contract
 
-Create `src/events/contract/<family>-events.v1.json` with `contract`,
+Create `src/events/contract/<family>-events.v1.json` with `family`, `contract`,
 `protocolVersion: "2026-07-28"`, `changeByEvent`, `inputSchema`, `payloadSchema`
 (`additionalProperties: false`, every field bounded), and `events` with one
 sentence of description each. Add it to `CONTRACTS`. Write the payload as a
 pointer (decision 4). Typical required set: `<id>`, `revision`, `change`,
-`changed_fields`, `deleted`.
+`changed_fields`, `deleted`, plus `source_doctype` for a multi-doctype family.
+For such a family the `inputSchema` also requires `source_doctype` whenever the
+id filter is supplied (an `if`/`then` with `required`, keywords the validator
+already supports).
 
 ### Step 5. ERP method names
 
 Add the read-back method to `ERP_EVENTS_METHODS` in `erp-store.ts`
-(`hvg_workspace.mcp_events.api.<family>_get`). Subscribe and unsubscribe stay
-the same methods for every family.
+(`hvg_workspace.mcp_events.api.<family_slug>_get`, using the slug from decision
+2, so `task.v2` maps to `api.task_v2_get`, never `api.task.v2_get`). Subscribe
+and unsubscribe stay the same methods for every family.
 
 ### Step 6. Re-read tool
 
 Add `src/tools/<family>.ts` (or extend `calendar.ts` only for calendar-like
-families) exporting the tool `erpnext_<family>_event_get` (decision 5) and its
-name. Check the name against every existing tool first. Register the name in
+families) exporting the tool `erpnext_<family_slug>_event_get` (decision 5) and
+its name. Check the name against every existing tool first. Register the name in
 `EVENTS_TOOL_NAMES` and the tool in the array `ErpNextToolsClient` appends when
 `includeEventsTools` is on. Keep it out of `toolsByCategory`, `allTools` and
 `getToolByName` (see the comment in `src/tools/mod.ts`): the public registries
@@ -340,7 +372,9 @@ would otherwise let a library user run it under service credentials with Events
 off. Add a `fetch<Family>()` and a `pick<Family>Fields()` in `erp-store.ts`,
 modelled on `fetchMeeting` / `pickMeetingFields`:
 
-- check `result.<id> === args.<id>` before anything else;
+- check `result.<id> === args.<id>` before anything else, and for a
+  multi-doctype family also `result.source_doctype === args.source_doctype`,
+  since `Task` and `ToDo` can share an id;
 - tombstone keys only when `deleted === true`;
 - every enum is a closed `Set`, every date and instant is checked as real, every
   string is bounded, unknown keys are dropped;
@@ -352,7 +386,7 @@ modelled on `fetchMeeting` / `pickMeetingFields`:
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `protocol_test.ts`          | Registry builds, duplicate name throws, catalog lists the new descriptors with their own schemas, arguments validated per event, `validateEventPayload` for valid and invalid fixtures of each new event.                                                                                                         |
 | `adapter_wire_test.ts`      | `events/list` over HTTP returns the new names; `events/subscribe` with a new name reaches the store with `name` and `arguments` unchanged; unknown name still `-32011`.                                                                                                                                           |
-| `erp-store_test.ts`         | The new fetch: id mismatch, extra keys dropped, every shape violation is `Events backend error`, 401 / 403 / 429 mapping.                                                                                                                                                                                         |
+| `erp-store_test.ts`         | The new fetch: id mismatch, doctype mismatch for a multi-doctype family, extra keys dropped, every shape violation is `Events backend error`, 401 / 403 / 429 mapping.                                                                                                                                            |
 | `contract_test.ts`          | Covered by step 2.                                                                                                                                                                                                                                                                                                |
 | tool test (`src/tools/...`) | Happy path: the handler, called with a caller-scoped client, makes exactly one GET to the read-back method with the expected arguments and returns the picked result. Then unknown argument refused with the fixed message, shared client refused, input bounds, and no duplicate name in the combined tool list. |
 
@@ -385,8 +419,9 @@ Listed here so both sides agree on the order; the ERP team implements it.
    new `source_change_id` and revision fence key (both including `family`), and
    tests proving meeting rows, cursors and replays are unchanged.
 2. **Contract loading**: copy the new contract file verbatim next to
-   `meeting-events.v1.json`, generalise `contract.py` to a registry, and add a
-   digest test against the hash published in this repository.
+   `meeting-events.v1.json`, generalise `contract.py` to a registry with the
+   same explicit family and name rules as `buildRegistry` here, and add a digest
+   test against the hash published in this repository.
 3. **Capture**: `doc_events` hooks for the new doctype in `hooks.py`, the same
    snapshot then `flush()` pattern as `events.py` (one net row per transaction,
    nothing on rollback, transient DB errors re-raised, other errors logged
@@ -395,18 +430,21 @@ Listed here so both sides agree on the order; the ERP team implements it.
    `readers` for a record, used at write time, at delivery recheck and in the
    read-back. Same rule in all three places.
 5. **Subscription arguments**: the family's id argument resolved to a stable
-   identity, like `event_identity` for meetings.
+   identity, like `event_identity` for meetings. For a multi-doctype family the
+   filter is the pair `(source_doctype, id)`: refuse an id without its doctype,
+   persist and match the pair, and test two records with equal ids in both
+   doctypes.
 6. **Dispatch**: `envelope()` takes the name from the row's `family`;
    `_fan_out_matches` compares family as well as change.
-7. **Read-back**: `api.<family>_get` with the fixed `{ok,result|error}`
+7. **Read-back**: `api.<family_slug>_get` with the fixed `{ok,result|error}`
    envelope, the not-available answer for no permission and for missing records
    alike, and a tombstone only for a user the journal proves saw it.
-8. **Flags**: `mcp_events_<family>_journal_enabled`,
-   `mcp_events_<family>_subscribe_enabled` and
-   `mcp_events_<family>_dispatch_enabled` for each new family, all default off,
-   each also gated by the global flag (decision 7). Meetings keep the global
-   flags only. Subscribe off answers `-32012`; dispatch off leaves deliveries
-   pending, never dropped.
+8. **Flags**: `mcp_events_<family_slug>_journal_enabled`,
+   `mcp_events_<family_slug>_subscribe_enabled` and
+   `mcp_events_<family_slug>_dispatch_enabled` for each new family, all default
+   off, each also gated by the global flag (decision 7). Meetings keep the
+   global flags only. Subscribe off answers `-32012`; dispatch off leaves
+   deliveries pending, never dropped.
 9. **Rollout**: shadow mode (journal on, subscribe off) in production, measure
    row volume and hook latency, then subscribe on with dispatch off, check that
    deliveries queue as pending, then dispatch on.
