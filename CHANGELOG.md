@@ -8,6 +8,30 @@ This package is a fork of
 deliberately still point at the upstream repository, where those commits, pull
 requests and tags actually live.
 
+## [3.6.0] - 2026-10-08
+
+### Added
+
+- MCP Events for calendar meetings, **off by default**. Setting
+  `MCP_EVENTS_ENABLED=1` adds `events/list`, `events/subscribe` and
+  `events/unsubscribe` on `POST /mcp`, advertises `capabilities.events` to
+  requests with a verified user identity, and registers `erpnext_meeting_get`
+  for re-reading a meeting under the caller's own permissions. Subscriptions,
+  the change journal and webhook delivery live in ERPNext (`hvg_workspace`);
+  this server stores nothing. Startup is refused when the flag is on without
+  `--http`, without `MCP_CALLER_IDENTITY=required`, without
+  `MCP_OAUTH_JWKS_URL`, or together with static `MCP_AUTH_TOKEN(S)`. An
+  unrecognised flag value also stops startup. See `docs/mcp-events-meetings.md`.
+- The legacy protocol shim maps `events/subscribe` and `events/unsubscribe` by
+  `name`, like the other named methods.
+- `docs/jsr-403-workaround.md`: how to build, test and release from a network
+  where jsr.io answers 403.
+
+### Changed
+
+- With the flag off, the tool list, discovery result and HTTP listener are the
+  same as in 3.5.0.
+
 ## [3.5.0] - 2026-09-08
 
 ### Added
