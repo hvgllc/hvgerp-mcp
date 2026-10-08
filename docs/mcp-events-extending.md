@@ -481,25 +481,31 @@ implementation detail.
    meetings: they have no per-family gates, and every family's gates are also
    conditioned on the global flags, so turning those off would stop every
    family), so no client on an older MCP release can create or extend one, and
-   only then turns dispatch off for them (the family's dispatch gate, or for
-   meetings and single names no longer writing those events). That release ships
-   the family's next contract version without the removed names (decision 1),
-   appends a retirement record for each to the ledger (step 2) and moves every
-   removed name into `RETIRED_EVENTS` in `protocol.ts` instead of deleting it: a
-   map from the name to the effective `inputSchema` of the retired contract file
-   that last shipped it (retired files stay in `src/events/contract/`, step 2).
-   `events/subscribe` with a retired name answers `-32011` like any unknown
-   name, while an authenticated `events/unsubscribe` still accepts it, validates
-   `arguments` against that retained schema and forwards the request to ERP,
-   which stays idempotent. ERP must still recognise the name at that point,
-   although its active contract no longer lists it: its contract registry keeps
-   each retired name with its argument schema in a retired list that only the
-   unsubscribe path accepts, until the MCP release that drops the name from
-   `RETIRED_EVENTS` (ERP recipe, step 2). Waiting out the leases is not enough,
-   because a subscription can have no expiry, so ERP deletes every stored
-   subscription for the retired names with a migration once subscribe is
-   refused. A name leaves `RETIRED_EVENTS` only in a later release, after ERP
-   reports zero stored subscriptions for it.
+   only then stops delivery for them. Not writing new rows is not enough, and
+   neither is a dispatch gate, which leaves queued deliveries pending rather
+   than dropping them: ERP stops writing those events, its dispatcher refuses at
+   send time every delivery whose event name is retired (a name-level check,
+   used for meetings and single names and also beside the family's dispatch gate
+   when a whole family retires), and a migration marks every queued, pending or
+   retrying delivery for those names terminally `retired`, so none is sent after
+   the cutoff. That release ships the family's next contract version without the
+   removed names (decision 1), appends a retirement record for each to the
+   ledger (step 2) and moves every removed name into `RETIRED_EVENTS` in
+   `protocol.ts` instead of deleting it: a map from the name to the effective
+   `inputSchema` of the retired contract file that last shipped it (retired
+   files stay in `src/events/contract/`, step 2). `events/subscribe` with a
+   retired name answers `-32011` like any unknown name, while an authenticated
+   `events/unsubscribe` still accepts it, validates `arguments` against that
+   retained schema and forwards the request to ERP, which stays idempotent. ERP
+   must still recognise the name at that point, although its active contract no
+   longer lists it: its contract registry keeps each retired name with its
+   argument schema in a retired list that only the unsubscribe path accepts,
+   until the MCP release that drops the name from `RETIRED_EVENTS` (ERP recipe,
+   step 2). Waiting out the leases is not enough, because a subscription can
+   have no expiry, so ERP deletes every stored subscription for the retired
+   names with a migration once subscribe is refused. A name leaves
+   `RETIRED_EVENTS` only in a later release, after ERP reports zero stored
+   subscriptions for it.
 
 ## 5. Recipe: this repository
 
@@ -1094,8 +1100,9 @@ Listed here so both sides agree on the order; the ERP team implements it.
    unsubscribe path only and refused by subscribe and refresh. An end-to-end
    test retires a fixture name, advances the active contract to a successor
    without it, and asserts that unsubscribe for a stored subscription returns
-   `{}` and deletes it, a second unsubscribe also returns `{}`, and subscribe
-   with the name is refused.
+   `{}` and deletes it, a second unsubscribe also returns `{}`, subscribe with
+   the name is refused, and a delivery for it queued or retrying before the
+   cutoff is marked `retired` and never sent, even with dispatch on.
 3. **Capture**: `doc_events` hooks for the new doctype in `hooks.py`, the same
    snapshot then `flush()` pattern as `events.py` (one net row per transaction,
    nothing on rollback, transient DB errors re-raised, other errors logged
