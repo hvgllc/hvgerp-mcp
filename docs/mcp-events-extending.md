@@ -195,7 +195,12 @@ implementation detail.
    `payloadSchema` as the default, and an event entry may override either. The
    catalog descriptor exposes the effective schemas. `parseSubscribeParams`
    already parses `name` before `arguments`, so validating arguments against the
-   schema of that name is a local change.
+   schema of that name is a local change. An override replaces the default
+   whole, so it must restate the default's guarantees: every effective input and
+   payload schema, override or not, is `type: object` with
+   `additionalProperties: false` and every field bounded. Otherwise a misspelled
+   argument could become an unfiltered subscription, or a payload could carry
+   undeclared content.
 4. **Payload stays a pointer.** Ids, revision, change, changed field names and
    the minimum scheduling or status data needed to decide whether to re-read.
    Never titles, descriptions, amounts, emails, names of people or free text.
@@ -225,13 +230,20 @@ implementation detail.
    `(source_doctype, source_name)`. One source change produces one row per
    family that covers it (two while `<family>` and `<family>.v2` run side by
    side), so the row identity includes the family: `source_change_id` hashes
-   `(site, family, source_doctype, source_name, revision)`, the unique index
-   becomes `(family, source_doctype, source_name, revision)` and the revision
-   fence is keyed by `(family, source_doctype, source_name)`. `_fan_out_matches`
-   compares `family` as well as change, and `envelope()` builds `name` from
-   `family`. Existing rows are backfilled as family `meeting`, doctype `Event`.
-   This is the largest and riskiest change of the whole extension and must ship,
-   migrate and be verified before any new family writes a row.
+   `(site, family, source_doctype, source_name, revision)` and the unique index
+   becomes `(family, source_doctype, source_name, revision)`. The revision
+   itself stays source-global: it is allocated once per source change from a
+   counter keyed by `(source_doctype, source_name)`, and every family's row for
+   that change carries the same number. The fence that rejects a stale or
+   repeated revision is checked per `(family, source_doctype, source_name)`, so
+   each family's row passes once. A shared counter keeps the read-back
+   unambiguous: the revision the ERP method returns is the same whichever family
+   the client follows, so a `<family>.v2` client never discards a newer event
+   because the base family counted differently. `_fan_out_matches` compares
+   `family` as well as change, and `envelope()` builds `name` from `family`.
+   Existing rows are backfilled as family `meeting`, doctype `Event`. This is
+   the largest and riskiest change of the whole extension and must ship, migrate
+   and be verified before any new family writes a row.
 7. **Each new family gets its own ERP gates**, each also gated by the matching
    global flag: `mcp_events_<family_slug>_journal_enabled`,
    `mcp_events_<family_slug>_subscribe_enabled` and
@@ -319,8 +331,9 @@ mistyped prefix on a later event must not move it into another family's gates.
 the same family (decision 1), on a family name outside the grammar or a slug
 shared by two families (decision 2), on a file `family` that differs from its
 entry, on any event whose name is not exactly `<family>.<changeByEvent[name]>`,
-on a name missing from `changeByEvent`, or on a `protocolVersion` other than the
-one this server speaks. Then:
+on a name missing from `changeByEvent`, on an effective input or payload schema
+that is not `type: object` with `additionalProperties: false` (decision 3), or
+on a `protocolVersion` other than the one this server speaks. Then:
 
 - `parseEventName` checks `REGISTRY.has(name)`.
 - `parseArguments(name, value)` validates against
@@ -399,13 +412,13 @@ modelled on `fetchMeeting` / `pickMeetingFields`:
 
 ### Step 7. Tests
 
-| File                        | Add                                                                                                                                                                                                                                                                                                               |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `protocol_test.ts`          | Registry builds, duplicate name throws, catalog lists the new descriptors with their own schemas, arguments validated per event, `validateEventPayload` for valid and invalid fixtures of each new event.                                                                                                         |
-| `adapter_wire_test.ts`      | `events/list` over HTTP returns the new names; `events/subscribe` with a new name reaches the store with `name` and `arguments` unchanged; unknown name still `-32011`.                                                                                                                                           |
-| `erp-store_test.ts`         | The new fetch: id mismatch, doctype mismatch for a multi-doctype family, extra keys dropped, every shape violation is `Events backend error`, 401 / 403 / 429 mapping.                                                                                                                                            |
-| `contract_test.ts`          | Covered by step 2.                                                                                                                                                                                                                                                                                                |
-| tool test (`src/tools/...`) | Happy path: the handler, called with a caller-scoped client, makes exactly one GET to the read-back method with the expected arguments and returns the picked result. Then unknown argument refused with the fixed message, shared client refused, input bounds, and no duplicate name in the combined tool list. |
+| File                        | Add                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `protocol_test.ts`          | Registry builds. One negative test per module-load rejection in step 1: duplicate name, duplicate family, family outside the grammar, shared slug, file `family` differing from its entry, event name not `<family>.<change>`, name missing from `changeByEvent`, open effective schema, wrong `protocolVersion`. Then catalog lists the new descriptors with their own schemas, arguments validated per event, `validateEventPayload` for valid and invalid fixtures of each new event, and an unknown-property fixture (argument and payload) for every event with an override. |
+| `adapter_wire_test.ts`      | `events/list` over HTTP returns the new names; `events/subscribe` with a new name reaches the store with `name` and `arguments` unchanged; unknown name still `-32011`.                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `erp-store_test.ts`         | The new fetch: id mismatch, doctype mismatch for a multi-doctype family, extra keys dropped, every shape violation is `Events backend error`, 401 / 403 / 429 mapping.                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `contract_test.ts`          | Covered by step 2.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| tool test (`src/tools/...`) | Happy path: the handler, called with a caller-scoped client, makes exactly one GET to the read-back method with the expected arguments and returns the picked result. Then unknown argument refused with the fixed message, shared client refused, input bounds, and no duplicate name in the combined tool list.                                                                                                                                                                                                                                                                 |
 
 Run `deno task pre-commit` and `deno task test`, then `deno task release:check`:
 a new family adds a contract import and a tool, which changes the published
@@ -433,8 +446,9 @@ Listed here so both sides agree on the order; the ERP team implements it.
 
 1. **Journal `family` and `source_doctype` columns** (decision 6), with
    migration, backfill, the new unique index in `install.ensure_indexes()`, the
-   new `source_change_id` and revision fence key (both including `family`), and
-   tests proving meeting rows, cursors and replays are unchanged.
+   new `source_change_id` and fence key (both including `family`), the
+   source-global revision counter, and tests proving meeting rows, cursors and
+   replays are unchanged.
 2. **Contract loading**: copy the new contract file verbatim next to
    `meeting-events.v1.json`, generalise `contract.py` to a registry with the
    same explicit family and name rules as `buildRegistry` here, and add a digest
@@ -503,11 +517,13 @@ Listed here so both sides agree on the order; the ERP team implements it.
       without identity there is no `capabilities.events`.
 - [ ] Subscribe with the allowed client succeeds; with any other client
       `-32012`; unknown name `-32011`; bad arguments `-32602`.
-- [ ] A real change produces exactly one journal row with a stable `eventId`.
-      Each subscriber receives it at least once; every repeat (a retry after a
-      timeout, a replay after re-subscribe) carries the same `eventId` and is
-      deduplicated by the client. The body validates with `validateEventPayload`
-      and the signature verifies.
+- [ ] A real change produces exactly one journal row per loaded family that
+      covers the record (two while `<family>` and `<family>.v2` run side by
+      side), all with the same revision and each with its own stable `eventId`.
+      Each subscriber receives its family's event at least once; every repeat (a
+      retry after a timeout, a replay after re-subscribe) carries the same
+      `eventId` and is deduplicated by the client. The body validates with
+      `validateEventPayload` and the signature verifies.
 - [ ] Two quick saves in one transaction produce one row; a rollback produces
       none.
 - [ ] Re-read returns current state for a reader, the not-available error for a
