@@ -541,9 +541,9 @@ ships as a minor release. Then each new family is steps 4 to 9.
 Replace the single import in `protocol.ts` with a registry. Sketch:
 
 ```ts
-import meetingContract from "./contract/meeting-events.v1.json" with {
-  type: "json",
-};
+// Every contract file, retired ones included, reaches the bundle through the
+// static archive of step 2, never through a filesystem read.
+import { CONTRACT_FILES } from "./contract/archive.ts";
 
 interface ContractFile {
   family?: string; // required in every new file; meeting-events.v1 predates it
@@ -574,9 +574,10 @@ export const CONTRACTS: readonly ContractEntry[] = [
   {
     family: "meeting",
     identityField: "event_id",
+    sourceDoctypes: ["Event"],
     readBackTool: "erpnext_meeting_get",
     readBackMethod: "meetingGet",
-    file: meetingContract,
+    file: CONTRACT_FILES["meeting-events.v1"],
   },
 ];
 
