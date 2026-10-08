@@ -14,6 +14,9 @@ A test (`src/events/contract_test.ts`) fails when this value and the file
 disagree, so the ERP side and this server can confirm they hold the same
 contract by comparing the hash.
 
+To add more event types (new families such as tasks or leave approvals), see
+[mcp-events-extending.md](mcp-events-extending.md).
+
 ## What this server does and does not do
 
 - It adds three JSON-RPC methods on the existing `POST /mcp` endpoint:
