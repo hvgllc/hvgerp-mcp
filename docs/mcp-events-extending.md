@@ -159,21 +159,24 @@ implementation detail.
 
 1. **One contract file per family, versioned on its own.** Add
    `src/events/contract/<family>-events.v1.json` (for example
-   `task-events.v1.json`). Never edit `meeting-events.v1.json` in place: its
-   hash is frozen in both repositories. The registry loads exactly one version
-   of each family's contract, and the two kinds of change ship differently:
-   - **Non-breaking** (an added optional payload field, a new event): release
-     `<family>-events.vN+1.json` with the same event names and a schema that is
-     a superset of vN, and remove vN from `CONTRACTS` in the same release. Order
-     matters: this repository ships vN+1 first, so its validator already accepts
-     the new field, and only then does ERP start emitting it.
-   - **Breaking** (a removed or renamed field, a changed meaning): new event
-     names `<family>.v2.<change>` in `<family>-events.v2.json`, loaded as a
-     separate family (`<family>.v2`) next to v1 until clients move. Version 1
-     names never carry a version segment.
+   `task-events.v1.json`). A released contract file is frozen: never edit it in
+   place, its hash is the agreement between the two repositories. Clients
+   validate payloads with `additionalProperties: false`, so any change to an
+   existing event's schema, even one added optional field, breaks a client that
+   still holds the old schema. Two kinds of release follow from that:
+   - **New events only.** `<family>-events.vN+1.json` keeps every existing event
+     with a byte-for-byte identical effective schema and adds new event names.
+     It replaces vN in `CONTRACTS`; the vN file stays in the repository (step 2
+     keeps testing it). Old clients see no difference for the events they
+     already use.
+   - **Any schema change to an existing event.** New event names
+     `<family>.vN.<change>` in `<family>-events.vN.json`, loaded as a separate
+     family (`<family>.vN`) next to the old one until clients move. ERP journals
+     each change once per loaded family (decision 6). Version 1 names never
+     carry a version segment.
 2. **Event names are `<family>.<change>` and globally unique** across all loaded
-   contracts. The registry must refuse to start if two contracts declare the
-   same name or the same family. Keep the `change` enum inside each family.
+   contracts. The registry must refuse to start if two loaded contracts declare
+   the same name or the same family. Keep the `change` enum inside each family.
 3. **Per-event schemas.** Each contract keeps a shared `inputSchema` and
    `payloadSchema` as the default, and an event entry may override either. The
    catalog descriptor exposes the effective schemas. `parseSubscribeParams`
@@ -198,19 +201,23 @@ implementation detail.
    columns: `family` (drives the event name and matching) and `source_doctype`
    (identifies the record; one family can span several doctypes, such as `Task`
    and `ToDo`). The canonical source identity is
-   `(source_doctype, source_name)`, so `source_change_id` hashes
-   `(site, source_doctype, source_name, revision)`, the unique index becomes
-   `(source_doctype, source_name, revision)` and the revision fence is keyed by
-   `(source_doctype, source_name)`. `_fan_out_matches` compares `family` as well
-   as change, and `envelope()` builds `name` from `family`. Existing rows are
-   backfilled as family `meeting`, doctype `Event`. This is the largest and
-   riskiest change of the whole extension and must ship, migrate and be verified
-   before any new family writes a row.
-7. **Each family gets its own ERP gates**, each also gated by the matching
+   `(source_doctype, source_name)`. One source change produces one row per
+   family that covers it (two while `<family>` and `<family>.v2` run side by
+   side), so the row identity includes the family: `source_change_id` hashes
+   `(site, family, source_doctype, source_name, revision)`, the unique index
+   becomes `(family, source_doctype, source_name, revision)` and the revision
+   fence is keyed by `(family, source_doctype, source_name)`. `_fan_out_matches`
+   compares `family` as well as change, and `envelope()` builds `name` from
+   `family`. Existing rows are backfilled as family `meeting`, doctype `Event`.
+   This is the largest and riskiest change of the whole extension and must ship,
+   migrate and be verified before any new family writes a row.
+7. **Each new family gets its own ERP gates**, each also gated by the matching
    global flag: `mcp_events_<family>_journal_enabled`,
    `mcp_events_<family>_subscribe_enabled` and
-   `mcp_events_<family>_dispatch_enabled`, all default off. They give the
-   rollout states without touching meetings:
+   `mcp_events_<family>_dispatch_enabled`, all default off (a missing key reads
+   as off). The meeting family has no per-family keys and keeps following the
+   global flags alone, so an upgrade that adds the gates cannot switch meetings
+   off on a site where they already run. The gates give the rollout states:
    - **shadow**: journal on, subscribe off. Rows are written and measured, but
      `events/subscribe` for the family answers `-32012`, so no subscription
      exists and nothing can be delivered.
@@ -223,12 +230,9 @@ implementation detail.
    the server. Ship a family in an MCP release only after ERP serves it in
    production, otherwise clients see events that always fail with `-32012`.
    `capabilities.events` stays `{}`.
-9. **Semver.** Adding a family or an event is a minor release. A non-breaking
-   contract version (decision 1) is also a minor release: the names do not
-   change and the new schema accepts every old payload. A breaking version is a
-   minor release when it only adds the `<family>.v2.*` names, and a major
-   release when it removes the v1 names. Removing any event or family is a major
-   release.
+9. **Semver.** Adding a family, adding events to a family (decision 1, first
+   case) or adding a `<family>.vN` family is a minor release. Removing any
+   event, family or `<family>.vN` family is a major release.
 
 ## 5. Recipe: this repository
 
@@ -286,11 +290,15 @@ the same family (decision 1), on a name missing from `changeByEvent`, or on a
 
 ### Step 2. Contract test per file (one time)
 
-Generalise `contract_test.ts`: for every entry of `CONTRACTS`, hash its file and
-compare with the line
-`SHA-256 of the contract file: \`<hex>\``in that
-family's doc (`docs/mcp-events-<family>.md`), assert the event list, and run`collectKeywords`
-over every schema, including per-event overrides.
+Generalise `contract_test.ts` to discover every `*.json` file in
+`src/events/contract/`, not just the entries of `CONTRACTS`: a retired version
+is still published and its hash is still an agreement, so an accidental edit to
+it must fail. For each file, hash it and compare with its own
+`SHA-256 of the contract file` line in that family's doc
+(`docs/mcp-events-<family>.md` keeps one line per version), assert the event
+list, and run `collectKeywords` over every schema, including per-event
+overrides. Also assert that every entry of `CONTRACTS` is one of the discovered
+files.
 
 ### Step 3. Schema keywords (only when needed)
 
@@ -365,8 +373,8 @@ Listed here so both sides agree on the order; the ERP team implements it.
 
 1. **Journal `family` and `source_doctype` columns** (decision 6), with
    migration, backfill, the new unique index in `install.ensure_indexes()`, the
-   new `source_change_id` and revision fence key, and tests proving meeting
-   rows, cursors and replays are unchanged.
+   new `source_change_id` and revision fence key (both including `family`), and
+   tests proving meeting rows, cursors and replays are unchanged.
 2. **Contract loading**: copy the new contract file verbatim next to
    `meeting-events.v1.json`, generalise `contract.py` to a registry, and add a
    digest test against the hash published in this repository.
@@ -386,9 +394,10 @@ Listed here so both sides agree on the order; the ERP team implements it.
    alike, and a tombstone only for a user the journal proves saw it.
 8. **Flags**: `mcp_events_<family>_journal_enabled`,
    `mcp_events_<family>_subscribe_enabled` and
-   `mcp_events_<family>_dispatch_enabled`, all default off, each also gated by
-   the global flag (decision 7). Subscribe off answers `-32012`; dispatch off
-   leaves deliveries pending, never dropped.
+   `mcp_events_<family>_dispatch_enabled` for each new family, all default off,
+   each also gated by the global flag (decision 7). Meetings keep the global
+   flags only. Subscribe off answers `-32012`; dispatch off leaves deliveries
+   pending, never dropped.
 9. **Rollout**: shadow mode (journal on, subscribe off) in production, measure
    row volume and hook latency, then subscribe on with dispatch off, check that
    deliveries queue as pending, then dispatch on.
@@ -408,12 +417,12 @@ Listed here so both sides agree on the order; the ERP team implements it.
 - Payloads are pointers. Content only comes from the re-read tool after a live
   permission check.
 - Delivery is at least once. The generic dedupe key is the envelope `eventId`,
-  unique per change across all families once `source_doctype` is part of
-  `source_change_id` (decision 6). Ordering is per record: compare `revision`
-  only between events of the same family and the same source id, and a lower
-  revision never overrides a higher one. Clients must tolerate replays and
-  out-of-order arrival. The meetings rule "dedupe on `(event_id, revision)`" is
-  that family's instance of this rule.
+  unique per journal row across all families once `family` and `source_doctype`
+  are part of `source_change_id` (decision 6). Ordering is per record: compare
+  `revision` only between events of the same family and the same source id, and
+  a lower revision never overrides a higher one. Clients must tolerate replays
+  and out-of-order arrival. The meetings rule "dedupe on `(event_id, revision)`"
+  is that family's instance of this rule.
 - A user who loses access stops receiving events and gets the same answer for
   "no permission" as for "does not exist".
 - A contract file never changes after release; its hash is the agreement between
@@ -429,8 +438,11 @@ Listed here so both sides agree on the order; the ERP team implements it.
       without identity there is no `capabilities.events`.
 - [ ] Subscribe with the allowed client succeeds; with any other client
       `-32012`; unknown name `-32011`; bad arguments `-32602`.
-- [ ] A real change produces exactly one webhook per subscriber, the body
-      validates with `validateEventPayload`, the signature verifies.
+- [ ] A real change produces exactly one journal row with a stable `eventId`.
+      Each subscriber receives it at least once; every repeat (a retry after a
+      timeout, a replay after re-subscribe) carries the same `eventId` and is
+      deduplicated by the client. The body validates with `validateEventPayload`
+      and the signature verifies.
 - [ ] Two quick saves in one transaction produce one row; a rollback produces
       none.
 - [ ] Re-read returns current state for a reader, the not-available error for a
