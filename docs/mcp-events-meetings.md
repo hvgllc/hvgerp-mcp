@@ -94,6 +94,13 @@ events carry only a pointer to be re-read with `erpnext_meeting_get`.
 `events/unsubscribe` takes `delivery.url`; `delivery.mode` may be omitted but,
 when present, must be `webhook`.
 
+Delivery is at least once. ERPNext sends each webhook straight to the client's
+callback (this server is not on that path), and a retry or a resubscribe can
+deliver an event that was already delivered. A client must treat
+`(event_id, revision)` as the identity of an event and ignore one it has already
+handled. Re-reading with `erpnext_meeting_get` is safe to repeat, so a duplicate
+only costs one extra read.
+
 The webhook signing secret is `whsec_` followed by base64 of 24 to 64 random
 bytes. It is validated and forwarded to ERPNext in the `subscribe` call; it is
 never stored, logged or echoed back.
