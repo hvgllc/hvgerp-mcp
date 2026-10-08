@@ -8,6 +8,28 @@ This package is a fork of
 deliberately still point at the upstream repository, where those commits, pull
 requests and tags actually live.
 
+## [3.7.0] - 2026-10-08
+
+### Added
+
+- `erpnext_meeting_get` returns the meeting's `title` and `meeting_url` when
+  ERPNext provides them, so a client can name the meeting and share its link
+  after a meeting event. Both keys are optional and backward compatible: an
+  ERPNext that predates them leaves them out, and either may be `null`. A
+  `title` needs at least one visible character and at most 500 code points; a
+  `meeting_url` must be an absolute `https` URL without credentials, hidden
+  characters or more than 2048 code points, and is returned in its canonical
+  serialized form (`null` when that form would exceed 2048 characters). Any
+  other shape is a backend error. Deleted meetings still return only `event_id`,
+  `revision` and `deleted`, and the webhook payload is unchanged.
+- `docs/mcp-events-meetings.md` states that webhook delivery is at least once,
+  so clients deduplicate by `(event_id, revision)`.
+
+### Changed
+
+- The `erpnext_meeting_get` description mentions the title and link and tells
+  the model to use them only when they are non-null, never inventing either.
+
 ## [3.6.0] - 2026-10-08
 
 ### Added
