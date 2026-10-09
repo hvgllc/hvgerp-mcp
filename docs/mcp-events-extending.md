@@ -1442,31 +1442,37 @@ so the hosted `release:check` step would otherwise fail on every run), since a
 skipped check would freeze nothing. `test.yml` is dispatched by hand, so it is
 not the gate: the same pull request adds a `preflight` job to
 `.github/workflows/publish.yml` (checkout with `fetch-depth: 0` and
-`fetch-tags: true`, `denoland/setup-deno@v2`, build the UI viewers,
-`deno task release:check`) and makes both `publish-jsr` and `publish-npm`
-declare `needs: preflight`. Comparing with the preceding tag leaves the tag
-being published unchecked, so `preflight` also checks it first: on a release
-event it requires the release's tag name (`GITHUB_REF_NAME`) to equal `v` plus
-the `deno.json` version, which `src/version.ts` must also equal, and on every
-other trigger (a manual dispatch, or a `workflow_call` from another workflow,
-which can run at any commit) it requires the same ERP pin read as a release, so
-`publish.yml` declares the ERP read-only token as a `required: true` entry under
-`on.workflow_call.secrets` (secrets are not passed to a reusable workflow
-automatically), every caller passes it explicitly, and `preflight` fails with a
-named error when it is empty instead of reaching the deployment lookup without
-credentials; it also requires the tag `v<deno.json version>` to exist and point
-at the checked commit; either way a mislabeled tag such as `v3.9.0` on a `3.8.0`
-manifest publishes nothing and never becomes a baseline. `publish-npm` treats
-npm's refusal to overwrite an existing version as success, so a rerun after a
-partial failure stays green; `preflight` therefore checks that case before
-either publish job runs: when `@hvgllc/hvgerp-mcp@<deno.json version>` already
-exists on npm, it verifies that version's provenance attestation exactly as the
-baseline selector does and fails unless its `gitCommit` is the checked commit,
-so a rerun of the same release still passes while a moved or recreated tag fails
-at once instead of reporting a publish that never happened. With that gate,
-publishing a GitHub release cannot reach npm or JSR with a ledger, contract or
-file list that fails the check. Give ERP the new contract hash so their verbatim
-copy can be checked against it.
+`fetch-tags: true`, `denoland/setup-deno@v2`, `actions/setup-node@v4` with Node
+22 followed by the same `npm install -g npm@latest` step `publish-npm` runs,
+because the provenance checks below call `npm audit signatures` and npm
+recommends the latest CLI for attestation verification while each job starts
+from the runner's bundled npm, build the UI viewers, `deno task release:check`)
+and makes both `publish-jsr` and `publish-npm` declare `needs: preflight`. The
+same pull request removes the `workflow_call` trigger from `publish.yml`: no
+workflow calls it, npm trusted publishing validates the calling workflow's name
+rather than the reusable one's, and a caller would also need its own
+`id-token: write` and the ERP token, so a caller could pass `preflight` and
+still fail at `npm publish`; `release:check` asserts that the `on` keys of
+`publish.yml` are exactly `release` and `workflow_dispatch`. Comparing with the
+preceding tag leaves the tag being published unchecked, so `preflight` also
+checks it first: on a release event it requires the release's tag name
+(`GITHUB_REF_NAME`) to equal `v` plus the `deno.json` version, which
+`src/version.ts` must also equal, and on a manual dispatch, which can run at any
+commit, it requires the same ERP pin read as a release (on either trigger
+`preflight` fails with a named error when the ERP token is empty instead of
+reaching the deployment lookup without credentials) and the tag
+`v<deno.json version>` to exist and point at the checked commit; either way a
+mislabeled tag such as `v3.9.0` on a `3.8.0` manifest publishes nothing and
+never becomes a baseline. `publish-npm` treats npm's refusal to overwrite an
+existing version as success, so a rerun after a partial failure stays green;
+`preflight` therefore checks that case before either publish job runs: when
+`@hvgllc/hvgerp-mcp@<deno.json version>` already exists on npm, it verifies that
+version's provenance attestation exactly as the baseline selector does and fails
+unless its `gitCommit` is the checked commit, so a rerun of the same release
+still passes while a moved or recreated tag fails at once instead of reporting a
+publish that never happened. With that gate, publishing a GitHub release cannot
+reach npm or JSR with a ledger, contract or file list that fails the check. Give
+ERP the new contract hash so their verbatim copy can be checked against it.
 
 ## 6. Recipe: ERPNext side (owned by the ERP repository)
 
