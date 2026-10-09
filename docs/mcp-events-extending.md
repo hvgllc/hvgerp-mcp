@@ -792,12 +792,26 @@ describes what `v3.7.0` already shipped, so its `release` must be exactly
 `3.7.0`, not the `deno.json` version, and the tagged-source verification below
 replaces the new-row check for it (the `deno.json` version must still be at
 least a minor bump over the newest tag, since the registry refactor is itself a
-feature). Any other row absent at that tag stays under the new-row check. A tag
-cannot be edited, so a released schema or binding cannot be blessed again by
-rewriting the ledger in the same commit. The one-time registry pull request
-creates the ledger with the `meeting-events.v1` row (release `3.7.0`, family
-`meeting`, doctypes `["Event"]`, tool `erpnext_meeting_get`, method
-`meetingGet`, path `hvg_workspace.mcp_events.api.meeting_get`, input
+feature). Any other row absent at that tag stays under the new-row check.
+Feature work never bumps the version (AGENTS.md: a bump needs explicit approval
+and lands in the release pull request), so the version checks run in two modes,
+chosen by comparing `deno.json` with the newest tag. While the two are equal (a
+feature pull request), every record absent at the tag (a row, a retirement
+record or an end record) must carry `"release": "unreleased"`, and only the
+checks that do not depend on the version run on it: digests, discovery,
+bindings, `RETIRED_EVENTS` membership and the cross-version comparison, which
+accepts a missing name with an `unreleased` retirement record. Once `deno.json`
+is above the tag (the approved release pull request), no record may still say
+`unreleased`: the release pull request replaces each with the `deno.json`
+version, and every version rule above and in decision 9 then applies to it as
+written, so a retirement or a new binding still ships only in an `X.0.0`
+release. The tag workflow runs the same check and refuses to tag while any
+record says `unreleased`, so the sentinel never reaches a tag. A tag cannot be
+edited, so a released schema or binding cannot be blessed again by rewriting the
+ledger in the same commit. The one-time registry pull request creates the ledger
+with the `meeting-events.v1` row (release `3.7.0`, family `meeting`, doctypes
+`["Event"]`, tool `erpnext_meeting_get`, method `meetingGet`, path
+`hvg_workspace.mcp_events.api.meeting_get`, input
 `erpnext_meeting_get.input.v1`, result `erpnext_meeting_get.result.v1`, checks
 `erpnext_meeting_get.checks.ts`). That row and its files describe what `v3.7.0`
 already shipped, so they are verified against `v3.7.0`, not trusted as written:
@@ -878,19 +892,29 @@ the bound rule only, above) with one addition, because a returned field may be
 null where a contract field never is (`title`, `meeting_url`, `recurrence` and
 the schedule fields of the meeting result): a nullable field is written exactly
 as `{ "anyOf": [{ "type": "null" }, <schema>] }`, with no other keyword beside
-`anyOf` and `<schema>` itself following the single-type rule. These two `anyOf`
-forms are the only ones a result schema may use; `checkSchemaShape` enforces
-that, and fixtures cover the nullable form (null accepted, a bounded value
-accepted, an over-long value and another type refused). Cross-field rules the
-picker enforces (for meetings, which schedule fields `all_day` requires or
-forbids) are written with `if`/`then`, so the samples below are checked against
-them. The tool test validates every happy-path and tombstone output against the
-live result schema, and asserts that the pick function cannot emit a key outside
-it. Clients can only rely on the schema if they can discover it, and today
-`ErpNextTool`, `MCPToolWireFormat` and `toMCPFormat()` carry only `inputSchema`.
-So the registry pull request adds an optional `outputSchema` to all three, sets
-it on each read-back tool to its live result file, and wraps the result only for
-MCP transport: the handler and `ErpNextToolsClient.execute()` keep returning the
+`anyOf` and `<schema>` itself following the single-type rule. The pointer fields
+a result carries are bound to the contract, not authored: in both the record and
+the tombstone branch the identity field (and `source_doctype` for a
+multi-doctype family) is required and deeply equal to the family's canonical
+identity schema (decision 3), `revision` where present is deeply equal to the
+canonical revision schema (`integer`, `minimum: 1`, `maximum: 9007199254740991`,
+exactly what the `v3.7.0` meeting picker accepts), and no conditional subschema
+of a result schema may name any of them, so a result schema cannot turn a record
+whose pointer a webhook legitimately carries into `Events backend error`;
+fixtures cover a narrowed identity, a `not`/`const` clause on it and a
+`revision` with a smaller `maximum`, each refused. These two `anyOf` forms are
+the only ones a result schema may use; `checkSchemaShape` enforces that, and
+fixtures cover the nullable form (null accepted, a bounded value accepted, an
+over-long value and another type refused). Cross-field rules the picker enforces
+(for meetings, which schedule fields `all_day` requires or forbids) are written
+with `if`/`then`, so the samples below are checked against them. The tool test
+validates every happy-path and tombstone output against the live result schema,
+and asserts that the pick function cannot emit a key outside it. Clients can
+only rely on the schema if they can discover it, and today `ErpNextTool`,
+`MCPToolWireFormat` and `toMCPFormat()` carry only `inputSchema`. So the
+registry pull request adds an optional `outputSchema` to all three, sets it on
+each read-back tool to its live result file, and wraps the result only for MCP
+transport: the handler and `ErpNextToolsClient.execute()` keep returning the
 picked object exactly as `v3.7.0` did, and `buildHandlersMap()` turns it into
 `{ content, structuredContent }` for any tool that declares `outputSchema`, as
 the MCP specification requires of such a tool (the way it already does for
