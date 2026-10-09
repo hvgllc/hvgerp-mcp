@@ -1712,6 +1712,20 @@ every subscription whatever the gates say, failing too when the call fails or
 omits a family. A family whose every event this release retires has no live
 entry and is not checked for readiness (its subscribe gate is meant to be off,
 decision 9); its names are checked by the retirement rule that follows instead.
+Gates on are not enough either: ERP can run the release's pin and still select
+the preceding contract of a family as active, so a successor that adds an event
+would be advertised while ERP refuses it. So in release mode `preflight` also
+calls ERP's read-only `events_registry` method (section 6, item 2) with the same
+key, which returns exactly the three lists the deployment check's bench command
+prints, and applies to the release's own registry the rules of that check that
+concern ERP's lists (section 6, item 3), without the
+newest-successful-deployment exception: every name the release serves live is in
+ERP's active list, every name in its `RETIRED_EVENTS` is in ERP's retired list
+with an equal schema, a name in ERP's retired list that the release neither
+serves nor retires has an end record in its ledger, and no name with an
+activated acknowledgement is served or retired by it, failing too when the call
+fails. So the package is never published with a catalog ERP does not serve; the
+deployment check repeats the comparison against the state at deployment time.
 The pin proves only that the retirement code is deployed, not that ERP has
 finished cutting the names off, so for every retirement record this release
 stamps `preflight` also calls ERP's read-only `retirement_cutoff_status` method
@@ -1958,90 +1972,94 @@ Listed here so both sides agree on the order; the ERP team implements it.
    dispatcher's name-level send refusal is active and how many of its deliveries
    are nonterminal (decision 9), which `preflight` requires to be refused,
    active, active and 0 for every retirement record and every end record the
-   release stamps, and a third one, `event_family_readiness`, returning, for a
-   requested OAuth client id, whether that client is in
-   `mcp_events_allowed_clients`, and for each requested family whether its
-   effective journal, subscribe and dispatch gates are on (the per-family keys
-   of decision 7 together with the global flags; for the meeting family, which
-   has no per-family keys, the global flags alone), which `preflight` requires
-   to be on for every family whose row the release stamps and that keeps a live
-   entry, with `hvgerp-mcp` allowed; all three are callable only by a dedicated
-   read-only API user, report nothing about any user's data beyond these counts
-   and flags, and an unknown family or event name is refused rather than
-   reported off. A name with an activated acknowledgement is not unknown: both
-   `retired_subscription_counts` and `retirement_cutoff_status` answer
-   `acknowledged` for it, and `preflight` accepts that answer for an end record
-   (never for a retirement record), because ERP lets an acknowledgement in only
-   after a successful MCP production deployment of that end, so rerunning the
-   workflow for a release whose end ERP has since acknowledged, or a recovery
-   publish of it, still passes. Every answer is computed live at the call, from
-   the current settings, refusals and delivery rows, never read from an earlier
-   record of the cleanup, so a check made for an end record cannot be satisfied
-   by a state that has since changed. Before every MCP production deployment,
-   rollbacks and redeploys included and whether or not the release changes
-   `RETIRED_EVENTS` (after an end is acknowledged, a rollback target from before
-   the retirement can carry an empty retired map yet serve the name live), a
-   deployment check compares the canonical JSON that `--print-events-registry`
-   prints with the same canonical JSON from an ERP bench command, comparing
-   active and retired names as separate sets, never as one coverage set. A
-   target that predates the diagnostic (no `src/events/contract-ledger.json` at
-   its commit, read with `git show`) is never started, since its `server.ts`
-   ignores the flag and would start the server: the check takes its registry
-   from `src/events/legacy-registries.json` in the deploying tree, keyed by
-   version, each entry with the live names, their schemas and an empty retired
-   map (every version before `3.6.0` serves none; `3.6.0`, which added the
-   meeting events behind `MCP_EVENTS_ENABLED`, and `3.7.0` each serve the three
-   meeting names with the schema their own source declares, counted as live
-   whatever the flag, since a rollback may run with it on). A target whose
-   `deno.json` version has no entry stops the deployment, and so does one that
-   is not the exact commit the `v<X>` tag of that version points at (for a
-   version npm lists, also the commit its provenance names): a pre-ledger
-   feature commit keeps the previous release's version but may serve a different
-   registry, so the entry describes only the tagged commit, and a test asserts
-   the table lists every npm-published version below the first release with a
-   ledger and that the entry of every version whose tagged source has an
-   `events/list` handler (`v3.6.0` and `v3.7.0`) equals what that handler
-   returns from the tagged source, so no pre-ledger release that serves events
-   is recorded as serving none. The bench command prints three lists: the event
-   names ERP serves as active (from its active contracts), its retired list with
-   each name's argument schema, and the names whose acknowledgement is
-   activated, and beside them the readiness `event_family_readiness` reports:
-   for each family in its active list whether its effective journal, subscribe
-   and dispatch gates are on, and whether `hvgerp-mcp` is in
-   `mcp_events_allowed_clients`. The deployment stops if any of these fails:
-   every name the target release serves live is in ERP's active list, or, only
-   when the target is the exact commit of the newest successful MCP `production`
-   deployment (a redeploy during the interval in which ERP has already retired a
-   name the running release still serves, decision 9), in ERP's retired list;
-   every name in the target's `RETIRED_EVENTS` is in ERP's retired list with an
-   equal schema; a name in ERP's retired list that the target neither serves
-   live nor lists in `RETIRED_EVENTS` has an end record in the target's ledger
-   whose `release` is a version no greater than the target's `deno.json`
-   version, never `unreleased`; no record in the target's ledger (a row, a
-   retirement record or an end record) still says `unreleased`, because such a
-   commit is a merged feature commit before its release is stamped: an
-   `unreleased` row advertises a new family or version under the earlier
-   release's version, without the release-mode checks and the minor release it
-   needs, an `unreleased` retirement record already removes the event from
-   `CONTRACTS`, a breaking removal shipped under that version, and an
-   `unreleased` end record already omits the name from `RETIRED_EVENTS` and
-   would answer `-32011` to an unsubscribe that the deployed release accepts, so
-   only a stamped release commit runs in production; and the target is the exact
-   commit the `v<X>` tag of its `deno.json` version points at and that version's
-   npm provenance names, the same binding as for a legacy target, because an
-   untagged commit after a release can keep its manifest and stamped ledger yet
-   change `runReadBack`, a checks module or the handler wiring, none of which
-   the registry comparison sees; no name with an activated acknowledgement is
-   one the target serves live or lists in `RETIRED_EVENTS`; and `hvgerp-mcp` is
-   allowed and every family with a name the target serves live that is in ERP's
-   active list has all three effective gates on (a name admitted through ERP's
-   retired list by the newest-successful-deployment exception above is exempt,
-   since decision 9 turns its family's gates off for the retirement, and
-   checking it would block the very redeploy that exception allows), the same
-   readiness `preflight` requires of the families a release stamps (step 9), but
-   taken at every deployment, a redeploy or rollback included, because ERP can
-   roll an already-shipped family back to the shadow state (decision 7) after
-   its release, and a target that lists it would then advertise events whose
+   release stamps, a third one, `events_registry`, returning the same three
+   lists as the deployment check's bench command (its active names, its retired
+   list with each name's argument schema, and the names whose acknowledgement is
+   activated), read from the same tables, and a fourth one,
+   `event_family_readiness`, returning, for a requested OAuth client id, whether
+   that client is in `mcp_events_allowed_clients`, and for each requested family
+   whether its effective journal, subscribe and dispatch gates are on (the
+   per-family keys of decision 7 together with the global flags; for the meeting
+   family, which has no per-family keys, the global flags alone), which
+   `preflight` requires to be on for every family whose row the release stamps
+   and that keeps a live entry, with `hvgerp-mcp` allowed; all four are callable
+   only by a dedicated read-only API user, report nothing about any user's data
+   beyond these counts, flags and lists, and an unknown family or event name is
+   refused rather than reported off. A name with an activated acknowledgement is
+   not unknown: both `retired_subscription_counts` and
+   `retirement_cutoff_status` answer `acknowledged` for it, and `preflight`
+   accepts that answer for an end record (never for a retirement record),
+   because ERP lets an acknowledgement in only after a successful MCP production
+   deployment of that end, so rerunning the workflow for a release whose end ERP
+   has since acknowledged, or a recovery publish of it, still passes. Every
+   answer is computed live at the call, from the current settings, refusals and
+   delivery rows, never read from an earlier record of the cleanup, so a check
+   made for an end record cannot be satisfied by a state that has since changed.
+   Before every MCP production deployment, rollbacks and redeploys included and
+   whether or not the release changes `RETIRED_EVENTS` (after an end is
+   acknowledged, a rollback target from before the retirement can carry an empty
+   retired map yet serve the name live), a deployment check compares the
+   canonical JSON that `--print-events-registry` prints with the same canonical
+   JSON from an ERP bench command, comparing active and retired names as
+   separate sets, never as one coverage set. A target that predates the
+   diagnostic (no `src/events/contract-ledger.json` at its commit, read with
+   `git show`) is never started, since its `server.ts` ignores the flag and
+   would start the server: the check takes its registry from
+   `src/events/legacy-registries.json` in the deploying tree, keyed by version,
+   each entry with the live names, their schemas and an empty retired map (every
+   version before `3.6.0` serves none; `3.6.0`, which added the meeting events
+   behind `MCP_EVENTS_ENABLED`, and `3.7.0` each serve the three meeting names
+   with the schema their own source declares, counted as live whatever the flag,
+   since a rollback may run with it on). A target whose `deno.json` version has
+   no entry stops the deployment, and so does one that is not the exact commit
+   the `v<X>` tag of that version points at (for a version npm lists, also the
+   commit its provenance names): a pre-ledger feature commit keeps the previous
+   release's version but may serve a different registry, so the entry describes
+   only the tagged commit, and a test asserts the table lists every
+   npm-published version below the first release with a ledger and that the
+   entry of every version whose tagged source has an `events/list` handler
+   (`v3.6.0` and `v3.7.0`) equals what that handler returns from the tagged
+   source, so no pre-ledger release that serves events is recorded as serving
+   none. The bench command prints three lists: the event names ERP serves as
+   active (from its active contracts), its retired list with each name's
+   argument schema, and the names whose acknowledgement is activated, and beside
+   them the readiness `event_family_readiness` reports: for each family in its
+   active list whether its effective journal, subscribe and dispatch gates are
+   on, and whether `hvgerp-mcp` is in `mcp_events_allowed_clients`. The
+   deployment stops if any of these fails: every name the target release serves
+   live is in ERP's active list, or, only when the target is the exact commit of
+   the newest successful MCP `production` deployment (a redeploy during the
+   interval in which ERP has already retired a name the running release still
+   serves, decision 9), in ERP's retired list; every name in the target's
+   `RETIRED_EVENTS` is in ERP's retired list with an equal schema; a name in
+   ERP's retired list that the target neither serves live nor lists in
+   `RETIRED_EVENTS` has an end record in the target's ledger whose `release` is
+   a version no greater than the target's `deno.json` version, never
+   `unreleased`; no record in the target's ledger (a row, a retirement record or
+   an end record) still says `unreleased`, because such a commit is a merged
+   feature commit before its release is stamped: an `unreleased` row advertises
+   a new family or version under the earlier release's version, without the
+   release-mode checks and the minor release it needs, an `unreleased`
+   retirement record already removes the event from `CONTRACTS`, a breaking
+   removal shipped under that version, and an `unreleased` end record already
+   omits the name from `RETIRED_EVENTS` and would answer `-32011` to an
+   unsubscribe that the deployed release accepts, so only a stamped release
+   commit runs in production; and the target is the exact commit the `v<X>` tag
+   of its `deno.json` version points at and that version's npm provenance names,
+   the same binding as for a legacy target, because an untagged commit after a
+   release can keep its manifest and stamped ledger yet change `runReadBack`, a
+   checks module or the handler wiring, none of which the registry comparison
+   sees; no name with an activated acknowledgement is one the target serves live
+   or lists in `RETIRED_EVENTS`; and `hvgerp-mcp` is allowed and every family
+   with a name the target serves live that is in ERP's active list has all three
+   effective gates on (a name admitted through ERP's retired list by the
+   newest-successful-deployment exception above is exempt, since decision 9
+   turns its family's gates off for the retirement, and checking it would block
+   the very redeploy that exception allows), the same readiness `preflight`
+   requires of the families a release stamps (step 9), but taken at every
+   deployment, a redeploy or rollback included, because ERP can roll an
+   already-shipped family back to the shadow state (decision 7) after its
+   release, and a target that lists it would then advertise events whose
    subscriptions answer `-32012` or whose deliveries stay paused (decision 8).
    While ERP keeps such a family gated off no MCP release that serves it
    deploys: ERP turns its gates back on, or MCP ships the release that retires
