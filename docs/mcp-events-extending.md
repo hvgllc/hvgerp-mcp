@@ -1654,15 +1654,26 @@ sha of the newest successful `production` deployment and reads the pin file at
 that commit with a read-only token (a repository secret scoped to that one
 repository), failing when there is none. In release mode the pinned sha must be
 an ancestor of the checked commit, with one exception: for a rerun or recovery
-publish of a version npm already holds with provenance naming the checked commit
-(the case step 9's `publish-npm` treats as already published), ERP may since
-have re-pinned to a later MCP commit, so the pin may instead be a descendant of
-the checked commit; ERP's re-pin subset test already guarantees that every
-artifact present at the checked commit is still present unchanged at such a pin,
-and the presence and identity checks that follow apply either way, and every row
-and every retirement record this release stamps must be present at that sha,
-with the record and every contract, result schema, case set and checks module it
-names identical there and at the checked commit apart from the `release` stamp;
+publish of a version whose earlier run may have passed `preflight` before ERP
+re-pinned to a later MCP commit, the pin may instead be a descendant of the
+checked commit. That covers a version npm already holds with provenance naming
+the checked commit (the case step 9's `publish-npm` treats as already
+published), and equally a version npm does not hold at all, because `preflight`
+passed and `npm publish` then failed: there is no provenance to name, so that
+case requires instead that the checked commit is the exact commit the `v<X>` tag
+of its `deno.json` version points at, that the version is absent from npm (not
+withdrawn, `src/events/withdrawn-releases.json`) and greater than every version
+npm holds, and that a `preflight` job of an earlier run of the publish workflow
+for that same tag succeeded, so a never-attempted release still needs an
+ancestor pin (a `preflight` test accepts a descendant pin for such a tagged,
+absent version after a failed publish, and refuses it without the earlier
+successful `preflight`, for an untagged commit and for a version below one npm
+holds); ERP's re-pin subset test already guarantees that every artifact present
+at the checked commit is still present unchanged at such a pin, and the presence
+and identity checks that follow apply either way, and every row and every
+retirement record this release stamps must be present at that sha, with the
+record and every contract, result schema, case set and checks module it names
+identical there and at the checked commit apart from the `release` stamp;
 nothing in this repository can move the anchor, so a multi-commit release pull
 request that edits an artifact, in whatever order it bumps the version, is still
 compared with what ERP runs. An end record need not be present at the pin: it
@@ -1952,51 +1963,65 @@ Listed here so both sides agree on the order; the ERP team implements it.
    is recorded as serving none. The bench command prints three lists: the event
    names ERP serves as active (from its active contracts), its retired list with
    each name's argument schema, and the names whose acknowledgement is
-   activated. The deployment stops if any of these fails: every name the target
-   release serves live is in ERP's active list, or, only when the target is the
-   exact commit of the newest successful MCP `production` deployment (a redeploy
-   during the interval in which ERP has already retired a name the running
-   release still serves, decision 9), in ERP's retired list; every name in the
-   target's `RETIRED_EVENTS` is in ERP's retired list with an equal schema; a
-   name in ERP's retired list that the target neither serves live nor lists in
-   `RETIRED_EVENTS` has an end record in the target's ledger whose `release` is
-   a version no greater than the target's `deno.json` version, never
-   `unreleased`; no record in the target's ledger (a row, a retirement record or
-   an end record) still says `unreleased`, because such a commit is a merged
-   feature commit before its release is stamped: an `unreleased` row advertises
-   a new family or version under the earlier release's version, without the
-   release-mode checks and the minor release it needs, an `unreleased`
-   retirement record already removes the event from `CONTRACTS`, a breaking
-   removal shipped under that version, and an `unreleased` end record already
-   omits the name from `RETIRED_EVENTS` and would answer `-32011` to an
-   unsubscribe that the deployed release accepts, so only a stamped release
-   commit runs in production; and the target is the exact commit the `v<X>` tag
-   of its `deno.json` version points at and that version's npm provenance names,
-   the same binding as for a legacy target, because an untagged commit after a
-   release can keep its manifest and stamped ledger yet change `runReadBack`, a
-   checks module or the handler wiring, none of which the registry comparison
-   sees; and no name with an activated acknowledgement is one the target serves
-   live or lists in `RETIRED_EVENTS`. An extra name in ERP's active list that
-   the target does not serve passes: ERP serves a new family before the MCP
-   release that ships it (decision 8), and redeploying the current release
-   during that staging interval must not stop. So a rollback to a release that
-   serves a name ERP has since retired stops, whether or not the end is
-   acknowledged yet, because the target would advertise an event whose every
-   subscribe and refresh ERP refuses, and a rollback to a release older than an
-   acknowledged end stops because it would advertise and forward an event ERP no
-   longer serves or accepts unsubscribe for. The extra names are what make an
-   end record safe to roll out: while old MCP instances still accept unsubscribe
-   for an ended name and forward it, ERP keeps accepting it, because ERP drops
-   the name only through the acknowledgement above, accepted only once a
-   successful MCP production deployment attests that the release is fully
-   deployed and the old instances are drained, whatever pin it has moved to in
-   between. So MCP never forwards an unsubscribe ERP would refuse, whichever
-   side moves first. An end-to-end test retires a fixture name, advances the
-   active contract to a successor without it, and asserts that unsubscribe for a
-   stored subscription returns `{}` and deletes it, a second unsubscribe also
-   returns `{}`, subscribe with the name is refused, and a delivery for it
-   queued or retrying before the cutoff is marked `retired` and never sent, even
-   with dispatch on.
+   activated, and beside them the readiness `event_family_readiness` reports:
+   for each family in its active list whether its effective journal, subscribe
+   and dispatch gates are on, and whether `hvgerp-mcp` is in
+   `mcp_events_allowed_clients`. The deployment stops if any of these fails:
+   every name the target release serves live is in ERP's active list, or, only
+   when the target is the exact commit of the newest successful MCP `production`
+   deployment (a redeploy during the interval in which ERP has already retired a
+   name the running release still serves, decision 9), in ERP's retired list;
+   every name in the target's `RETIRED_EVENTS` is in ERP's retired list with an
+   equal schema; a name in ERP's retired list that the target neither serves
+   live nor lists in `RETIRED_EVENTS` has an end record in the target's ledger
+   whose `release` is a version no greater than the target's `deno.json`
+   version, never `unreleased`; no record in the target's ledger (a row, a
+   retirement record or an end record) still says `unreleased`, because such a
+   commit is a merged feature commit before its release is stamped: an
+   `unreleased` row advertises a new family or version under the earlier
+   release's version, without the release-mode checks and the minor release it
+   needs, an `unreleased` retirement record already removes the event from
+   `CONTRACTS`, a breaking removal shipped under that version, and an
+   `unreleased` end record already omits the name from `RETIRED_EVENTS` and
+   would answer `-32011` to an unsubscribe that the deployed release accepts, so
+   only a stamped release commit runs in production; and the target is the exact
+   commit the `v<X>` tag of its `deno.json` version points at and that version's
+   npm provenance names, the same binding as for a legacy target, because an
+   untagged commit after a release can keep its manifest and stamped ledger yet
+   change `runReadBack`, a checks module or the handler wiring, none of which
+   the registry comparison sees; no name with an activated acknowledgement is
+   one the target serves live or lists in `RETIRED_EVENTS`; and `hvgerp-mcp` is
+   allowed and every family with a name the target serves live has all three
+   effective gates on, the same readiness `preflight` requires of the families a
+   release stamps (step 9), but taken at every deployment, a redeploy or
+   rollback included, because ERP can roll an already-shipped family back to the
+   shadow state (decision 7) after its release, and a target that lists it would
+   then advertise events whose subscriptions answer `-32012` or whose deliveries
+   stay paused (decision 8). While ERP keeps such a family gated off no MCP
+   release that serves it deploys: ERP turns its gates back on, or MCP ships the
+   release that retires it. A deployment-check test feeds a bench result where a
+   served family has its subscribe gate off, one where its journal gate is off
+   and one without `hvgerp-mcp`, and asserts each stops a redeploy of the newest
+   successful commit. An extra name in ERP's active list that the target does
+   not serve passes: ERP serves a new family before the MCP release that ships
+   it (decision 8), and redeploying the current release during that staging
+   interval must not stop. So a rollback to a release that serves a name ERP has
+   since retired stops, whether or not the end is acknowledged yet, because the
+   target would advertise an event whose every subscribe and refresh ERP
+   refuses, and a rollback to a release older than an acknowledged end stops
+   because it would advertise and forward an event ERP no longer serves or
+   accepts unsubscribe for. The extra names are what make an end record safe to
+   roll out: while old MCP instances still accept unsubscribe for an ended name
+   and forward it, ERP keeps accepting it, because ERP drops the name only
+   through the acknowledgement above, accepted only once a successful MCP
+   production deployment attests that the release is fully deployed and the old
+   instances are drained, whatever pin it has moved to in between. So MCP never
+   forwards an unsubscribe ERP would refuse, whichever side moves first. An
+   end-to-end test retires a fixture name, advances the active contract to a
+   successor without it, and asserts that unsubscribe for a stored subscription
+   returns `{}` and deletes it, a second unsubscribe also returns `{}`,
+   subscribe with the name is refused, and a delivery for it queued or retrying
+   before the cutoff is marked `retired` and never sent, even with dispatch on.
 3. **Capture**: `doc_events` hooks for the new doctype in `hooks.py`, the same
    snapshot then `flush()` pattern as `events.py` (one net row per transaction,
    nothing on rollback, transient DB errors re-raised, other errors logged
