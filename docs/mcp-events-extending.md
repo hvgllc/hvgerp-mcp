@@ -791,50 +791,55 @@ warning, every candidate `v<X>` that was not a successful release: its own
 `@hvgllc/hvgerp-mcp@X` must exist on the public npm registry, which only a run
 that passed `preflight` can publish and which never lets a version be
 republished. Version existence alone does not bind a tag to the commit that
-published it, so `v*` tags are immutable: a repository ruleset targeting
-`refs/tags/v*` blocks update and deletion with an empty bypass list, and the
-selector lists the repository's tag rulesets through the API and fails, rather
-than warns, unless an active one covering `refs/tags/v*` carries both rules, so
-a published `vX` can never be moved or recreated onto a commit with a rewritten
+published it, so the selector also checks the npm provenance, which depends on
+no hidden repository setting: trusted publishing attaches a signed SLSA
+provenance attestation to every version (`v3.7.0` carries one naming
+`refs/tags/v3.7.0` and its commit), and the selector installs
+`@hvgllc/hvgerp-mcp@X` into a temporary directory, runs `npm audit signatures`
+there so the attestation's signature is verified, then reads the attestation
+from the registry and requires its source repository to be `hvgllc/hvgerp-mcp`
+and its `gitCommit` to equal the commit `v<X>` points to. A published version
+whose attestation is missing or names another commit fails the check rather than
+being skipped, because it means the tag was moved or recreated after the
+release, so a published `vX` can never be repointed at a commit with a rewritten
 ledger. A tag left behind by a refused publish, mislabeled or with a matching
 name but a rewritten contract, therefore never becomes a baseline even after
-later commits make it an ancestor; it stays (the ruleset forbids deleting it),
-and the next attempt uses a new version number, because publishing on any
-trigger needs the version's tag at the checked commit; a fixture checks out a
-tagged commit and asserts the selected baseline is the previous tag and fails if
-any row present there changed (other than gaining `retired` in a major release)
-or disappeared, or if any contract file present there is not byte-identical now.
-A row absent at the tag is new in this release: in release mode (defined below)
-its `release` must equal the version in `deno.json`, and that version must be at
-least a minor bump over the newest tag (a higher major, or the same major and a
-higher minor), because a new contract version adds an event, a tool or both,
-which is a feature and never a patch. The one exception is the
-`meeting-events.v1` bootstrap row while the newest tag carries no ledger: it
-describes what `v3.7.0` already shipped, so its `release` must be exactly
-`3.7.0`, not the `deno.json` version, and the tagged-source verification below
-replaces the new-row check for it (it keeps `3.7.0` in both modes, and in
-release mode the `deno.json` version must still be at least a minor bump over
-the newest tag, since the registry refactor is itself a feature). Any other row
-absent at that tag stays under the new-row check. Feature work never bumps the
-version (AGENTS.md: a bump needs explicit approval and lands in the release pull
-request), so the version checks run in two modes, chosen by comparing
-`deno.json` with the newest tag. While the two are equal (a feature pull
-request), every record absent at the tag (a row, a retirement record or an end
-record) other than that bootstrap row must carry `"release": "unreleased"`, and
-only the checks that do not depend on the version run on it: digests, discovery,
-bindings, `RETIRED_EVENTS` membership and the cross-version comparison, which
-accepts a missing name with an `unreleased` retirement record. Once `deno.json`
-is above the tag (the approved release pull request), no record may still say
-`unreleased`: the release pull request replaces each with the `deno.json`
-version, and every version rule above and in decision 9 then applies to it as
-written, so a retirement or a new binding still ships only in an `X.0.0`
-release. The publish workflow runs the same check from the release tag before
-either registry publication (step 9), so a release tag left with an `unreleased`
-record publishes nothing. A tag cannot be edited, so a released schema or
-binding cannot be blessed again by rewriting the ledger in the same commit. The
-one-time registry pull request creates the ledger with the `meeting-events.v1`
-row (release `3.7.0`, family `meeting`, doctypes `["Event"]`, tool
-`erpnext_meeting_get`, method `meetingGet`, path
+later commits make it an ancestor (the release runbook deletes it, and the next
+attempt may reuse the version only through a new tag at the corrected commit); a
+fixture checks out a tagged commit and asserts the selected baseline is the
+previous tag and fails if any row present there changed (other than gaining
+`retired` in a major release) or disappeared, or if any contract file present
+there is not byte-identical now. A row absent at the tag is new in this release:
+in release mode (defined below) its `release` must equal the version in
+`deno.json`, and that version must be at least a minor bump over the newest tag
+(a higher major, or the same major and a higher minor), because a new contract
+version adds an event, a tool or both, which is a feature and never a patch. The
+one exception is the `meeting-events.v1` bootstrap row while the newest tag
+carries no ledger: it describes what `v3.7.0` already shipped, so its `release`
+must be exactly `3.7.0`, not the `deno.json` version, and the tagged-source
+verification below replaces the new-row check for it (it keeps `3.7.0` in both
+modes, and in release mode the `deno.json` version must still be at least a
+minor bump over the newest tag, since the registry refactor is itself a
+feature). Any other row absent at that tag stays under the new-row check.
+Feature work never bumps the version (AGENTS.md: a bump needs explicit approval
+and lands in the release pull request), so the version checks run in two modes,
+chosen by comparing `deno.json` with the newest tag. While the two are equal (a
+feature pull request), every record absent at the tag (a row, a retirement
+record or an end record) other than that bootstrap row must carry
+`"release": "unreleased"`, and only the checks that do not depend on the version
+run on it: digests, discovery, bindings, `RETIRED_EVENTS` membership and the
+cross-version comparison, which accepts a missing name with an `unreleased`
+retirement record. Once `deno.json` is above the tag (the approved release pull
+request), no record may still say `unreleased`: the release pull request
+replaces each with the `deno.json` version, and every version rule above and in
+decision 9 then applies to it as written, so a retirement or a new binding still
+ships only in an `X.0.0` release. The publish workflow runs the same check from
+the release tag before either registry publication (step 9), so a release tag
+left with an `unreleased` record publishes nothing. A tag cannot be edited, so a
+released schema or binding cannot be blessed again by rewriting the ledger in
+the same commit. The one-time registry pull request creates the ledger with the
+`meeting-events.v1` row (release `3.7.0`, family `meeting`, doctypes
+`["Event"]`, tool `erpnext_meeting_get`, method `meetingGet`, path
 `hvg_workspace.mcp_events.api.meeting_get`, input
 `erpnext_meeting_get.input.v1`, result `erpnext_meeting_get.result.v1`, checks
 `erpnext_meeting_get.checks.ts`). That row and its files describe what `v3.7.0`
@@ -896,13 +901,21 @@ new predicate was written (a check that rejects one particular `window_start`
 year or one schema-valid title would pass it), so the meeting checks module is
 not rewritten at all: the refactor moves the tagged functions that make these
 decisions (`pickMeetingFields`, the guards in `fetchMeeting`, the argument and
-window checks of the `v3.7.0` handler, and every helper they call) into it
-verbatim, and a test extracts each moved function from `git show v3.7.0:<path>`
-with the TypeScript compiler API and asserts the module's copy is
-token-identical apart from an added `export` and its import specifiers. The only
-other code in the module is the glue the registry needs (`meetingPrecheck`, the
-`readBack` wrapper and the `MEETING_READ_BACK` object), listed by name in the
-test, which fails on any other top-level declaration; the glue may only call
+window checks of the `v3.7.0` handler) into it verbatim, together with every
+top-level declaration, value or type, that they reach transitively wherever it
+was declared in the tagged tree (`TEMPORAL_PATTERN`, `TEMPORAL_MAX_LENGTH`,
+`MEETING_STATUSES`, `MEETING_KEYS`, `VISIBLE_CHARACTER`, `DATE_ONLY` and
+`TemporalInstant` among them), since the module's import allowlist excludes
+their original modules and inlining them would change the tokens. A test
+computes that transitive closure from the `v3.7.0` sources
+(`git show v3.7.0:<path>`) with the TypeScript compiler API, starting from the
+named roots and following every identifier that resolves to a top-level
+declaration outside the allowlisted imports, asserts the module declares exactly
+that set, and asserts each copy is token-identical apart from an added `export`
+and its import specifiers. The only other code in the module is the glue the
+registry needs (`meetingPrecheck`, the `readBack` wrapper and the
+`MEETING_READ_BACK` object), listed by name in the test, which fails on any
+top-level declaration outside the closure and that list; the glue may only call
 moved functions, compare argument keys with the input schema's properties and
 return the fixed messages, and the test asserts it contains no other literal,
 comparison or regular expression. The differential test then covers the glue and
@@ -1434,12 +1447,17 @@ being published unchecked, so `preflight` also checks it first: on a release
 event it requires the release's tag name (`GITHUB_REF_NAME`) to equal `v` plus
 the `deno.json` version, which `src/version.ts` must also equal, and on every
 other trigger (a manual dispatch, or a `workflow_call` from another workflow,
-which can run at any commit) it requires the tag `v<deno.json version>` to exist
-and point at the checked commit; either way a mislabeled tag such as `v3.9.0` on
-a `3.8.0` manifest publishes nothing and never becomes a baseline. With that
-gate, publishing a GitHub release cannot reach npm or JSR with a ledger,
-contract or file list that fails the check. Give ERP the new contract hash so
-their verbatim copy can be checked against it.
+which can run at any commit) it requires the same ERP pin read as a release, so
+`publish.yml` declares the ERP read-only token as a `required: true` entry under
+`on.workflow_call.secrets` (secrets are not passed to a reusable workflow
+automatically), every caller passes it explicitly, and `preflight` fails with a
+named error when it is empty instead of reaching the deployment lookup without
+credentials; it also requires the tag `v<deno.json version>` to exist and point
+at the checked commit; either way a mislabeled tag such as `v3.9.0` on a `3.8.0`
+manifest publishes nothing and never becomes a baseline. With that gate,
+publishing a GitHub release cannot reach npm or JSR with a ledger, contract or
+file list that fails the check. Give ERP the new contract hash so their verbatim
+copy can be checked against it.
 
 ## 6. Recipe: ERPNext side (owned by the ERP repository)
 
