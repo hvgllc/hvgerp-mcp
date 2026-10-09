@@ -524,10 +524,21 @@ implementation detail.
    refresh that passed eligibility before the refusal could otherwise activate
    after it, even after the cleanup migration: ERP rechecks the name-level
    refusal and the family gates inside the activating compare-and-set, in the
-   same transaction, and refuses the activation if either now applies. An ERP
-   test pauses a subscribe in callback verification, retires its name and runs
-   the cleanup, then resumes it and asserts that no stored subscription exists
-   for the name. Not writing new rows is not enough, and neither is a dispatch
+   same transaction, and refuses the activation if either now applies. A recheck
+   in the same transaction is not serialization on its own, so the activation
+   first takes, in share mode, the retirement lock row (below) of every event
+   name the subscription covers and holds it through the compare-and-set, as
+   journal flush and fan-out do; activating a refusal, and turning a family's
+   subscribe or dispatch gate off for a retirement, takes, `FOR UPDATE`, the
+   lock row of every name it retires, so it waits for every activation already
+   past the recheck, and no activation can commit, or report success to its
+   caller, after it. An ERP test pauses a subscribe in callback verification,
+   retires its name and runs the cleanup, then resumes it and asserts that no
+   stored subscription exists for the name; a second one pauses a refresh
+   between its recheck and its compare-and-set, activates the refusal from a
+   second connection, and asserts that the activation of the refusal blocks
+   until the refresh commits and that the cleanup then deletes the refreshed
+   subscription. Not writing new rows is not enough, and neither is a dispatch
    gate, which leaves queued deliveries pending rather than dropping them: ERP
    stops writing those events, its dispatcher refuses at send time every
    delivery whose event name is retired (a name-level check, used for meetings
@@ -1576,15 +1587,21 @@ successful only after its post-deploy health check, and `preflight` takes the
 sha of the newest successful `production` deployment and reads the pin file at
 that commit with a read-only token (a repository secret scoped to that one
 repository), failing when there is none. In release mode the pinned sha must be
-an ancestor of the checked commit, and every row and every retirement record
-this release stamps must be present at that sha, with the record and every
-contract, result schema, case set and checks module it names identical there and
-at the checked commit apart from the `release` stamp; nothing in this repository
-can move the anchor, so a multi-commit release pull request that edits an
-artifact, in whatever order it bumps the version, is still compared with what
-ERP runs. An end record need not be present at the pin: it names no contract,
-and ERP drops the name from its retired list only once its own
-`acknowledged_retirement_ends` file names it, which happens only after the
+an ancestor of the checked commit, with one exception: for a rerun or recovery
+publish of a version npm already holds with provenance naming the checked commit
+(the case step 9's `publish-npm` treats as already published), ERP may since
+have re-pinned to a later MCP commit, so the pin may instead be a descendant of
+the checked commit; ERP's re-pin subset test already guarantees that every
+artifact present at the checked commit is still present unchanged at such a pin,
+and the presence and identity checks that follow apply either way, and every row
+and every retirement record this release stamps must be present at that sha,
+with the record and every contract, result schema, case set and checks module it
+names identical there and at the checked commit apart from the `release` stamp;
+nothing in this repository can move the anchor, so a multi-commit release pull
+request that edits an artifact, in whatever order it bumps the version, is still
+compared with what ERP runs. An end record need not be present at the pin: it
+names no contract, and ERP drops the name from its retired list only once its
+own `acknowledged_retirement_ends` file names it, which happens only after the
 release is deployed (section 6, item 2), so it is checked by the version rules,
 the deployment coverage check and two production checks: in release mode
 `preflight` calls ERP's read-only `retired_subscription_counts` method (section
