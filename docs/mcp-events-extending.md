@@ -1373,23 +1373,26 @@ The digest stops at `runReadBack`'s return. What reaches the client after it,
 per row, so it is pinned by behaviour instead. A wire test drives every sample
 case, every `transport` case and the fixed-seed argument and result runs through
 a real `tools/call` on the assembled server, not through the handler, and
-asserts the one wire form a read-back tool has: a success has no `isError`, a
-`structuredContent` deeply equal to the expected output and a `content` of
-exactly one `text` item whose JSON parses to the same value; an error has
-`isError: true` and exactly one `text` item equal to the fixed message, with
-nothing else. The same test runs in `release:check` and, while the newest tag
-carries no ledger, against the `v3.7.0` worktree of the bootstrap check with its
-own legacy expectation: `v3.7.0` declared no `outputSchema` for
-`erpnext_meeting_get` and its `buildHandlersMap()` adds `structuredContent` only
-for viewer-bound tools, so a tagged success has no `isError`, no
-`structuredContent` and exactly one `text` item whose JSON parses to the
-expected output, and a tagged error is the same as above. The refactored release
-must then return, for every input, exactly the tagged response, and its
-`tools/list` descriptor for the meeting tool must equal the tagged one (no
-`outputSchema`). So the wire form the meeting tool already ships is the one
-asserted, and the bootstrap release changes no read-back wire response. An edit
-to any shared layer that changes a read-back tool's wire response therefore
-fails in the release that makes it.
+asserts the wire form of the tool's entry kind. For an `identityMode: "runner"`
+tool a success has no `isError`, a `structuredContent` deeply equal to the
+expected output and a `content` of exactly one `text` item whose JSON parses to
+the same value. For the legacy meeting entry, in the refactored release as in
+every later one that keeps it, a success has the legacy form below: no
+`isError`, no `structuredContent` and exactly one `text` item whose JSON parses
+to the expected output. For both kinds an error has `isError: true` and exactly
+one `text` item equal to the fixed message, with nothing else. The same test
+runs in `release:check` and, while the newest tag carries no ledger, against the
+`v3.7.0` worktree of the bootstrap check with that same legacy expectation:
+`v3.7.0` declared no `outputSchema` for `erpnext_meeting_get` and its
+`buildHandlersMap()` adds `structuredContent` only for viewer-bound tools, so a
+tagged success has no `isError`, no `structuredContent` and exactly one `text`
+item whose JSON parses to the expected output, and a tagged error is the same as
+above. The refactored release must then return, for every input, exactly the
+tagged response, and its `tools/list` descriptor for the meeting tool must equal
+the tagged one (no `outputSchema`). So the wire form the meeting tool already
+ships is the one asserted, and the bootstrap release changes no read-back wire
+response. An edit to any shared layer that changes a read-back tool's wire
+response therefore fails in the release that makes it.
 
 Validation alone cannot catch a pick function that stops copying an optional
 field or stops passing one variant of a field: every output still validates. So
@@ -2055,13 +2058,21 @@ Listed here so both sides agree on the order; the ERP team implements it.
    Unsubscribe deletes the subscription and, in the same transaction, marks
    every queued, pending or retrying delivery of it terminally `cancelled`, and
    a claim takes the subscription row in share mode and refuses a delivery whose
-   subscription is gone, so no send starts after unsubscribe commits (one whose
-   claim committed before it may still finish). Tests prove: in shadow mode,
-   unsubscribing a subscription made before the rollback succeeds, a second
-   unsubscribe also succeeds, and no delivery is created for it once dispatch is
-   back on; and with subscribe on and dispatch off, a subscription with pending
-   deliveries is unsubscribed, dispatch is turned on, and the callback receives
-   nothing while those deliveries end `cancelled`.
+   subscription is gone, so no delivery is claimed after unsubscribe commits.
+   The guarantee stops there: a claim that committed before the unsubscribe has
+   already released the row, so its send may still start after the unsubscribe
+   commits, once, and nothing retries it (its retry path finds the subscription
+   gone and ends the delivery `cancelled`). The subscriber must therefore
+   tolerate at most one callback per delivery that was already claimed when it
+   unsubscribed, and the contract documentation says so. Tests prove: in shadow
+   mode, unsubscribing a subscription made before the rollback succeeds, a
+   second unsubscribe also succeeds, and no delivery is created for it once
+   dispatch is back on; and with subscribe on and dispatch off, a subscription
+   with pending deliveries is unsubscribed, dispatch is turned on, and the
+   callback receives nothing while those deliveries end `cancelled`; and a
+   delivery claimed before an unsubscribe commits (the test holds the worker
+   between claim and send) is sent at most once and never retried, while every
+   unclaimed delivery of it ends `cancelled`.
 9. **Rollout**: shadow mode (journal on, subscribe and dispatch off) in
    production, measure row volume and hook latency, then subscribe on with
    dispatch off, check that deliveries queue as pending, then dispatch on.
@@ -2119,7 +2130,8 @@ Listed here so both sides agree on the order; the ERP team implements it.
 - [ ] Re-read returns current state for a reader, the not-available error for a
       non-reader, a tombstone after deletion for a former reader.
 - [ ] Removing a user's permission stops delivery to that user.
-- [ ] Unsubscribe is idempotent and stops delivery.
+- [ ] Unsubscribe is idempotent and stops delivery (at most one send of a
+      delivery already claimed when it committed).
 - [ ] No content in webhook bodies or logs (grep a sample for titles and
       emails).
 
