@@ -876,9 +876,24 @@ lists from empty to several hundred entries. For every generated input the
 `v3.7.0` handler and the refactored handler must send the same ERP call and
 either return the same output, which must validate against `result.v1` (so a
 `required` key the tagged reader may omit, or a bound it does not enforce,
-fails), or throw the same message. So the bootstrap pull request cannot change
-the tool, method, path or behaviour and bless the change in the first row. Once
-a tag carries the ledger, the ordinary tag check takes over.
+fails), or throw the same message. A finite generator still cannot prove that no
+new predicate was written (a check that rejects one particular `window_start`
+year or one schema-valid title would pass it), so the meeting checks module is
+not rewritten at all: the refactor moves the tagged functions that make these
+decisions (`pickMeetingFields`, the guards in `fetchMeeting`, the argument and
+window checks of the `v3.7.0` handler, and every helper they call) into it
+verbatim, and a test extracts each moved function from `git show v3.7.0:<path>`
+with the TypeScript compiler API and asserts the module's copy is
+token-identical apart from an added `export` and its import specifiers. The only
+other code in the module is the glue the registry needs (`meetingPrecheck`, the
+`readBack` wrapper and the `MEETING_READ_BACK` object), listed by name in the
+test, which fails on any other top-level declaration; the glue may only call
+moved functions, compare argument keys with the input schema's properties and
+return the fixed messages, and the test asserts it contains no other literal,
+comparison or regular expression. The differential test then covers the glue and
+the wiring. So the bootstrap pull request cannot change the tool, method, path
+or behaviour and bless the change in the first row. Once a tag carries the
+ledger, the ordinary tag check takes over.
 
 The tool's own interface is pinned the same way, because a binding is not the
 whole promise: a release could keep the tool, method and path and still drop an
@@ -1333,28 +1348,38 @@ release PR, tag, npm, bundle image). The feature PR already added the contract's
 row to `src/events/contract-ledger.json` with `"release": "unreleased"` (step
 2); the approved release PR that bumps `deno.json` replaces every `unreleased`
 in the ledger with that version, and the ledger check refuses the bump if one is
-left; the tag cut from that PR is what later releases are checked against. Add
-the tag-comparison test to `scripts/release-check.sh` with the one-time registry
-work, and make it fail rather than skip when no `v*` tag is reachable (a shallow
-clone must fetch tags first: the same pull request sets `fetch-depth: 0` and
-`fetch-tags: true` on the `actions/checkout@v5` step of
-`.github/workflows/test.yml`, which by default fetches one commit and no tags,
-so the hosted `release:check` step would otherwise fail on every run), since a
-skipped check would freeze nothing. `test.yml` is dispatched by hand, so it is
-not the gate: the same pull request adds a `preflight` job to
-`.github/workflows/publish.yml` (checkout with `fetch-depth: 0` and
-`fetch-tags: true`, `denoland/setup-deno@v2`, build the UI viewers,
-`deno task release:check`) and makes both `publish-jsr` and `publish-npm`
-declare `needs: preflight`. Comparing with the preceding tag leaves the tag
-being published unchecked, so `preflight` also checks it first: on a release
-event it requires the release's tag name (`GITHUB_REF_NAME`) to equal `v` plus
-the `deno.json` version, which `src/version.ts` must also equal, and on a manual
-dispatch it requires the tag `v<deno.json version>` to exist and point at the
-checked commit; either way a mislabeled tag such as `v3.9.0` on a `3.8.0`
-manifest publishes nothing and never becomes a baseline. With that gate,
-publishing a GitHub release cannot reach npm or JSR with a ledger, contract or
-file list that fails the check. Give ERP the new contract hash so their verbatim
-copy can be checked against it.
+left. That is all it may change in event artifacts: in release mode the check
+also reads the last first-parent `main` commit before the bump (the newest one
+whose `deno.json` still equals the preceding tag's version) and requires every
+record that said `unreleased` there, and every contract, result schema, case set
+and checks module such a record names, to be identical at the checked commit
+apart from the `release` stamp, so a contract ERP may already have pinned cannot
+change inside the release PR. Before the GitHub release is published, ERP runs
+its re-pin subset test (section 6, item 2) against the release PR's head commit
+by full sha, and the release PR records that it passed; a contract change ERP
+has not pinned is found there, not after npm has the release; the tag cut from
+that PR is what later releases are checked against. Add the tag-comparison test
+to `scripts/release-check.sh` with the one-time registry work, and make it fail
+rather than skip when no `v*` tag is reachable (a shallow clone must fetch tags
+first: the same pull request sets `fetch-depth: 0` and `fetch-tags: true` on the
+`actions/checkout@v5` step of `.github/workflows/test.yml`, which by default
+fetches one commit and no tags, so the hosted `release:check` step would
+otherwise fail on every run), since a skipped check would freeze nothing.
+`test.yml` is dispatched by hand, so it is not the gate: the same pull request
+adds a `preflight` job to `.github/workflows/publish.yml` (checkout with
+`fetch-depth: 0` and `fetch-tags: true`, `denoland/setup-deno@v2`, build the UI
+viewers, `deno task release:check`) and makes both `publish-jsr` and
+`publish-npm` declare `needs: preflight`. Comparing with the preceding tag
+leaves the tag being published unchecked, so `preflight` also checks it first:
+on a release event it requires the release's tag name (`GITHUB_REF_NAME`) to
+equal `v` plus the `deno.json` version, which `src/version.ts` must also equal,
+and on every other trigger (a manual dispatch, or a `workflow_call` from another
+workflow, which can run at any commit) it requires the tag
+`v<deno.json version>` to exist and point at the checked commit; either way a
+mislabeled tag such as `v3.9.0` on a `3.8.0` manifest publishes nothing and
+never becomes a baseline. With that gate, publishing a GitHub release cannot
+reach npm or JSR with a ledger, contract or file list that fails the check. Give
+ERP the new contract hash so their verbatim copy can be checked against it.
 
 ## 6. Recipe: ERPNext side (owned by the ERP repository)
 
@@ -1447,9 +1472,18 @@ Listed here so both sides agree on the order; the ERP team implements it.
    covering every event of the family, every `change` value and every branch of
    the payload schema (each conditional subschema taken and not taken, each
    optional field present and absent, the deleted form), and validates each
-   envelope's `data` with a draft 2020-12 validator against that event's
-   effective `payloadSchema` read from the verbatim contract copy (item 2). The
-   family's dispatch flag stays off until that suite passes in ERP CI.
+   envelope's `data` with this repository's own validator, so `format` is
+   asserted with exactly the `json-schema.ts` semantics (its `date` and
+   `date-time` rules, casing and leap seconds included) rather than a generic
+   checker's, which may treat `format` as an annotation: ERP CI pipes each
+   `{ event, data }` through `scripts/check-erp-fixtures.ts payload` at its
+   pinned commit, which runs `validateEventPayload` and must accept every one. A
+   faster in-process validator ERP keeps for local runs must enable format
+   assertion and pass a parity set for every format the contracts use, exported
+   as JSON by the same script (`scripts/check-erp-fixtures.ts formats` prints
+   each probe value with the verdict `json-schema.ts` gives it), but the script
+   is the gate. The family's dispatch flag stays off until that suite passes in
+   ERP CI.
 7. **Read-back**: `api.<family_slug>_get` with the fixed `{ok,result|error}`
    envelope, the not-available answer for no permission and for missing records
    alike, and a tombstone only for a user the journal proves saw it. ERP copies
@@ -1459,7 +1493,19 @@ Listed here so both sides agree on the order; the ERP team implements it.
    present and absent, each enum value, the tombstone) against that schema, so
    an ERP release that drops a required field or emits a value outside an enum
    or bound fails in ERP's own suite instead of turning re-reads into
-   `Events backend error`.
+   `Events backend error`. The schema is not the whole check (the guards listed
+   in the case file reject schema-valid results, such as an `http:` URL, an
+   invisible-only title, duplicate weekdays or an end before its start), so ERP
+   CI also checks out this repository at its pinned commit and pipes every
+   result its method tests produce, with the arguments that produced it, through
+   `deno run --allow-read scripts/check-erp-fixtures.ts read-back <tool>`, which
+   runs the frozen `<TOOL>_READ_BACK` entry point with an injected ERP call
+   returning that result and prints, per line, the output or the fixed error;
+   every fixture must come back as an output. For every name in the tool's
+   `guards` list ERP also has a source record that would break that guard (an
+   `http:` link, a title of hidden characters only, ...) and asserts its method
+   normalizes or omits the offending value, so the script accepts the result.
+   The one-time registry pull request adds the script.
 8. **Flags**: `mcp_events_<family_slug>_journal_enabled`,
    `mcp_events_<family_slug>_subscribe_enabled` and
    `mcp_events_<family_slug>_dispatch_enabled` for each new family, all default
