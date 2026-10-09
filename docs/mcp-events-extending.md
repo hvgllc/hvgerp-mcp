@@ -726,10 +726,14 @@ exactly `1` to `n` with no gap or duplicate, that for each base family the
 generations found across the discovered files' `family` values (the base family
 counting as generation 1, `task.v2` as 2) are likewise exactly `1` to `m`, so
 the first incompatible successor of `task` can only be `task.v2` and a release
-cannot freeze `task.v3` or `task.v9` into the ledger, and that each family with
-a live entry has that entry on its highest `K` (a family whose every event is
-retired has no live entry and is exempt), so a release cannot add
-`task-events.v2.json` and its row while `CONTRACTS` stays on `v1`:
+cannot freeze `task.v3` or `task.v9` into the ledger, and that every discovered
+family with at least one event that no retirement record names has exactly one
+live entry, on its highest `K`, while a family whose every event is retired has
+none. The check runs in both directions, and in every CI run, a patch release
+included: a release cannot add `task-events.v2.json` and its row while
+`CONTRACTS` stays on `v1`, nor ship a new family's contract and row with no live
+entry, which a later release could then activate by adding only the entry and
+the tool, stamping no new row and so escaping the readiness check of step 9.
 `buildRegistry` sees only the live entries, and without this check a successor
 could reuse a retired version's id, or a file named `task-event.v1.json` could
 be frozen into the ledger outside the lineage that successor discovery and the
@@ -1513,46 +1517,48 @@ at the checked commit apart from the `release` stamp; nothing in this repository
 can move the anchor, so a multi-commit release pull request that edits an
 artifact, in whatever order it bumps the version, is still compared with what
 ERP runs. An end record need not be present at the pin: it names no contract,
-and ERP re-pins past it only after the release is deployed (section 6, item 2),
-so it is checked by the version rules, the deployment coverage check and two
-production checks: in release mode `preflight` calls ERP's read-only
-`retired_subscription_counts` method (section 6, item 2) with a dedicated
-read-only API key held as a repository secret and fails unless the count of
-stored subscriptions is exactly 0 for every event whose end record this release
-stamps, failing too when the call fails or omits an event. The pin proves only
-that ERP runs the family's code: ERP may run it in the shadow state (decision 7)
-with the family's gates off, and an MCP release that then lists the family would
-advertise events whose subscriptions answer `-32012` or whose deliveries stay
-paused, against decision 8. So in release mode `preflight` also calls ERP's
-read-only `event_family_readiness` method (section 6, item 2) with the same
-read-only key, for every family that has a row this release stamps and still has
-a live `CONTRACTS` entry after it, and fails unless ERP reports the effective
-journal, subscribe and dispatch gates of each one all on in production (with the
-journal gate off, subscriptions would succeed while no source change is ever
-recorded or delivered) and the OAuth client this server authenticates as
-(`hvgerp-mcp`, the expected client named in the workflow, not read from ERP) in
-`mcp_events_allowed_clients`, since a client outside that list gets `-32012` for
-every subscription whatever the gates say, failing too when the call fails or
-omits a family. A family whose every event this release retires has no live
-entry and is not checked for readiness (its subscribe gate is meant to be off,
-decision 9); its names are checked by the retirement rule that follows instead.
-The pin proves only that the retirement code is deployed, not that ERP has
-finished cutting the names off, so for every retirement record this release
-stamps `preflight` also calls ERP's read-only `retirement_cutoff_status` method
-(section 6, item 2) with the same key and fails unless ERP reports, for each
-retired name, that `subscribe` and lease refresh are refused, that the
-dispatcher's name-level send refusal is active, and that no delivery for the
-name is nonterminal (decision 9: none queued, pending or retrying, and no claim
-whose lease has not expired), failing too when the call fails or omits a name.
-The same call, with the same requirement, runs for every event whose end record
-this release stamps, beside the zero subscription count: ERP drops the
-name-level refusal only when it re-pins past the end record, so the end release
-must see, live, that nothing is left for that refusal to hold back. This holds
-for a partial-family retirement, where the family's own gates stay on, as much
-as for a whole family. Subscribe and lease refresh for a retired name have been
-refused since its retirement shipped, so the count cannot rise again after the
-check. Together these rules mean a contract ERP may already have pinned cannot
-change inside the release PR, and a retirement cannot end while ERP still holds
+and ERP drops the name from its retired list only once its own
+`acknowledged_retirement_ends` file names it, which happens only after the
+release is deployed (section 6, item 2), so it is checked by the version rules,
+the deployment coverage check and two production checks: in release mode
+`preflight` calls ERP's read-only `retired_subscription_counts` method (section
+6, item 2) with a dedicated read-only API key held as a repository secret and
+fails unless the count of stored subscriptions is exactly 0 for every event
+whose end record this release stamps, failing too when the call fails or omits
+an event. The pin proves only that ERP runs the family's code: ERP may run it in
+the shadow state (decision 7) with the family's gates off, and an MCP release
+that then lists the family would advertise events whose subscriptions answer
+`-32012` or whose deliveries stay paused, against decision 8. So in release mode
+`preflight` also calls ERP's read-only `event_family_readiness` method (section
+6, item 2) with the same read-only key, for every family that has a row this
+release stamps and still has a live `CONTRACTS` entry after it, and fails unless
+ERP reports the effective journal, subscribe and dispatch gates of each one all
+on in production (with the journal gate off, subscriptions would succeed while
+no source change is ever recorded or delivered) and the OAuth client this server
+authenticates as (`hvgerp-mcp`, the expected client named in the workflow, not
+read from ERP) in `mcp_events_allowed_clients`, since a client outside that list
+gets `-32012` for every subscription whatever the gates say, failing too when
+the call fails or omits a family. A family whose every event this release
+retires has no live entry and is not checked for readiness (its subscribe gate
+is meant to be off, decision 9); its names are checked by the retirement rule
+that follows instead. The pin proves only that the retirement code is deployed,
+not that ERP has finished cutting the names off, so for every retirement record
+this release stamps `preflight` also calls ERP's read-only
+`retirement_cutoff_status` method (section 6, item 2) with the same key and
+fails unless ERP reports, for each retired name, that `subscribe` and lease
+refresh are refused, that the dispatcher's name-level send refusal is active,
+and that no delivery for the name is nonterminal (decision 9: none queued,
+pending or retrying, and no claim whose lease has not expired), failing too when
+the call fails or omits a name. The same call, with the same requirement, runs
+for every event whose end record this release stamps, beside the zero
+subscription count: ERP drops the name-level refusal only when it acknowledges
+the end record in `acknowledged_retirement_ends`, so the end release must see,
+live, that nothing is left for that refusal to hold back. This holds for a
+partial-family retirement, where the family's own gates stay on, as much as for
+a whole family. Subscribe and lease refresh for a retired name have been refused
+since its retirement shipped, so the count cannot rise again after the check.
+Together these rules mean a contract ERP may already have pinned cannot change
+inside the release PR, and a retirement cannot end while ERP still holds
 subscriptions only `unsubscribe` can reach. Before the GitHub release is
 published, ERP runs its re-pin subset test (section 6, item 2) against the
 release PR's head commit by full sha, and the release PR records that it passed;
@@ -1662,48 +1668,58 @@ Listed here so both sides agree on the order; the ERP team implements it.
    may have become a version number, and anything else in the new pin's ledger
    or contract directory is an appended record or file (another family's feature
    merged in between), accepted as it stands. ERP keeps every retired contract
-   file and builds the list exactly as `protocol.ts` builds `RETIRED_EVENTS`
-   (each retirement record without an end record, with the effective
-   `inputSchema` of its `from` contract). Next to that list ERP adds a read-only
-   whitelisted method, `retired_subscription_counts`, returning for every name
-   in its retired list the number of stored subscriptions across all users,
-   which the MCP `preflight` job requires to be 0 before it accepts an end
-   record (step 9 of section 5), a second one, `retirement_cutoff_status`,
-   returning for each requested retired name whether `subscribe` and lease
-   refresh are refused, whether the dispatcher's name-level send refusal is
-   active and how many of its deliveries are nonterminal (decision 9), which
-   `preflight` requires to be refused, active and 0 for every retirement record
-   and every end record the release stamps, and a third one,
-   `event_family_readiness`, returning, for a requested OAuth client id, whether
-   that client is in `mcp_events_allowed_clients`, and for each requested family
-   whether its effective journal, subscribe and dispatch gates are on (the
-   per-family keys of decision 7 together with the global flags; for the meeting
-   family, which has no per-family keys, the global flags alone), which
-   `preflight` requires to be on for every family whose row the release stamps
-   and that keeps a live entry, with `hvgerp-mcp` allowed; all three are
-   callable only by a dedicated read-only API user, report nothing about any
-   user's data beyond these counts and flags, and an unknown family or event
-   name is refused rather than reported off. Every answer is computed live at
-   the call, from the current settings, refusals and delivery rows, never read
-   from an earlier record of the cleanup, so a check made for an end record
-   cannot be satisfied by a state that has since changed. Before an MCP release
-   that changes `RETIRED_EVENTS` is deployed, a deployment check compares the
-   canonical JSON that `--print-events-registry` prints with the same canonical
-   JSON from an ERP bench command, and the deployment stops unless ERP's list
-   covers MCP's: every name MCP lists must be in ERP's list with an equal
-   schema, and ERP may list an extra name only when the MCP ledger being
-   deployed holds an end record for it. The extra names are what make an end
-   record safe to roll out: while old MCP instances still accept unsubscribe for
-   an ended name and forward it, ERP keeps accepting it, because ERP re-pins to
-   the tag that adds the end record only after that MCP release is fully
-   deployed and the old instances are drained; until then its copy stays at the
-   earlier pin, which still lists the name. So MCP never forwards an unsubscribe
-   ERP would refuse, whichever side moves first. An end-to-end test retires a
-   fixture name, advances the active contract to a successor without it, and
-   asserts that unsubscribe for a stored subscription returns `{}` and deletes
-   it, a second unsubscribe also returns `{}`, subscribe with the name is
-   refused, and a delivery for it queued or retrying before the cutoff is marked
-   `retired` and never sent, even with dispatch on.
+   file and builds the list from the same retirement records as `protocol.ts`
+   builds `RETIRED_EVENTS` (with the effective `inputSchema` of each record's
+   `from` contract), with one difference: an end record removes a name from
+   ERP's list only once ERP's own `acknowledged_retirement_ends` file, kept in
+   its contracts directory beside the pin file and never copied from MCP, names
+   that event. Every pin change carries end records in with the ledger, and a
+   re-pin to a later, unrelated family's feature commit can carry an end record
+   whose release is still `unreleased` or not yet deployed; without the
+   acknowledgement ERP would then drop the name and refuse an unsubscribe the
+   deployed MCP release still advertises and forwards. ERP's tests refuse an
+   acknowledgement for an event whose end record at the pin is missing or still
+   `unreleased`, and the acknowledgement is added only in the follow-up change
+   made after that MCP release is fully deployed and the old instances are
+   drained. Next to that list ERP adds a read-only whitelisted method,
+   `retired_subscription_counts`, returning for every name in its retired list
+   the number of stored subscriptions across all users, which the MCP
+   `preflight` job requires to be 0 before it accepts an end record (step 9 of
+   section 5), a second one, `retirement_cutoff_status`, returning for each
+   requested retired name whether `subscribe` and lease refresh are refused,
+   whether the dispatcher's name-level send refusal is active and how many of
+   its deliveries are nonterminal (decision 9), which `preflight` requires to be
+   refused, active and 0 for every retirement record and every end record the
+   release stamps, and a third one, `event_family_readiness`, returning, for a
+   requested OAuth client id, whether that client is in
+   `mcp_events_allowed_clients`, and for each requested family whether its
+   effective journal, subscribe and dispatch gates are on (the per-family keys
+   of decision 7 together with the global flags; for the meeting family, which
+   has no per-family keys, the global flags alone), which `preflight` requires
+   to be on for every family whose row the release stamps and that keeps a live
+   entry, with `hvgerp-mcp` allowed; all three are callable only by a dedicated
+   read-only API user, report nothing about any user's data beyond these counts
+   and flags, and an unknown family or event name is refused rather than
+   reported off. Every answer is computed live at the call, from the current
+   settings, refusals and delivery rows, never read from an earlier record of
+   the cleanup, so a check made for an end record cannot be satisfied by a state
+   that has since changed. Before an MCP release that changes `RETIRED_EVENTS`
+   is deployed, a deployment check compares the canonical JSON that
+   `--print-events-registry` prints with the same canonical JSON from an ERP
+   bench command, and the deployment stops unless ERP's list covers MCP's: every
+   name MCP lists must be in ERP's list with an equal schema, and ERP may list
+   an extra name only when the MCP ledger being deployed holds an end record for
+   it. The extra names are what make an end record safe to roll out: while old
+   MCP instances still accept unsubscribe for an ended name and forward it, ERP
+   keeps accepting it, because ERP drops the name only through the
+   acknowledgement above, made after that MCP release is fully deployed and the
+   old instances are drained, whatever pin it has moved to in between. So MCP
+   never forwards an unsubscribe ERP would refuse, whichever side moves first.
+   An end-to-end test retires a fixture name, advances the active contract to a
+   successor without it, and asserts that unsubscribe for a stored subscription
+   returns `{}` and deletes it, a second unsubscribe also returns `{}`,
+   subscribe with the name is refused, and a delivery for it queued or retrying
+   before the cutoff is marked `retired` and never sent, even with dispatch on.
 3. **Capture**: `doc_events` hooks for the new doctype in `hooks.py`, the same
    snapshot then `flush()` pattern as `events.py` (one net row per transaction,
    nothing on rollback, transient DB errors re-raised, other errors logged
