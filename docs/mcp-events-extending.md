@@ -781,12 +781,18 @@ present there is not byte-identical now. A row absent at the tag is new in this
 release: its `release` must equal the version in `deno.json`, and that version
 must be at least a minor bump over the newest tag (a higher major, or the same
 major and a higher minor), because a new contract version adds an event, a tool
-or both, which is a feature and never a patch. A tag cannot be edited, so a
-released schema or binding cannot be blessed again by rewriting the ledger in
-the same commit. The one-time registry pull request creates the ledger with the
-`meeting-events.v1` row (release `3.7.0`, family `meeting`, doctypes
-`["Event"]`, tool `erpnext_meeting_get`, method `meetingGet`, path
-`hvg_workspace.mcp_events.api.meeting_get`, input
+or both, which is a feature and never a patch. The one exception is the
+`meeting-events.v1` bootstrap row while the newest tag carries no ledger: it
+describes what `v3.7.0` already shipped, so its `release` must be exactly
+`3.7.0`, not the `deno.json` version, and the tagged-source verification below
+replaces the new-row check for it (the `deno.json` version must still be at
+least a minor bump over the newest tag, since the registry refactor is itself a
+feature). Any other row absent at that tag stays under the new-row check. A tag
+cannot be edited, so a released schema or binding cannot be blessed again by
+rewriting the ledger in the same commit. The one-time registry pull request
+creates the ledger with the `meeting-events.v1` row (release `3.7.0`, family
+`meeting`, doctypes `["Event"]`, tool `erpnext_meeting_get`, method
+`meetingGet`, path `hvg_workspace.mcp_events.api.meeting_get`, input
 `erpnext_meeting_get.input.v1`, result `erpnext_meeting_get.result.v1`, checks
 `erpnext_meeting_get.checks.ts`). That row and its files describe what `v3.7.0`
 already shipped, so they are verified against `v3.7.0`, not trusted as written:
@@ -1004,13 +1010,20 @@ boundary value and one past it: members and boundary values must succeed and the
 others must throw `Events backend error`. Tests fail if an argument error or a
 response-shape backend error is thrown any other way, if the names in
 `MEETING_ARGUMENT_RULES` differ from the case set's `rules` or those in
-`MEETING_GUARDS` from the sample set's `guards`, or if the parameters the fake
-client receives differ from `meetingErpCall(arguments)` for any recorded case or
-for a fixed-seed run of generated valid arguments (every temporal form,
-fractional seconds of every length, each argument present and absent), or if the
-handler's output differs from the module's `pickMeetingFields` for any sample
-case or for a fixed-seed run of generated ERP results (each key present, absent
-and null, titles from every Unicode general category, URLs of every scheme, long
+`MEETING_GUARDS` from the sample set's `guards`, or if, for any recorded case or
+generated valid arguments, the parameters the fake client receives do not hold
+each canonical identity field the arguments carry (the identity field and, for a
+multi-doctype family, `source_doctype`) under the same name with a value
+strictly equal (`===`) to the argument's, an assertion the test writes from the
+contract's `identityField` and never through `meetingErpCall`, so a helper that
+trims, lowercases or truncates an accepted id fails even though both sides of
+the next comparison would agree, or if the parameters the fake client receives
+differ from `meetingErpCall(arguments)` for any recorded case or for a
+fixed-seed run of generated valid arguments (every temporal form, fractional
+seconds of every length, each argument present and absent), or if the handler's
+output differs from the module's `pickMeetingFields` for any sample case or for
+a fixed-seed run of generated ERP results (each key present, absent and null,
+titles from every Unicode general category, URLs of every scheme, long
 occurrence lists), so trimming a title or rewriting a URL that no sample covers
 fails. The `assertShape` rule covers only rejections of a response body: a
 transport failure or a malformed envelope fails before there is a body to
