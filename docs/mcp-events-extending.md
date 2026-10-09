@@ -524,65 +524,72 @@ implementation detail.
    merely co-located: the refusal lives on one retirement lock row per event
    name ERP serves (created with the contract that introduces the name), the
    transaction that activates a refusal takes that row `FOR UPDATE`, and every
-   fan-out takes the row of the event it delivers in share mode
-   (`LOCK IN SHARE MODE`) before it reads the refusal and holds it until its
-   inserts commit, so activation waits for every fan-out already past the check,
-   and the cleanup that runs after activation commits sees every delivery they
-   inserted; a fan-out that selected a subscription before the refusal therefore
-   cannot commit a new delivery for the name after it. An ERP test pauses a
-   fan-out between its refusal read and its insert, activates the refusal from a
-   second connection, and asserts that activation blocks until the fan-out
-   commits and that the cleanup then marks its delivery `retired`, and a
-   migration marks every queued, pending or retrying delivery for those names
-   terminally `retired`. Marking rows does not cancel a send already under way:
-   a worker that claimed a delivery before the refusal may have passed the check
-   already. So the dispatcher rechecks the refusal in the same transaction that
-   takes the claim, every claim carries a bounded lease and a worker starts a
-   send only while at least the send timeout is left on it, so each send ends
-   before its lease does, and the cleanup reports the cutoff complete only once
-   every claim on those names taken before the refusal has finished or its lease
-   has expired. Only then is none sent after the cutoff. An ERP test claims a
-   delivery, retires its name, and asserts that the cleanup does not report the
-   cutoff while the claim is live and that the worker sends nothing once it has.
-   That release ships the family's next contract version without the removed
-   names (decision 1), appends a retirement record for each to the ledger
-   (step 2) and moves every removed name into `RETIRED_EVENTS` in `protocol.ts`
-   instead of deleting it: a map from the name to the effective `inputSchema` of
-   the retired contract file that last shipped it (retired files stay in
-   `src/events/contract/`, step 2). The schema is not written by hand:
-   `RETIRED_EVENTS` is built at module load from the `from` contract of each
-   ledger retirement record that has no end record, read through the runtime
-   archive of step 2 (`CONTRACT_FILES` and the statically imported ledger),
-   because a retired file is no longer in `CONTRACTS` and the test-only
-   discovery of step 2 is not part of the published module graph, and a test
-   asserts that every entry deeply equals that event's effective `inputSchema`
-   there, override included. `events/subscribe` with a retired name answers
-   `-32011` like any unknown name, while an authenticated `events/unsubscribe`
-   still accepts it, validates `arguments` against that retained schema and
-   forwards the request to ERP, which stays idempotent. ERP must still recognise
-   the name at that point, although its active contract no longer lists it: its
-   contract registry keeps each retired name with its argument schema in a
-   retired list that only the unsubscribe path accepts, until the MCP release
-   that drops the name from `RETIRED_EVENTS` (ERP recipe, step 2). Waiting out
-   the leases is not enough, because a subscription can have no expiry, so ERP
-   deletes every stored subscription for the retired names with a migration once
-   subscribe is refused. A name leaves `RETIRED_EVENTS` only in a later major
-   release, after ERP production reports zero stored subscriptions for it
-   (checked by the publishing `preflight`, step 9 of section 5, never by a
-   manual ordering alone), and it leaves by an end record, not by deleting
-   history: that release appends `{ "event": ..., "release": ... }` to an
-   append-only `retirementEnds` array in the ledger, checked against the tag
-   like the rest and accepted only when its `release` is the version in
-   `deno.json` and that version is a major release (`X.0.0`) whose major is
-   above both the retirement record's and the newest reachable `v*` tag's, as
-   for a retirement record, so a release cannot end a retirement under an unused
-   older major (`4.0.0` while `v5.3.0` is out). Removing the name turns
-   `events/unsubscribe` for it from an idempotent `{}` into `-32011`, which is a
-   breaking change to input an earlier release accepted, and zero stored
-   subscriptions does not stop a client of the previous release from retrying an
-   unsubscribe, so a minor or patch release cannot end a retirement, so the
-   retirement record stays as audit history while the name drops out of
-   `RETIRED_EVENTS` (and ERP drops it from its mirror in step).
+   journal flush and every fan-out takes, in share mode (`LOCK IN SHARE MODE`),
+   the row of each event it writes or delivers before it reads the refusal and
+   holds it until its inserts commit (a flush runs inside the source document's
+   transaction, so it holds the row until that transaction commits), so
+   activation waits for every flush and fan-out already past the check, no
+   journal row or delivery for the name can commit after activation does, and
+   the cleanup that runs after activation commits sees every row they inserted;
+   a fan-out that selected a subscription before the refusal therefore cannot
+   commit a new delivery for the name after it. An ERP test pauses a fan-out
+   between its refusal read and its insert, activates the refusal from a second
+   connection, and asserts that activation blocks until the fan-out commits and
+   that the cleanup then marks its delivery `retired`; a second test does the
+   same with a source transaction paused between its capture refusal read and
+   its journal insert, and asserts that activation blocks until that transaction
+   commits and that the cleanup then marks every delivery fanned out from its
+   row `retired`, and a migration marks every queued, pending or retrying
+   delivery for those names terminally `retired`. Marking rows does not cancel a
+   send already under way: a worker that claimed a delivery before the refusal
+   may have passed the check already. So the dispatcher rechecks the refusal in
+   the same transaction that takes the claim, every claim carries a bounded
+   lease and a worker starts a send only while at least the send timeout is left
+   on it, so each send ends before its lease does, and the cleanup reports the
+   cutoff complete only once every claim on those names taken before the refusal
+   has finished or its lease has expired. Only then is none sent after the
+   cutoff. An ERP test claims a delivery, retires its name, and asserts that the
+   cleanup does not report the cutoff while the claim is live and that the
+   worker sends nothing once it has. That release ships the family's next
+   contract version without the removed names (decision 1), appends a retirement
+   record for each to the ledger (step 2) and moves every removed name into
+   `RETIRED_EVENTS` in `protocol.ts` instead of deleting it: a map from the name
+   to the effective `inputSchema` of the retired contract file that last shipped
+   it (retired files stay in `src/events/contract/`, step 2). The schema is not
+   written by hand: `RETIRED_EVENTS` is built at module load from the `from`
+   contract of each ledger retirement record that has no end record, read
+   through the runtime archive of step 2 (`CONTRACT_FILES` and the statically
+   imported ledger), because a retired file is no longer in `CONTRACTS` and the
+   test-only discovery of step 2 is not part of the published module graph, and
+   a test asserts that every entry deeply equals that event's effective
+   `inputSchema` there, override included. `events/subscribe` with a retired
+   name answers `-32011` like any unknown name, while an authenticated
+   `events/unsubscribe` still accepts it, validates `arguments` against that
+   retained schema and forwards the request to ERP, which stays idempotent. ERP
+   must still recognise the name at that point, although its active contract no
+   longer lists it: its contract registry keeps each retired name with its
+   argument schema in a retired list that only the unsubscribe path accepts,
+   until the MCP release that drops the name from `RETIRED_EVENTS` (ERP recipe,
+   step 2). Waiting out the leases is not enough, because a subscription can
+   have no expiry, so ERP deletes every stored subscription for the retired
+   names with a migration once subscribe is refused. A name leaves
+   `RETIRED_EVENTS` only in a later major release, after ERP production reports
+   zero stored subscriptions for it (checked by the publishing `preflight`, step
+   9 of section 5, never by a manual ordering alone), and it leaves by an end
+   record, not by deleting history: that release appends
+   `{ "event": ..., "release": ... }` to an append-only `retirementEnds` array
+   in the ledger, checked against the tag like the rest and accepted only when
+   its `release` is the version in `deno.json` and that version is a major
+   release (`X.0.0`) whose major is above both the retirement record's and the
+   newest reachable `v*` tag's, as for a retirement record, so a release cannot
+   end a retirement under an unused older major (`4.0.0` while `v5.3.0` is out).
+   Removing the name turns `events/unsubscribe` for it from an idempotent `{}`
+   into `-32011`, which is a breaking change to input an earlier release
+   accepted, and zero stored subscriptions does not stop a client of the
+   previous release from retrying an unsubscribe, so a minor or patch release
+   cannot end a retirement, so the retirement record stays as audit history
+   while the name drops out of `RETIRED_EVENTS` (and ERP drops it from its
+   mirror in step).
 
 ## 5. Recipe: this repository
 
