@@ -762,27 +762,30 @@ endpoint. Each row also records `readBackInput` and `readBackResult`, the id and
 SHA-256 of the input schema the tool accepted and of the result schema it
 returned when that version shipped, `readBackChecks`, the SHA-256 of the tool's
 checks module (below), and `release`, the version that first shipped the row.
-Rows are append-only: a row is never edited or removed, and a major release that
-retires a version marks it `retired` without touching the other fields. Before
-resolving any row, `contract_test.ts` asserts that the ledger holds at most one
-row per `contract` id, so a second row appended for a released id cannot carry a
-new tool, method or path past the tag check, which only sees that the first row
-is unchanged. It then asserts that every discovered file has exactly one row
-with its exact digest, that every row's `contract` names exactly one discovered
-file (an orphan row would otherwise be frozen at the next tag and could be
-picked as a base family's newest row), that every row's `family` equals its
-file's own `family` (or the legacy map's) and, for a live row, its `CONTRACTS`
-entry's `family`, with `sourceDoctypes` equal as a set to that entry's, so a
-`task-events.v1` row cannot freeze family `leave` or doctypes `["ToDo"]`, and
-that every live `CONTRACTS` entry names the `readBackTool` and `readBackMethod`
-of its row and that `ERP_EVENTS_METHODS[readBackMethod]` equals the row's
-`readBackPath`, so a minor release cannot rename the tool, switch the method or
-re-point its path for a version that is still live. What makes the ledger itself
-immutable is the release tag: a test in `release:check` (step 9) reads the
-ledger and every contract file at the newest `v*` tag with
-`git show <tag>:<path>`, where "newest tag" everywhere in this check means the
-newest `v*` tag that is an ancestor of the checked commit and does not point at
-it
+Rows are append-only: a row is never edited or removed, not even when its
+version is retired. A retirement is recorded only by appending a record to the
+ledger's `retirements` array (decision 9, and the record format later in this
+step), so every comparison below, the tag check, the release pull request freeze
+and ERP's re-pin subset test, can treat each existing row as frozen without an
+exception for retirement. Before resolving any row, `contract_test.ts` asserts
+that the ledger holds at most one row per `contract` id, so a second row
+appended for a released id cannot carry a new tool, method or path past the tag
+check, which only sees that the first row is unchanged. It then asserts that
+every discovered file has exactly one row with its exact digest, that every
+row's `contract` names exactly one discovered file (an orphan row would
+otherwise be frozen at the next tag and could be picked as a base family's
+newest row), that every row's `family` equals its file's own `family` (or the
+legacy map's) and, for a live row, its `CONTRACTS` entry's `family`, with
+`sourceDoctypes` equal as a set to that entry's, so a `task-events.v1` row
+cannot freeze family `leave` or doctypes `["ToDo"]`, and that every live
+`CONTRACTS` entry names the `readBackTool` and `readBackMethod` of its row and
+that `ERP_EVENTS_METHODS[readBackMethod]` equals the row's `readBackPath`, so a
+minor release cannot rename the tool, switch the method or re-point its path for
+a version that is still live. What makes the ledger itself immutable is the
+release tag: a test in `release:check` (step 9) reads the ledger and every
+contract file at the newest `v*` tag with `git show <tag>:<path>`, where "newest
+tag" everywhere in this check means the newest `v*` tag that is an ancestor of
+the checked commit and does not point at it
 (`git tag --list 'v*' --merged HEAD --no-contains HEAD --sort=-version:refname`,
 first line), so a run from a freshly created release tag compares against the
 preceding release instead of against itself, and skipping, with a printed
@@ -807,25 +810,24 @@ name but a rewritten contract, therefore never becomes a baseline even after
 later commits make it an ancestor (the release runbook deletes it, and the next
 attempt may reuse the version only through a new tag at the corrected commit); a
 fixture checks out a tagged commit and asserts the selected baseline is the
-previous tag and fails if any row present there changed (other than gaining
-`retired` in a major release) or disappeared, or if any contract file present
-there is not byte-identical now. A row absent at the tag is new in this release:
-in release mode (defined below) its `release` must equal the version in
-`deno.json`, and that version must be at least a minor bump over the newest tag
-(a higher major, or the same major and a higher minor), because a new contract
-version adds an event, a tool or both, which is a feature and never a patch. The
-one exception is the `meeting-events.v1` bootstrap row while the newest tag
-carries no ledger: it describes what `v3.7.0` already shipped, so its `release`
-must be exactly `3.7.0`, not the `deno.json` version, and the tagged-source
-verification below replaces the new-row check for it (it keeps `3.7.0` in both
-modes, and in release mode the `deno.json` version must still be at least a
-minor bump over the newest tag, since the registry refactor is itself a
-feature). Any other row absent at that tag stays under the new-row check.
-Feature work never bumps the version (AGENTS.md: a bump needs explicit approval
-and lands in the release pull request), so the version checks run in two modes,
-chosen by comparing `deno.json` with the newest tag. While the two are equal (a
-feature pull request), every record absent at the tag (a row, a retirement
-record or an end record) other than that bootstrap row must carry
+previous tag and fails if any row present there changed or disappeared, or if
+any contract file present there is not byte-identical now. A row absent at the
+tag is new in this release: in release mode (defined below) its `release` must
+equal the version in `deno.json`, and that version must be at least a minor bump
+over the newest tag (a higher major, or the same major and a higher minor),
+because a new contract version adds an event, a tool or both, which is a feature
+and never a patch. The one exception is the `meeting-events.v1` bootstrap row
+while the newest tag carries no ledger: it describes what `v3.7.0` already
+shipped, so its `release` must be exactly `3.7.0`, not the `deno.json` version,
+and the tagged-source verification below replaces the new-row check for it (it
+keeps `3.7.0` in both modes, and in release mode the `deno.json` version must
+still be at least a minor bump over the newest tag, since the registry refactor
+is itself a feature). Any other row absent at that tag stays under the new-row
+check. Feature work never bumps the version (AGENTS.md: a bump needs explicit
+approval and lands in the release pull request), so the version checks run in
+two modes, chosen by comparing `deno.json` with the newest tag. While the two
+are equal (a feature pull request), every record absent at the tag (a row, a
+retirement record or an end record) other than that bootstrap row must carry
 `"release": "unreleased"`, and only the checks that do not depend on the version
 run on it: digests, discovery, bindings, `RETIRED_EVENTS` membership and the
 cross-version comparison, which accepts a missing name with an `unreleased`
@@ -1454,7 +1456,14 @@ automatically), every caller passes it explicitly, and `preflight` fails with a
 named error when it is empty instead of reaching the deployment lookup without
 credentials; it also requires the tag `v<deno.json version>` to exist and point
 at the checked commit; either way a mislabeled tag such as `v3.9.0` on a `3.8.0`
-manifest publishes nothing and never becomes a baseline. With that gate,
+manifest publishes nothing and never becomes a baseline. `publish-npm` treats
+npm's refusal to overwrite an existing version as success, so a rerun after a
+partial failure stays green; `preflight` therefore checks that case before
+either publish job runs: when `@hvgllc/hvgerp-mcp@<deno.json version>` already
+exists on npm, it verifies that version's provenance attestation exactly as the
+baseline selector does and fails unless its `gitCommit` is the checked commit,
+so a rerun of the same release still passes while a moved or recreated tag fails
+at once instead of reporting a publish that never happened. With that gate,
 publishing a GitHub release cannot reach npm or JSR with a ledger, contract or
 file list that fails the check. Give ERP the new contract hash so their verbatim
 copy can be checked against it.
