@@ -848,68 +848,77 @@ selector lists every version of `@hvgllc/hvgerp-mcp` on the public npm registry
 the highest by SemVer precedence, leaving out only a version whose provenance
 (below) names the checked commit itself, so a run from a freshly created release
 tag, or a rerun after its publish, compares against the preceding release
-instead of against itself. Version existence alone does not bind a version to a
-commit, so the selector checks the npm provenance, which depends on no hidden
-repository setting: trusted publishing attaches a signed SLSA provenance
-attestation to every version (`v3.7.0` carries one naming `refs/tags/v3.7.0` and
-its commit), and the selector installs `@hvgllc/hvgerp-mcp@X` into a temporary
-directory, runs `npm audit signatures` there so the attestation's signature is
-verified, then reads the attestation from the registry and requires its source
-repository to be `hvgllc/hvgerp-mcp`. Its `gitCommit` is the baseline commit:
-the check fails unless the tag `v<X>` exists and points at it, so a missing,
-moved or recreated tag fails rather than being skipped and a published `vX` can
-never be repointed at a commit with a rewritten ledger, and fails unless that
-commit is an ancestor of the checked commit, so a release cut from an unmerged
-branch must be merged before any later release can pass (the release runbook
-merges it, or restores a deleted tag at the attested commit). A version whose
-attestation is missing or unverifiable fails the check too. The baseline's own
-`deno.json` (read with `git show <gitCommit>:deno.json`) must say `X`. A tag no
-published version attests, left behind by a refused publish, mislabeled or with
-a matching name but a rewritten contract, therefore never becomes a baseline
-even after later commits make it an ancestor (the release runbook deletes it,
-and the next attempt may reuse the version only through a new tag at the
-corrected commit); a fixture with a stubbed registry asserts the selected
-baseline is the previous published version, and that a newest published version
-whose commit is not an ancestor, or whose tag is missing, fails the check. The
-check then fails if any row present at the baseline changed or disappeared, or
-if any contract file present there is not byte-identical now. A row absent at
-the tag is new in this release: in release mode (defined below) its `release`
-must equal the version in `deno.json`, and that version must be a feature bump
-over the newest tag `vM.N.P` as SemVer defines it: either `M.K.0` with `K`
-greater than `N`, or `J.0.0` with `J` greater than `M`, so a bump resets every
-lower component (`3.8.1` after `v3.7.0` and `4.2.7` after any `3.x` fail) but
-may skip an abandoned or reserved number (`3.9.0` after `v3.7.0` passes),
-because a new contract version adds an event, a tool or both, which is a feature
-and never a patch. The one exception is the `meeting-events.v1` bootstrap row
-while the newest tag carries no ledger: it describes what `v3.7.0` already
-shipped, so its `release` must be exactly `3.7.0`, not the `deno.json` version,
-and the tagged-source verification below replaces the new-row check for it (it
-keeps `3.7.0` in both modes, and in release mode the `deno.json` version must
-still be such a feature bump over the newest tag, since the registry refactor is
-itself a feature). Any other row absent at that tag stays under the new-row
-check. Feature work never bumps the version (AGENTS.md: a bump needs explicit
-approval and lands in the release pull request), so the version checks run in
-two modes, chosen by comparing `deno.json` with the newest tag. A `deno.json`
-version below it by SemVer fails the check in every run, before either mode is
-chosen and whatever records the release stamps, so a patch or internal release
-with no new record cannot publish newer source under an older, unused version
-number. While the two are equal (a feature pull request), every record absent at
-the tag (a row, a retirement record or an end record) other than that bootstrap
-row must carry `"release": "unreleased"`, and only the checks that do not depend
-on the version run on it: digests, discovery, bindings, `RETIRED_EVENTS`
-membership and the cross-version comparison, which accepts a missing name with
-an `unreleased` retirement record. Once `deno.json` is above the tag (the
-approved release pull request), no record may still say `unreleased`: the
-release pull request replaces each with the `deno.json` version, and every
-version rule above and in decision 9 then applies to it as written, so a
-retirement or a new binding still ships only in an `X.0.0` release. The publish
-workflow runs the same check from the release tag before either registry
-publication (step 9), so a release tag left with an `unreleased` record
-publishes nothing. A tag cannot be edited, so a released schema or binding
-cannot be blessed again by rewriting the ledger in the same commit. The one-time
-registry pull request creates the ledger with the `meeting-events.v1` row
-(release `3.7.0`, family `meeting`, doctypes `["Event"]`, tool
-`erpnext_meeting_get`, method `meetingGet`, path
+instead of against itself. Release versions are plain `MAJOR.MINOR.PATCH`:
+`release:check` fails when the `deno.json` version carries a prerelease or build
+suffix, so `preflight` never lets one reach npm (the `release: published`
+trigger also fires for a GitHub release marked as a prerelease, and this check
+is what stops it), and the selector ignores every prerelease version npm lists,
+which only a publish outside the workflow could have created, instead of taking
+it as a baseline: `3.8.0-rc.1` as the baseline would make the stable `3.8.0`
+neither a minor nor a major bump over it, so no release could ever pass. A
+fixture asserts that `3.8.0-rc.1` in `deno.json` fails the check and that a
+listed `3.8.0-rc.1` is never selected. Version existence alone does not bind a
+version to a commit, so the selector checks the npm provenance, which depends on
+no hidden repository setting: trusted publishing attaches a signed SLSA
+provenance attestation to every version (`v3.7.0` carries one naming
+`refs/tags/v3.7.0` and its commit), and the selector installs
+`@hvgllc/hvgerp-mcp@X` into a temporary directory, runs `npm audit signatures`
+there so the attestation's signature is verified, then reads the attestation
+from the registry and requires its source repository to be `hvgllc/hvgerp-mcp`.
+Its `gitCommit` is the baseline commit: the check fails unless the tag `v<X>`
+exists and points at it, so a missing, moved or recreated tag fails rather than
+being skipped and a published `vX` can never be repointed at a commit with a
+rewritten ledger, and fails unless that commit is an ancestor of the checked
+commit, so a release cut from an unmerged branch must be merged before any later
+release can pass (the release runbook merges it, or restores a deleted tag at
+the attested commit). A version whose attestation is missing or unverifiable
+fails the check too. The baseline's own `deno.json` (read with
+`git show <gitCommit>:deno.json`) must say `X`. A tag no published version
+attests, left behind by a refused publish, mislabeled or with a matching name
+but a rewritten contract, therefore never becomes a baseline even after later
+commits make it an ancestor (the release runbook deletes it, and the next
+attempt may reuse the version only through a new tag at the corrected commit); a
+fixture with a stubbed registry asserts the selected baseline is the previous
+published version, and that a newest published version whose commit is not an
+ancestor, or whose tag is missing, fails the check. The check then fails if any
+row present at the baseline changed or disappeared, or if any contract file
+present there is not byte-identical now. A row absent at the tag is new in this
+release: in release mode (defined below) its `release` must equal the version in
+`deno.json`, and that version must be a feature bump over the newest tag
+`vM.N.P` as SemVer defines it: either `M.K.0` with `K` greater than `N`, or
+`J.0.0` with `J` greater than `M`, so a bump resets every lower component
+(`3.8.1` after `v3.7.0` and `4.2.7` after any `3.x` fail) but may skip an
+abandoned or reserved number (`3.9.0` after `v3.7.0` passes), because a new
+contract version adds an event, a tool or both, which is a feature and never a
+patch. The one exception is the `meeting-events.v1` bootstrap row while the
+newest tag carries no ledger: it describes what `v3.7.0` already shipped, so its
+`release` must be exactly `3.7.0`, not the `deno.json` version, and the
+tagged-source verification below replaces the new-row check for it (it keeps
+`3.7.0` in both modes, and in release mode the `deno.json` version must still be
+such a feature bump over the newest tag, since the registry refactor is itself a
+feature). Any other row absent at that tag stays under the new-row check.
+Feature work never bumps the version (AGENTS.md: a bump needs explicit approval
+and lands in the release pull request), so the version checks run in two modes,
+chosen by comparing `deno.json` with the newest tag. A `deno.json` version below
+it by SemVer fails the check in every run, before either mode is chosen and
+whatever records the release stamps, so a patch or internal release with no new
+record cannot publish newer source under an older, unused version number. While
+the two are equal (a feature pull request), every record absent at the tag (a
+row, a retirement record or an end record) other than that bootstrap row must
+carry `"release": "unreleased"`, and only the checks that do not depend on the
+version run on it: digests, discovery, bindings, `RETIRED_EVENTS` membership and
+the cross-version comparison, which accepts a missing name with an `unreleased`
+retirement record. Once `deno.json` is above the tag (the approved release pull
+request), no record may still say `unreleased`: the release pull request
+replaces each with the `deno.json` version, and every version rule above and in
+decision 9 then applies to it as written, so a retirement or a new binding still
+ships only in an `X.0.0` release. The publish workflow runs the same check from
+the release tag before either registry publication (step 9), so a release tag
+left with an `unreleased` record publishes nothing. A tag cannot be edited, so a
+released schema or binding cannot be blessed again by rewriting the ledger in
+the same commit. The one-time registry pull request creates the ledger with the
+`meeting-events.v1` row (release `3.7.0`, family `meeting`, doctypes
+`["Event"]`, tool `erpnext_meeting_get`, method `meetingGet`, path
 `hvg_workspace.mcp_events.api.meeting_get`, input
 `erpnext_meeting_get.input.v1`, result `erpnext_meeting_get.result.v1`, checks
 `erpnext_meeting_get.checks.ts`). That row and its files describe what `v3.7.0`
@@ -1833,28 +1842,34 @@ Listed here so both sides agree on the order; the ERP team implements it.
    ERP's retired list; every name in the target's `RETIRED_EVENTS` is in ERP's
    retired list with an equal schema; a name in ERP's retired list that the
    target neither serves live nor lists in `RETIRED_EVENTS` has an end record in
-   the target's ledger; and no name in ERP's `acknowledged_retirement_ends` is
-   one the target serves live or lists in `RETIRED_EVENTS`. An extra name in
-   ERP's active list that the target does not serve passes: ERP serves a new
-   family before the MCP release that ships it (decision 8), and redeploying the
-   current release during that staging interval must not stop. So a rollback to
-   a release that serves a name ERP has since retired stops, whether or not the
-   end is acknowledged yet, because the target would advertise an event whose
-   every subscribe and refresh ERP refuses, and a rollback to a release older
-   than an acknowledged end stops because it would advertise and forward an
-   event ERP no longer serves or accepts unsubscribe for. The extra names are
-   what make an end record safe to roll out: while old MCP instances still
-   accept unsubscribe for an ended name and forward it, ERP keeps accepting it,
-   because ERP drops the name only through the acknowledgement above, accepted
-   only once a successful MCP production deployment attests that the release is
-   fully deployed and the old instances are drained, whatever pin it has moved
-   to in between. So MCP never forwards an unsubscribe ERP would refuse,
-   whichever side moves first. An end-to-end test retires a fixture name,
-   advances the active contract to a successor without it, and asserts that
-   unsubscribe for a stored subscription returns `{}` and deletes it, a second
-   unsubscribe also returns `{}`, subscribe with the name is refused, and a
-   delivery for it queued or retrying before the cutoff is marked `retired` and
-   never sent, even with dispatch on.
+   the target's ledger whose `release` is a version no greater than the target's
+   `deno.json` version, never `unreleased`; no end record in the target's ledger
+   still says `unreleased`, because such a commit (a merged feature commit
+   before its major release is stamped) already omits the name from
+   `RETIRED_EVENTS` and would answer `-32011` to an unsubscribe that the
+   deployed release accepts, while its manifest still names the earlier release;
+   and no name in ERP's `acknowledged_retirement_ends` is one the target serves
+   live or lists in `RETIRED_EVENTS`. An extra name in ERP's active list that
+   the target does not serve passes: ERP serves a new family before the MCP
+   release that ships it (decision 8), and redeploying the current release
+   during that staging interval must not stop. So a rollback to a release that
+   serves a name ERP has since retired stops, whether or not the end is
+   acknowledged yet, because the target would advertise an event whose every
+   subscribe and refresh ERP refuses, and a rollback to a release older than an
+   acknowledged end stops because it would advertise and forward an event ERP no
+   longer serves or accepts unsubscribe for. The extra names are what make an
+   end record safe to roll out: while old MCP instances still accept unsubscribe
+   for an ended name and forward it, ERP keeps accepting it, because ERP drops
+   the name only through the acknowledgement above, accepted only once a
+   successful MCP production deployment attests that the release is fully
+   deployed and the old instances are drained, whatever pin it has moved to in
+   between. So MCP never forwards an unsubscribe ERP would refuse, whichever
+   side moves first. An end-to-end test retires a fixture name, advances the
+   active contract to a successor without it, and asserts that unsubscribe for a
+   stored subscription returns `{}` and deletes it, a second unsubscribe also
+   returns `{}`, subscribe with the name is refused, and a delivery for it
+   queued or retrying before the cutoff is marked `retired` and never sent, even
+   with dispatch on.
 3. **Capture**: `doc_events` hooks for the new doctype in `hooks.py`, the same
    snapshot then `flush()` pattern as `events.py` (one net row per transaction,
    nothing on rollback, transient DB errors re-raised, other errors logged
