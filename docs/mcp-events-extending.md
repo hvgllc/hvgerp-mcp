@@ -897,9 +897,13 @@ adding that version and its tagged commit to
 listed, with the tag and ancestor checks below applied to it and the npm
 provenance check replaced by that record. Release versions are plain
 `MAJOR.MINOR.PATCH`: `release:check` fails when the `deno.json` version carries
-a prerelease or build suffix, so `preflight` never lets one reach npm (the
-`release: published` trigger also fires for a GitHub release marked as a
-prerelease, and this check is what stops it), and the selector ignores every
+a prerelease or build suffix, so `preflight` never lets one reach npm, and
+because GitHub's prerelease flag is release metadata independent of the tag and
+the manifest (the `release: published` trigger fires for prereleases too, so a
+prerelease created for `v3.8.0` with a plain `3.8.0` manifest would publish a
+stable version), every job of the publish workflow runs only when
+`github.event_name != 'release' || github.event.release.prerelease == false`, a
+condition a workflow test asserts on each job, and the selector ignores every
 prerelease version npm lists, which only a publish outside the workflow could
 have created, instead of taking it as a baseline: `3.8.0-rc.1` as the baseline
 would make the stable `3.8.0` neither a minor nor a major bump over it, so no
@@ -1863,21 +1867,26 @@ Listed here so both sides agree on the order; the ERP team implements it.
    id of its GitHub deployment (created before the check runs), refusing, and so
    stopping its own deployment, when the row already holds an open mark for
    another deployment, so production deployments never overlap; the deploy
-   workflow clears the mark in an always-run step once its deployment reaches a
-   terminal state, by compare-and-set on its own deployment id, so one workflow
-   can never clear another's mark, the mark never expires on its own, and an
-   operator clears a stale one only after confirming in GitHub that the
-   deployment it names is terminal. So either the activation commits first and
-   the rollback's check sees the name and stops, or the deployment opens first
-   and the activation is refused until it ends, when the newest successful
-   deployment is the rollback, whose ledger has no end record, so the
-   acknowledgement is refused again. An ERP test opens a deployment mark,
-   asserts that activating an acknowledgement is refused, clears the mark, and
-   asserts that the activation then succeeds. Next to that list ERP adds a
-   read-only whitelisted method, `retired_subscription_counts`, returning for
-   every name in its retired list the number of stored subscriptions across all
-   users, which the MCP `preflight` job requires to be 0 before it accepts a
-   retirement record or an end record (step 9 of section 5), a second one,
+   workflow clears the mark in an always-run step, by compare-and-set on its own
+   deployment id, so one workflow can never clear another's mark: at once when
+   its deployment succeeded, and after a failure only once the step has
+   confirmed that no instance of the target commit is running (every running
+   instance reports, through its image label, the commit of the newest
+   successful deployment), because a rollback that started old instances and
+   then failed its health or drain step leaves them forwarding names while
+   GitHub still names the end release as the newest success. Otherwise the mark
+   stays, it never expires on its own, and an operator clears it only after that
+   same confirmation. So either the activation commits first and the rollback's
+   check sees the name and stops, or the deployment opens first and the
+   activation is refused until it ends, when the newest successful deployment is
+   the rollback, whose ledger has no end record, so the acknowledgement is
+   refused again. An ERP test opens a deployment mark, asserts that activating
+   an acknowledgement is refused, clears the mark, and asserts that the
+   activation then succeeds. Next to that list ERP adds a read-only whitelisted
+   method, `retired_subscription_counts`, returning for every name in its
+   retired list the number of stored subscriptions across all users, which the
+   MCP `preflight` job requires to be 0 before it accepts a retirement record or
+   an end record (step 9 of section 5), a second one,
    `retirement_cutoff_status`, returning for each requested retired name whether
    `subscribe` and lease refresh are refused, whether the name-level capture
    refusal is active (the journal flush writes no row naming the event, decision
@@ -1949,28 +1958,33 @@ Listed here so both sides agree on the order; the ERP team implements it.
    removal shipped under that version, and an `unreleased` end record already
    omits the name from `RETIRED_EVENTS` and would answer `-32011` to an
    unsubscribe that the deployed release accepts, so only a stamped release
-   commit runs in production; and no name with an activated acknowledgement is
-   one the target serves live or lists in `RETIRED_EVENTS`. An extra name in
-   ERP's active list that the target does not serve passes: ERP serves a new
-   family before the MCP release that ships it (decision 8), and redeploying the
-   current release during that staging interval must not stop. So a rollback to
-   a release that serves a name ERP has since retired stops, whether or not the
-   end is acknowledged yet, because the target would advertise an event whose
-   every subscribe and refresh ERP refuses, and a rollback to a release older
-   than an acknowledged end stops because it would advertise and forward an
-   event ERP no longer serves or accepts unsubscribe for. The extra names are
-   what make an end record safe to roll out: while old MCP instances still
-   accept unsubscribe for an ended name and forward it, ERP keeps accepting it,
-   because ERP drops the name only through the acknowledgement above, accepted
-   only once a successful MCP production deployment attests that the release is
-   fully deployed and the old instances are drained, whatever pin it has moved
-   to in between. So MCP never forwards an unsubscribe ERP would refuse,
-   whichever side moves first. An end-to-end test retires a fixture name,
-   advances the active contract to a successor without it, and asserts that
-   unsubscribe for a stored subscription returns `{}` and deletes it, a second
-   unsubscribe also returns `{}`, subscribe with the name is refused, and a
-   delivery for it queued or retrying before the cutoff is marked `retired` and
-   never sent, even with dispatch on.
+   commit runs in production; and the target is the exact commit the `v<X>` tag
+   of its `deno.json` version points at and that version's npm provenance names,
+   the same binding as for a legacy target, because an untagged commit after a
+   release can keep its manifest and stamped ledger yet change `runReadBack`, a
+   checks module or the handler wiring, none of which the registry comparison
+   sees; and no name with an activated acknowledgement is one the target serves
+   live or lists in `RETIRED_EVENTS`. An extra name in ERP's active list that
+   the target does not serve passes: ERP serves a new family before the MCP
+   release that ships it (decision 8), and redeploying the current release
+   during that staging interval must not stop. So a rollback to a release that
+   serves a name ERP has since retired stops, whether or not the end is
+   acknowledged yet, because the target would advertise an event whose every
+   subscribe and refresh ERP refuses, and a rollback to a release older than an
+   acknowledged end stops because it would advertise and forward an event ERP no
+   longer serves or accepts unsubscribe for. The extra names are what make an
+   end record safe to roll out: while old MCP instances still accept unsubscribe
+   for an ended name and forward it, ERP keeps accepting it, because ERP drops
+   the name only through the acknowledgement above, accepted only once a
+   successful MCP production deployment attests that the release is fully
+   deployed and the old instances are drained, whatever pin it has moved to in
+   between. So MCP never forwards an unsubscribe ERP would refuse, whichever
+   side moves first. An end-to-end test retires a fixture name, advances the
+   active contract to a successor without it, and asserts that unsubscribe for a
+   stored subscription returns `{}` and deletes it, a second unsubscribe also
+   returns `{}`, subscribe with the name is refused, and a delivery for it
+   queued or retrying before the cutoff is marked `retired` and never sent, even
+   with dispatch on.
 3. **Capture**: `doc_events` hooks for the new doctype in `hooks.py`, the same
    snapshot then `flush()` pattern as `events.py` (one net row per transaction,
    nothing on rollback, transient DB errors re-raised, other errors logged
