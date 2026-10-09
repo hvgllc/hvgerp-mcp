@@ -419,7 +419,20 @@ implementation detail.
    and asserts all of this for every group. A shared tool and method therefore
    stay registered until the last family that names them is retired; removing
    the base family while `<family>.v<G>` still points at its tool fails that
-   test instead of leaving v<G> events without a re-read path.
+   test instead of leaving v<G> events without a re-read path. ERP outlives the
+   tool on its side: ERP deploys a retirement before the MCP release that drops
+   the tool, and the MCP instances still running meanwhile keep advertising it
+   to clients that are still processing delivered events, so ERP keeps every
+   read-back method whitelisted after its last event retires and removes it only
+   once every event of every ledger row naming its `readBackPath` is in ERP's
+   `acknowledged_retirement_ends` (section 6, item 2). An acknowledgement is
+   admitted only after a successful MCP production deployment attests that the
+   end release is out and the instances before it have drained, and the end
+   release comes after the release that dropped the tool, so no deployed MCP
+   instance can still call the method; ERP's tests assert this for every
+   whitelisted read-back method. A path a successor contract stopped naming
+   without retiring its events stays whitelisted; it is read-only and runs under
+   the caller's permissions, so keeping it costs nothing.
 6. **The journal records the family and the source doctype.** ERP adds two
    columns: `family` (drives the event name and matching) and `source_doctype`
    (identifies the record; one family can span several doctypes, such as `Task`
@@ -1569,94 +1582,99 @@ the deployment coverage check and two production checks: in release mode
 `preflight` calls ERP's read-only `retired_subscription_counts` method (section
 6, item 2) with a dedicated read-only API key held as a repository secret and
 fails unless the count of stored subscriptions is exactly 0 for every event
-whose end record this release stamps, failing too when the call fails or omits
-an event. The pin proves only that ERP runs the family's code: ERP may run it in
-the shadow state (decision 7) with the family's gates off, and an MCP release
-that then lists the family would advertise events whose subscriptions answer
-`-32012` or whose deliveries stay paused, against decision 8. So in release mode
-`preflight` also calls ERP's read-only `event_family_readiness` method (section
-6, item 2) with the same read-only key, for every family that has a row this
-release stamps and still has a live `CONTRACTS` entry after it, and fails unless
-ERP reports the effective journal, subscribe and dispatch gates of each one all
-on in production (with the journal gate off, subscriptions would succeed while
-no source change is ever recorded or delivered) and the OAuth client this server
-authenticates as (`hvgerp-mcp`, the expected client named in the workflow, not
-read from ERP) in `mcp_events_allowed_clients`, since a client outside that list
-gets `-32012` for every subscription whatever the gates say, failing too when
-the call fails or omits a family. A family whose every event this release
-retires has no live entry and is not checked for readiness (its subscribe gate
-is meant to be off, decision 9); its names are checked by the retirement rule
-that follows instead. The pin proves only that the retirement code is deployed,
-not that ERP has finished cutting the names off, so for every retirement record
-this release stamps `preflight` also calls ERP's read-only
-`retirement_cutoff_status` method (section 6, item 2) with the same key and
-fails unless ERP reports, for each retired name, that `subscribe` and lease
-refresh are refused, that the name-level capture refusal is active (no new
-journal row names the event, so source changes stop adding rows nothing may
-deliver), that the dispatcher's name-level send refusal is active, and that no
-delivery for the name is nonterminal (decision 9: none queued, pending or
-retrying, and no claim whose lease has not expired), failing too when the call
-fails or omits a name. The same call, with the same requirement, runs for every
-event whose end record this release stamps, beside the zero subscription count
-(for an end record ERP has already acknowledged, both calls answer
-`acknowledged` instead, which `preflight` accepts, section 6, item 2): ERP drops
-the name-level refusal only when it acknowledges the end record in
-`acknowledged_retirement_ends`, so the end release must see, live, that nothing
-is left for that refusal to hold back. This holds for a partial-family
-retirement, where the family's own gates stay on, as much as for a whole family.
-Subscribe and lease refresh for a retired name have been refused since its
-retirement shipped, so the count cannot rise again after the check. Together
-these rules mean a contract ERP may already have pinned cannot change inside the
-release PR, and a retirement cannot end while ERP still holds subscriptions only
-`unsubscribe` can reach. Before the GitHub release is published, ERP runs its
-re-pin subset test (section 6, item 2) against the release PR's head commit by
-full sha, and the release PR records that it passed; a contract change ERP has
-not pinned is found there, not after npm has the release; the tag cut from that
-PR is what later releases are checked against. Add the tag-comparison test to
-`scripts/release-check.sh` with the one-time registry work, and make it fail
-rather than skip when no `v*` tag is reachable (a shallow clone must fetch tags
-first: the same pull request sets `fetch-depth: 0` and `fetch-tags: true` on the
-`actions/checkout@v5` step of `.github/workflows/test.yml`, which by default
-fetches one commit and no tags, so the hosted `release:check` step would
-otherwise fail on every run), since a skipped check would freeze nothing.
-`test.yml` is dispatched by hand, so it is not the gate: the same pull request
-adds a `preflight` job to `.github/workflows/publish.yml` (checkout with
-`fetch-depth: 0` and `fetch-tags: true`, `denoland/setup-deno@v2`,
-`actions/setup-node@v4` with Node 22 followed by the same
-`npm install -g npm@latest` step `publish-npm` runs, because the provenance
-checks below call `npm audit signatures` and npm recommends the latest CLI for
-attestation verification while each job starts from the runner's bundled npm,
-build the UI viewers, `deno task release:check`) and makes both `publish-jsr`
-and `publish-npm` declare `needs: preflight`. The same pull request removes the
-`workflow_call` trigger from `publish.yml`: no workflow calls it, npm trusted
-publishing validates the calling workflow's name rather than the reusable one's,
-and a caller would also need its own `id-token: write` and the ERP token, so a
-caller could pass `preflight` and still fail at `npm publish`; `release:check`
-asserts that the `on` keys of `publish.yml` are exactly `release` and
-`workflow_dispatch`. The same pull request updates the workflow description in
-`AGENTS.md` (its CI section, which today calls `publish.yml` reusable through
-`workflow_call`) to list only the release and manual triggers and to describe
-the `preflight` job and its ERP secrets, so the repository guidance and the
-workflow never disagree. Comparing with the preceding tag leaves the tag being
-published unchecked, so `preflight` also checks it first: on a release event it
-requires the release's tag name (`GITHUB_REF_NAME`) to equal `v` plus the
-`deno.json` version, which `src/version.ts` must also equal, and on a manual
-dispatch, which can run at any commit, it requires the same ERP pin read as a
-release (on either trigger `preflight` fails with a named error when the ERP
-token, or in release mode the read-only ERP API key, is empty instead of
-reaching the deployment lookup or the ERP calls without credentials) and the tag
-`v<deno.json version>` to exist and point at the checked commit; either way a
-mislabeled tag such as `v3.9.0` on a `3.8.0` manifest publishes nothing and
-never becomes a baseline. `publish-npm` treats npm's refusal to overwrite an
-existing version as success, so a rerun after a partial failure stays green;
-`preflight` therefore checks that case before either publish job runs: when
-`@hvgllc/hvgerp-mcp@<deno.json version>` already exists on npm, it verifies that
-version's provenance attestation exactly as the baseline selector does and fails
-unless its `gitCommit` is the checked commit, so a rerun of the same release
-still passes while a moved or recreated tag fails at once instead of reporting a
-publish that never happened. With that gate, publishing a GitHub release cannot
-reach npm or JSR with a ledger, contract or file list that fails the check. Give
-ERP the new contract hash so their verbatim copy can be checked against it.
+whose retirement record or end record this release stamps, failing too when the
+call fails or omits an event: for a retirement record the zero proves the
+cleanup migration of decision 9 deleted every stored subscription, since one
+with no expiry would otherwise keep using its owner's quota for the whole
+retirement, and for an end record it proves nothing is left that only
+`unsubscribe` could reach. The pin proves only that ERP runs the family's code:
+ERP may run it in the shadow state (decision 7) with the family's gates off, and
+an MCP release that then lists the family would advertise events whose
+subscriptions answer `-32012` or whose deliveries stay paused, against
+decision 8. So in release mode `preflight` also calls ERP's read-only
+`event_family_readiness` method (section 6, item 2) with the same read-only key,
+for every family that has a row this release stamps and still has a live
+`CONTRACTS` entry after it, and fails unless ERP reports the effective journal,
+subscribe and dispatch gates of each one all on in production (with the journal
+gate off, subscriptions would succeed while no source change is ever recorded or
+delivered) and the OAuth client this server authenticates as (`hvgerp-mcp`, the
+expected client named in the workflow, not read from ERP) in
+`mcp_events_allowed_clients`, since a client outside that list gets `-32012` for
+every subscription whatever the gates say, failing too when the call fails or
+omits a family. A family whose every event this release retires has no live
+entry and is not checked for readiness (its subscribe gate is meant to be off,
+decision 9); its names are checked by the retirement rule that follows instead.
+The pin proves only that the retirement code is deployed, not that ERP has
+finished cutting the names off, so for every retirement record this release
+stamps `preflight` also calls ERP's read-only `retirement_cutoff_status` method
+(section 6, item 2) with the same key and fails unless ERP reports, for each
+retired name, that `subscribe` and lease refresh are refused, that the
+name-level capture refusal is active (no new journal row names the event, so
+source changes stop adding rows nothing may deliver), that the dispatcher's
+name-level send refusal is active, and that no delivery for the name is
+nonterminal (decision 9: none queued, pending or retrying, and no claim whose
+lease has not expired), failing too when the call fails or omits a name. The
+same call, with the same requirement, runs for every event whose end record this
+release stamps, beside the zero subscription count (for an end record ERP has
+already acknowledged, both calls answer `acknowledged` instead, which
+`preflight` accepts, section 6, item 2): ERP drops the name-level refusal only
+when it acknowledges the end record in `acknowledged_retirement_ends`, so the
+end release must see, live, that nothing is left for that refusal to hold back.
+This holds for a partial-family retirement, where the family's own gates stay
+on, as much as for a whole family. Subscribe and lease refresh for a retired
+name have been refused since its retirement shipped, so the count cannot rise
+again after the check. Together these rules mean a contract ERP may already have
+pinned cannot change inside the release PR, and a retirement cannot end while
+ERP still holds subscriptions only `unsubscribe` can reach. Before the GitHub
+release is published, ERP runs its re-pin subset test (section 6, item 2)
+against the release PR's head commit by full sha, and the release PR records
+that it passed; a contract change ERP has not pinned is found there, not after
+npm has the release; the tag cut from that PR is what later releases are checked
+against. Add the tag-comparison test to `scripts/release-check.sh` with the
+one-time registry work, and make it fail rather than skip when no `v*` tag is
+reachable (a shallow clone must fetch tags first: the same pull request sets
+`fetch-depth: 0` and `fetch-tags: true` on the `actions/checkout@v5` step of
+`.github/workflows/test.yml`, which by default fetches one commit and no tags,
+so the hosted `release:check` step would otherwise fail on every run), since a
+skipped check would freeze nothing. `test.yml` is dispatched by hand, so it is
+not the gate: the same pull request adds a `preflight` job to
+`.github/workflows/publish.yml` (checkout with `fetch-depth: 0` and
+`fetch-tags: true`, `denoland/setup-deno@v2`, `actions/setup-node@v4` with Node
+22 followed by the same `npm install -g npm@latest` step `publish-npm` runs,
+because the provenance checks below call `npm audit signatures` and npm
+recommends the latest CLI for attestation verification while each job starts
+from the runner's bundled npm, build the UI viewers, `deno task release:check`)
+and makes both `publish-jsr` and `publish-npm` declare `needs: preflight`. The
+same pull request removes the `workflow_call` trigger from `publish.yml`: no
+workflow calls it, npm trusted publishing validates the calling workflow's name
+rather than the reusable one's, and a caller would also need its own
+`id-token: write` and the ERP token, so a caller could pass `preflight` and
+still fail at `npm publish`; `release:check` asserts that the `on` keys of
+`publish.yml` are exactly `release` and `workflow_dispatch`. The same pull
+request updates the workflow description in `AGENTS.md` (its CI section, which
+today calls `publish.yml` reusable through `workflow_call`) to list only the
+release and manual triggers and to describe the `preflight` job and its ERP
+secrets, so the repository guidance and the workflow never disagree. Comparing
+with the preceding tag leaves the tag being published unchecked, so `preflight`
+also checks it first: on a release event it requires the release's tag name
+(`GITHUB_REF_NAME`) to equal `v` plus the `deno.json` version, which
+`src/version.ts` must also equal, and on a manual dispatch, which can run at any
+commit, it requires the same ERP pin read as a release (on either trigger
+`preflight` fails with a named error when the ERP token, or in release mode the
+read-only ERP API key, is empty instead of reaching the deployment lookup or the
+ERP calls without credentials) and the tag `v<deno.json version>` to exist and
+point at the checked commit; either way a mislabeled tag such as `v3.9.0` on a
+`3.8.0` manifest publishes nothing and never becomes a baseline. `publish-npm`
+treats npm's refusal to overwrite an existing version as success, so a rerun
+after a partial failure stays green; `preflight` therefore checks that case
+before either publish job runs: when `@hvgllc/hvgerp-mcp@<deno.json version>`
+already exists on npm, it verifies that version's provenance attestation exactly
+as the baseline selector does and fails unless its `gitCommit` is the checked
+commit, so a rerun of the same release still passes while a moved or recreated
+tag fails at once instead of reporting a publish that never happened. With that
+gate, publishing a GitHub release cannot reach npm or JSR with a ledger,
+contract or file list that fails the check. Give ERP the new contract hash so
+their verbatim copy can be checked against it.
 
 ## 6. Recipe: ERPNext side (owned by the ERP repository)
 
@@ -1746,26 +1764,26 @@ Listed here so both sides agree on the order; the ERP team implements it.
    lists. Next to that list ERP adds a read-only whitelisted method,
    `retired_subscription_counts`, returning for every name in its retired list
    the number of stored subscriptions across all users, which the MCP
-   `preflight` job requires to be 0 before it accepts an end record (step 9 of
-   section 5), a second one, `retirement_cutoff_status`, returning for each
-   requested retired name whether `subscribe` and lease refresh are refused,
-   whether the name-level capture refusal is active (the journal flush writes no
-   row naming the event, decision 9), whether the dispatcher's name-level send
-   refusal is active and how many of its deliveries are nonterminal (decision
-   9), which `preflight` requires to be refused, active, active and 0 for every
-   retirement record and every end record the release stamps, and a third one,
-   `event_family_readiness`, returning, for a requested OAuth client id, whether
-   that client is in `mcp_events_allowed_clients`, and for each requested family
-   whether its effective journal, subscribe and dispatch gates are on (the
-   per-family keys of decision 7 together with the global flags; for the meeting
-   family, which has no per-family keys, the global flags alone), which
-   `preflight` requires to be on for every family whose row the release stamps
-   and that keeps a live entry, with `hvgerp-mcp` allowed; all three are
-   callable only by a dedicated read-only API user, report nothing about any
-   user's data beyond these counts and flags, and an unknown family or event
-   name is refused rather than reported off. A name in ERP's
-   `acknowledged_retirement_ends` is not unknown: both
-   `retired_subscription_counts` and `retirement_cutoff_status` answer
+   `preflight` job requires to be 0 before it accepts a retirement record or an
+   end record (step 9 of section 5), a second one, `retirement_cutoff_status`,
+   returning for each requested retired name whether `subscribe` and lease
+   refresh are refused, whether the name-level capture refusal is active (the
+   journal flush writes no row naming the event, decision 9), whether the
+   dispatcher's name-level send refusal is active and how many of its deliveries
+   are nonterminal (decision 9), which `preflight` requires to be refused,
+   active, active and 0 for every retirement record and every end record the
+   release stamps, and a third one, `event_family_readiness`, returning, for a
+   requested OAuth client id, whether that client is in
+   `mcp_events_allowed_clients`, and for each requested family whether its
+   effective journal, subscribe and dispatch gates are on (the per-family keys
+   of decision 7 together with the global flags; for the meeting family, which
+   has no per-family keys, the global flags alone), which `preflight` requires
+   to be on for every family whose row the release stamps and that keeps a live
+   entry, with `hvgerp-mcp` allowed; all three are callable only by a dedicated
+   read-only API user, report nothing about any user's data beyond these counts
+   and flags, and an unknown family or event name is refused rather than
+   reported off. A name in ERP's `acknowledged_retirement_ends` is not unknown:
+   both `retired_subscription_counts` and `retirement_cutoff_status` answer
    `acknowledged` for it, and `preflight` accepts that answer for an end record
    (never for a retirement record), because ERP lets an acknowledgement in only
    after a successful MCP production deployment of that end, so rerunning the
