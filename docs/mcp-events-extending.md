@@ -1058,10 +1058,19 @@ asserts the one wire form a read-back tool has: a success has no `isError`, a
 exactly one `text` item whose JSON parses to the same value; an error has
 `isError: true` and exactly one `text` item equal to the fixed message, with
 nothing else. The same test runs in `release:check` and, while the newest tag
-carries no ledger, against the `v3.7.0` worktree of the bootstrap check, so the
-wire form the meeting tool already ships is the one asserted. An edit to any
-shared layer that changes a read-back tool's wire response therefore fails in
-the release that makes it.
+carries no ledger, against the `v3.7.0` worktree of the bootstrap check with its
+own legacy expectation: `v3.7.0` declared no `outputSchema` for
+`erpnext_meeting_get` and its `buildHandlersMap()` adds `structuredContent` only
+for viewer-bound tools, so a tagged success has no `isError`, no
+`structuredContent` and exactly one `text` item whose JSON parses to the
+expected output, and a tagged error is the same as above. The refactored release
+must then return, for every input, the tagged response plus exactly one added
+member, `structuredContent`, deeply equal to the parsed `text`; its `content`
+and error responses equal the tagged ones. So the wire form the meeting tool
+already ships is the one asserted, and adding `structuredContent` is the only
+wire change the bootstrap release may make. An edit to any shared layer that
+changes a read-back tool's wire response therefore fails in the release that
+makes it.
 
 Validation alone cannot catch a pick function that stops copying an optional
 field or stops passing one variant of a field: every output still validates. So
