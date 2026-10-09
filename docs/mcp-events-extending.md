@@ -790,43 +790,51 @@ warning, every candidate `v<X>` that was not a successful release: its own
 `deno.json` (read with `git show v<X>:deno.json`) must say `X`, and
 `@hvgllc/hvgerp-mcp@X` must exist on the public npm registry, which only a run
 that passed `preflight` can publish and which never lets a version be
-republished. A tag left behind by a refused publish, mislabeled or with a
-matching name but a rewritten contract, therefore never becomes a baseline even
-after later commits make it an ancestor (the release runbook also deletes such a
-tag); a fixture checks out a tagged commit and asserts the selected baseline is
-the previous tag and fails if any row present there changed (other than gaining
-`retired` in a major release) or disappeared, or if any contract file present
-there is not byte-identical now. A row absent at the tag is new in this release:
-in release mode (defined below) its `release` must equal the version in
-`deno.json`, and that version must be at least a minor bump over the newest tag
-(a higher major, or the same major and a higher minor), because a new contract
-version adds an event, a tool or both, which is a feature and never a patch. The
-one exception is the `meeting-events.v1` bootstrap row while the newest tag
-carries no ledger: it describes what `v3.7.0` already shipped, so its `release`
-must be exactly `3.7.0`, not the `deno.json` version, and the tagged-source
-verification below replaces the new-row check for it (it keeps `3.7.0` in both
-modes, and in release mode the `deno.json` version must still be at least a
-minor bump over the newest tag, since the registry refactor is itself a
-feature). Any other row absent at that tag stays under the new-row check.
-Feature work never bumps the version (AGENTS.md: a bump needs explicit approval
-and lands in the release pull request), so the version checks run in two modes,
-chosen by comparing `deno.json` with the newest tag. While the two are equal (a
-feature pull request), every record absent at the tag (a row, a retirement
-record or an end record) other than that bootstrap row must carry
-`"release": "unreleased"`, and only the checks that do not depend on the version
-run on it: digests, discovery, bindings, `RETIRED_EVENTS` membership and the
-cross-version comparison, which accepts a missing name with an `unreleased`
-retirement record. Once `deno.json` is above the tag (the approved release pull
-request), no record may still say `unreleased`: the release pull request
-replaces each with the `deno.json` version, and every version rule above and in
-decision 9 then applies to it as written, so a retirement or a new binding still
-ships only in an `X.0.0` release. The publish workflow runs the same check from
-the release tag before either registry publication (step 9), so a release tag
-left with an `unreleased` record publishes nothing. A tag cannot be edited, so a
-released schema or binding cannot be blessed again by rewriting the ledger in
-the same commit. The one-time registry pull request creates the ledger with the
-`meeting-events.v1` row (release `3.7.0`, family `meeting`, doctypes
-`["Event"]`, tool `erpnext_meeting_get`, method `meetingGet`, path
+republished. Version existence alone does not bind a tag to the commit that
+published it, so `v*` tags are immutable: a repository ruleset targeting
+`refs/tags/v*` blocks update and deletion with an empty bypass list, and the
+selector lists the repository's tag rulesets through the API and fails, rather
+than warns, unless an active one covering `refs/tags/v*` carries both rules, so
+a published `vX` can never be moved or recreated onto a commit with a rewritten
+ledger. A tag left behind by a refused publish, mislabeled or with a matching
+name but a rewritten contract, therefore never becomes a baseline even after
+later commits make it an ancestor; it stays (the ruleset forbids deleting it),
+and the next attempt uses a new version number, because publishing on any
+trigger needs the version's tag at the checked commit; a fixture checks out a
+tagged commit and asserts the selected baseline is the previous tag and fails if
+any row present there changed (other than gaining `retired` in a major release)
+or disappeared, or if any contract file present there is not byte-identical now.
+A row absent at the tag is new in this release: in release mode (defined below)
+its `release` must equal the version in `deno.json`, and that version must be at
+least a minor bump over the newest tag (a higher major, or the same major and a
+higher minor), because a new contract version adds an event, a tool or both,
+which is a feature and never a patch. The one exception is the
+`meeting-events.v1` bootstrap row while the newest tag carries no ledger: it
+describes what `v3.7.0` already shipped, so its `release` must be exactly
+`3.7.0`, not the `deno.json` version, and the tagged-source verification below
+replaces the new-row check for it (it keeps `3.7.0` in both modes, and in
+release mode the `deno.json` version must still be at least a minor bump over
+the newest tag, since the registry refactor is itself a feature). Any other row
+absent at that tag stays under the new-row check. Feature work never bumps the
+version (AGENTS.md: a bump needs explicit approval and lands in the release pull
+request), so the version checks run in two modes, chosen by comparing
+`deno.json` with the newest tag. While the two are equal (a feature pull
+request), every record absent at the tag (a row, a retirement record or an end
+record) other than that bootstrap row must carry `"release": "unreleased"`, and
+only the checks that do not depend on the version run on it: digests, discovery,
+bindings, `RETIRED_EVENTS` membership and the cross-version comparison, which
+accepts a missing name with an `unreleased` retirement record. Once `deno.json`
+is above the tag (the approved release pull request), no record may still say
+`unreleased`: the release pull request replaces each with the `deno.json`
+version, and every version rule above and in decision 9 then applies to it as
+written, so a retirement or a new binding still ships only in an `X.0.0`
+release. The publish workflow runs the same check from the release tag before
+either registry publication (step 9), so a release tag left with an `unreleased`
+record publishes nothing. A tag cannot be edited, so a released schema or
+binding cannot be blessed again by rewriting the ledger in the same commit. The
+one-time registry pull request creates the ledger with the `meeting-events.v1`
+row (release `3.7.0`, family `meeting`, doctypes `["Event"]`, tool
+`erpnext_meeting_get`, method `meetingGet`, path
 `hvg_workspace.mcp_events.api.meeting_get`, input
 `erpnext_meeting_get.input.v1`, result `erpnext_meeting_get.result.v1`, checks
 `erpnext_meeting_get.checks.ts`). That row and its files describe what `v3.7.0`
@@ -1007,7 +1015,8 @@ tool's live result schema file (pinned by `readBackResult`), and
 from there, so the validator and the tool count the same way); a test parses
 each checks module and asserts its import list equals exactly that allowlist.
 The module exports `MEETING_READ_BACK`, a frozen
-`{ precheck, readBack, identity, resultSchema }`: `precheck` is
+`{ precheck, readBack, identity, identityMode, resultSchema }`: `identityMode`
+is `"legacy"` (the runner rules below), `precheck` is
 `meetingPrecheck(keys, actsAs)`, which reproduces, in the `v3.7.0` order and
 with its fixed messages, the checks the tagged handler makes before it reads the
 identity (a shared client is refused with `Not authorized to read this meeting`,
@@ -1058,60 +1067,67 @@ which imports nothing), `code-points.ts` and `result-validator.ts`, and
 every sample and generated output and fails on any disagreement, so the copy
 cannot drift silently while it is still meant to match. Identity is the
 canonical check's alone, and for every family after meetings the checks module
-never sees it: `runReadBack` removes the identity field and `source_doctype`
-from the arguments it passes to `entry.readBack`, wraps `erpGet` so the runner
-itself adds them to the ERP params, checks that the record or tombstone ERP
-returns carries exactly the requested identity (a mismatch is
-`Events backend error`) and strips it before the picker runs, and sets it on the
-picker's output itself; a test parses each such checks module and fails if the
-identity field or `source_doctype` appears in it as an identifier, property name
-or string literal, so no branch on an identity value can exist. The meeting
-module is exempt only because its identity handling is the token-identical
-`v3.7.0` code (above), which is what shipped. Beyond that, each argument rule
-declares the `fields` it reads, a test asserts that no rule of any checks module
-lists the identity field or `source_doctype`, and a fixed-seed run of generated
-identities (every Unicode general category, punctuation, symbols and control
-characters included, at the minimum, the maximum and lengths between, counted in
-code points) must reach `erpGet` unrefused, so a module cannot add a predicate
-that rejects a document name the contract allows. The picker likewise reads
-every enum it accepts and every bound it enforces from the imported result
-schema, never from a literal, and the fixed-seed result generator reads that
-schema and adds, for every enum, each member and one non-member and, for every
-string, array and number bound, the boundary value and one past it: members and
-boundary values must succeed and the others must throw `Events backend error`.
-Tests fail if an argument error or a response-shape backend error is thrown any
-other way, if the names in `MEETING_ARGUMENT_RULES` differ from the case set's
-`rules` or those in `MEETING_GUARDS` from the sample set's `guards`, or if, for
-any recorded case or generated valid arguments, the parameters the fake client
-receives do not hold each canonical identity field the arguments carry (the
-identity field and, for a multi-doctype family, `source_doctype`) under the same
-name with a value strictly equal (`===`) to the argument's, an assertion the
-test writes from the contract's `identityField` and never through
-`meetingErpCall`, so a helper that trims, lowercases or truncates an accepted id
-fails even though both sides of the next comparison would agree, or if the
-parameters the fake client receives differ from `meetingErpCall(arguments)` for
-any recorded case or for a fixed-seed run of generated valid arguments (every
-temporal form, fractional seconds of every length, each argument present and
-absent), or if the handler's output differs from the module's
-`pickMeetingFields` for any sample case or for a fixed-seed run of generated ERP
-results (each key present, absent and null, titles from every Unicode general
-category, URLs of every scheme, long occurrence lists), so trimming a title or
-rewriting a URL that no sample covers fails. The `assertShape` rule covers only
-rejections of a response body: a transport failure or a malformed envelope fails
-before there is a body to inspect, so the sample set pins those in a separate
-`transport` array, each `{ "failure": ..., "error": ... }` with `failure` a
-thrown client error (network failure, HTTP 429, 401, 403, 500) or a raw message
-that is not a valid `{ ok, result | error }` envelope, and `error` the fixed
-message the handler must throw for it; it is immutable like the rest of the
-sample set. The ledger row records `readBackChecks`, the SHA-256 of the checks
-module, `run.ts`, `errors.ts`, `code-points.ts` and `result-validator.ts`
-together as the version shipped (the contract file the module imports is pinned
-by its own ledger digest), and the tag check requires it byte-identical for
-every live row. Adding, removing, tightening or loosening a rule or guard,
-changing how an argument is forwarded or how a result field is mapped, is
-therefore a new checks module, and so a major release under a new tool name or
-contract version, like any other change to what the tool accepts, sends or
-returns.
+never sees it. Which path `runReadBack` takes is read from the entry's required
+`identityMode`, never inferred from a function or field name: `"legacy"` passes
+the arguments through unchanged and leaves the result's identity to the module,
+and `"runner"` does what follows. A registry test asserts that exactly one entry
+has `"legacy"`, the one registered for the `meeting-events.v1` read-back tool,
+that every other entry has `"runner"`, and that `buildRegistry` refuses a
+missing or unknown mode, and `run_test.ts` exercises both paths with fixture
+entries. In `"runner"` mode `runReadBack` removes the identity field and
+`source_doctype` from the arguments it passes to `entry.readBack`, wraps
+`erpGet` so the runner itself adds them to the ERP params, checks that the
+record or tombstone ERP returns carries exactly the requested identity (a
+mismatch is `Events backend error`) and strips it before the picker runs, and
+sets it on the picker's output itself; a test parses each such checks module and
+fails if the identity field or `source_doctype` appears in it as an identifier,
+property name or string literal, so no branch on an identity value can exist.
+The meeting module is exempt only because its identity handling is the
+token-identical `v3.7.0` code (above), which is what shipped. Beyond that, each
+argument rule declares the `fields` it reads, a test asserts that no rule of any
+checks module lists the identity field or `source_doctype`, and a fixed-seed run
+of generated identities (every Unicode general category, punctuation, symbols
+and control characters included, at the minimum, the maximum and lengths
+between, counted in code points) must reach `erpGet` unrefused, so a module
+cannot add a predicate that rejects a document name the contract allows. The
+picker likewise reads every enum it accepts and every bound it enforces from the
+imported result schema, never from a literal, and the fixed-seed result
+generator reads that schema and adds, for every enum, each member and one
+non-member and, for every string, array and number bound, the boundary value and
+one past it: members and boundary values must succeed and the others must throw
+`Events backend error`. Tests fail if an argument error or a response-shape
+backend error is thrown any other way, if the names in `MEETING_ARGUMENT_RULES`
+differ from the case set's `rules` or those in `MEETING_GUARDS` from the sample
+set's `guards`, or if, for any recorded case or generated valid arguments, the
+parameters the fake client receives do not hold each canonical identity field
+the arguments carry (the identity field and, for a multi-doctype family,
+`source_doctype`) under the same name with a value strictly equal (`===`) to the
+argument's, an assertion the test writes from the contract's `identityField` and
+never through `meetingErpCall`, so a helper that trims, lowercases or truncates
+an accepted id fails even though both sides of the next comparison would agree,
+or if the parameters the fake client receives differ from
+`meetingErpCall(arguments)` for any recorded case or for a fixed-seed run of
+generated valid arguments (every temporal form, fractional seconds of every
+length, each argument present and absent), or if the handler's output differs
+from the module's `pickMeetingFields` for any sample case or for a fixed-seed
+run of generated ERP results (each key present, absent and null, titles from
+every Unicode general category, URLs of every scheme, long occurrence lists), so
+trimming a title or rewriting a URL that no sample covers fails. The
+`assertShape` rule covers only rejections of a response body: a transport
+failure or a malformed envelope fails before there is a body to inspect, so the
+sample set pins those in a separate `transport` array, each
+`{ "failure": ..., "error": ... }` with `failure` a thrown client error (network
+failure, HTTP 429, 401, 403, 500) or a raw message that is not a valid
+`{ ok, result | error }` envelope, and `error` the fixed message the handler
+must throw for it; it is immutable like the rest of the sample set. The ledger
+row records `readBackChecks`, the SHA-256 of the checks module, `run.ts`,
+`errors.ts`, `code-points.ts` and `result-validator.ts` together as the version
+shipped (the contract file the module imports is pinned by its own ledger
+digest), and the tag check requires it byte-identical for every live row.
+Adding, removing, tightening or loosening a rule or guard, changing how an
+argument is forwarded or how a result field is mapped, is therefore a new checks
+module, and so a major release under a new tool name or contract version, like
+any other change to what the tool accepts, sends or returns.
 
 The digest stops at `runReadBack`'s return. What reaches the client after it,
 `buildHandlersMap()` in `src/client.ts`, the server's `toolErrorMapper` and the
@@ -1311,8 +1327,9 @@ the meeting checks module except for identity, which a new family's module never
 handles (step 2: `runReadBack` strips, forwards and matches it), holding the
 argument rules, `<family>ErpCall`, the guards, `pick<Family>Fields`,
 `<family>Precheck(keys, actsAs)`, the `<family>ReadBack(arguments, erpGet)`
-entry point and its frozen `{ precheck, readBack, identity, resultSchema }`
-entry; the handler is exactly
+entry point and its frozen
+`{ precheck, readBack, identity, identityMode, resultSchema }` entry with
+`identityMode: "runner"`; the handler is exactly
 `(args, ctx) => runReadBack(<FAMILY>_READ_BACK, args, ctx.client)`, with
 `<FAMILY>_READ_BACK` exported as the meeting module exports `MEETING_READ_BACK`,
 and `erp-store.ts` keeps only the generic subscribe and unsubscribe calls and
@@ -1377,23 +1394,28 @@ row to `src/events/contract-ledger.json` with `"release": "unreleased"` (step
 in the ledger with that version, and the ledger check refuses the bump if one is
 left. That is all it may change in event artifacts: the anchor is the pin ERP
 actually runs, read from ERP rather than from this checkout, where a release
-pull request could rewrite it. ERP records each pin in a pin file in its
-contracts directory (contract id to the full MCP sha, the file its digest tests
-read), and the `preflight` job reads that file from the ERP repository's default
-branch with a read-only token (a repository secret scoped to that one
-repository). In release mode every row and every retirement record this release
-stamps must have a pin there (a retirement record under its `to` contract id)
-whose sha is an ancestor of the checked commit, and the record and every
-contract, result schema, case set and checks module it names must be identical
-at that sha and at the checked commit apart from the `release` stamp; nothing in
-this repository can move the anchor, so a multi-commit release pull request that
-edits an artifact, in whatever order it bumps the version, is still compared
-with what ERP runs. An end record needs no pin: it names no contract, and ERP
-re-pins past it only after the release is deployed (section 6, item 2), so it is
-checked by the version rules and the deployment coverage check alone, so a
-contract ERP may already have pinned cannot change inside the release PR. Before
-the GitHub release is published, ERP runs its re-pin subset test (section 6,
-item 2) against the release PR's head commit by full sha, and the release PR
+pull request could rewrite it. ERP records one pin, the full MCP sha its ledger
+copy and every contract copy come from, in a pin file in its contracts directory
+(the file its digest tests read), and the `preflight` job reads that file at the
+ERP commit production runs, never at the head of a branch, where a merged but
+undeployed pin would pass: ERP's deploy creates a GitHub deployment in its
+`production` environment for the exact commit it deployed and marks it
+successful only after its post-deploy health check, and `preflight` takes the
+sha of the newest successful `production` deployment and reads the pin file at
+that commit with a read-only token (a repository secret scoped to that one
+repository), failing when there is none. In release mode the pinned sha must be
+an ancestor of the checked commit, and every row and every retirement record
+this release stamps must be present at that sha, with the record and every
+contract, result schema, case set and checks module it names identical there and
+at the checked commit apart from the `release` stamp; nothing in this repository
+can move the anchor, so a multi-commit release pull request that edits an
+artifact, in whatever order it bumps the version, is still compared with what
+ERP runs. An end record need not be present at the pin: it names no contract,
+and ERP re-pins past it only after the release is deployed (section 6, item 2),
+so it is checked by the version rules and the deployment coverage check alone,
+so a contract ERP may already have pinned cannot change inside the release PR.
+Before the GitHub release is published, ERP runs its re-pin subset test (section
+6, item 2) against the release PR's head commit by full sha, and the release PR
 records that it passed; a contract change ERP has not pinned is found there, not
 after npm has the release; the tag cut from that PR is what later releases are
 checked against. Add the tag-comparison test to `scripts/release-check.sh` with
@@ -1459,39 +1481,44 @@ Listed here so both sides agree on the order; the ERP team implements it.
    it, accepted by the unsubscribe path only and refused by subscribe and
    refresh. That list is derived, never written by hand: ERP copies
    `src/events/contract-ledger.json` verbatim with a digest test against the
-   copy at an exact MCP commit it pins, recorded per contract id in a pin file
-   in its contracts directory that the MCP `preflight` job reads (step 9 of
-   section 5). Because ERP serves a family before the MCP release that ships it
-   (decision 8) and feature work leaves new records `unreleased`, the pin is
-   first the full sha of the merged feature pull request's commit on MCP `main`,
-   never a branch or a tag that does not exist yet; once the release is tagged,
-   ERP re-pins to that tag in a follow-up change whose test treats the first pin
-   as an immutable subset of the tag: every contract file present at the first
-   pin is byte-identical at the tag, every ledger record present there is still
-   present and unchanged except that a `release` of `unreleased` became the
-   tag's version, and anything else in the tag's ledger or contract directory is
-   an appended record or file (another family's feature merged before the same
-   release), accepted as it stands. ERP keeps every retired contract file and
-   builds the list exactly as `protocol.ts` builds `RETIRED_EVENTS` (each
-   retirement record without an end record, with the effective `inputSchema` of
-   its `from` contract). Before an MCP release that changes `RETIRED_EVENTS` is
-   deployed, a deployment check compares the canonical JSON that
-   `--print-events-registry` prints with the same canonical JSON from an ERP
-   bench command, and the deployment stops unless ERP's list covers MCP's: every
-   name MCP lists must be in ERP's list with an equal schema, and ERP may list
-   an extra name only when the MCP ledger being deployed holds an end record for
-   it. The extra names are what make an end record safe to roll out: while old
-   MCP instances still accept unsubscribe for an ended name and forward it, ERP
-   keeps accepting it, because ERP re-pins to the tag that adds the end record
-   only after that MCP release is fully deployed and the old instances are
-   drained; until then its copy stays at the earlier pin, which still lists the
-   name. So MCP never forwards an unsubscribe ERP would refuse, whichever side
-   moves first. An end-to-end test retires a fixture name, advances the active
-   contract to a successor without it, and asserts that unsubscribe for a stored
-   subscription returns `{}` and deletes it, a second unsubscribe also returns
-   `{}`, subscribe with the name is refused, and a delivery for it queued or
-   retrying before the cutoff is marked `retired` and never sent, even with
-   dispatch on.
+   copy at one exact MCP commit it pins, the commit every contract copy also
+   comes from, recorded in a pin file in its contracts directory that the MCP
+   `preflight` job reads at ERP's deployed commit (step 9 of section 5). There
+   is one pin, never one per contract: a single ledger copy can match only one
+   MCP revision, so adding a family's contract moves the pin for every copied
+   file together, through the subset test described next. Because ERP serves a
+   family before the MCP release that ships it (decision 8) and feature work
+   leaves new records `unreleased`, the pin is first the full sha of the merged
+   feature pull request's commit on MCP `main`, never a branch or a tag that
+   does not exist yet; once the release is tagged, ERP re-pins to that tag's
+   commit in a follow-up change. Every pin change, this one and a later family's
+   move to its own feature commit alike, runs a test that treats the previous
+   pin as an immutable subset of the new one: every contract file present at the
+   previous pin is byte-identical at the new one, every ledger record present
+   there is still present and unchanged except that a `release` of `unreleased`
+   may have become a version number, and anything else in the new pin's ledger
+   or contract directory is an appended record or file (another family's feature
+   merged in between), accepted as it stands. ERP keeps every retired contract
+   file and builds the list exactly as `protocol.ts` builds `RETIRED_EVENTS`
+   (each retirement record without an end record, with the effective
+   `inputSchema` of its `from` contract). Before an MCP release that changes
+   `RETIRED_EVENTS` is deployed, a deployment check compares the canonical JSON
+   that `--print-events-registry` prints with the same canonical JSON from an
+   ERP bench command, and the deployment stops unless ERP's list covers MCP's:
+   every name MCP lists must be in ERP's list with an equal schema, and ERP may
+   list an extra name only when the MCP ledger being deployed holds an end
+   record for it. The extra names are what make an end record safe to roll out:
+   while old MCP instances still accept unsubscribe for an ended name and
+   forward it, ERP keeps accepting it, because ERP re-pins to the tag that adds
+   the end record only after that MCP release is fully deployed and the old
+   instances are drained; until then its copy stays at the earlier pin, which
+   still lists the name. So MCP never forwards an unsubscribe ERP would refuse,
+   whichever side moves first. An end-to-end test retires a fixture name,
+   advances the active contract to a successor without it, and asserts that
+   unsubscribe for a stored subscription returns `{}` and deletes it, a second
+   unsubscribe also returns `{}`, subscribe with the name is refused, and a
+   delivery for it queued or retrying before the cutoff is marked `retired` and
+   never sent, even with dispatch on.
 3. **Capture**: `doc_events` hooks for the new doctype in `hooks.py`, the same
    snapshot then `flush()` pattern as `events.py` (one net row per transaction,
    nothing on rollback, transient DB errors re-raised, other errors logged
