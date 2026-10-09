@@ -1304,31 +1304,38 @@ off. Do not add a `fetch<Family>()` or `pick<Family>Fields()` to `erp-store.ts`:
 refactor moves out, and a picker left there sits outside the `readBackChecks`
 digest, so a later minor release could change returned values without the ledger
 noticing. Create `src/events/read-back/<tool>.checks.ts` instead, modelled on
-the meeting checks module, holding the argument rules, `<family>ErpCall`, the
-guards, `pick<Family>Fields`, `<family>Precheck(keys, actsAs)`, the
-`<family>ReadBack(arguments, erpGet)` entry point and its frozen
-`{ precheck, readBack, identity, resultSchema }` entry; the handler is exactly
+the meeting checks module except for identity, which a new family's module never
+handles (step 2: `runReadBack` strips, forwards and matches it), holding the
+argument rules, `<family>ErpCall`, the guards, `pick<Family>Fields`,
+`<family>Precheck(keys, actsAs)`, the `<family>ReadBack(arguments, erpGet)`
+entry point and its frozen `{ precheck, readBack, identity, resultSchema }`
+entry; the handler is exactly
 `(args, ctx) => runReadBack(<FAMILY>_READ_BACK, args, ctx.client)`, with
 `<FAMILY>_READ_BACK` exported as the meeting module exports `MEETING_READ_BACK`,
 and `erp-store.ts` keeps only the generic subscribe and unsubscribe calls and
 the method names of step 5. Inside the checks module:
 
-- derive the identity part of the tool's input schema (the id's `minLength` and
-  `maxLength`, the `source_doctype` enum) from the family's contract file,
-  imported by the checks module, instead of restating it, so every identity a
-  webhook can carry is one the tool accepts, and measure the id with
-  `codePointLength` from `code-points.ts`, as `erpnext_meeting_get` does, never
-  with `string.length`: JSON Schema counts code points, `length` counts UTF-16
-  units, and a name with characters outside the Basic Multilingual Plane would
+- set the entry's `identity` to `identityOf(contract)`, exported by
+  `code-points.ts` next to `checkIdentity`, which reads the id's name,
+  `minLength` and `maxLength` and the `source_doctype` enum from the family's
+  contract file without the module naming any of them; the tool file builds the
+  identity part of its input schema from that entry with the same helper instead
+  of restating it, so every identity a webhook can carry is one the tool
+  accepts, and measure the id with `codePointLength` (inside `checkIdentity`,
+  which the runner calls), as `erpnext_meeting_get` does, never with
+  `string.length`: JSON Schema counts code points, `length` counts UTF-16 units,
+  and a name with characters outside the Basic Multilingual Plane would
   otherwise pass the contract and be refused by the tool;
 - unlike the contract's input schema, where `{}` is a valid unfiltered
   subscription, the tool's complete `inputSchema` lists the id in `required`,
   plus `source_doctype` for a multi-doctype family (`erpnext_meeting_get` has
   `required: ["event_id"]`), because a record cannot be read without them, and
   the handler refuses a call missing either before any request to ERP;
-- check `result.<id> === args.<id>` before anything else, and for a
-  multi-doctype family also `result.source_doctype === args.source_doctype`,
-  since `Task` and `ToDo` can share an id;
+- do not compare the result's identity with the request: `runReadBack` checks
+  `result.<id> === args.<id>` (and
+  `result.source_doctype === args.source_doctype` for a multi-doctype family,
+  since `Task` and `ToDo` can share an id) before the module runs, and the
+  guards and picker see the record with those fields removed;
 - tombstone keys only when `deleted === true`;
 - every enum is a closed `Set`, every date and instant is checked as real, every
   string is bounded, unknown keys are dropped;
@@ -1365,18 +1372,23 @@ release PR, tag, npm, bundle image). The feature PR already added the contract's
 row to `src/events/contract-ledger.json` with `"release": "unreleased"` (step
 2); the approved release PR that bumps `deno.json` replaces every `unreleased`
 in the ledger with that version, and the ledger check refuses the bump if one is
-left. That is all it may change in event artifacts: in release mode the check
-also reads the last first-parent `main` commit before the bump (the newest one
-whose `deno.json` still equals the preceding tag's version) and requires every
-record that said `unreleased` there, and every contract, result schema, case set
-and checks module such a record names, to be identical at the checked commit
-apart from the `release` stamp, so a contract ERP may already have pinned cannot
-change inside the release PR. Before the GitHub release is published, ERP runs
-its re-pin subset test (section 6, item 2) against the release PR's head commit
-by full sha, and the release PR records that it passed; a contract change ERP
-has not pinned is found there, not after npm has the release; the tag cut from
-that PR is what later releases are checked against. Add the tag-comparison test
-to `scripts/release-check.sh` with the one-time registry work, and make it fail
+left. That is all it may change in event artifacts: the commit ERP pinned is
+recorded here, in `src/events/erp-pins.json` (contract id to the full sha ERP
+pins, appended by a small pull request whenever ERP pins or re-pins a family,
+naming the same sha as the ERP change), and in release mode the check requires
+every record this release stamps to have an entry whose sha is an ancestor of
+the checked commit, and requires that record and every contract, result schema,
+case set and checks module it names to be identical at that sha and at the
+checked commit apart from the `release` stamp. The anchor is the pin, not a
+commit found by walking history, so a multi-commit release pull request that
+edits an artifact before it bumps the version is still compared with what ERP
+runs, so a contract ERP may already have pinned cannot change inside the release
+PR. Before the GitHub release is published, ERP runs its re-pin subset test
+(section 6, item 2) against the release PR's head commit by full sha, and the
+release PR records that it passed; a contract change ERP has not pinned is found
+there, not after npm has the release; the tag cut from that PR is what later
+releases are checked against. Add the tag-comparison test to
+`scripts/release-check.sh` with the one-time registry work, and make it fail
 rather than skip when no `v*` tag is reachable (a shallow clone must fetch tags
 first: the same pull request sets `fetch-depth: 0` and `fetch-tags: true` on the
 `actions/checkout@v5` step of `.github/workflows/test.yml`, which by default
