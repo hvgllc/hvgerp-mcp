@@ -546,11 +546,18 @@ implementation detail.
    family retires), the fan-out that creates deliveries rechecks that refusal in
    the same transaction that inserts them, and the two are serialized, not
    merely co-located: the refusal lives on one retirement lock row per event
-   name ERP serves (created with the contract that introduces the name), the
-   transaction that activates a refusal takes that row `FOR UPDATE`, and every
-   journal flush and every fan-out takes, in share mode (`LOCK IN SHARE MODE`),
-   the row of each event it writes or delivers before it reads the refusal and
-   holds it until its inserts commit (a flush runs inside the source document's
+   name ERP serves (created with the contract that introduces the name, and for
+   every name ERP already serves when the table is introduced, all the
+   `meeting-events.v1` names included, by an idempotent `after_migrate` step in
+   that same ERP release, which inserts a missing row for every name in the
+   active contracts and the retired list before any capture, fan-out, claim or
+   activation can run on the new code; a path that finds no row raises instead
+   of proceeding unlocked, and a test upgrades a site that already holds meeting
+   subscriptions and asserts that every such name has a row), the transaction
+   that activates a refusal takes that row `FOR UPDATE`, and every journal flush
+   and every fan-out takes, in share mode (`LOCK IN SHARE MODE`), the row of
+   each event it writes or delivers before it reads the refusal and holds it
+   until its inserts commit (a flush runs inside the source document's
    transaction, so it holds the row until that transaction commits), so
    activation waits for every flush and fan-out already past the check, no
    journal row or delivery for the name can commit after activation does, and
@@ -567,43 +574,52 @@ implementation detail.
    retrying delivery for those names terminally `retired`. Marking rows does not
    cancel a send already under way: a worker that claimed a delivery before the
    refusal may have passed the check already. So the dispatcher rechecks the
-   refusal in the same transaction that takes the claim, every claim carries a
-   bounded lease and a worker starts a send only while at least the send timeout
-   is left on it, so each send ends before its lease does, and the cleanup
-   reports the cutoff complete only once every claim on those names taken before
-   the refusal has finished or its lease has expired. Only then is none sent
-   after the cutoff. An ERP test claims a delivery, retires its name, and
-   asserts that the cleanup does not report the cutoff while the claim is live
-   and that the worker sends nothing once it has. That release ships the
-   family's next contract version without the removed names (decision 1),
-   appends a retirement record for each to the ledger (step 2) and moves every
-   removed name into `RETIRED_EVENTS` in `protocol.ts` instead of deleting it: a
-   map from the name to the effective `inputSchema` of the retired contract file
-   that last shipped it (retired files stay in `src/events/contract/`, step 2).
-   The schema is not written by hand: `RETIRED_EVENTS` is built at module load
-   from the `from` contract of each ledger retirement record that has no end
-   record, read through the runtime archive of step 2 (`CONTRACT_FILES` and the
-   statically imported ledger), because a retired file is no longer in
-   `CONTRACTS` and the test-only discovery of step 2 is not part of the
-   published module graph, and a test asserts that every entry deeply equals
-   that event's effective `inputSchema` there, override included.
-   `events/subscribe` with a retired name answers `-32011` like any unknown
-   name, while an authenticated `events/unsubscribe` still accepts it, validates
-   `arguments` against that retained schema and forwards the request to ERP,
-   which stays idempotent. ERP must still recognise the name at that point,
-   although its active contract no longer lists it: its contract registry keeps
-   each retired name with its argument schema in a retired list that only the
-   unsubscribe path accepts, until the MCP release that drops the name from
-   `RETIRED_EVENTS` (ERP recipe, step 2). Waiting out the leases is not enough,
-   because a subscription can have no expiry, so ERP deletes every stored
-   subscription for the retired names with a migration once subscribe is
-   refused. A name leaves `RETIRED_EVENTS` only in a later major release, after
-   ERP production reports zero stored subscriptions for it (checked by the
-   publishing `preflight`, step 9 of section 5, never by a manual ordering
-   alone), and it leaves by an end record, not by deleting history: that release
-   appends `{ "event": ..., "release": ... }` to an append-only `retirementEnds`
-   array in the ledger, checked against the tag like the rest and accepted only
-   when its `release` is the version in `deno.json` and that version is a major
+   refusal in the same transaction that takes the claim, and, like a flush or a
+   fan-out, takes the lock row of the delivery's event name in share mode before
+   that read and holds it until the claim commits, so activating the refusal
+   waits for every claim already past the check and the cleanup that runs after
+   it sees every claim committed before it; a recheck in the claim's own
+   transaction alone would let a claim that read the refusal as inactive commit
+   after the cleanup reported no live claim. every claim carries a bounded lease
+   and a worker starts a send only while at least the send timeout is left on
+   it, so each send ends before its lease does, and the cleanup reports the
+   cutoff complete only once every claim on those names taken before the refusal
+   has finished or its lease has expired. Only then is none sent after the
+   cutoff. An ERP test claims a delivery, retires its name, and asserts that the
+   cleanup does not report the cutoff while the claim is live and that the
+   worker sends nothing once it has; a second one pauses a claim between its
+   refusal read and its commit, activates the refusal from a second connection,
+   and asserts that activation blocks until the claim commits and that the
+   cleanup then waits for that claim. That release ships the family's next
+   contract version without the removed names (decision 1), appends a retirement
+   record for each to the ledger (step 2) and moves every removed name into
+   `RETIRED_EVENTS` in `protocol.ts` instead of deleting it: a map from the name
+   to the effective `inputSchema` of the retired contract file that last shipped
+   it (retired files stay in `src/events/contract/`, step 2). The schema is not
+   written by hand: `RETIRED_EVENTS` is built at module load from the `from`
+   contract of each ledger retirement record that has no end record, read
+   through the runtime archive of step 2 (`CONTRACT_FILES` and the statically
+   imported ledger), because a retired file is no longer in `CONTRACTS` and the
+   test-only discovery of step 2 is not part of the published module graph, and
+   a test asserts that every entry deeply equals that event's effective
+   `inputSchema` there, override included. `events/subscribe` with a retired
+   name answers `-32011` like any unknown name, while an authenticated
+   `events/unsubscribe` still accepts it, validates `arguments` against that
+   retained schema and forwards the request to ERP, which stays idempotent. ERP
+   must still recognise the name at that point, although its active contract no
+   longer lists it: its contract registry keeps each retired name with its
+   argument schema in a retired list that only the unsubscribe path accepts,
+   until the MCP release that drops the name from `RETIRED_EVENTS` (ERP recipe,
+   step 2). Waiting out the leases is not enough, because a subscription can
+   have no expiry, so ERP deletes every stored subscription for the retired
+   names with a migration once subscribe is refused. A name leaves
+   `RETIRED_EVENTS` only in a later major release, after ERP production reports
+   zero stored subscriptions for it (checked by the publishing `preflight`, step
+   9 of section 5, never by a manual ordering alone), and it leaves by an end
+   record, not by deleting history: that release appends
+   `{ "event": ..., "release": ... }` to an append-only `retirementEnds` array
+   in the ledger, checked against the tag like the rest and accepted only when
+   its `release` is the version in `deno.json` and that version is a major
    release (`X.0.0`) whose major is above both the retirement record's and the
    newest reachable `v*` tag's, as for a retirement record, so a release cannot
    end a retirement under an unused older major (`4.0.0` while `v5.3.0` is out).
@@ -848,31 +864,44 @@ selector lists every version of `@hvgllc/hvgerp-mcp` on the public npm registry
 the highest by SemVer precedence, leaving out only a version whose provenance
 (below) names the checked commit itself, so a run from a freshly created release
 tag, or a rerun after its publish, compares against the preceding release
-instead of against itself. Release versions are plain `MAJOR.MINOR.PATCH`:
-`release:check` fails when the `deno.json` version carries a prerelease or build
-suffix, so `preflight` never lets one reach npm (the `release: published`
-trigger also fires for a GitHub release marked as a prerelease, and this check
-is what stops it), and the selector ignores every prerelease version npm lists,
-which only a publish outside the workflow could have created, instead of taking
-it as a baseline: `3.8.0-rc.1` as the baseline would make the stable `3.8.0`
-neither a minor nor a major bump over it, so no release could ever pass. A
-fixture asserts that `3.8.0-rc.1` in `deno.json` fails the check and that a
-listed `3.8.0-rc.1` is never selected. Version existence alone does not bind a
-version to a commit, so the selector checks the npm provenance, which depends on
-no hidden repository setting: trusted publishing attaches a signed SLSA
-provenance attestation to every version (`v3.7.0` carries one naming
-`refs/tags/v3.7.0` and its commit), and the selector installs
-`@hvgllc/hvgerp-mcp@X` into a temporary directory, runs `npm audit signatures`
-there so the attestation's signature is verified, then reads the attestation
-from the registry and requires its source repository to be `hvgllc/hvgerp-mcp`.
-Its `gitCommit` is the baseline commit: the check fails unless the tag `v<X>`
-exists and points at it, so a missing, moved or recreated tag fails rather than
-being skipped and a published `vX` can never be repointed at a commit with a
-rewritten ledger, and fails unless that commit is an ancestor of the checked
-commit, so a release cut from an unmerged branch must be merged before any later
-release can pass (the release runbook merges it, or restores a deleted tag at
-the attested commit). A version whose attestation is missing or unverifiable
-fails the check too. The baseline's own `deno.json` (read with
+instead of against itself. npm lets a version be unpublished, and an unpublished
+version drops out of that list, so the list alone cannot prove no newer release
+exists: the check also lists the `v*` tags on the remote
+(`git ls-remote --tags`, never the local checkout) and every stamped `release`
+in the checked ledger, and fails, naming the version, if either holds a version
+above the selected baseline other than the `deno.json` version itself, rather
+than silently comparing with an older release and dropping the vanished one's
+contracts and retirement history. Unpublishing is forbidden by the release
+runbook, and a tag left by a refused publish is deleted by it (below), so this
+fails only when a release really vanished; the recovery is a reviewed change
+adding that version and its tagged commit to
+`src/events/withdrawn-releases.json`, after which the selector treats it as
+listed, with the tag and ancestor checks below applied to it and the npm
+provenance check replaced by that record. Release versions are plain
+`MAJOR.MINOR.PATCH`: `release:check` fails when the `deno.json` version carries
+a prerelease or build suffix, so `preflight` never lets one reach npm (the
+`release: published` trigger also fires for a GitHub release marked as a
+prerelease, and this check is what stops it), and the selector ignores every
+prerelease version npm lists, which only a publish outside the workflow could
+have created, instead of taking it as a baseline: `3.8.0-rc.1` as the baseline
+would make the stable `3.8.0` neither a minor nor a major bump over it, so no
+release could ever pass. A fixture asserts that `3.8.0-rc.1` in `deno.json`
+fails the check and that a listed `3.8.0-rc.1` is never selected. Version
+existence alone does not bind a version to a commit, so the selector checks the
+npm provenance, which depends on no hidden repository setting: trusted
+publishing attaches a signed SLSA provenance attestation to every version
+(`v3.7.0` carries one naming `refs/tags/v3.7.0` and its commit), and the
+selector installs `@hvgllc/hvgerp-mcp@X` into a temporary directory, runs
+`npm audit signatures` there so the attestation's signature is verified, then
+reads the attestation from the registry and requires its source repository to be
+`hvgllc/hvgerp-mcp`. Its `gitCommit` is the baseline commit: the check fails
+unless the tag `v<X>` exists and points at it, so a missing, moved or recreated
+tag fails rather than being skipped and a published `vX` can never be repointed
+at a commit with a rewritten ledger, and fails unless that commit is an ancestor
+of the checked commit, so a release cut from an unmerged branch must be merged
+before any later release can pass (the release runbook merges it, or restores a
+deleted tag at the attested commit). A version whose attestation is missing or
+unverifiable fails the check too. The baseline's own `deno.json` (read with
 `git show <gitCommit>:deno.json`) must say `X`. A tag no published version
 attests, left behind by a refused publish, mislabeled or with a matching name
 but a rewritten contract, therefore never becomes a baseline even after later
@@ -1837,12 +1866,16 @@ Listed here so both sides agree on the order; the ERP team implements it.
    ignores the flag and would start the server: the check takes its registry
    from `src/events/legacy-registries.json` in the deploying tree, keyed by
    version, each entry with the live names, their schemas and an empty retired
-   map (every version before `3.7.0` serves none, and `3.7.0` serves the
-   `meeting-events.v1` names with that contract's schema). A target whose
+   map (every version before `3.6.0` serves none; `3.6.0`, which added the
+   meeting events behind `MCP_EVENTS_ENABLED`, and `3.7.0` each serve the three
+   meeting names with the schema their own source declares, counted as live
+   whatever the flag, since a rollback may run with it on). A target whose
    `deno.json` version has no entry stops the deployment, and a test asserts the
    table lists every npm-published version below the first release with a ledger
-   and that the `3.7.0` entry equals what `events/list` returns from the tagged
-   `v3.7.0` source. The bench command prints three lists: the event names ERP
+   and that the entry of every version whose tagged source has an `events/list`
+   handler (`v3.6.0` and `v3.7.0`) equals what that handler returns from the
+   tagged source, so no pre-ledger release that serves events is recorded as
+   serving none. The bench command prints three lists: the event names ERP
    serves as active (from its active contracts), its retired list with each
    name's argument schema, and its `acknowledged_retirement_ends`. The
    deployment stops if any of these fails: every name the target release serves
@@ -1854,15 +1887,18 @@ Listed here so both sides agree on the order; the ERP team implements it.
    ERP's retired list that the target neither serves live nor lists in
    `RETIRED_EVENTS` has an end record in the target's ledger whose `release` is
    a version no greater than the target's `deno.json` version, never
-   `unreleased`; no end record in the target's ledger still says `unreleased`,
-   because such a commit (a merged feature commit before its major release is
-   stamped) already omits the name from `RETIRED_EVENTS` and would answer
-   `-32011` to an unsubscribe that the deployed release accepts, while its
-   manifest still names the earlier release; and no name in ERP's
-   `acknowledged_retirement_ends` is one the target serves live or lists in
-   `RETIRED_EVENTS`. An extra name in ERP's active list that the target does not
-   serve passes: ERP serves a new family before the MCP release that ships it
-   (decision 8), and redeploying the current release during that staging
+   `unreleased`; no retirement record and no end record in the target's ledger
+   still says `unreleased`, because such a commit is a merged feature commit
+   before its major release is stamped: with an `unreleased` retirement record
+   it already removes the event from `CONTRACTS`, a breaking removal shipped
+   under the earlier release's version, and with an `unreleased` end record it
+   already omits the name from `RETIRED_EVENTS` and would answer `-32011` to an
+   unsubscribe that the deployed release accepts, so only the stamped
+   major-release commit can remove or end a name in production; and no name in
+   ERP's `acknowledged_retirement_ends` is one the target serves live or lists
+   in `RETIRED_EVENTS`. An extra name in ERP's active list that the target does
+   not serve passes: ERP serves a new family before the MCP release that ships
+   it (decision 8), and redeploying the current release during that staging
    interval must not stop. So a rollback to a release that serves a name ERP has
    since retired stops, whether or not the end is acknowledged yet, because the
    target would advertise an event whose every subscribe and refresh ERP
