@@ -55,14 +55,14 @@ sequenceDiagram
 
 ### 2.1 Subscribe path (this repository)
 
-| Step | Where                                             | What happens                                                                                                                                                                      |
-| ---- | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1    | `server.ts`                                       | `eventsFlagEnabled()` reads `MCP_EVENTS_ENABLED`; `assertEventsPolicy()` refuses to start unless `MCP_CALLER_IDENTITY=required`, OAuth JWKS is set and no static tokens exist.    |
-| 2    | `src/events/adapter.ts` `createEventsAdapter`     | Wraps the SDK fetch handler. It only acts when the SDK answers 404 / `-32601` for an `events/*` method, so every other method is untouched.                                       |
-| 3    | adapter                                           | Re-verifies the bearer, resolves the caller identity, checks `Mcp-Name` against `params.name`, applies the limiter (10 active, 50 queued) and the peek budget.                    |
-| 4    | `src/events/protocol.ts` `parseSubscribeParams`   | Strict key allowlist, event name, `delivery` (`webhook` only, https URL, `whsec_` secret of 24 to 64 bytes), then `arguments` against the input schema, then ttl, maxAge, cursor. |
-| 5    | `src/events/erp-store.ts` `createErpEventsStore`  | Calls `hvg_workspace.mcp_events.api.subscribe` with the caller's client (`actsAs === "caller"` is enforced), unwraps the `{ok,result                                              |
-| 6    | `protocol.ts` `toSubscribeResult` / `mapErpError` | Validates the ERP result shape and maps ERP errors through a closed allowlist with fixed messages.                                                                                |
+| Step | Where                                             | What happens                                                                                                                                                                                                                                  |
+| ---- | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | `server.ts`                                       | `eventsFlagEnabled()` reads `MCP_EVENTS_ENABLED`; `assertEventsPolicy()` refuses to start unless `MCP_CALLER_IDENTITY=required`, OAuth JWKS is set and no static tokens exist.                                                                |
+| 2    | `src/events/adapter.ts` `createEventsAdapter`     | Wraps the SDK fetch handler. It only acts when the SDK answers 404 / `-32601` for an `events/*` method, so every other method is untouched.                                                                                                   |
+| 3    | adapter                                           | Re-verifies the bearer, resolves the caller identity, checks `Mcp-Name` against `params.name`, applies the limiter (10 active, 50 queued) and the peek budget.                                                                                |
+| 4    | `src/events/protocol.ts` `parseSubscribeParams`   | Strict key allowlist, event name, `delivery` (`webhook` only, https URL, `whsec_` secret of 24 to 64 bytes), then `arguments` against the input schema, then ttl, maxAge, cursor.                                                             |
+| 5    | `src/events/erp-store.ts` `createErpEventsStore`  | Calls `hvg_workspace.mcp_events.api.subscribe` with the caller's client (`actsAs === "caller"` is enforced), unwraps the `{ok:true,result}` or `{ok:false,error:{code,message,data}}` envelope and treats any other shape as a backend error. |
+| 6    | `protocol.ts` `toSubscribeResult` / `mapErpError` | Validates the ERP result shape and maps ERP errors through a closed allowlist with fixed messages.                                                                                                                                            |
 
 ### 2.2 Change capture and delivery (ERPNext, `hvg_workspace/mcp_events/`)
 
@@ -652,7 +652,8 @@ implementation detail.
    subscriptions does not stop a client of the previous release from retrying an
    unsubscribe, so a minor or patch release cannot end a retirement, so the
    retirement record stays as audit history while the name drops out of
-   `RETIRED_EVENTS` (and ERP drops it from its mirror in step).
+   `RETIRED_EVENTS` (and ERP drops it from its retired-list mirror, section 6,
+   item 2).
 
 ## 5. Recipe: this repository
 
@@ -1638,7 +1639,10 @@ bundle still builds. CI on a branch runs only on manual dispatch:
   table, the re-read tool rules. Link it from
   [mcp-events-meetings.md](mcp-events-meetings.md) and this file.
 - `docs/tools.md` and the README tool count if they list tools.
-- `CHANGELOG.md` under the new minor version.
+- `CHANGELOG.md` under an `## [Unreleased]` heading (add it above the newest
+  version if it is missing); the feature PR picks no version number, and the
+  approved release PR of step 9 renames that heading to the version it bumps to,
+  as it does for the ledger's `"unreleased"`.
 
 ### Step 9. Release
 
@@ -1646,64 +1650,65 @@ Follow the normal release flow (version in `deno.json` and `src/version.ts`,
 release PR, tag, npm, bundle image). The feature PR already added the contract's
 row to `src/events/contract-ledger.json` with `"release": "unreleased"` (step
 2); the approved release PR that bumps `deno.json` replaces every `unreleased`
-in the ledger with that version, and the ledger check refuses the bump if one is
-left. That is all it may change in event artifacts: the anchor is the pin ERP
-actually runs, read from ERP rather than from this checkout, where a release
-pull request could rewrite it. ERP records one pin, the full MCP sha its ledger
-copy and every contract copy come from, in a pin file in its contracts directory
-(the file its digest tests read), and the `preflight` job reads that file at the
-ERP commit production runs, never at the head of a branch, where a merged but
-undeployed pin would pass: ERP's deploy creates a GitHub deployment in its
-`production` environment for the exact commit it deployed and marks it
-successful only after its post-deploy health check, and `preflight` takes the
-sha of the newest successful `production` deployment and reads the pin file at
-that commit with a read-only token (a repository secret scoped to that one
-repository), failing when there is none. In release mode the pinned sha must be
-an ancestor of the checked commit, with one exception: for a rerun or recovery
-publish of a version whose earlier run may have passed `preflight` before ERP
-re-pinned to a later MCP commit, the pin may instead be a descendant of the
-checked commit. That covers a version npm already holds with provenance naming
-the checked commit (the case step 9's `publish-npm` treats as already
-published), and equally a version npm does not hold at all, because `preflight`
-passed and `npm publish` then failed: there is no provenance to name, so that
-case requires instead that the checked commit is the exact commit the `v<X>` tag
-of its `deno.json` version points at, that the version is absent from npm (not
-withdrawn, `src/events/withdrawn-releases.json`) and greater than every version
-npm holds, and that a `preflight` job of an earlier run of the publish workflow
-for that same tag succeeded, so a never-attempted release still needs an
-ancestor pin (a `preflight` test accepts a descendant pin for such a tagged,
-absent version after a failed publish, and refuses it without the earlier
-successful `preflight`, for an untagged commit and for a version below one npm
-holds); ERP's re-pin subset test already guarantees that every artifact present
-at the checked commit is still present unchanged at such a pin, and the presence
-and identity checks that follow apply either way, and every row and every
-retirement record this release stamps must be present at that sha, with the
-record and every contract, result schema, case set and checks module it names
-identical there and at the checked commit apart from the `release` stamp;
-nothing in this repository can move the anchor, so a multi-commit release pull
-request that edits an artifact, in whatever order it bumps the version, is still
-compared with what ERP runs. An end record need not be present at the pin: it
-names no contract, and ERP drops the name from its retired list only once its
-own `acknowledged_retirement_ends` file names it and its deploy step has
-activated that acknowledgement, which happens only after the release is deployed
-(section 6, item 2), so it is checked by the version rules, the deployment
-coverage check and two production checks: in release mode `preflight` calls
-ERP's read-only `retired_subscription_counts` method (section 6, item 2) with a
-dedicated read-only API key held as a repository secret and fails unless the
-count of stored subscriptions is exactly 0 for every event whose retirement
-record or end record this release stamps, failing too when the call fails or
-omits an event: for a retirement record the zero proves the cleanup migration of
-decision 9 deleted every stored subscription, since one with no expiry would
-otherwise keep using its owner's quota for the whole retirement, and for an end
-record it proves nothing is left that only `unsubscribe` could reach. The pin
-proves only that ERP runs the family's code: ERP may run it in the shadow state
-(decision 7) with the family's gates off, and an MCP release that then lists the
-family would advertise events whose subscriptions answer `-32012` or whose
-deliveries stay paused, against decision 8. So in release mode `preflight` also
-calls ERP's read-only `event_family_readiness` method (section 6, item 2) with
-the same read-only key, for every family that has a live `CONTRACTS` entry in
-this release, whether or not the release stamps a row for it (a patch release or
-one changing another family still publishes a catalog listing the untouched
+in the ledger with that version and renames the changelog's `## [Unreleased]`
+heading to it, and the ledger check refuses the bump if one is left. That is all
+it may change in event artifacts: the anchor is the pin ERP actually runs, read
+from ERP rather than from this checkout, where a release pull request could
+rewrite it. ERP records one pin, the full MCP sha its ledger copy and every
+contract copy come from, in a pin file in its contracts directory (the file its
+digest tests read), and the `preflight` job reads that file at the ERP commit
+production runs, never at the head of a branch, where a merged but undeployed
+pin would pass: ERP's deploy creates a GitHub deployment in its `production`
+environment for the exact commit it deployed and marks it successful only after
+its post-deploy health check, and `preflight` takes the sha of the newest
+successful `production` deployment and reads the pin file at that commit with a
+read-only token (a repository secret scoped to that one repository), failing
+when there is none. In release mode the pinned sha must be an ancestor of the
+checked commit, with one exception: for a rerun or recovery publish of a version
+whose earlier run may have passed `preflight` before ERP re-pinned to a later
+MCP commit, the pin may instead be a descendant of the checked commit. That
+covers a version npm already holds with provenance naming the checked commit
+(the case step 9's `publish-npm` treats as already published), and equally a
+version npm does not hold at all, because `preflight` passed and `npm publish`
+then failed: there is no provenance to name, so that case requires instead that
+the checked commit is the exact commit the `v<X>` tag of its `deno.json` version
+points at, that the version is absent from npm (not withdrawn,
+`src/events/withdrawn-releases.json`) and greater than every version npm holds,
+and that a `preflight` job of an earlier run of the publish workflow for that
+same tag succeeded, so a never-attempted release still needs an ancestor pin (a
+`preflight` test accepts a descendant pin for such a tagged, absent version
+after a failed publish, and refuses it without the earlier successful
+`preflight`, for an untagged commit and for a version below one npm holds);
+ERP's re-pin subset test already guarantees that every artifact present at the
+checked commit is still present unchanged at such a pin, and the presence and
+identity checks that follow apply either way, and every row and every retirement
+record this release stamps must be present at that sha, with the record and
+every contract, result schema, case set and checks module it names identical
+there and at the checked commit apart from the `release` stamp; nothing in this
+repository can move the anchor, so a multi-commit release pull request that
+edits an artifact, in whatever order it bumps the version, is still compared
+with what ERP runs. An end record need not be present at the pin: it names no
+contract, and ERP drops the name from its retired list only once its own
+`acknowledged_retirement_ends` file names it and its deploy step has activated
+that acknowledgement, which happens only after the release is deployed (section
+6, item 2), so it is checked by the version rules, the deployment coverage check
+and two production checks: in release mode `preflight` calls ERP's read-only
+`retired_subscription_counts` method (section 6, item 2) with a dedicated
+read-only API key held as a repository secret and fails unless the count of
+stored subscriptions is exactly 0 for every event whose retirement record or end
+record this release stamps, failing too when the call fails or omits an event:
+for a retirement record the zero proves the cleanup migration of decision 9
+deleted every stored subscription, since one with no expiry would otherwise keep
+using its owner's quota for the whole retirement, and for an end record it
+proves nothing is left that only `unsubscribe` could reach. The pin proves only
+that ERP runs the family's code: ERP may run it in the shadow state (decision 7)
+with the family's gates off, and an MCP release that then lists the family would
+advertise events whose subscriptions answer `-32012` or whose deliveries stay
+paused, against decision 8. So in release mode `preflight` also calls ERP's
+read-only `event_family_readiness` method (section 6, item 2) with the same
+read-only key, for every family that has a live `CONTRACTS` entry in this
+release, whether or not the release stamps a row for it (a patch release or one
+changing another family still publishes a catalog listing the untouched
 families, whose gates or allowed clients ERP may have changed since their own
 release), and fails unless ERP reports the effective journal, subscribe and
 dispatch gates of each one all on in production (with the journal gate off,
