@@ -519,13 +519,16 @@ implementation detail.
    stops writing those events, its dispatcher refuses at send time every
    delivery whose event name is retired (a name-level check, used for meetings
    and single names and also beside the family's dispatch gate when a whole
-   family retires), and a migration marks every queued, pending or retrying
-   delivery for those names terminally `retired`. Marking rows does not cancel a
-   send already under way: a worker that claimed a delivery before the refusal
-   may have passed the check already. So the dispatcher rechecks the refusal in
-   the same transaction that takes the claim, every claim carries a bounded
-   lease and a worker starts a send only while at least the send timeout is left
-   on it, so each send ends before its lease does, and the cleanup reports the
+   family retires), the fan-out that creates deliveries rechecks that refusal in
+   the same transaction that inserts them, so a fan-out that selected a
+   subscription before the refusal cannot commit a new delivery for the name
+   after it, and a migration marks every queued, pending or retrying delivery
+   for those names terminally `retired`. Marking rows does not cancel a send
+   already under way: a worker that claimed a delivery before the refusal may
+   have passed the check already. So the dispatcher rechecks the refusal in the
+   same transaction that takes the claim, every claim carries a bounded lease
+   and a worker starts a send only while at least the send timeout is left on
+   it, so each send ends before its lease does, and the cleanup reports the
    cutoff complete only once every claim on those names taken before the refusal
    has finished or its lease has expired. Only then is none sent after the
    cutoff. An ERP test claims a delivery, retires its name, and asserts that the
@@ -787,44 +790,53 @@ minor release cannot rename the tool, switch the method or re-point its path for
 a version that is still live. What makes the ledger itself immutable is the
 release tag: a test in `release:check` (step 9) reads the ledger and every
 contract file at the newest `v*` tag with `git show <tag>:<path>`, where "newest
-tag" everywhere in this check means the newest `v*` tag that is an ancestor of
-the checked commit and does not point at it
-(`git tag --list 'v*' --merged HEAD --no-contains HEAD --sort=-version:refname`,
-first line), so a run from a freshly created release tag compares against the
-preceding release instead of against itself, and skipping, with a printed
-warning, every candidate `v<X>` that was not a successful release: its own
-`deno.json` (read with `git show v<X>:deno.json`) must say `X`, and
-`@hvgllc/hvgerp-mcp@X` must exist on the public npm registry, which only a run
-that passed `preflight` can publish and which never lets a version be
-republished. Version existence alone does not bind a tag to the commit that
-published it, so the selector also checks the npm provenance, which depends on
-no hidden repository setting: trusted publishing attaches a signed SLSA
-provenance attestation to every version (`v3.7.0` carries one naming
-`refs/tags/v3.7.0` and its commit), and the selector installs
-`@hvgllc/hvgerp-mcp@X` into a temporary directory, runs `npm audit signatures`
-there so the attestation's signature is verified, then reads the attestation
-from the registry and requires its source repository to be `hvgllc/hvgerp-mcp`
-and its `gitCommit` to equal the commit `v<X>` points to. A published version
-whose attestation is missing or names another commit fails the check rather than
-being skipped, because it means the tag was moved or recreated after the
-release, so a published `vX` can never be repointed at a commit with a rewritten
-ledger. A tag left behind by a refused publish, mislabeled or with a matching
-name but a rewritten contract, therefore never becomes a baseline even after
-later commits make it an ancestor (the release runbook deletes it, and the next
-attempt may reuse the version only through a new tag at the corrected commit); a
-fixture checks out a tagged commit and asserts the selected baseline is the
-previous tag and fails if any row present there changed or disappeared, or if
-any contract file present there is not byte-identical now. A row absent at the
-tag is new in this release: in release mode (defined below) its `release` must
-equal the version in `deno.json`, and that version must be a feature bump over
-the newest tag `vM.N.P` as SemVer defines it: either `M.(N+1).0` or `(M+1).0.0`,
-so a bump resets every lower component (`3.8.1` or `3.9.0` after `v3.7.0`, and
-`4.2.7` after any `3.x`, all fail), because a new contract version adds an
-event, a tool or both, which is a feature and never a patch. The one exception
-is the `meeting-events.v1` bootstrap row while the newest tag carries no ledger:
-it describes what `v3.7.0` already shipped, so its `release` must be exactly
-`3.7.0`, not the `deno.json` version, and the tagged-source verification below
-replaces the new-row check for it (it keeps `3.7.0` in both modes, and in
+tag" everywhere in this check means the tag `v<X>` of the baseline version `X`,
+which is chosen from what npm has published, not from the tags this checkout can
+reach: a release tag cut from a branch that was never merged, or a tag deleted
+after its release, would otherwise drop out of a tag scan while its npm version
+and its contracts stay published, and a later release would compare with an
+older tag and silently omit that release's contracts and retirement history. The
+selector lists every version of `@hvgllc/hvgerp-mcp` on the public npm registry
+(`npm view @hvgllc/hvgerp-mcp versions --json`), which only a run that passed
+`preflight` can publish and which never lets a version be republished, and takes
+the highest by SemVer precedence, leaving out only a version whose provenance
+(below) names the checked commit itself, so a run from a freshly created release
+tag, or a rerun after its publish, compares against the preceding release
+instead of against itself. Version existence alone does not bind a version to a
+commit, so the selector checks the npm provenance, which depends on no hidden
+repository setting: trusted publishing attaches a signed SLSA provenance
+attestation to every version (`v3.7.0` carries one naming `refs/tags/v3.7.0` and
+its commit), and the selector installs `@hvgllc/hvgerp-mcp@X` into a temporary
+directory, runs `npm audit signatures` there so the attestation's signature is
+verified, then reads the attestation from the registry and requires its source
+repository to be `hvgllc/hvgerp-mcp`. Its `gitCommit` is the baseline commit:
+the check fails unless the tag `v<X>` exists and points at it, so a missing,
+moved or recreated tag fails rather than being skipped and a published `vX` can
+never be repointed at a commit with a rewritten ledger, and fails unless that
+commit is an ancestor of the checked commit, so a release cut from an unmerged
+branch must be merged before any later release can pass (the release runbook
+merges it, or restores a deleted tag at the attested commit). A version whose
+attestation is missing or unverifiable fails the check too. The baseline's own
+`deno.json` (read with `git show <gitCommit>:deno.json`) must say `X`. A tag no
+published version attests, left behind by a refused publish, mislabeled or with
+a matching name but a rewritten contract, therefore never becomes a baseline
+even after later commits make it an ancestor (the release runbook deletes it,
+and the next attempt may reuse the version only through a new tag at the
+corrected commit); a fixture with a stubbed registry asserts the selected
+baseline is the previous published version, and that a newest published version
+whose commit is not an ancestor, or whose tag is missing, fails the check. The
+check then fails if any row present at the baseline changed or disappeared, or
+if any contract file present there is not byte-identical now. A row absent at
+the tag is new in this release: in release mode (defined below) its `release`
+must equal the version in `deno.json`, and that version must be a feature bump
+over the newest tag `vM.N.P` as SemVer defines it: either `M.(N+1).0` or
+`(M+1).0.0`, so a bump resets every lower component (`3.8.1` or `3.9.0` after
+`v3.7.0`, and `4.2.7` after any `3.x`, all fail), because a new contract version
+adds an event, a tool or both, which is a feature and never a patch. The one
+exception is the `meeting-events.v1` bootstrap row while the newest tag carries
+no ledger: it describes what `v3.7.0` already shipped, so its `release` must be
+exactly `3.7.0`, not the `deno.json` version, and the tagged-source verification
+below replaces the new-row check for it (it keeps `3.7.0` in both modes, and in
 release mode the `deno.json` version must still be such a feature bump over the
 newest tag, since the registry refactor is itself a feature). Any other row
 absent at that tag stays under the new-row check. Feature work never bumps the
@@ -1462,8 +1474,8 @@ can move the anchor, so a multi-commit release pull request that edits an
 artifact, in whatever order it bumps the version, is still compared with what
 ERP runs. An end record need not be present at the pin: it names no contract,
 and ERP re-pins past it only after the release is deployed (section 6, item 2),
-so it is checked by the version rules, the deployment coverage check and one
-production check: in release mode `preflight` calls ERP's read-only
+so it is checked by the version rules, the deployment coverage check and two
+production checks: in release mode `preflight` calls ERP's read-only
 `retired_subscription_counts` method (section 6, item 2) with a dedicated
 read-only API key held as a repository secret and fails unless the count of
 stored subscriptions is exactly 0 for every event whose end record this release
@@ -1474,75 +1486,79 @@ advertise events whose subscriptions answer `-32012` or whose deliveries stay
 paused, against decision 8. So in release mode `preflight` also calls ERP's
 read-only `event_family_readiness` method (section 6, item 2) with the same
 read-only key, for every family that has a row this release stamps and still has
-a live `CONTRACTS` entry after it, and fails unless ERP reports both the
-effective subscribe and the effective dispatch gate of each one on in
-production, failing too when the call fails or omits a family. A family whose
-every event this release retires has no live entry and is not checked for
-readiness (its subscribe gate is meant to be off, decision 9); its names are
-checked by the retirement rule that follows instead. The pin proves only that
-the retirement code is deployed, not that ERP has finished cutting the names
-off, so for every retirement record this release stamps `preflight` also calls
-ERP's read-only `retirement_cutoff_status` method (section 6, item 2) with the
-same key and fails unless ERP reports, for each retired name, that `subscribe`
-and lease refresh are refused, that the dispatcher's name-level send refusal is
-active, and that the cleanup has reported the cutoff complete (decision 9: every
-queued delivery terminally `retired` and every claim taken before the refusal
-finished or past its lease), failing too when the call fails or omits a name.
-This holds for a partial-family retirement, where the family's own gates stay
-on, as much as for a whole family. Subscribe and lease refresh for a retired
-name have been refused since its retirement shipped, so the count cannot rise
-again after the check. Together these rules mean a contract ERP may already have
-pinned cannot change inside the release PR, and a retirement cannot end while
-ERP still holds subscriptions only `unsubscribe` can reach. Before the GitHub
-release is published, ERP runs its re-pin subset test (section 6, item 2)
-against the release PR's head commit by full sha, and the release PR records
-that it passed; a contract change ERP has not pinned is found there, not after
-npm has the release; the tag cut from that PR is what later releases are checked
-against. Add the tag-comparison test to `scripts/release-check.sh` with the
-one-time registry work, and make it fail rather than skip when no `v*` tag is
-reachable (a shallow clone must fetch tags first: the same pull request sets
-`fetch-depth: 0` and `fetch-tags: true` on the `actions/checkout@v5` step of
-`.github/workflows/test.yml`, which by default fetches one commit and no tags,
-so the hosted `release:check` step would otherwise fail on every run), since a
-skipped check would freeze nothing. `test.yml` is dispatched by hand, so it is
-not the gate: the same pull request adds a `preflight` job to
-`.github/workflows/publish.yml` (checkout with `fetch-depth: 0` and
-`fetch-tags: true`, `denoland/setup-deno@v2`, `actions/setup-node@v4` with Node
-22 followed by the same `npm install -g npm@latest` step `publish-npm` runs,
-because the provenance checks below call `npm audit signatures` and npm
-recommends the latest CLI for attestation verification while each job starts
-from the runner's bundled npm, build the UI viewers, `deno task release:check`)
-and makes both `publish-jsr` and `publish-npm` declare `needs: preflight`. The
-same pull request removes the `workflow_call` trigger from `publish.yml`: no
-workflow calls it, npm trusted publishing validates the calling workflow's name
-rather than the reusable one's, and a caller would also need its own
-`id-token: write` and the ERP token, so a caller could pass `preflight` and
-still fail at `npm publish`; `release:check` asserts that the `on` keys of
-`publish.yml` are exactly `release` and `workflow_dispatch`. The same pull
-request updates the workflow description in `AGENTS.md` (its CI section, which
-today calls `publish.yml` reusable through `workflow_call`) to list only the
-release and manual triggers and to describe the `preflight` job and its ERP
-secrets, so the repository guidance and the workflow never disagree. Comparing
-with the preceding tag leaves the tag being published unchecked, so `preflight`
-also checks it first: on a release event it requires the release's tag name
-(`GITHUB_REF_NAME`) to equal `v` plus the `deno.json` version, which
-`src/version.ts` must also equal, and on a manual dispatch, which can run at any
-commit, it requires the same ERP pin read as a release (on either trigger
-`preflight` fails with a named error when the ERP token, or in release mode the
-read-only ERP API key, is empty instead of reaching the deployment lookup or the
-ERP calls without credentials) and the tag `v<deno.json version>` to exist and
-point at the checked commit; either way a mislabeled tag such as `v3.9.0` on a
-`3.8.0` manifest publishes nothing and never becomes a baseline. `publish-npm`
-treats npm's refusal to overwrite an existing version as success, so a rerun
-after a partial failure stays green; `preflight` therefore checks that case
-before either publish job runs: when `@hvgllc/hvgerp-mcp@<deno.json version>`
-already exists on npm, it verifies that version's provenance attestation exactly
-as the baseline selector does and fails unless its `gitCommit` is the checked
-commit, so a rerun of the same release still passes while a moved or recreated
-tag fails at once instead of reporting a publish that never happened. With that
-gate, publishing a GitHub release cannot reach npm or JSR with a ledger,
-contract or file list that fails the check. Give ERP the new contract hash so
-their verbatim copy can be checked against it.
+a live `CONTRACTS` entry after it, and fails unless ERP reports the effective
+journal, subscribe and dispatch gates of each one all on in production (with the
+journal gate off, subscriptions would succeed while no source change is ever
+recorded or delivered), failing too when the call fails or omits a family. A
+family whose every event this release retires has no live entry and is not
+checked for readiness (its subscribe gate is meant to be off, decision 9); its
+names are checked by the retirement rule that follows instead. The pin proves
+only that the retirement code is deployed, not that ERP has finished cutting the
+names off, so for every retirement record this release stamps `preflight` also
+calls ERP's read-only `retirement_cutoff_status` method (section 6, item 2) with
+the same key and fails unless ERP reports, for each retired name, that
+`subscribe` and lease refresh are refused, that the dispatcher's name-level send
+refusal is active, and that no delivery for the name is nonterminal (decision 9:
+none queued, pending or retrying, and no claim whose lease has not expired),
+failing too when the call fails or omits a name. The same call, with the same
+requirement, runs for every event whose end record this release stamps, beside
+the zero subscription count: ERP drops the name-level refusal only when it
+re-pins past the end record, so the end release must see, live, that nothing is
+left for that refusal to hold back. This holds for a partial-family retirement,
+where the family's own gates stay on, as much as for a whole family. Subscribe
+and lease refresh for a retired name have been refused since its retirement
+shipped, so the count cannot rise again after the check. Together these rules
+mean a contract ERP may already have pinned cannot change inside the release PR,
+and a retirement cannot end while ERP still holds subscriptions only
+`unsubscribe` can reach. Before the GitHub release is published, ERP runs its
+re-pin subset test (section 6, item 2) against the release PR's head commit by
+full sha, and the release PR records that it passed; a contract change ERP has
+not pinned is found there, not after npm has the release; the tag cut from that
+PR is what later releases are checked against. Add the tag-comparison test to
+`scripts/release-check.sh` with the one-time registry work, and make it fail
+rather than skip when no `v*` tag is reachable (a shallow clone must fetch tags
+first: the same pull request sets `fetch-depth: 0` and `fetch-tags: true` on the
+`actions/checkout@v5` step of `.github/workflows/test.yml`, which by default
+fetches one commit and no tags, so the hosted `release:check` step would
+otherwise fail on every run), since a skipped check would freeze nothing.
+`test.yml` is dispatched by hand, so it is not the gate: the same pull request
+adds a `preflight` job to `.github/workflows/publish.yml` (checkout with
+`fetch-depth: 0` and `fetch-tags: true`, `denoland/setup-deno@v2`,
+`actions/setup-node@v4` with Node 22 followed by the same
+`npm install -g npm@latest` step `publish-npm` runs, because the provenance
+checks below call `npm audit signatures` and npm recommends the latest CLI for
+attestation verification while each job starts from the runner's bundled npm,
+build the UI viewers, `deno task release:check`) and makes both `publish-jsr`
+and `publish-npm` declare `needs: preflight`. The same pull request removes the
+`workflow_call` trigger from `publish.yml`: no workflow calls it, npm trusted
+publishing validates the calling workflow's name rather than the reusable one's,
+and a caller would also need its own `id-token: write` and the ERP token, so a
+caller could pass `preflight` and still fail at `npm publish`; `release:check`
+asserts that the `on` keys of `publish.yml` are exactly `release` and
+`workflow_dispatch`. The same pull request updates the workflow description in
+`AGENTS.md` (its CI section, which today calls `publish.yml` reusable through
+`workflow_call`) to list only the release and manual triggers and to describe
+the `preflight` job and its ERP secrets, so the repository guidance and the
+workflow never disagree. Comparing with the preceding tag leaves the tag being
+published unchecked, so `preflight` also checks it first: on a release event it
+requires the release's tag name (`GITHUB_REF_NAME`) to equal `v` plus the
+`deno.json` version, which `src/version.ts` must also equal, and on a manual
+dispatch, which can run at any commit, it requires the same ERP pin read as a
+release (on either trigger `preflight` fails with a named error when the ERP
+token, or in release mode the read-only ERP API key, is empty instead of
+reaching the deployment lookup or the ERP calls without credentials) and the tag
+`v<deno.json version>` to exist and point at the checked commit; either way a
+mislabeled tag such as `v3.9.0` on a `3.8.0` manifest publishes nothing and
+never becomes a baseline. `publish-npm` treats npm's refusal to overwrite an
+existing version as success, so a rerun after a partial failure stays green;
+`preflight` therefore checks that case before either publish job runs: when
+`@hvgllc/hvgerp-mcp@<deno.json version>` already exists on npm, it verifies that
+version's provenance attestation exactly as the baseline selector does and fails
+unless its `gitCommit` is the checked commit, so a rerun of the same release
+still passes while a moved or recreated tag fails at once instead of reporting a
+publish that never happened. With that gate, publishing a GitHub release cannot
+reach npm or JSR with a ledger, contract or file list that fails the check. Give
+ERP the new contract hash so their verbatim copy can be checked against it.
 
 ## 6. Recipe: ERPNext side (owned by the ERP repository)
 
@@ -1611,19 +1627,21 @@ Listed here so both sides agree on the order; the ERP team implements it.
    record (step 9 of section 5), a second one, `retirement_cutoff_status`,
    returning for each requested retired name whether `subscribe` and lease
    refresh are refused, whether the dispatcher's name-level send refusal is
-   active and whether the cleanup has recorded the cutoff complete (decision 9),
-   which `preflight` requires for every retirement record the release stamps,
-   and a third one, `event_family_readiness`, returning for each requested
-   family whether its effective subscribe gate and effective dispatch gate are
-   on (the per-family keys of decision 7 together with the global flags; for the
-   meeting family, which has no per-family keys, the global flags alone), which
-   `preflight` requires to be on for every family whose row the release stamps
-   and that keeps a live entry; all three are callable only by a dedicated
-   read-only API user, report nothing about any user's data beyond these counts
-   and flags, and an unknown family or event name is refused rather than
-   reported off. The cleanup records the moment it reports the cutoff complete
-   for a name, so the answer is read from that record, not recomputed. Before an
-   MCP release that changes `RETIRED_EVENTS` is deployed, a deployment check
+   active and how many of its deliveries are nonterminal (decision 9), which
+   `preflight` requires to be refused, active and 0 for every retirement record
+   and every end record the release stamps, and a third one,
+   `event_family_readiness`, returning for each requested family whether its
+   effective journal, subscribe and dispatch gates are on (the per-family keys
+   of decision 7 together with the global flags; for the meeting family, which
+   has no per-family keys, the global flags alone), which `preflight` requires
+   to be on for every family whose row the release stamps and that keeps a live
+   entry; all three are callable only by a dedicated read-only API user, report
+   nothing about any user's data beyond these counts and flags, and an unknown
+   family or event name is refused rather than reported off. Every answer is
+   computed live at the call, from the current settings, refusals and delivery
+   rows, never read from an earlier record of the cleanup, so a check made for
+   an end record cannot be satisfied by a state that has since changed. Before
+   an MCP release that changes `RETIRED_EVENTS` is deployed, a deployment check
    compares the canonical JSON that `--print-events-registry` prints with the
    same canonical JSON from an ERP bench command, and the deployment stops
    unless ERP's list covers MCP's: every name MCP lists must be in ERP's list
