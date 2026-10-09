@@ -891,22 +891,34 @@ tag, or a rerun after its publish, compares against the preceding release
 instead of against itself. npm lets a version be unpublished, and an unpublished
 version drops out of that list, so the list alone cannot prove no newer release
 exists: the check also lists the `v*` tags on the remote
-(`git ls-remote --tags`, never the local checkout) and every stamped `release`
-in the checked ledger, and fails, naming the version, if either holds a version
-above the selected baseline other than the `deno.json` version itself, rather
-than silently comparing with an older release and dropping the vanished one's
-contracts and retirement history. Unpublishing is forbidden by the release
-runbook, and a tag left by a refused publish is deleted by it (below), so this
-fails only when a release really vanished; the recovery is a reviewed change
-adding that version and its tagged commit to
-`src/events/withdrawn-releases.json`, after which the selector treats it as
-listed, with the tag and ancestor checks below applied to it and the npm
-provenance check replaced by that record. Release versions are plain
-`MAJOR.MINOR.PATCH`: `release:check` fails when the `deno.json` version carries
-a prerelease or build suffix, so `preflight` never lets one reach npm, and
-because GitHub's prerelease flag is release metadata independent of the tag and
-the manifest (the `release: published` trigger fires for prereleases too, so a
-prerelease created for `v3.8.0` with a plain `3.8.0` manifest would publish a
+(`git ls-remote --tags`, never the local checkout), every stamped `release` in
+the checked ledger and the version keys of npm's publication history
+(`npm view @hvgllc/hvgerp-mcp time --json`, ignoring its `created` and
+`modified` keys), and fails, naming the version, if any of them holds a version
+above the selected baseline other than the `deno.json` version itself. The tags
+and the ledger can both lose a release: a version unpublished from npm whose
+remote tag was then deleted is in neither, and the ledger can drop its rows
+because the comparison has fallen back to a baseline that never held them. The
+publication history is the source nobody in this repository can edit: npm never
+lets a version number be reused, so it keeps an unpublished version's entry in
+that map, and only a run that passed `preflight` can have put one there. A
+workflow test feeds a history holding a version that is missing from the version
+list, the remote tags and the ledger, and asserts the check fails naming it.
+This relies on npm's rule that a version number is never reused; were the
+registry ever to stop keeping the entry, the release runbook's ban on
+unpublishing would be the remaining guard. The check fails rather than silently
+comparing with an older release and dropping the vanished one's contracts and
+retirement history. Unpublishing is forbidden by the release runbook, and a tag
+left by a refused publish is deleted by it (below), so this fails only when a
+release really vanished; the recovery is a reviewed change adding that version
+and its tagged commit to `src/events/withdrawn-releases.json`, after which the
+selector treats it as listed, with the tag and ancestor checks below applied to
+it and the npm provenance check replaced by that record. Release versions are
+plain `MAJOR.MINOR.PATCH`: `release:check` fails when the `deno.json` version
+carries a prerelease or build suffix, so `preflight` never lets one reach npm,
+and because GitHub's prerelease flag is release metadata independent of the tag
+and the manifest (the `release: published` trigger fires for prereleases too, so
+a prerelease created for `v3.8.0` with a plain `3.8.0` manifest would publish a
 stable version), every job of the publish workflow runs only when
 `github.event_name != 'release' || github.event.release.prerelease == false`, a
 condition a workflow test asserts on each job, and the selector ignores every
