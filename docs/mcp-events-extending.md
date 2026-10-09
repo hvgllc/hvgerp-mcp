@@ -1345,9 +1345,16 @@ not the gate: the same pull request adds a `preflight` job to
 `.github/workflows/publish.yml` (checkout with `fetch-depth: 0` and
 `fetch-tags: true`, `denoland/setup-deno@v2`, build the UI viewers,
 `deno task release:check`) and makes both `publish-jsr` and `publish-npm`
-declare `needs: preflight`, so publishing a GitHub release cannot reach npm or
-JSR with a ledger, contract or file list that fails the check. Give ERP the new
-contract hash so their verbatim copy can be checked against it.
+declare `needs: preflight`. Comparing with the preceding tag leaves the tag
+being published unchecked, so `preflight` also checks it first: on a release
+event it requires the release's tag name (`GITHUB_REF_NAME`) to equal `v` plus
+the `deno.json` version, which `src/version.ts` must also equal, and on a manual
+dispatch it requires the tag `v<deno.json version>` to exist and point at the
+checked commit; either way a mislabeled tag such as `v3.9.0` on a `3.8.0`
+manifest publishes nothing and never becomes a baseline. With that gate,
+publishing a GitHub release cannot reach npm or JSR with a ledger, contract or
+file list that fails the check. Give ERP the new contract hash so their verbatim
+copy can be checked against it.
 
 ## 6. Recipe: ERPNext side (owned by the ERP repository)
 
@@ -1394,21 +1401,32 @@ Listed here so both sides agree on the order; the ERP team implements it.
    `unreleased`, the pin is first the full sha of the merged feature pull
    request's commit on MCP `main`, never a branch or a tag that does not exist
    yet; once the release is tagged, ERP re-pins to that tag in a follow-up
-   change whose test asserts that every contract file is byte-identical between
-   the two pins and that the two ledgers differ only in `release` values going
-   from `unreleased` to the tag's version. ERP keeps every retired contract file
-   and builds the list exactly as `protocol.ts` builds `RETIRED_EVENTS` (each
-   retirement record without an end record, with the effective `inputSchema` of
-   its `from` contract). Before an MCP release that changes `RETIRED_EVENTS` is
-   deployed, a deployment check compares the canonical JSON that
-   `--print-events-registry` prints with the same canonical JSON from an ERP
-   bench command, and the deployment stops if the active retirement names or
-   their schemas differ, so MCP never forwards an unsubscribe ERP would refuse.
-   An end-to-end test retires a fixture name, advances the active contract to a
-   successor without it, and asserts that unsubscribe for a stored subscription
-   returns `{}` and deletes it, a second unsubscribe also returns `{}`,
-   subscribe with the name is refused, and a delivery for it queued or retrying
-   before the cutoff is marked `retired` and never sent, even with dispatch on.
+   change whose test treats the first pin as an immutable subset of the tag:
+   every contract file present at the first pin is byte-identical at the tag,
+   every ledger record present there is still present and unchanged except that
+   a `release` of `unreleased` became the tag's version, and anything else in
+   the tag's ledger or contract directory is an appended record or file (another
+   family's feature merged before the same release), accepted as it stands. ERP
+   keeps every retired contract file and builds the list exactly as
+   `protocol.ts` builds `RETIRED_EVENTS` (each retirement record without an end
+   record, with the effective `inputSchema` of its `from` contract). Before an
+   MCP release that changes `RETIRED_EVENTS` is deployed, a deployment check
+   compares the canonical JSON that `--print-events-registry` prints with the
+   same canonical JSON from an ERP bench command, and the deployment stops
+   unless ERP's list covers MCP's: every name MCP lists must be in ERP's list
+   with an equal schema, and ERP may list an extra name only when the MCP ledger
+   being deployed holds an end record for it. The extra names are what make an
+   end record safe to roll out: while old MCP instances still accept unsubscribe
+   for an ended name and forward it, ERP keeps accepting it, because ERP re-pins
+   to the tag that adds the end record only after that MCP release is fully
+   deployed and the old instances are drained; until then its copy stays at the
+   earlier pin, which still lists the name. So MCP never forwards an unsubscribe
+   ERP would refuse, whichever side moves first. An end-to-end test retires a
+   fixture name, advances the active contract to a successor without it, and
+   asserts that unsubscribe for a stored subscription returns `{}` and deletes
+   it, a second unsubscribe also returns `{}`, subscribe with the name is
+   refused, and a delivery for it queued or retrying before the cutoff is marked
+   `retired` and never sent, even with dispatch on.
 3. **Capture**: `doc_events` hooks for the new doctype in `hooks.py`, the same
    snapshot then `flush()` pattern as `events.py` (one net row per transaction,
    nothing on rollback, transient DB errors re-raised, other errors logged
@@ -1423,7 +1441,15 @@ Listed here so both sides agree on the order; the ERP team implements it.
    records with equal ids in both doctypes. Arguments are identity-only
    (decision 3); refuse any other argument rather than ignoring it.
 6. **Dispatch**: `envelope()` takes the name from the row's `family`;
-   `_fan_out_matches` compares family as well as change.
+   `_fan_out_matches` compares family as well as change. This repository never
+   receives the webhooks, so its `validateEventPayload` cannot catch a malformed
+   delivery: ERP's own suite builds the real envelope from journal fixtures
+   covering every event of the family, every `change` value and every branch of
+   the payload schema (each conditional subschema taken and not taken, each
+   optional field present and absent, the deleted form), and validates each
+   envelope's `data` with a draft 2020-12 validator against that event's
+   effective `payloadSchema` read from the verbatim contract copy (item 2). The
+   family's dispatch flag stays off until that suite passes in ERP CI.
 7. **Read-back**: `api.<family_slug>_get` with the fixed `{ok,result|error}`
    envelope, the not-available answer for no permission and for missing records
    alike, and a tombstone only for a user the journal proves saw it. ERP copies
@@ -1483,6 +1509,8 @@ Listed here so both sides agree on the order; the ERP team implements it.
       meeting events still delivered (compare one real `meeting.updated` before
       and after).
 - [ ] Contract hash identical in both repositories.
+- [ ] ERP's payload suite (item 6 of section 6) validates an envelope for every
+      event, `change` value and payload branch against the copied contract.
 - [ ] `events/list` from a client with a verified identity shows the new events;
       without identity there is no `capabilities.events`.
 - [ ] Subscribe with the allowed client succeeds; with any other client
