@@ -1421,13 +1421,21 @@ already announced must keep re-reading through the same public tool, the same
 arguments, the same ERP endpoint, the same checks and the same fields, so
 changing any of these is a major release (decision 9), never a side effect of
 adding events. In a major release (`deno.json` at `X.0.0` with `X` above the
-newest tag's major) the successor may instead record a new binding: its row
-names the new tool, method, path, input, result and checks module, each of which
-must pass every check above as a new live row (the `v3.7.0` bootstrap check
-excepted), and the cross-version test then compares only the effective schemas
-and `changeByEvent` entries. Keep that test for as long as `v<K>` is in the
-repository. Without it, a changed schema with a freshly recorded hash would pass
-every other check.
+newest tag's major) the successor either keeps the `v<K>` binding exactly, as in
+a release that is not major, or records a new binding: its row names a new tool,
+method, path, input, result and checks module, each of which must pass every
+check above as a new live row (the `v3.7.0` bootstrap check excepted), and its
+`readBackTool`, `readBackMethod` and `readBackPath` must each differ from those
+of every earlier ledger row. ERP deploys before MCP, so MCP instances still
+running the previous release keep calling the old endpoint with the old contract
+until they drain; a new binding is therefore always a new endpoint beside the
+old one, never a reuse of the old one with a different wire contract, and ERP
+keeps the old endpoint whitelisted (decision 5). A fixture whose major successor
+reuses any of the three with a changed input, result or checks module fails the
+ledger check, and the cross-version test then compares only the effective
+schemas and `changeByEvent` entries. Keep that test for as long as `v<K>` is in
+the repository. Without it, a changed schema with a freshly recorded hash would
+pass every other check.
 
 ### Step 3. Schema keywords (only when needed)
 
@@ -1791,29 +1799,31 @@ Listed here so both sides agree on the order; the ERP team implements it.
    publish of it, still passes. Every answer is computed live at the call, from
    the current settings, refusals and delivery rows, never read from an earlier
    record of the cleanup, so a check made for an end record cannot be satisfied
-   by a state that has since changed. Before an MCP release that changes
-   `RETIRED_EVENTS` is deployed, a deployment check compares the canonical JSON
-   that `--print-events-registry` prints with the same canonical JSON from an
-   ERP bench command, and the deployment stops unless ERP's list covers MCP's:
-   every name MCP lists must be in ERP's list with an equal schema, and ERP may
-   list an extra name only when the MCP ledger being deployed holds an end
-   record for it. The same bench command prints ERP's
-   `acknowledged_retirement_ends`, and the deployment also stops if any of those
-   names is one the target release serves live or lists in `RETIRED_EVENTS`: a
-   rollback to a release older than an acknowledged end would advertise and
-   forward an event ERP no longer serves or accepts unsubscribe for. The extra
-   names are what make an end record safe to roll out: while old MCP instances
-   still accept unsubscribe for an ended name and forward it, ERP keeps
-   accepting it, because ERP drops the name only through the acknowledgement
-   above, accepted only once a successful MCP production deployment attests that
-   the release is fully deployed and the old instances are drained, whatever pin
-   it has moved to in between. So MCP never forwards an unsubscribe ERP would
-   refuse, whichever side moves first. An end-to-end test retires a fixture
-   name, advances the active contract to a successor without it, and asserts
-   that unsubscribe for a stored subscription returns `{}` and deletes it, a
-   second unsubscribe also returns `{}`, subscribe with the name is refused, and
-   a delivery for it queued or retrying before the cutoff is marked `retired`
-   and never sent, even with dispatch on.
+   by a state that has since changed. Before every MCP production deployment,
+   rollbacks and redeploys included and whether or not the release changes
+   `RETIRED_EVENTS` (after an end is acknowledged, a rollback target from before
+   the retirement can carry an empty retired map yet serve the name live), a
+   deployment check compares the canonical JSON that `--print-events-registry`
+   prints with the same canonical JSON from an ERP bench command, and the
+   deployment stops unless ERP's list covers MCP's: every name MCP lists must be
+   in ERP's list with an equal schema, and ERP may list an extra name only when
+   the MCP ledger being deployed holds an end record for it. The same bench
+   command prints ERP's `acknowledged_retirement_ends`, and the deployment also
+   stops if any of those names is one the target release serves live or lists in
+   `RETIRED_EVENTS`: a rollback to a release older than an acknowledged end
+   would advertise and forward an event ERP no longer serves or accepts
+   unsubscribe for. The extra names are what make an end record safe to roll
+   out: while old MCP instances still accept unsubscribe for an ended name and
+   forward it, ERP keeps accepting it, because ERP drops the name only through
+   the acknowledgement above, accepted only once a successful MCP production
+   deployment attests that the release is fully deployed and the old instances
+   are drained, whatever pin it has moved to in between. So MCP never forwards
+   an unsubscribe ERP would refuse, whichever side moves first. An end-to-end
+   test retires a fixture name, advances the active contract to a successor
+   without it, and asserts that unsubscribe for a stored subscription returns
+   `{}` and deletes it, a second unsubscribe also returns `{}`, subscribe with
+   the name is refused, and a delivery for it queued or retrying before the
+   cutoff is marked `retired` and never sent, even with dispatch on.
 3. **Capture**: `doc_events` hooks for the new doctype in `hooks.py`, the same
    snapshot then `flush()` pattern as `events.py` (one net row per transaction,
    nothing on rollback, transient DB errors re-raised, other errors logged
