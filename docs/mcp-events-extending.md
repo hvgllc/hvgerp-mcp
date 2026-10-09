@@ -398,23 +398,28 @@ implementation detail.
    `readBackMethod`, and every entry that names a given `readBackMethod` must
    name the same `readBackTool` (a family that needs another method needs its
    own tool, and a new tool needs its own method), and the tool test asserts
-   that the handler's one GET goes to exactly that method. The pair also has one
-   input schema, derived from a single identity contract, so every entry that
-   names it must also share the same `identityField`, a deeply equal identity
-   schema and the same `sourceDoctypes` (or none on all of them); a family whose
-   identity differs in any of these needs its own tool and method, or the shared
-   pair would refuse identities that family's webhooks carry, or read the wrong
-   doctype. Equal identities are not enough on their own: a read-back request
-   carries neither a family nor, for a single-doctype family, a doctype, so the
-   method can only query the doctypes of one family. Every entry naming a given
-   tool or method must therefore belong to the same base family (the family
-   itself or its versions `<family>.v<G>`, decision 1, which keep its doctypes);
-   two unrelated single-doctype families with the same `identityField` and
-   schema still need a tool and method each. A test groups the entries both by
-   tool and by method and asserts all of this for every group. A shared tool and
-   method therefore stay registered until the last family that names them is
-   retired; removing the base family while `<family>.v<G>` still points at its
-   tool fails that test instead of leaving v<G> events without a re-read path.
+   that the handler's one GET goes to exactly that method. The binding is
+   checked on the resolved paths too, since two distinct keys could name the
+   same Frappe endpoint: a test asserts that `ERP_EVENTS_METHODS` is injective
+   (no two keys, `subscribe` and `unsubscribe` included, resolve to the same
+   path), so a path serves exactly one method, and through it one tool and one
+   base family's generations. The pair also has one input schema, derived from a
+   single identity contract, so every entry that names it must also share the
+   same `identityField`, a deeply equal identity schema and the same
+   `sourceDoctypes` (or none on all of them); a family whose identity differs in
+   any of these needs its own tool and method, or the shared pair would refuse
+   identities that family's webhooks carry, or read the wrong doctype. Equal
+   identities are not enough on their own: a read-back request carries neither a
+   family nor, for a single-doctype family, a doctype, so the method can only
+   query the doctypes of one family. Every entry naming a given tool or method
+   must therefore belong to the same base family (the family itself or its
+   versions `<family>.v<G>`, decision 1, which keep its doctypes); two unrelated
+   single-doctype families with the same `identityField` and schema still need a
+   tool and method each. A test groups the entries both by tool and by method
+   and asserts all of this for every group. A shared tool and method therefore
+   stay registered until the last family that names them is retired; removing
+   the base family while `<family>.v<G>` still points at its tool fails that
+   test instead of leaving v<G> events without a re-read path.
 6. **The journal records the family and the source doctype.** ERP adds two
    columns: `family` (drives the event name and matching) and `source_doctype`
    (identifies the record; one family can span several doctypes, such as `Task`
@@ -991,24 +996,25 @@ rules plus the two `anyOf` forms and `if`/`then` above), importing only
 `code-points.ts`; it is deliberately not `json-schema.ts`, which step 3 extends
 for contracts in minor releases, because a change to how a keyword or format is
 checked would change which shipped results are returned or refused. `run.ts`
-imports only the error classes, `code-points.ts` and `result-validator.ts`, and
-`readBackChecks` covers it together with the checks module, `code-points.ts` and
-`result-validator.ts`; a test runs both validators over every sample and
-generated output and fails on any disagreement, so the copy cannot drift
-silently while it is still meant to match. Identity is the canonical check's
-alone: each argument rule declares the `fields` it reads, a test asserts that no
-rule of any checks module lists the identity field or `source_doctype`, and a
-fixed-seed run of generated identities (every Unicode general category,
-punctuation, symbols and control characters included, at the minimum, the
-maximum and lengths between, counted in code points) must reach `erpGet`
-unrefused, so a module cannot add a predicate that rejects a document name the
-contract allows. The picker likewise reads every enum it accepts and every bound
-it enforces from the imported result schema, never from a literal, and the
-fixed-seed result generator reads that schema and adds, for every enum, each
-member and one non-member and, for every string, array and number bound, the
-boundary value and one past it: members and boundary values must succeed and the
-others must throw `Events backend error`. Tests fail if an argument error or a
-response-shape backend error is thrown any other way, if the names in
+imports only `src/events/read-back/errors.ts` (the read-back error classes,
+which imports nothing), `code-points.ts` and `result-validator.ts`, and
+`readBackChecks` covers it together with the checks module, `errors.ts`,
+`code-points.ts` and `result-validator.ts`; a test runs both validators over
+every sample and generated output and fails on any disagreement, so the copy
+cannot drift silently while it is still meant to match. Identity is the
+canonical check's alone: each argument rule declares the `fields` it reads, a
+test asserts that no rule of any checks module lists the identity field or
+`source_doctype`, and a fixed-seed run of generated identities (every Unicode
+general category, punctuation, symbols and control characters included, at the
+minimum, the maximum and lengths between, counted in code points) must reach
+`erpGet` unrefused, so a module cannot add a predicate that rejects a document
+name the contract allows. The picker likewise reads every enum it accepts and
+every bound it enforces from the imported result schema, never from a literal,
+and the fixed-seed result generator reads that schema and adds, for every enum,
+each member and one non-member and, for every string, array and number bound,
+the boundary value and one past it: members and boundary values must succeed and
+the others must throw `Events backend error`. Tests fail if an argument error or
+a response-shape backend error is thrown any other way, if the names in
 `MEETING_ARGUMENT_RULES` differ from the case set's `rules` or those in
 `MEETING_GUARDS` from the sample set's `guards`, or if, for any recorded case or
 generated valid arguments, the parameters the fake client receives do not hold
@@ -1033,13 +1039,29 @@ failure, HTTP 429, 401, 403, 500) or a raw message that is not a valid
 `{ ok, result | error }` envelope, and `error` the fixed message the handler
 must throw for it; it is immutable like the rest of the sample set. The ledger
 row records `readBackChecks`, the SHA-256 of the checks module, `run.ts`,
-`code-points.ts` and `result-validator.ts` together as the version shipped (the
-contract file the module imports is pinned by its own ledger digest), and the
-tag check requires it byte-identical for every live row. Adding, removing,
-tightening or loosening a rule or guard, changing how an argument is forwarded
-or how a result field is mapped, is therefore a new checks module, and so a
-major release under a new tool name or contract version, like any other change
-to what the tool accepts, sends or returns.
+`errors.ts`, `code-points.ts` and `result-validator.ts` together as the version
+shipped (the contract file the module imports is pinned by its own ledger
+digest), and the tag check requires it byte-identical for every live row.
+Adding, removing, tightening or loosening a rule or guard, changing how an
+argument is forwarded or how a result field is mapped, is therefore a new checks
+module, and so a major release under a new tool name or contract version, like
+any other change to what the tool accepts, sends or returns.
+
+The digest stops at `runReadBack`'s return. What reaches the client after it,
+`buildHandlersMap()` in `src/client.ts`, the server's `toolErrorMapper` and the
+`@casys/mcp-server` framework, is shared with every tool and cannot be frozen
+per row, so it is pinned by behaviour instead. A wire test drives every sample
+case, every `transport` case and the fixed-seed argument and result runs through
+a real `tools/call` on the assembled server, not through the handler, and
+asserts the one wire form a read-back tool has: a success has no `isError`, a
+`structuredContent` deeply equal to the expected output and a `content` of
+exactly one `text` item whose JSON parses to the same value; an error has
+`isError: true` and exactly one `text` item equal to the fixed message, with
+nothing else. The same test runs in `release:check` and, while the newest tag
+carries no ledger, against the `v3.7.0` worktree of the bootstrap check, so the
+wire form the meeting tool already ships is the one asserted. An edit to any
+shared layer that changes a read-back tool's wire response therefore fails in
+the release that makes it.
 
 Validation alone cannot catch a pick function that stops copying an optional
 field or stops passing one variant of a field: every output still validates. So
@@ -1309,12 +1331,21 @@ Listed here so both sides agree on the order; the ERP team implements it.
    registry also keeps a retired list mirroring `RETIRED_EVENTS` (decision 9):
    each retired name with the argument schema of the contract that last shipped
    it, accepted by the unsubscribe path only and refused by subscribe and
-   refresh. An end-to-end test retires a fixture name, advances the active
-   contract to a successor without it, and asserts that unsubscribe for a stored
-   subscription returns `{}` and deletes it, a second unsubscribe also returns
-   `{}`, subscribe with the name is refused, and a delivery for it queued or
-   retrying before the cutoff is marked `retired` and never sent, even with
-   dispatch on.
+   refresh. That list is derived, never written by hand: ERP copies
+   `src/events/contract-ledger.json` verbatim with a digest test against the
+   copy at the release tag it pairs with, keeps every retired contract file, and
+   builds the list exactly as `protocol.ts` builds `RETIRED_EVENTS` (each
+   retirement record without an end record, with the effective `inputSchema` of
+   its `from` contract). Before an MCP release that changes `RETIRED_EVENTS` is
+   deployed, a deployment check compares the canonical JSON that
+   `--print-events-registry` prints with the same canonical JSON from an ERP
+   bench command, and the deployment stops if the active retirement names or
+   their schemas differ, so MCP never forwards an unsubscribe ERP would refuse.
+   An end-to-end test retires a fixture name, advances the active contract to a
+   successor without it, and asserts that unsubscribe for a stored subscription
+   returns `{}` and deletes it, a second unsubscribe also returns `{}`,
+   subscribe with the name is refused, and a delivery for it queued or retrying
+   before the cutoff is marked `retired` and never sent, even with dispatch on.
 3. **Capture**: `doc_events` hooks for the new doctype in `hooks.py`, the same
    snapshot then `flush()` pattern as `events.py` (one net row per transaction,
    nothing on rollback, transient DB errors re-raised, other errors logged
@@ -1332,7 +1363,14 @@ Listed here so both sides agree on the order; the ERP team implements it.
    `_fan_out_matches` compares family as well as change.
 7. **Read-back**: `api.<family_slug>_get` with the fixed `{ok,result|error}`
    envelope, the not-available answer for no permission and for missing records
-   alike, and a tombstone only for a user the journal proves saw it.
+   alike, and a tombstone only for a user the journal proves saw it. ERP copies
+   the tool's `<tool>.result.v<N>.json` verbatim next to the contract, with a
+   digest test against this repository's file, and its method tests validate
+   every `result` they produce (each record fixture, every optional field
+   present and absent, each enum value, the tombstone) against that schema, so
+   an ERP release that drops a required field or emits a value outside an enum
+   or bound fails in ERP's own suite instead of turning re-reads into
+   `Events backend error`.
 8. **Flags**: `mcp_events_<family_slug>_journal_enabled`,
    `mcp_events_<family_slug>_subscribe_enabled` and
    `mcp_events_<family_slug>_dispatch_enabled` for each new family, all default
