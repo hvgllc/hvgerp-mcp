@@ -1701,62 +1701,86 @@ proves only that ERP runs the family's code: ERP may run it in the shadow state
 family would advertise events whose subscriptions answer `-32012` or whose
 deliveries stay paused, against decision 8. So in release mode `preflight` also
 calls ERP's read-only `event_family_readiness` method (section 6, item 2) with
-the same read-only key, for every family that has a row this release stamps and
-still has a live `CONTRACTS` entry after it, and fails unless ERP reports the
-effective journal, subscribe and dispatch gates of each one all on in production
-(with the journal gate off, subscriptions would succeed while no source change
-is ever recorded or delivered) and the OAuth client this server authenticates as
-(`hvgerp-mcp`, the expected client named in the workflow, not read from ERP) in
+the same read-only key, for every family that has a live `CONTRACTS` entry in
+this release, whether or not the release stamps a row for it (a patch release or
+one changing another family still publishes a catalog listing the untouched
+families, whose gates or allowed clients ERP may have changed since their own
+release), and fails unless ERP reports the effective journal, subscribe and
+dispatch gates of each one all on in production (with the journal gate off,
+subscriptions would succeed while no source change is ever recorded or
+delivered) and the OAuth client this server authenticates as (`hvgerp-mcp`, the
+expected client named in the workflow, not read from ERP) in
 `mcp_events_allowed_clients`, since a client outside that list gets `-32012` for
 every subscription whatever the gates say, failing too when the call fails or
-omits a family. A family whose every event this release retires has no live
-entry and is not checked for readiness (its subscribe gate is meant to be off,
-decision 9); its names are checked by the retirement rule that follows instead.
-Gates on are not enough either: ERP can run the release's pin and still select
-the preceding contract of a family as active, so a successor that adds an event
-would be advertised while ERP refuses it. So in release mode `preflight` also
-calls ERP's read-only `events_registry` method (section 6, item 2) with the same
-key, which returns exactly the three lists the deployment check's bench command
-prints, and applies to the release's own registry the rules of that check that
-concern ERP's lists (section 6, item 3), without the
-newest-successful-deployment exception: every name the release serves live is in
-ERP's active list, every name in its `RETIRED_EVENTS` is in ERP's retired list
-with an equal schema, a name in ERP's retired list that the release neither
-serves nor retires has an end record in its ledger, and no name with an
-activated acknowledgement is served or retired by it, failing too when the call
-fails. So the package is never published with a catalog ERP does not serve; the
-deployment check repeats the comparison against the state at deployment time.
-The pin proves only that the retirement code is deployed, not that ERP has
-finished cutting the names off, so for every retirement record this release
-stamps `preflight` also calls ERP's read-only `retirement_cutoff_status` method
-(section 6, item 2) with the same key and fails unless ERP reports, for each
-retired name, that `subscribe` and lease refresh are refused, that the
-name-level capture refusal is active (no new journal row names the event, so
-source changes stop adding rows nothing may deliver), that the dispatcher's
-name-level send refusal is active, and that no delivery for the name is
-nonterminal (decision 9: none queued, pending or retrying, and no claim taken
-before the refusal without a completion record, whether or not its lease has
-expired, unless the dispatcher's worker registry shows the process that held it
-gone), failing too when the call fails or omits a name. The same call, with the
-same requirement, runs for every event whose end record this release stamps,
-beside the zero subscription count (for an end record ERP has already
-acknowledged, both calls answer `acknowledged` instead, which `preflight`
-accepts, section 6, item 2): ERP drops the name-level refusal only when it
-acknowledges the end record in `acknowledged_retirement_ends`, so the end
-release must see, live, that nothing is left for that refusal to hold back. This
-holds for a partial-family retirement, where the family's own gates stay on, as
-much as for a whole family. Subscribe and lease refresh for a retired name have
-been refused since its retirement shipped, so the count cannot rise again after
-the check. Together these rules mean a contract ERP may already have pinned
-cannot change inside the release PR, and a retirement cannot end while ERP still
-holds subscriptions only `unsubscribe` can reach. Before the GitHub release is
-published, ERP runs its re-pin subset test (section 6, item 2) against the
-release PR's head commit by full sha, and the release PR records that it passed;
-a contract change ERP has not pinned is found there, not after npm has the
-release; the tag cut from that PR is what later releases are checked against.
-Add the tag-comparison test to `scripts/release-check.sh` with the one-time
-registry work, and make it fail rather than skip when no `v*` tag is reachable
-(a shallow clone must fetch tags first: the same pull request sets
+omits a family. A family whose every event the release retires, or that it no
+longer serves at all, has no live entry and is not checked for readiness (its
+subscribe gate is meant to be off, decision 9); its names are checked by the
+retirement rule that follows instead. Gates on are not enough either: ERP can
+run the release's pin and still select the preceding contract of a family as
+active, so a successor that adds an event would be advertised while ERP refuses
+it. So in release mode `preflight` also calls ERP's read-only `events_registry`
+method (section 6, item 2) with the same key, which returns exactly the three
+lists the deployment check's bench command prints, and applies to the release's
+own registry the rules of that check that concern ERP's lists (section 6, item
+2), without the newest-successful-deployment exception: every name the release
+serves live is in ERP's active list, every name in its `RETIRED_EVENTS` is in
+ERP's retired list with an equal schema, a name in ERP's retired list that the
+release neither serves nor retires has an end record in its ledger, and no name
+with an activated acknowledgement is served or retired by it, failing too when
+the call fails. Both reads are snapshots, and ERP can still switch a contract or
+turn a gate off through its locked bench commands between `preflight` and the
+publish jobs, so `events_registry` also returns `registry_revision`, a counter
+on ERP's MCP deployment lock row that every one of those locked commands
+increments in its own transaction (section 6, item 2), `preflight` passes the
+revision it read to the publish jobs as a job output, and `publish-npm` and
+`publish-jsr` each repeat the `events_registry` and `event_family_readiness`
+checks as the step immediately before their publish command and fail unless
+every rule still holds and the revision is unchanged, so any locked transition
+after `preflight` stops the release instead of being missed by a later
+equal-looking read. The final read and the registry's acceptance of the upload
+remain two moments, and the protocol does not try to hold ERP between them: ERP
+gets no write access from the release workflow, and a transition in those
+seconds is indistinguishable from one made a minute after publication, which no
+publish-time check can prevent either. Its effect on the published catalog is
+what decision 8 warns about, `-32012` for an event ERP no longer serves or whose
+family's gate is off, with deliveries left pending rather than dropped (decision
+7), production keeps the version it runs, because publishing deploys nothing,
+and the deployment check, which compares under the lock, refuses to roll the
+release out until ERP serves its catalog again. So the package is never
+published with a catalog ERP did not serve and ready when the publish step
+started, and no deployment ever runs one ERP does not serve. A workflow test
+feeds a changed revision to the pre-publish step and asserts that neither
+publish command runs. The pin proves only that the retirement code is deployed,
+not that ERP has finished cutting the names off, so for every retirement record
+this release stamps `preflight` also calls ERP's read-only
+`retirement_cutoff_status` method (section 6, item 2) with the same key and
+fails unless ERP reports, for each retired name, that `subscribe` and lease
+refresh are refused, that the name-level capture refusal is active (no new
+journal row names the event, so source changes stop adding rows nothing may
+deliver), that the dispatcher's name-level send refusal is active, and that no
+delivery for the name is nonterminal (decision 9: none queued, pending or
+retrying, and no claim taken before the refusal without a completion record,
+whether or not its lease has expired, unless the dispatcher's worker registry
+shows the process that held it gone), failing too when the call fails or omits a
+name. The same call, with the same requirement, runs for every event whose end
+record this release stamps, beside the zero subscription count (for an end
+record ERP has already acknowledged, both calls answer `acknowledged` instead,
+which `preflight` accepts, section 6, item 2): ERP drops the name-level refusal
+only when it acknowledges the end record in `acknowledged_retirement_ends`, so
+the end release must see, live, that nothing is left for that refusal to hold
+back. This holds for a partial-family retirement, where the family's own gates
+stay on, as much as for a whole family. Subscribe and lease refresh for a
+retired name have been refused since its retirement shipped, so the count cannot
+rise again after the check. Together these rules mean a contract ERP may already
+have pinned cannot change inside the release PR, and a retirement cannot end
+while ERP still holds subscriptions only `unsubscribe` can reach. Before the
+GitHub release is published, ERP runs its re-pin subset test (section 6, item 2)
+against the release PR's head commit by full sha, and the release PR records
+that it passed; a contract change ERP has not pinned is found there, not after
+npm has the release; the tag cut from that PR is what later releases are checked
+against. Add the tag-comparison test to `scripts/release-check.sh` with the
+one-time registry work, and make it fail rather than skip when no `v*` tag is
+reachable (a shallow clone must fetch tags first: the same pull request sets
 `fetch-depth: 0` and `fetch-tags: true` on the `actions/checkout@v5` step of
 `.github/workflows/test.yml`, which by default fetches one commit and no tags,
 so the hosted `release:check` step would otherwise fail on every run), since a
@@ -1935,59 +1959,61 @@ Listed here so both sides agree on the order; the ERP team implements it.
    refusal, switching a family's active contract, turning a family's journal,
    subscribe or dispatch gate off and removing `hvgerp-mcp` from
    `mcp_events_allowed_clients` each go through a bench command that takes the
-   row `FOR UPDATE` in its own transaction and refuses while it holds an open
-   mark, so a rollout never finishes against a registry or readiness ERP changed
-   after the check. A gate can still be turned off outside those commands in an
-   incident (a direct site-config edit), so the deploy workflow also reruns the
-   bench command after the rollout, before it marks the deployment successful,
-   and fails the deployment unless the target still passes every rule of the
-   deployment check; that failure keeps the mark under the failure rule above.
-   The recheck narrows the window for a direct edit but cannot close it, and the
-   protocol does not rely on closing it, because the two kinds of state differ.
-   Everything the recorded success attests for later coordination, the names ERP
-   serves as active, its retired list and its activated acknowledgements, ERP
-   keeps in tables written only by the locked bench commands, never in site
-   config, so no change to it can land between the recheck and the success. A
-   direct edit can reach only the gates and the allowed-client list, and
-   readiness is a point-in-time condition: a gate turned off after the recheck
-   is the same as one turned off a minute after the success, its effect is
-   `-32012` on subscribe or deliveries left pending (decision 7, never dropped),
-   and the next deployment check refuses every target serving that family until
-   the gate is back on. An ERP test opens a deployment mark, asserts that
-   activating an acknowledgement is refused, clears the mark, and asserts that
-   the activation then succeeds, and repeats this for each narrowing command; a
-   workflow test asserts that the cleanup clears the mark after a failed
-   redeploy of the newest successful commit and keeps it after a failed rollback
-   that left one instance it started, outside the snapshot, on another commit,
-   or that updated a snapshot instance in place to that commit, or whose desired
-   state still names the target while no target instance happens to run. Next to
-   that list ERP adds a read-only whitelisted method,
-   `retired_subscription_counts`, returning for every name in its retired list
-   the number of stored subscriptions across all users, which the MCP
-   `preflight` job requires to be 0 before it accepts a retirement record or an
-   end record (step 9 of section 5), a second one, `retirement_cutoff_status`,
-   returning for each requested retired name whether `subscribe` and lease
-   refresh are refused, whether the name-level capture refusal is active (the
-   journal flush writes no row naming the event, decision 9), whether the
-   dispatcher's name-level send refusal is active and how many of its deliveries
-   are nonterminal (decision 9), which `preflight` requires to be refused,
-   active, active and 0 for every retirement record and every end record the
-   release stamps, a third one, `events_registry`, returning the same three
-   lists as the deployment check's bench command (its active names, its retired
-   list with each name's argument schema, and the names whose acknowledgement is
-   activated), read from the same tables, and a fourth one,
-   `event_family_readiness`, returning, for a requested OAuth client id, whether
-   that client is in `mcp_events_allowed_clients`, and for each requested family
-   whether its effective journal, subscribe and dispatch gates are on (the
-   per-family keys of decision 7 together with the global flags; for the meeting
-   family, which has no per-family keys, the global flags alone), which
-   `preflight` requires to be on for every family whose row the release stamps
-   and that keeps a live entry, with `hvgerp-mcp` allowed; all four are callable
-   only by a dedicated read-only API user, report nothing about any user's data
-   beyond these counts, flags and lists, and an unknown family or event name is
-   refused rather than reported off. A name with an activated acknowledgement is
-   not unknown: both `retired_subscription_counts` and
-   `retirement_cutoff_status` answer `acknowledged` for it, and `preflight`
+   row `FOR UPDATE` in its own transaction, refuses while it holds an open mark
+   and increments the row's `registry_revision` (which `events_registry`
+   returns, so a release in flight sees the change, section 5), so a rollout
+   never finishes against a registry or readiness ERP changed after the check. A
+   gate can still be turned off outside those commands in an incident (a direct
+   site-config edit), so the deploy workflow also reruns the bench command after
+   the rollout, before it marks the deployment successful, and fails the
+   deployment unless the target still passes every rule of the deployment check;
+   that failure keeps the mark under the failure rule above. The recheck narrows
+   the window for a direct edit but cannot close it, and the protocol does not
+   rely on closing it, because the two kinds of state differ. Everything the
+   recorded success attests for later coordination, the names ERP serves as
+   active, its retired list and its activated acknowledgements, ERP keeps in
+   tables written only by the locked bench commands, never in site config, so no
+   change to it can land between the recheck and the success. A direct edit can
+   reach only the gates and the allowed-client list, and readiness is a
+   point-in-time condition: a gate turned off after the recheck is the same as
+   one turned off a minute after the success, its effect is `-32012` on
+   subscribe or deliveries left pending (decision 7, never dropped), and the
+   next deployment check refuses every target serving that family until the gate
+   is back on. An ERP test opens a deployment mark, asserts that activating an
+   acknowledgement is refused, clears the mark, and asserts that the activation
+   then succeeds, and repeats this for each narrowing command; a workflow test
+   asserts that the cleanup clears the mark after a failed redeploy of the
+   newest successful commit and keeps it after a failed rollback that left one
+   instance it started, outside the snapshot, on another commit, or that updated
+   a snapshot instance in place to that commit, or whose desired state still
+   names the target while no target instance happens to run. Next to that list
+   ERP adds a read-only whitelisted method, `retired_subscription_counts`,
+   returning for every name in its retired list the number of stored
+   subscriptions across all users, which the MCP `preflight` job requires to be
+   0 before it accepts a retirement record or an end record (step 9 of section
+   5), a second one, `retirement_cutoff_status`, returning for each requested
+   retired name whether `subscribe` and lease refresh are refused, whether the
+   name-level capture refusal is active (the journal flush writes no row naming
+   the event, decision 9), whether the dispatcher's name-level send refusal is
+   active and how many of its deliveries are nonterminal (decision 9), which
+   `preflight` requires to be refused, active, active and 0 for every retirement
+   record and every end record the release stamps, a third one,
+   `events_registry`, returning the same three lists as the deployment check's
+   bench command (its active names, its retired list with each name's argument
+   schema, and the names whose acknowledgement is activated), read from the same
+   tables, with the lock row's `registry_revision` read in the same transaction,
+   and a fourth one, `event_family_readiness`, returning, for a requested OAuth
+   client id, whether that client is in `mcp_events_allowed_clients`, and for
+   each requested family whether its effective journal, subscribe and dispatch
+   gates are on (the per-family keys of decision 7 together with the global
+   flags; for the meeting family, which has no per-family keys, the global flags
+   alone), which `preflight` and the step before each publish require to be on
+   for every family with a live entry in the release, with `hvgerp-mcp` allowed;
+   all four are callable only by a dedicated read-only API user, report nothing
+   about any user's data beyond these counts, flags and lists, and an unknown
+   family or event name is refused rather than reported off. A name with an
+   activated acknowledgement is not unknown: both `retired_subscription_counts`
+   and `retirement_cutoff_status` answer `acknowledged` for it, and `preflight`
    accepts that answer for an end record (never for a retirement record),
    because ERP lets an acknowledgement in only after a successful MCP production
    deployment of that end, so rerunning the workflow for a release whose end ERP
