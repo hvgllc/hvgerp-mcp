@@ -564,22 +564,31 @@ implementation detail.
    journal row or delivery for the name can commit after activation does, and
    the cleanup that runs after activation commits sees every row they inserted;
    a fan-out that selected a subscription before the refusal therefore cannot
-   commit a new delivery for the name after it. An ERP test pauses a fan-out
-   between its refusal read and its insert, activates the refusal from a second
-   connection, and asserts that activation blocks until the fan-out commits and
-   that the cleanup then marks its delivery `retired`; a second test does the
-   same with a source transaction paused between its capture refusal read and
-   its journal insert, and asserts that activation blocks until that transaction
-   commits and that the fan-out of its row, which runs after activation, creates
-   no delivery for the name, and a migration marks every queued, pending or
-   retrying delivery for those names terminally `retired`. Marking rows does not
-   cancel a send already under way: a worker that claimed a delivery before the
-   refusal may have passed the check already. So the dispatcher rechecks the
-   refusal in the same transaction that takes the claim, and, like a flush or a
-   fan-out, takes the lock row of the delivery's event name in share mode before
-   that read and holds it until the claim commits, so activating the refusal
-   waits for every claim already past the check and the cleanup that runs after
-   it sees every claim committed before it; a recheck in the claim's own
+   commit a new delivery for the name after it. Every path that takes these rows
+   (capture, fan-out, subscribe and refresh activation, claims, refusal
+   activation and gate-off) takes its whole set of names in one statement,
+   ordered by event name ascending, never one row at a time in the order it
+   meets them, so two transactions never wait on each other's rows in opposite
+   orders: a flush holding `B` while it waits for `A` against a retirement
+   holding `A` while it waits for `B` would make the database abort one of them,
+   failing a document save or the retirement. An ERP test runs a multi-name
+   flush and a whole-family refusal activation concurrently many times and
+   asserts that neither ever deadlocks. An ERP test pauses a fan-out between its
+   refusal read and its insert, activates the refusal from a second connection,
+   and asserts that activation blocks until the fan-out commits and that the
+   cleanup then marks its delivery `retired`; a second test does the same with a
+   source transaction paused between its capture refusal read and its journal
+   insert, and asserts that activation blocks until that transaction commits and
+   that the fan-out of its row, which runs after activation, creates no delivery
+   for the name, and a migration marks every queued, pending or retrying
+   delivery for those names terminally `retired`. Marking rows does not cancel a
+   send already under way: a worker that claimed a delivery before the refusal
+   may have passed the check already. So the dispatcher rechecks the refusal in
+   the same transaction that takes the claim, and, like a flush or a fan-out,
+   takes the lock row of the delivery's event name in share mode before that
+   read and holds it until the claim commits, so activating the refusal waits
+   for every claim already past the check and the cleanup that runs after it
+   sees every claim committed before it; a recheck in the claim's own
    transaction alone would let a claim that read the refusal as inactive commit
    after the cleanup reported no live claim. Every claim carries a bounded lease
    and a worker starts a send only while at least the send timeout is left on
@@ -1684,27 +1693,29 @@ retired name, that `subscribe` and lease refresh are refused, that the
 name-level capture refusal is active (no new journal row names the event, so
 source changes stop adding rows nothing may deliver), that the dispatcher's
 name-level send refusal is active, and that no delivery for the name is
-nonterminal (decision 9: none queued, pending or retrying, and no claim whose
-lease has not expired), failing too when the call fails or omits a name. The
-same call, with the same requirement, runs for every event whose end record this
-release stamps, beside the zero subscription count (for an end record ERP has
-already acknowledged, both calls answer `acknowledged` instead, which
-`preflight` accepts, section 6, item 2): ERP drops the name-level refusal only
-when it acknowledges the end record in `acknowledged_retirement_ends`, so the
-end release must see, live, that nothing is left for that refusal to hold back.
-This holds for a partial-family retirement, where the family's own gates stay
-on, as much as for a whole family. Subscribe and lease refresh for a retired
-name have been refused since its retirement shipped, so the count cannot rise
-again after the check. Together these rules mean a contract ERP may already have
-pinned cannot change inside the release PR, and a retirement cannot end while
-ERP still holds subscriptions only `unsubscribe` can reach. Before the GitHub
-release is published, ERP runs its re-pin subset test (section 6, item 2)
-against the release PR's head commit by full sha, and the release PR records
-that it passed; a contract change ERP has not pinned is found there, not after
-npm has the release; the tag cut from that PR is what later releases are checked
-against. Add the tag-comparison test to `scripts/release-check.sh` with the
-one-time registry work, and make it fail rather than skip when no `v*` tag is
-reachable (a shallow clone must fetch tags first: the same pull request sets
+nonterminal (decision 9: none queued, pending or retrying, and no claim taken
+before the refusal without a completion record, whether or not its lease has
+expired, unless the dispatcher's worker registry shows the process that held it
+gone), failing too when the call fails or omits a name. The same call, with the
+same requirement, runs for every event whose end record this release stamps,
+beside the zero subscription count (for an end record ERP has already
+acknowledged, both calls answer `acknowledged` instead, which `preflight`
+accepts, section 6, item 2): ERP drops the name-level refusal only when it
+acknowledges the end record in `acknowledged_retirement_ends`, so the end
+release must see, live, that nothing is left for that refusal to hold back. This
+holds for a partial-family retirement, where the family's own gates stay on, as
+much as for a whole family. Subscribe and lease refresh for a retired name have
+been refused since its retirement shipped, so the count cannot rise again after
+the check. Together these rules mean a contract ERP may already have pinned
+cannot change inside the release PR, and a retirement cannot end while ERP still
+holds subscriptions only `unsubscribe` can reach. Before the GitHub release is
+published, ERP runs its re-pin subset test (section 6, item 2) against the
+release PR's head commit by full sha, and the release PR records that it passed;
+a contract change ERP has not pinned is found there, not after npm has the
+release; the tag cut from that PR is what later releases are checked against.
+Add the tag-comparison test to `scripts/release-check.sh` with the one-time
+registry work, and make it fail rather than skip when no `v*` tag is reachable
+(a shallow clone must fetch tags first: the same pull request sets
 `fetch-depth: 0` and `fetch-tags: true` on the `actions/checkout@v5` step of
 `.github/workflows/test.yml`, which by default fetches one commit and no tags,
 so the hosted `release:check` step would otherwise fail on every run), since a
@@ -1845,10 +1856,14 @@ Listed here so both sides agree on the order; the ERP team implements it.
    that honours an acknowledgement (the retired list, unsubscribe and the two
    methods below) reads instead of the file. The MCP deployment check takes the
    same row `FOR UPDATE` through the bench command that prints ERP's lists, and
-   in the transaction that reads the activated names marks the row open for its
-   deployment; the deploy workflow clears the mark in an always-run step once
-   its deployment reaches a terminal state, the mark never expires on its own,
-   and an operator clears a stale one only after confirming in GitHub that the
+   in the transaction that reads the activated names marks the row open with the
+   id of its GitHub deployment (created before the check runs), refusing, and so
+   stopping its own deployment, when the row already holds an open mark for
+   another deployment, so production deployments never overlap; the deploy
+   workflow clears the mark in an always-run step once its deployment reaches a
+   terminal state, by compare-and-set on its own deployment id, so one workflow
+   can never clear another's mark, the mark never expires on its own, and an
+   operator clears a stale one only after confirming in GitHub that the
    deployment it names is terminal. So either the activation commits first and
    the rollback's check sees the name and stops, or the deployment opens first
    and the activation is refused until it ends, when the newest successful
@@ -1901,21 +1916,25 @@ Listed here so both sides agree on the order; the ERP team implements it.
    meeting events behind `MCP_EVENTS_ENABLED`, and `3.7.0` each serve the three
    meeting names with the schema their own source declares, counted as live
    whatever the flag, since a rollback may run with it on). A target whose
-   `deno.json` version has no entry stops the deployment, and a test asserts the
-   table lists every npm-published version below the first release with a ledger
-   and that the entry of every version whose tagged source has an `events/list`
-   handler (`v3.6.0` and `v3.7.0`) equals what that handler returns from the
-   tagged source, so no pre-ledger release that serves events is recorded as
-   serving none. The bench command prints three lists: the event names ERP
-   serves as active (from its active contracts), its retired list with each
-   name's argument schema, and the names whose acknowledgement is activated. The
-   deployment stops if any of these fails: every name the target release serves
-   live is in ERP's active list, or, only when the target is the exact commit of
-   the newest successful MCP `production` deployment (a redeploy during the
-   interval in which ERP has already retired a name the running release still
-   serves, decision 9), in ERP's retired list; every name in the target's
-   `RETIRED_EVENTS` is in ERP's retired list with an equal schema; a name in
-   ERP's retired list that the target neither serves live nor lists in
+   `deno.json` version has no entry stops the deployment, and so does one that
+   is not the exact commit the `v<X>` tag of that version points at (for a
+   version npm lists, also the commit its provenance names): a pre-ledger
+   feature commit keeps the previous release's version but may serve a different
+   registry, so the entry describes only the tagged commit, and a test asserts
+   the table lists every npm-published version below the first release with a
+   ledger and that the entry of every version whose tagged source has an
+   `events/list` handler (`v3.6.0` and `v3.7.0`) equals what that handler
+   returns from the tagged source, so no pre-ledger release that serves events
+   is recorded as serving none. The bench command prints three lists: the event
+   names ERP serves as active (from its active contracts), its retired list with
+   each name's argument schema, and the names whose acknowledgement is
+   activated. The deployment stops if any of these fails: every name the target
+   release serves live is in ERP's active list, or, only when the target is the
+   exact commit of the newest successful MCP `production` deployment (a redeploy
+   during the interval in which ERP has already retired a name the running
+   release still serves, decision 9), in ERP's retired list; every name in the
+   target's `RETIRED_EVENTS` is in ERP's retired list with an equal schema; a
+   name in ERP's retired list that the target neither serves live nor lists in
    `RETIRED_EVENTS` has an end record in the target's ledger whose `release` is
    a version no greater than the target's `deno.json` version, never
    `unreleased`; no record in the target's ledger (a row, a retirement record or
@@ -1996,13 +2015,19 @@ Listed here so both sides agree on the order; the ERP team implements it.
    CI also checks out this repository at its pinned commit and pipes every
    result its method tests produce, with the arguments that produced it, through
    `deno run --allow-read scripts/check-erp-fixtures.ts read-back <tool>`, which
-   runs the frozen `<TOOL>_READ_BACK` entry point with an injected ERP call
-   returning that result and prints, per line, the output or the fixed error;
-   every fixture must come back as an output. For every name in the tool's
-   `guards` list ERP also has a source record that would break that guard (an
-   `http:` link, a title of hidden characters only, ...) and asserts its method
-   normalizes or omits the offending value, so the script accepts the result.
-   The one-time registry pull request adds the script.
+   runs the tool's read-back exactly as production does, never the checks entry
+   alone: a `"runner"` entry through `runReadBack` with a fake caller-scoped
+   client whose `callMethod` returns that result, so the identity the runner
+   adds to the ERP params, its comparison of the returned identity and
+   `source_doctype`, and the strip all run, and the meeting legacy entry through
+   its frozen handler with the same fake client; it prints, per line, the output
+   or the fixed error, so a schema-valid record for the wrong document comes
+   back as `Events backend error`; every fixture must come back as an output.
+   For every name in the tool's `guards` list ERP also has a source record that
+   would break that guard (an `http:` link, a title of hidden characters only,
+   ...) and asserts its method normalizes or omits the offending value, so the
+   script accepts the result. The one-time registry pull request adds the
+   script.
 8. **Flags**: `mcp_events_<family_slug>_journal_enabled`,
    `mcp_events_<family_slug>_subscribe_enabled` and
    `mcp_events_<family_slug>_dispatch_enabled` for each new family, all default
