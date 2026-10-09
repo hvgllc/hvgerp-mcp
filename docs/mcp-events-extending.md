@@ -785,11 +785,15 @@ newest `v*` tag that is an ancestor of the checked commit and does not point at
 it
 (`git tag --list 'v*' --merged HEAD --no-contains HEAD --sort=-version:refname`,
 first line), so a run from a freshly created release tag compares against the
-preceding release instead of against itself; a fixture checks out a tagged
-commit and asserts the selected baseline is the previous tag and fails if any
-row present there changed (other than gaining `retired` in a major release) or
-disappeared, or if any contract file present there is not byte-identical now. A
-row absent at the tag is new in this release: in release mode (defined below)
+preceding release instead of against itself, and skipping, with a printed
+warning, every candidate `v<X>` whose own `deno.json` (read with
+`git show v<X>:deno.json`) does not say `X`, so a mislabeled tag left behind by
+a refused publish never becomes a baseline even after later commits make it an
+ancestor (the release runbook also deletes such a tag); a fixture checks out a
+tagged commit and asserts the selected baseline is the previous tag and fails if
+any row present there changed (other than gaining `retired` in a major release)
+or disappeared, or if any contract file present there is not byte-identical now.
+A row absent at the tag is new in this release: in release mode (defined below)
 its `release` must equal the version in `deno.json`, and that version must be at
 least a minor bump over the newest tag (a higher major, or the same major and a
 higher minor), because a new contract version adds an event, a tool or both,
@@ -1050,50 +1054,61 @@ which imports nothing), `code-points.ts` and `result-validator.ts`, and
 `code-points.ts` and `result-validator.ts`; a test runs both validators over
 every sample and generated output and fails on any disagreement, so the copy
 cannot drift silently while it is still meant to match. Identity is the
-canonical check's alone: each argument rule declares the `fields` it reads, a
-test asserts that no rule of any checks module lists the identity field or
-`source_doctype`, and a fixed-seed run of generated identities (every Unicode
-general category, punctuation, symbols and control characters included, at the
-minimum, the maximum and lengths between, counted in code points) must reach
-`erpGet` unrefused, so a module cannot add a predicate that rejects a document
-name the contract allows. The picker likewise reads every enum it accepts and
-every bound it enforces from the imported result schema, never from a literal,
-and the fixed-seed result generator reads that schema and adds, for every enum,
-each member and one non-member and, for every string, array and number bound,
-the boundary value and one past it: members and boundary values must succeed and
-the others must throw `Events backend error`. Tests fail if an argument error or
-a response-shape backend error is thrown any other way, if the names in
-`MEETING_ARGUMENT_RULES` differ from the case set's `rules` or those in
-`MEETING_GUARDS` from the sample set's `guards`, or if, for any recorded case or
-generated valid arguments, the parameters the fake client receives do not hold
-each canonical identity field the arguments carry (the identity field and, for a
-multi-doctype family, `source_doctype`) under the same name with a value
-strictly equal (`===`) to the argument's, an assertion the test writes from the
-contract's `identityField` and never through `meetingErpCall`, so a helper that
-trims, lowercases or truncates an accepted id fails even though both sides of
-the next comparison would agree, or if the parameters the fake client receives
-differ from `meetingErpCall(arguments)` for any recorded case or for a
-fixed-seed run of generated valid arguments (every temporal form, fractional
-seconds of every length, each argument present and absent), or if the handler's
-output differs from the module's `pickMeetingFields` for any sample case or for
-a fixed-seed run of generated ERP results (each key present, absent and null,
-titles from every Unicode general category, URLs of every scheme, long
-occurrence lists), so trimming a title or rewriting a URL that no sample covers
-fails. The `assertShape` rule covers only rejections of a response body: a
-transport failure or a malformed envelope fails before there is a body to
-inspect, so the sample set pins those in a separate `transport` array, each
-`{ "failure": ..., "error": ... }` with `failure` a thrown client error (network
-failure, HTTP 429, 401, 403, 500) or a raw message that is not a valid
-`{ ok, result | error }` envelope, and `error` the fixed message the handler
-must throw for it; it is immutable like the rest of the sample set. The ledger
-row records `readBackChecks`, the SHA-256 of the checks module, `run.ts`,
-`errors.ts`, `code-points.ts` and `result-validator.ts` together as the version
-shipped (the contract file the module imports is pinned by its own ledger
-digest), and the tag check requires it byte-identical for every live row.
-Adding, removing, tightening or loosening a rule or guard, changing how an
-argument is forwarded or how a result field is mapped, is therefore a new checks
-module, and so a major release under a new tool name or contract version, like
-any other change to what the tool accepts, sends or returns.
+canonical check's alone, and for every family after meetings the checks module
+never sees it: `runReadBack` removes the identity field and `source_doctype`
+from the arguments it passes to `entry.readBack`, wraps `erpGet` so the runner
+itself adds them to the ERP params, checks that the record or tombstone ERP
+returns carries exactly the requested identity (a mismatch is
+`Events backend error`) and strips it before the picker runs, and sets it on the
+picker's output itself; a test parses each such checks module and fails if the
+identity field or `source_doctype` appears in it as an identifier, property name
+or string literal, so no branch on an identity value can exist. The meeting
+module is exempt only because its identity handling is the token-identical
+`v3.7.0` code (above), which is what shipped. Beyond that, each argument rule
+declares the `fields` it reads, a test asserts that no rule of any checks module
+lists the identity field or `source_doctype`, and a fixed-seed run of generated
+identities (every Unicode general category, punctuation, symbols and control
+characters included, at the minimum, the maximum and lengths between, counted in
+code points) must reach `erpGet` unrefused, so a module cannot add a predicate
+that rejects a document name the contract allows. The picker likewise reads
+every enum it accepts and every bound it enforces from the imported result
+schema, never from a literal, and the fixed-seed result generator reads that
+schema and adds, for every enum, each member and one non-member and, for every
+string, array and number bound, the boundary value and one past it: members and
+boundary values must succeed and the others must throw `Events backend error`.
+Tests fail if an argument error or a response-shape backend error is thrown any
+other way, if the names in `MEETING_ARGUMENT_RULES` differ from the case set's
+`rules` or those in `MEETING_GUARDS` from the sample set's `guards`, or if, for
+any recorded case or generated valid arguments, the parameters the fake client
+receives do not hold each canonical identity field the arguments carry (the
+identity field and, for a multi-doctype family, `source_doctype`) under the same
+name with a value strictly equal (`===`) to the argument's, an assertion the
+test writes from the contract's `identityField` and never through
+`meetingErpCall`, so a helper that trims, lowercases or truncates an accepted id
+fails even though both sides of the next comparison would agree, or if the
+parameters the fake client receives differ from `meetingErpCall(arguments)` for
+any recorded case or for a fixed-seed run of generated valid arguments (every
+temporal form, fractional seconds of every length, each argument present and
+absent), or if the handler's output differs from the module's
+`pickMeetingFields` for any sample case or for a fixed-seed run of generated ERP
+results (each key present, absent and null, titles from every Unicode general
+category, URLs of every scheme, long occurrence lists), so trimming a title or
+rewriting a URL that no sample covers fails. The `assertShape` rule covers only
+rejections of a response body: a transport failure or a malformed envelope fails
+before there is a body to inspect, so the sample set pins those in a separate
+`transport` array, each `{ "failure": ..., "error": ... }` with `failure` a
+thrown client error (network failure, HTTP 429, 401, 403, 500) or a raw message
+that is not a valid `{ ok, result | error }` envelope, and `error` the fixed
+message the handler must throw for it; it is immutable like the rest of the
+sample set. The ledger row records `readBackChecks`, the SHA-256 of the checks
+module, `run.ts`, `errors.ts`, `code-points.ts` and `result-validator.ts`
+together as the version shipped (the contract file the module imports is pinned
+by its own ledger digest), and the tag check requires it byte-identical for
+every live row. Adding, removing, tightening or loosening a rule or guard,
+changing how an argument is forwarded or how a result field is mapped, is
+therefore a new checks module, and so a major release under a new tool name or
+contract version, like any other change to what the tool accepts, sends or
+returns.
 
 The digest stops at `runReadBack`'s return. What reaches the client after it,
 `buildHandlersMap()` in `src/client.ts`, the server's `toolErrorMapper` and the
@@ -1198,12 +1213,14 @@ carries no doctype, so without this a successor could move `task` from `Task` to
 `ToDo` with identical schemas, and existing names would point at other records.
 A different doctype set is a new family, never a successor. A retired name is
 never reintroduced: `contract_test.ts` fails if a name with a retirement record,
-ended or not, appears in any contract file of its family with a `K` above that
-record's `to` version, retired files included, because older servers and clients
-still hold the old contract for that name and would receive an incompatible
-payload under it; a change that needs the name back ships a new name. Retirement
-records live in the ledger beside its rows, in an append-only `retirements`
-array of
+ended or not, appears in any contract file except the files of its own family up
+to that record's `from` version, retired files included and other families
+included (a `change` may contain a dot, so base family `task` retiring
+`task.v2.updated` must not let family `task.v2` publish the same name with
+change `updated` later), because older servers and clients still hold the old
+contract for that name and would receive an incompatible payload under it; a
+change that needs the name back ships a new name. Retirement records live in the
+ledger beside its rows, in an append-only `retirements` array of
 `{ "event": ..., "from": "<contract id of v<K>>", "to": "<contract id of v<K+1>>", "release": "<X.0.0>" }`,
 checked against the tag like the rows. A record not yet present at the newest
 `v*` tag carries `"release": "unreleased"` in a feature pull request (the two
