@@ -1831,45 +1831,55 @@ Listed here so both sides agree on the order; the ERP team implements it.
    the retirement can carry an empty retired map yet serve the name live), a
    deployment check compares the canonical JSON that `--print-events-registry`
    prints with the same canonical JSON from an ERP bench command, comparing
-   active and retired names as separate sets, never as one coverage set. The
-   bench command prints three lists: the event names ERP serves as active (from
-   its active contracts), its retired list with each name's argument schema, and
-   its `acknowledged_retirement_ends`. The deployment stops if any of these
-   fails: every name the target release serves live is in ERP's active list, or,
-   only when the target is the exact commit of the newest successful MCP
-   `production` deployment (a redeploy during the interval in which ERP has
-   already retired a name the running release still serves, decision 9), in
-   ERP's retired list; every name in the target's `RETIRED_EVENTS` is in ERP's
-   retired list with an equal schema; a name in ERP's retired list that the
-   target neither serves live nor lists in `RETIRED_EVENTS` has an end record in
-   the target's ledger whose `release` is a version no greater than the target's
-   `deno.json` version, never `unreleased`; no end record in the target's ledger
-   still says `unreleased`, because such a commit (a merged feature commit
-   before its major release is stamped) already omits the name from
-   `RETIRED_EVENTS` and would answer `-32011` to an unsubscribe that the
-   deployed release accepts, while its manifest still names the earlier release;
-   and no name in ERP's `acknowledged_retirement_ends` is one the target serves
-   live or lists in `RETIRED_EVENTS`. An extra name in ERP's active list that
-   the target does not serve passes: ERP serves a new family before the MCP
-   release that ships it (decision 8), and redeploying the current release
-   during that staging interval must not stop. So a rollback to a release that
-   serves a name ERP has since retired stops, whether or not the end is
-   acknowledged yet, because the target would advertise an event whose every
-   subscribe and refresh ERP refuses, and a rollback to a release older than an
-   acknowledged end stops because it would advertise and forward an event ERP no
-   longer serves or accepts unsubscribe for. The extra names are what make an
-   end record safe to roll out: while old MCP instances still accept unsubscribe
-   for an ended name and forward it, ERP keeps accepting it, because ERP drops
-   the name only through the acknowledgement above, accepted only once a
-   successful MCP production deployment attests that the release is fully
-   deployed and the old instances are drained, whatever pin it has moved to in
-   between. So MCP never forwards an unsubscribe ERP would refuse, whichever
-   side moves first. An end-to-end test retires a fixture name, advances the
-   active contract to a successor without it, and asserts that unsubscribe for a
-   stored subscription returns `{}` and deletes it, a second unsubscribe also
-   returns `{}`, subscribe with the name is refused, and a delivery for it
-   queued or retrying before the cutoff is marked `retired` and never sent, even
-   with dispatch on.
+   active and retired names as separate sets, never as one coverage set. A
+   target that predates the diagnostic (no `src/events/contract-ledger.json` at
+   its commit, read with `git show`) is never started, since its `server.ts`
+   ignores the flag and would start the server: the check takes its registry
+   from `src/events/legacy-registries.json` in the deploying tree, keyed by
+   version, each entry with the live names, their schemas and an empty retired
+   map (every version before `3.7.0` serves none, and `3.7.0` serves the
+   `meeting-events.v1` names with that contract's schema). A target whose
+   `deno.json` version has no entry stops the deployment, and a test asserts the
+   table lists every npm-published version below the first release with a ledger
+   and that the `3.7.0` entry equals what `events/list` returns from the tagged
+   `v3.7.0` source. The bench command prints three lists: the event names ERP
+   serves as active (from its active contracts), its retired list with each
+   name's argument schema, and its `acknowledged_retirement_ends`. The
+   deployment stops if any of these fails: every name the target release serves
+   live is in ERP's active list, or, only when the target is the exact commit of
+   the newest successful MCP `production` deployment (a redeploy during the
+   interval in which ERP has already retired a name the running release still
+   serves, decision 9), in ERP's retired list; every name in the target's
+   `RETIRED_EVENTS` is in ERP's retired list with an equal schema; a name in
+   ERP's retired list that the target neither serves live nor lists in
+   `RETIRED_EVENTS` has an end record in the target's ledger whose `release` is
+   a version no greater than the target's `deno.json` version, never
+   `unreleased`; no end record in the target's ledger still says `unreleased`,
+   because such a commit (a merged feature commit before its major release is
+   stamped) already omits the name from `RETIRED_EVENTS` and would answer
+   `-32011` to an unsubscribe that the deployed release accepts, while its
+   manifest still names the earlier release; and no name in ERP's
+   `acknowledged_retirement_ends` is one the target serves live or lists in
+   `RETIRED_EVENTS`. An extra name in ERP's active list that the target does not
+   serve passes: ERP serves a new family before the MCP release that ships it
+   (decision 8), and redeploying the current release during that staging
+   interval must not stop. So a rollback to a release that serves a name ERP has
+   since retired stops, whether or not the end is acknowledged yet, because the
+   target would advertise an event whose every subscribe and refresh ERP
+   refuses, and a rollback to a release older than an acknowledged end stops
+   because it would advertise and forward an event ERP no longer serves or
+   accepts unsubscribe for. The extra names are what make an end record safe to
+   roll out: while old MCP instances still accept unsubscribe for an ended name
+   and forward it, ERP keeps accepting it, because ERP drops the name only
+   through the acknowledgement above, accepted only once a successful MCP
+   production deployment attests that the release is fully deployed and the old
+   instances are drained, whatever pin it has moved to in between. So MCP never
+   forwards an unsubscribe ERP would refuse, whichever side moves first. An
+   end-to-end test retires a fixture name, advances the active contract to a
+   successor without it, and asserts that unsubscribe for a stored subscription
+   returns `{}` and deletes it, a second unsubscribe also returns `{}`,
+   subscribe with the name is refused, and a delivery for it queued or retrying
+   before the cutoff is marked `retired` and never sent, even with dispatch on.
 3. **Capture**: `doc_events` hooks for the new doctype in `hooks.py`, the same
    snapshot then `flush()` pattern as `events.py` (one net row per transaction,
    nothing on rollback, transient DB errors re-raised, other errors logged
