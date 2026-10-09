@@ -1898,48 +1898,56 @@ Listed here so both sides agree on the order; the ERP team implements it.
    id and the commit it reports now, or reports the commit of the newest
    successful deployment, so an instance updated in place under a stable id (a
    VM, task or StatefulSet member) that now serves the failed target counts as
-   started by the rollout. A failed redeploy of that same commit therefore
-   clears at once, since every instance it started serves exactly the names of
-   the newest success, while a failed rollout to another commit keeps the mark
-   until each instance it started is gone, because a rollback that started old
-   instances and then failed its health or drain step leaves them forwarding
-   names while GitHub still names the end release as the newest success.
-   Otherwise the mark stays, it never expires on its own, and an operator clears
-   it only after that same confirmation. So either the activation commits first
-   and the rollback's check sees the name and stops, or the deployment opens
-   first and the activation is refused until it ends, when the newest successful
-   deployment is the rollback, whose ledger has no end record, so the
-   acknowledgement is refused again. The same row guards every other ERP
-   transition that narrows what the deployment check accepted: activating a
-   name-level retirement refusal, switching a family's active contract, turning
-   a family's journal, subscribe or dispatch gate off and removing `hvgerp-mcp`
-   from `mcp_events_allowed_clients` each go through a bench command that takes
-   the row `FOR UPDATE` in its own transaction and refuses while it holds an
-   open mark, so a rollout never finishes against a registry or readiness ERP
-   changed after the check. A gate can still be turned off outside those
-   commands in an incident (a direct site-config edit), so the deploy workflow
-   also reruns the bench command after the rollout, before it marks the
-   deployment successful, and fails the deployment unless the target still
-   passes every rule of the deployment check; that failure keeps the mark under
-   the failure rule above. The recheck narrows the window for a direct edit but
-   cannot close it, and the protocol does not rely on closing it, because the
-   two kinds of state differ. Everything the recorded success attests for later
-   coordination, the names ERP serves as active, its retired list and its
-   activated acknowledgements, ERP keeps in tables written only by the locked
-   bench commands, never in site config, so no change to it can land between the
-   recheck and the success. A direct edit can reach only the gates and the
-   allowed-client list, and readiness is a point-in-time condition: a gate
-   turned off after the recheck is the same as one turned off a minute after the
-   success, its effect is `-32012` on subscribe or deliveries left pending
-   (decision 7, never dropped), and the next deployment check refuses every
-   target serving that family until the gate is back on. An ERP test opens a
-   deployment mark, asserts that activating an acknowledgement is refused,
-   clears the mark, and asserts that the activation then succeeds, and repeats
-   this for each narrowing command; a workflow test asserts that the cleanup
-   clears the mark after a failed redeploy of the newest successful commit and
-   keeps it after a failed rollback that left one instance it started, outside
-   the snapshot, on another commit, or that updated a snapshot instance in place
-   to that commit. Next to that list ERP adds a read-only whitelisted method,
+   started by the rollout. A clean fleet at one instant is not enough on its
+   own, since a restart policy or a desired state still naming the target could
+   start one afterwards, so the step first confirms that nothing can: the
+   desired state of every MCP service (the compose file or orchestrator spec the
+   deploy applies) names the image of the newest successful deployment again or
+   the service is stopped, no deploy job for the target is still running, and
+   the fleet then matches that desired state on two reads a full restart
+   interval apart. A failed redeploy of that same commit therefore clears at
+   once, since every instance it started serves exactly the names of the newest
+   success, while a failed rollout to another commit keeps the mark until each
+   instance it started is gone, because a rollback that started old instances
+   and then failed its health or drain step leaves them forwarding names while
+   GitHub still names the end release as the newest success. Otherwise the mark
+   stays, it never expires on its own, and an operator clears it only after that
+   same confirmation. So either the activation commits first and the rollback's
+   check sees the name and stops, or the deployment opens first and the
+   activation is refused until it ends, when the newest successful deployment is
+   the rollback, whose ledger has no end record, so the acknowledgement is
+   refused again. The same row guards every other ERP transition that narrows
+   what the deployment check accepted: activating a name-level retirement
+   refusal, switching a family's active contract, turning a family's journal,
+   subscribe or dispatch gate off and removing `hvgerp-mcp` from
+   `mcp_events_allowed_clients` each go through a bench command that takes the
+   row `FOR UPDATE` in its own transaction and refuses while it holds an open
+   mark, so a rollout never finishes against a registry or readiness ERP changed
+   after the check. A gate can still be turned off outside those commands in an
+   incident (a direct site-config edit), so the deploy workflow also reruns the
+   bench command after the rollout, before it marks the deployment successful,
+   and fails the deployment unless the target still passes every rule of the
+   deployment check; that failure keeps the mark under the failure rule above.
+   The recheck narrows the window for a direct edit but cannot close it, and the
+   protocol does not rely on closing it, because the two kinds of state differ.
+   Everything the recorded success attests for later coordination, the names ERP
+   serves as active, its retired list and its activated acknowledgements, ERP
+   keeps in tables written only by the locked bench commands, never in site
+   config, so no change to it can land between the recheck and the success. A
+   direct edit can reach only the gates and the allowed-client list, and
+   readiness is a point-in-time condition: a gate turned off after the recheck
+   is the same as one turned off a minute after the success, its effect is
+   `-32012` on subscribe or deliveries left pending (decision 7, never dropped),
+   and the next deployment check refuses every target serving that family until
+   the gate is back on. An ERP test opens a deployment mark, asserts that
+   activating an acknowledgement is refused, clears the mark, and asserts that
+   the activation then succeeds, and repeats this for each narrowing command; a
+   workflow test asserts that the cleanup clears the mark after a failed
+   redeploy of the newest successful commit and keeps it after a failed rollback
+   that left one instance it started, outside the snapshot, on another commit,
+   or that updated a snapshot instance in place to that commit, or whose desired
+   state still names the target while no target instance happens to run. Next to
+   that list ERP adds a read-only whitelisted method,
    `retired_subscription_counts`, returning for every name in its retired list
    the number of stored subscriptions across all users, which the MCP
    `preflight` job requires to be 0 before it accepts a retirement record or an
