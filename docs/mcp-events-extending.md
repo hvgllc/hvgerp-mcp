@@ -1821,26 +1821,40 @@ Listed here so both sides agree on the order; the ERP team implements it.
    `RETIRED_EVENTS` (after an end is acknowledged, a rollback target from before
    the retirement can carry an empty retired map yet serve the name live), a
    deployment check compares the canonical JSON that `--print-events-registry`
-   prints with the same canonical JSON from an ERP bench command, and the
-   deployment stops unless ERP's list covers MCP's: every name MCP lists must be
-   in ERP's list with an equal schema, and ERP may list an extra name only when
-   the MCP ledger being deployed holds an end record for it. The same bench
-   command prints ERP's `acknowledged_retirement_ends`, and the deployment also
-   stops if any of those names is one the target release serves live or lists in
-   `RETIRED_EVENTS`: a rollback to a release older than an acknowledged end
-   would advertise and forward an event ERP no longer serves or accepts
-   unsubscribe for. The extra names are what make an end record safe to roll
-   out: while old MCP instances still accept unsubscribe for an ended name and
-   forward it, ERP keeps accepting it, because ERP drops the name only through
-   the acknowledgement above, accepted only once a successful MCP production
-   deployment attests that the release is fully deployed and the old instances
-   are drained, whatever pin it has moved to in between. So MCP never forwards
-   an unsubscribe ERP would refuse, whichever side moves first. An end-to-end
-   test retires a fixture name, advances the active contract to a successor
-   without it, and asserts that unsubscribe for a stored subscription returns
-   `{}` and deletes it, a second unsubscribe also returns `{}`, subscribe with
-   the name is refused, and a delivery for it queued or retrying before the
-   cutoff is marked `retired` and never sent, even with dispatch on.
+   prints with the same canonical JSON from an ERP bench command, comparing
+   active and retired names as separate sets, never as one coverage set. The
+   bench command prints three lists: the event names ERP serves as active (from
+   its active contracts), its retired list with each name's argument schema, and
+   its `acknowledged_retirement_ends`. The deployment stops if any of these
+   fails: every name the target release serves live is in ERP's active list, or,
+   only when the target is the exact commit of the newest successful MCP
+   `production` deployment (a redeploy during the interval in which ERP has
+   already retired a name the running release still serves, decision 9), in
+   ERP's retired list; every name in the target's `RETIRED_EVENTS` is in ERP's
+   retired list with an equal schema; a name in ERP's retired list that the
+   target neither serves live nor lists in `RETIRED_EVENTS` has an end record in
+   the target's ledger; and no name in ERP's `acknowledged_retirement_ends` is
+   one the target serves live or lists in `RETIRED_EVENTS`. An extra name in
+   ERP's active list that the target does not serve passes: ERP serves a new
+   family before the MCP release that ships it (decision 8), and redeploying the
+   current release during that staging interval must not stop. So a rollback to
+   a release that serves a name ERP has since retired stops, whether or not the
+   end is acknowledged yet, because the target would advertise an event whose
+   every subscribe and refresh ERP refuses, and a rollback to a release older
+   than an acknowledged end stops because it would advertise and forward an
+   event ERP no longer serves or accepts unsubscribe for. The extra names are
+   what make an end record safe to roll out: while old MCP instances still
+   accept unsubscribe for an ended name and forward it, ERP keeps accepting it,
+   because ERP drops the name only through the acknowledgement above, accepted
+   only once a successful MCP production deployment attests that the release is
+   fully deployed and the old instances are drained, whatever pin it has moved
+   to in between. So MCP never forwards an unsubscribe ERP would refuse,
+   whichever side moves first. An end-to-end test retires a fixture name,
+   advances the active contract to a successor without it, and asserts that
+   unsubscribe for a stored subscription returns `{}` and deletes it, a second
+   unsubscribe also returns `{}`, subscribe with the name is refused, and a
+   delivery for it queued or retrying before the cutoff is marked `retired` and
+   never sent, even with dispatch on.
 3. **Capture**: `doc_events` hooks for the new doctype in `hooks.py`, the same
    snapshot then `flush()` pattern as `events.py` (one net row per transaction,
    nothing on rollback, transient DB errors re-raised, other errors logged
