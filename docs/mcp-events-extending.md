@@ -520,59 +520,69 @@ implementation detail.
    delivery whose event name is retired (a name-level check, used for meetings
    and single names and also beside the family's dispatch gate when a whole
    family retires), the fan-out that creates deliveries rechecks that refusal in
-   the same transaction that inserts them, so a fan-out that selected a
-   subscription before the refusal cannot commit a new delivery for the name
-   after it, and a migration marks every queued, pending or retrying delivery
-   for those names terminally `retired`. Marking rows does not cancel a send
-   already under way: a worker that claimed a delivery before the refusal may
-   have passed the check already. So the dispatcher rechecks the refusal in the
-   same transaction that takes the claim, every claim carries a bounded lease
-   and a worker starts a send only while at least the send timeout is left on
-   it, so each send ends before its lease does, and the cleanup reports the
-   cutoff complete only once every claim on those names taken before the refusal
-   has finished or its lease has expired. Only then is none sent after the
-   cutoff. An ERP test claims a delivery, retires its name, and asserts that the
-   cleanup does not report the cutoff while the claim is live and that the
-   worker sends nothing once it has. That release ships the family's next
-   contract version without the removed names (decision 1), appends a retirement
-   record for each to the ledger (step 2) and moves every removed name into
-   `RETIRED_EVENTS` in `protocol.ts` instead of deleting it: a map from the name
-   to the effective `inputSchema` of the retired contract file that last shipped
-   it (retired files stay in `src/events/contract/`, step 2). The schema is not
-   written by hand: `RETIRED_EVENTS` is built at module load from the `from`
-   contract of each ledger retirement record that has no end record, read
-   through the runtime archive of step 2 (`CONTRACT_FILES` and the statically
-   imported ledger), because a retired file is no longer in `CONTRACTS` and the
-   test-only discovery of step 2 is not part of the published module graph, and
-   a test asserts that every entry deeply equals that event's effective
-   `inputSchema` there, override included. `events/subscribe` with a retired
-   name answers `-32011` like any unknown name, while an authenticated
-   `events/unsubscribe` still accepts it, validates `arguments` against that
-   retained schema and forwards the request to ERP, which stays idempotent. ERP
-   must still recognise the name at that point, although its active contract no
-   longer lists it: its contract registry keeps each retired name with its
-   argument schema in a retired list that only the unsubscribe path accepts,
-   until the MCP release that drops the name from `RETIRED_EVENTS` (ERP recipe,
-   step 2). Waiting out the leases is not enough, because a subscription can
-   have no expiry, so ERP deletes every stored subscription for the retired
-   names with a migration once subscribe is refused. A name leaves
-   `RETIRED_EVENTS` only in a later major release, after ERP production reports
-   zero stored subscriptions for it (checked by the publishing `preflight`, step
-   9 of section 5, never by a manual ordering alone), and it leaves by an end
-   record, not by deleting history: that release appends
-   `{ "event": ..., "release": ... }` to an append-only `retirementEnds` array
-   in the ledger, checked against the tag like the rest and accepted only when
-   its `release` is the version in `deno.json` and that version is a major
-   release (`X.0.0`) whose major is above both the retirement record's and the
-   newest reachable `v*` tag's, as for a retirement record, so a release cannot
-   end a retirement under an unused older major (`4.0.0` while `v5.3.0` is out).
-   Removing the name turns `events/unsubscribe` for it from an idempotent `{}`
-   into `-32011`, which is a breaking change to input an earlier release
-   accepted, and zero stored subscriptions does not stop a client of the
-   previous release from retrying an unsubscribe, so a minor or patch release
-   cannot end a retirement, so the retirement record stays as audit history
-   while the name drops out of `RETIRED_EVENTS` (and ERP drops it from its
-   mirror in step).
+   the same transaction that inserts them, and the two are serialized, not
+   merely co-located: the refusal lives on one retirement lock row per event
+   name ERP serves (created with the contract that introduces the name), the
+   transaction that activates a refusal takes that row `FOR UPDATE`, and every
+   fan-out takes the row of the event it delivers in share mode
+   (`LOCK IN SHARE MODE`) before it reads the refusal and holds it until its
+   inserts commit, so activation waits for every fan-out already past the check,
+   and the cleanup that runs after activation commits sees every delivery they
+   inserted; a fan-out that selected a subscription before the refusal therefore
+   cannot commit a new delivery for the name after it. An ERP test pauses a
+   fan-out between its refusal read and its insert, activates the refusal from a
+   second connection, and asserts that activation blocks until the fan-out
+   commits and that the cleanup then marks its delivery `retired`, and a
+   migration marks every queued, pending or retrying delivery for those names
+   terminally `retired`. Marking rows does not cancel a send already under way:
+   a worker that claimed a delivery before the refusal may have passed the check
+   already. So the dispatcher rechecks the refusal in the same transaction that
+   takes the claim, every claim carries a bounded lease and a worker starts a
+   send only while at least the send timeout is left on it, so each send ends
+   before its lease does, and the cleanup reports the cutoff complete only once
+   every claim on those names taken before the refusal has finished or its lease
+   has expired. Only then is none sent after the cutoff. An ERP test claims a
+   delivery, retires its name, and asserts that the cleanup does not report the
+   cutoff while the claim is live and that the worker sends nothing once it has.
+   That release ships the family's next contract version without the removed
+   names (decision 1), appends a retirement record for each to the ledger
+   (step 2) and moves every removed name into `RETIRED_EVENTS` in `protocol.ts`
+   instead of deleting it: a map from the name to the effective `inputSchema` of
+   the retired contract file that last shipped it (retired files stay in
+   `src/events/contract/`, step 2). The schema is not written by hand:
+   `RETIRED_EVENTS` is built at module load from the `from` contract of each
+   ledger retirement record that has no end record, read through the runtime
+   archive of step 2 (`CONTRACT_FILES` and the statically imported ledger),
+   because a retired file is no longer in `CONTRACTS` and the test-only
+   discovery of step 2 is not part of the published module graph, and a test
+   asserts that every entry deeply equals that event's effective `inputSchema`
+   there, override included. `events/subscribe` with a retired name answers
+   `-32011` like any unknown name, while an authenticated `events/unsubscribe`
+   still accepts it, validates `arguments` against that retained schema and
+   forwards the request to ERP, which stays idempotent. ERP must still recognise
+   the name at that point, although its active contract no longer lists it: its
+   contract registry keeps each retired name with its argument schema in a
+   retired list that only the unsubscribe path accepts, until the MCP release
+   that drops the name from `RETIRED_EVENTS` (ERP recipe, step 2). Waiting out
+   the leases is not enough, because a subscription can have no expiry, so ERP
+   deletes every stored subscription for the retired names with a migration once
+   subscribe is refused. A name leaves `RETIRED_EVENTS` only in a later major
+   release, after ERP production reports zero stored subscriptions for it
+   (checked by the publishing `preflight`, step 9 of section 5, never by a
+   manual ordering alone), and it leaves by an end record, not by deleting
+   history: that release appends `{ "event": ..., "release": ... }` to an
+   append-only `retirementEnds` array in the ledger, checked against the tag
+   like the rest and accepted only when its `release` is the version in
+   `deno.json` and that version is a major release (`X.0.0`) whose major is
+   above both the retirement record's and the newest reachable `v*` tag's, as
+   for a retirement record, so a release cannot end a retirement under an unused
+   older major (`4.0.0` while `v5.3.0` is out). Removing the name turns
+   `events/unsubscribe` for it from an idempotent `{}` into `-32011`, which is a
+   breaking change to input an earlier release accepted, and zero stored
+   subscriptions does not stop a client of the previous release from retrying an
+   unsubscribe, so a minor or patch release cannot end a retirement, so the
+   retirement record stays as audit history while the name drops out of
+   `RETIRED_EVENTS` (and ERP drops it from its mirror in step).
 
 ## 5. Recipe: this repository
 
@@ -755,8 +765,9 @@ cannot be imported for this: `server.ts` calls `main()` unconditionally and the
 bundle exports nothing, so an import would start the server and expose no value.
 So `main()` handles that flag first, before reading any environment or
 configuration and without starting the stdio or HTTP server: it prints a
-canonical JSON of the loaded contract ids and of `RETIRED_EVENTS` (names and
-retained schemas, all already public in the shipped contract files) and exits 0.
+canonical JSON of the loaded contract ids, of the event names each live
+`CONTRACTS` entry serves, and of `RETIRED_EVENTS` (names and retained schemas,
+all already public in the shipped contract files) and exits 0.
 
 The doc hash alone does not freeze a released file: a commit that edits the JSON
 and the hash line together passes it. So every contract version is also pinned
@@ -847,23 +858,27 @@ still be such a feature bump over the newest tag, since the registry refactor is
 itself a feature). Any other row absent at that tag stays under the new-row
 check. Feature work never bumps the version (AGENTS.md: a bump needs explicit
 approval and lands in the release pull request), so the version checks run in
-two modes, chosen by comparing `deno.json` with the newest tag. While the two
-are equal (a feature pull request), every record absent at the tag (a row, a
-retirement record or an end record) other than that bootstrap row must carry
-`"release": "unreleased"`, and only the checks that do not depend on the version
-run on it: digests, discovery, bindings, `RETIRED_EVENTS` membership and the
-cross-version comparison, which accepts a missing name with an `unreleased`
-retirement record. Once `deno.json` is above the tag (the approved release pull
-request), no record may still say `unreleased`: the release pull request
-replaces each with the `deno.json` version, and every version rule above and in
-decision 9 then applies to it as written, so a retirement or a new binding still
-ships only in an `X.0.0` release. The publish workflow runs the same check from
-the release tag before either registry publication (step 9), so a release tag
-left with an `unreleased` record publishes nothing. A tag cannot be edited, so a
-released schema or binding cannot be blessed again by rewriting the ledger in
-the same commit. The one-time registry pull request creates the ledger with the
-`meeting-events.v1` row (release `3.7.0`, family `meeting`, doctypes
-`["Event"]`, tool `erpnext_meeting_get`, method `meetingGet`, path
+two modes, chosen by comparing `deno.json` with the newest tag. A `deno.json`
+version below it by SemVer fails the check in every run, before either mode is
+chosen and whatever records the release stamps, so a patch or internal release
+with no new record cannot publish newer source under an older, unused version
+number. While the two are equal (a feature pull request), every record absent at
+the tag (a row, a retirement record or an end record) other than that bootstrap
+row must carry `"release": "unreleased"`, and only the checks that do not depend
+on the version run on it: digests, discovery, bindings, `RETIRED_EVENTS`
+membership and the cross-version comparison, which accepts a missing name with
+an `unreleased` retirement record. Once `deno.json` is above the tag (the
+approved release pull request), no record may still say `unreleased`: the
+release pull request replaces each with the `deno.json` version, and every
+version rule above and in decision 9 then applies to it as written, so a
+retirement or a new binding still ships only in an `X.0.0` release. The publish
+workflow runs the same check from the release tag before either registry
+publication (step 9), so a release tag left with an `unreleased` record
+publishes nothing. A tag cannot be edited, so a released schema or binding
+cannot be blessed again by rewriting the ledger in the same commit. The one-time
+registry pull request creates the ledger with the `meeting-events.v1` row
+(release `3.7.0`, family `meeting`, doctypes `["Event"]`, tool
+`erpnext_meeting_get`, method `meetingGet`, path
 `hvg_workspace.mcp_events.api.meeting_get`, input
 `erpnext_meeting_get.input.v1`, result `erpnext_meeting_get.result.v1`, checks
 `erpnext_meeting_get.checks.ts`). That row and its files describe what `v3.7.0`
@@ -956,37 +971,39 @@ closure stops only at a fixed boundary list in the test, `FrappeClient` and
 `FrappeAPIError` from `src/api/frappe-client.ts`, whose real module would pull
 in the HTTP client: `src/events/read-back/errors.ts` holds a copy of the tagged
 `FrappeAPIError` declaration (its own closure checked the same way) and a
-`FrappeClient` type naming only `callMethod`, the one member `fetchMeeting`
-uses. The closure is not merged into one file, because the tagged tree declares
-more than one top-level `isRecord` (`src/events/erp-store.ts` and
-`src/events/protocol.ts`), and one module cannot hold both unchanged: the frozen
-copies live in `src/events/read-back/meeting-v3.7.0/`, one module per tagged
-source file the closure reaches, at the same relative path
-(`events/erp-store.ts`, `events/protocol.ts`, `tools/calendar.ts` and so on).
-The test asserts that each of these modules declares exactly the closure members
-declared in its tagged file, and that each copy is token-identical apart from an
-added `export` and its import specifiers, which may name only sibling frozen
-modules and `src/events/read-back/errors.ts`;
-`src/events/read-back/meeting.checks.ts` holds the glue and imports the frozen
-modules. The adapters are what lets the copies run unchanged: the module's
-`readBack` builds a client whose `callMethod` performs the injected `erpGet`
-once and returns the raw message on HTTP 200 or throws what the tagged
-`FrappeClient` threw for that outcome (a `FrappeAPIError` carrying the status,
-or the network error as `erpGet` reported it), and a `ctx` whose `client` is
-that adapter with the caller's `actsAs`, then calls `meetingHandler`; the
-`transport` cases and the differential run compare every resulting message with
-the `v3.7.0` handler's, so an adapter that throws a different error fails there.
-The only other code in the module is the glue the registry needs
-(`meetingPrecheck`, the `readBack` wrapper, the client and `ctx` adapters and
-the `MEETING_READ_BACK` object), listed by name in the test, which fails on any
-top-level declaration outside the closure and that list; the glue may only call
-moved functions, compare argument keys with the input schema's properties, map
-an `erpGet` outcome to the tagged client's return value or thrown error, and
-return the fixed messages, and the test asserts it contains no other literal,
-comparison or regular expression. The differential test then covers the glue and
-the wiring. So the bootstrap pull request cannot change the tool, method, path
-or behaviour and bless the change in the first row. Once a tag carries the
-ledger, the ordinary tag check takes over.
+`FrappeClient` type naming only `callMethod` and `actsAs`, typed as in the
+tagged `FrappeClient`: the members the frozen code uses (`fetchMeeting` calls
+`callMethod`, and the handler reads `ctx.client.actsAs`), so the copies
+type-check against the narrow boundary. The closure is not merged into one file,
+because the tagged tree declares more than one top-level `isRecord`
+(`src/events/erp-store.ts` and `src/events/protocol.ts`), and one module cannot
+hold both unchanged: the frozen copies live in
+`src/events/read-back/meeting-v3.7.0/`, one module per tagged source file the
+closure reaches, at the same relative path (`events/erp-store.ts`,
+`events/protocol.ts`, `tools/calendar.ts` and so on). The test asserts that each
+of these modules declares exactly the closure members declared in its tagged
+file, and that each copy is token-identical apart from an added `export` and its
+import specifiers, which may name only sibling frozen modules and
+`src/events/read-back/errors.ts`; `src/events/read-back/meeting.checks.ts` holds
+the glue and imports the frozen modules. The adapters are what lets the copies
+run unchanged: the module's `readBack` builds a client whose `callMethod`
+performs the injected `erpGet` once and returns the raw message on HTTP 200 or
+throws what the tagged `FrappeClient` threw for that outcome (a `FrappeAPIError`
+carrying the status, or the network error as `erpGet` reported it), and a `ctx`
+whose `client` is that adapter with the caller's `actsAs`, then calls
+`meetingHandler`; the `transport` cases and the differential run compare every
+resulting message with the `v3.7.0` handler's, so an adapter that throws a
+different error fails there. The only other code in the module is the glue the
+registry needs (`meetingPrecheck`, the `readBack` wrapper, the client and `ctx`
+adapters and the `MEETING_READ_BACK` object), listed by name in the test, which
+fails on any top-level declaration outside the closure and that list; the glue
+may only call moved functions, compare argument keys with the input schema's
+properties, map an `erpGet` outcome to the tagged client's return value or
+thrown error, and return the fixed messages, and the test asserts it contains no
+other literal, comparison or regular expression. The differential test then
+covers the glue and the wiring. So the bootstrap pull request cannot change the
+tool, method, path or behaviour and bless the change in the first row. Once a
+tag carries the ledger, the ordinary tag check takes over.
 
 The tool's own interface is pinned the same way, because a binding is not the
 whole promise: a release could keep the tool, method and path and still drop an
@@ -1193,32 +1210,35 @@ family after meetings the checks module never sees it. Which path `runReadBack`
 takes is read from the entry's required `identityMode`, never inferred from a
 function or field name: `"legacy"` passes the arguments through unchanged and
 leaves the result's identity to the module, and `"runner"` does what follows. A
-registry test asserts that exactly one entry has `"legacy"`, the one registered
-for the `meeting-events.v1` read-back tool, that every other entry has
-`"runner"`, and that `buildRegistry` refuses a missing or unknown mode, and
-`run_test.ts` exercises both paths with fixture entries. In `"runner"` mode
-`runReadBack` removes the identity field and `source_doctype` from the arguments
-it passes to `entry.readBack`, wraps `erpGet` so the runner itself adds them to
-the ERP params, checks that the record or tombstone ERP returns carries exactly
-the requested identity (a mismatch is `Events backend error`) and strips it
-before the picker runs, and sets it on the picker's output itself; a test parses
-each such checks module and fails if the identity field or `source_doctype`
-appears in it as an identifier, property name or string literal, so no branch on
-an identity value can exist. The meeting module is exempt only because its
-identity handling is the token-identical `v3.7.0` code (above), which is what
-shipped. Beyond that, each argument rule declares the `fields` it reads, a test
-asserts that no rule of any checks module lists the identity field or
-`source_doctype`, and a fixed-seed run of generated identities (every Unicode
-general category, punctuation, symbols and control characters included, at the
-minimum, the maximum and lengths between, counted in code points) must reach
-`erpGet` unrefused, so a module cannot add a predicate that rejects a document
-name the contract allows. The picker likewise reads every enum it accepts and
-every bound it enforces from the imported result schema, never from a literal,
-and the fixed-seed result generator reads that schema and adds, for every enum,
-each member and one non-member and, for every string, array and number bound,
-the boundary value and one past it: members and boundary values must succeed and
-the others must throw `Events backend error`. Tests fail if an argument error or
-a response-shape backend error is thrown any other way, if the names in
+registry test asserts that at most one entry has `"legacy"`, and only the one
+registered for the `meeting-events.v1` read-back tool, present exactly while a
+live `CONTRACTS` entry still names `erpnext_meeting_get` as its read-back tool
+(so retiring every meeting event, which leaves no live meeting entry and removes
+the tool, also removes the legacy entry), that every other entry has `"runner"`,
+and that `buildRegistry` refuses a missing or unknown mode, and `run_test.ts`
+exercises both paths with fixture entries. In `"runner"` mode `runReadBack`
+removes the identity field and `source_doctype` from the arguments it passes to
+`entry.readBack`, wraps `erpGet` so the runner itself adds them to the ERP
+params, checks that the record or tombstone ERP returns carries exactly the
+requested identity (a mismatch is `Events backend error`) and strips it before
+the picker runs, and sets it on the picker's output itself; a test parses each
+such checks module and fails if the identity field or `source_doctype` appears
+in it as an identifier, property name or string literal, so no branch on an
+identity value can exist. The meeting module is exempt only because its identity
+handling is the token-identical `v3.7.0` code (above), which is what shipped.
+Beyond that, each argument rule declares the `fields` it reads, a test asserts
+that no rule of any checks module lists the identity field or `source_doctype`,
+and a fixed-seed run of generated identities (every Unicode general category,
+punctuation, symbols and control characters included, at the minimum, the
+maximum and lengths between, counted in code points) must reach `erpGet`
+unrefused, so a module cannot add a predicate that rejects a document name the
+contract allows. The picker likewise reads every enum it accepts and every bound
+it enforces from the imported result schema, never from a literal, and the
+fixed-seed result generator reads that schema and adds, for every enum, each
+member and one non-member and, for every string, array and number bound, the
+boundary value and one past it: members and boundary values must succeed and the
+others must throw `Events backend error`. Tests fail if an argument error or a
+response-shape backend error is thrown any other way, if the names in
 `MEETING_ARGUMENT_RULES` differ from the case set's `rules` or those in
 `MEETING_GUARDS` from the sample set's `guards`, or if, for any recorded case or
 generated valid arguments, the parameters the fake client receives do not hold
@@ -1570,8 +1590,10 @@ deliver), that the dispatcher's name-level send refusal is active, and that no
 delivery for the name is nonterminal (decision 9: none queued, pending or
 retrying, and no claim whose lease has not expired), failing too when the call
 fails or omits a name. The same call, with the same requirement, runs for every
-event whose end record this release stamps, beside the zero subscription count:
-ERP drops the name-level refusal only when it acknowledges the end record in
+event whose end record this release stamps, beside the zero subscription count
+(for an end record ERP has already acknowledged, both calls answer
+`acknowledged` instead, which `preflight` accepts, section 6, item 2): ERP drops
+the name-level refusal only when it acknowledges the end record in
 `acknowledged_retirement_ends`, so the end release must see, live, that nothing
 is left for that refusal to hold back. This holds for a partial-family
 retirement, where the family's own gates stay on, as much as for a whole family.
@@ -1734,27 +1756,39 @@ Listed here so both sides agree on the order; the ERP team implements it.
    and that keeps a live entry, with `hvgerp-mcp` allowed; all three are
    callable only by a dedicated read-only API user, report nothing about any
    user's data beyond these counts and flags, and an unknown family or event
-   name is refused rather than reported off. Every answer is computed live at
-   the call, from the current settings, refusals and delivery rows, never read
-   from an earlier record of the cleanup, so a check made for an end record
-   cannot be satisfied by a state that has since changed. Before an MCP release
-   that changes `RETIRED_EVENTS` is deployed, a deployment check compares the
-   canonical JSON that `--print-events-registry` prints with the same canonical
-   JSON from an ERP bench command, and the deployment stops unless ERP's list
-   covers MCP's: every name MCP lists must be in ERP's list with an equal
-   schema, and ERP may list an extra name only when the MCP ledger being
-   deployed holds an end record for it. The extra names are what make an end
-   record safe to roll out: while old MCP instances still accept unsubscribe for
-   an ended name and forward it, ERP keeps accepting it, because ERP drops the
-   name only through the acknowledgement above, accepted only once a successful
-   MCP production deployment attests that the release is fully deployed and the
-   old instances are drained, whatever pin it has moved to in between. So MCP
-   never forwards an unsubscribe ERP would refuse, whichever side moves first.
-   An end-to-end test retires a fixture name, advances the active contract to a
-   successor without it, and asserts that unsubscribe for a stored subscription
-   returns `{}` and deletes it, a second unsubscribe also returns `{}`,
-   subscribe with the name is refused, and a delivery for it queued or retrying
-   before the cutoff is marked `retired` and never sent, even with dispatch on.
+   name is refused rather than reported off. A name in ERP's
+   `acknowledged_retirement_ends` is not unknown: both
+   `retired_subscription_counts` and `retirement_cutoff_status` answer
+   `acknowledged` for it, and `preflight` accepts that answer for an end record
+   (never for a retirement record), because ERP lets an acknowledgement in only
+   after a successful MCP production deployment of that end, so rerunning the
+   workflow for a release whose end ERP has since acknowledged, or a recovery
+   publish of it, still passes. Every answer is computed live at the call, from
+   the current settings, refusals and delivery rows, never read from an earlier
+   record of the cleanup, so a check made for an end record cannot be satisfied
+   by a state that has since changed. Before an MCP release that changes
+   `RETIRED_EVENTS` is deployed, a deployment check compares the canonical JSON
+   that `--print-events-registry` prints with the same canonical JSON from an
+   ERP bench command, and the deployment stops unless ERP's list covers MCP's:
+   every name MCP lists must be in ERP's list with an equal schema, and ERP may
+   list an extra name only when the MCP ledger being deployed holds an end
+   record for it. The same bench command prints ERP's
+   `acknowledged_retirement_ends`, and the deployment also stops if any of those
+   names is one the target release serves live or lists in `RETIRED_EVENTS`: a
+   rollback to a release older than an acknowledged end would advertise and
+   forward an event ERP no longer serves or accepts unsubscribe for. The extra
+   names are what make an end record safe to roll out: while old MCP instances
+   still accept unsubscribe for an ended name and forward it, ERP keeps
+   accepting it, because ERP drops the name only through the acknowledgement
+   above, accepted only once a successful MCP production deployment attests that
+   the release is fully deployed and the old instances are drained, whatever pin
+   it has moved to in between. So MCP never forwards an unsubscribe ERP would
+   refuse, whichever side moves first. An end-to-end test retires a fixture
+   name, advances the active contract to a successor without it, and asserts
+   that unsubscribe for a stored subscription returns `{}` and deletes it, a
+   second unsubscribe also returns `{}`, subscribe with the name is refused, and
+   a delivery for it queued or retrying before the cutoff is marked `retired`
+   and never sent, even with dispatch on.
 3. **Capture**: `doc_events` hooks for the new doctype in `hooks.py`, the same
    snapshot then `flush()` pattern as `events.py` (one net row per transaction,
    nothing on rollback, transient DB errors re-raised, other errors logged
