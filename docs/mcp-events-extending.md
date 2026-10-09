@@ -1873,31 +1873,40 @@ Listed here so both sides agree on the order; the ERP team implements it.
    workflow clears the mark in an always-run step, by compare-and-set on its own
    deployment id, so one workflow can never clear another's mark: at once when
    its deployment succeeded, and after a failure only once the step has
-   confirmed that no instance of the target commit is running (every running
-   instance reports, through its image label, the commit of the newest
-   successful deployment), because a rollback that started old instances and
-   then failed its health or drain step leaves them forwarding names while
-   GitHub still names the end release as the newest success. Otherwise the mark
-   stays, it never expires on its own, and an operator clears it only after that
-   same confirmation. So either the activation commits first and the rollback's
-   check sees the name and stops, or the deployment opens first and the
-   activation is refused until it ends, when the newest successful deployment is
-   the rollback, whose ledger has no end record, so the acknowledgement is
-   refused again. An ERP test opens a deployment mark, asserts that activating
-   an acknowledgement is refused, clears the mark, and asserts that the
-   activation then succeeds. Next to that list ERP adds a read-only whitelisted
-   method, `retired_subscription_counts`, returning for every name in its
-   retired list the number of stored subscriptions across all users, which the
-   MCP `preflight` job requires to be 0 before it accepts a retirement record or
-   an end record (step 9 of section 5), a second one,
-   `retirement_cutoff_status`, returning for each requested retired name whether
-   `subscribe` and lease refresh are refused, whether the name-level capture
-   refusal is active (the journal flush writes no row naming the event, decision
-   9), whether the dispatcher's name-level send refusal is active and how many
-   of its deliveries are nonterminal (decision 9), which `preflight` requires to
-   be refused, active, active and 0 for every retirement record and every end
-   record the release stamps, and a third one, `event_family_readiness`,
-   returning, for a requested OAuth client id, whether that client is in
+   confirmed that the failed rollout left no instance serving another commit:
+   right after opening the mark and before starting anything, the workflow
+   records a snapshot of the running instance ids, and the step accepts only a
+   fleet where every running instance is either in that snapshot or reports,
+   through its image label, the commit of the newest successful deployment. A
+   failed redeploy of that same commit therefore clears at once, since every
+   instance it started serves exactly the names of the newest success, while a
+   failed rollout to another commit keeps the mark until each instance it
+   started is gone, because a rollback that started old instances and then
+   failed its health or drain step leaves them forwarding names while GitHub
+   still names the end release as the newest success. Otherwise the mark stays,
+   it never expires on its own, and an operator clears it only after that same
+   confirmation. So either the activation commits first and the rollback's check
+   sees the name and stops, or the deployment opens first and the activation is
+   refused until it ends, when the newest successful deployment is the rollback,
+   whose ledger has no end record, so the acknowledgement is refused again. An
+   ERP test opens a deployment mark, asserts that activating an acknowledgement
+   is refused, clears the mark, and asserts that the activation then succeeds; a
+   workflow test asserts that the cleanup clears the mark after a failed
+   redeploy of the newest successful commit and keeps it after a failed rollback
+   that left one instance it started, outside the snapshot, on another commit.
+   Next to that list ERP adds a read-only whitelisted method,
+   `retired_subscription_counts`, returning for every name in its retired list
+   the number of stored subscriptions across all users, which the MCP
+   `preflight` job requires to be 0 before it accepts a retirement record or an
+   end record (step 9 of section 5), a second one, `retirement_cutoff_status`,
+   returning for each requested retired name whether `subscribe` and lease
+   refresh are refused, whether the name-level capture refusal is active (the
+   journal flush writes no row naming the event, decision 9), whether the
+   dispatcher's name-level send refusal is active and how many of its deliveries
+   are nonterminal (decision 9), which `preflight` requires to be refused,
+   active, active and 0 for every retirement record and every end record the
+   release stamps, and a third one, `event_family_readiness`, returning, for a
+   requested OAuth client id, whether that client is in
    `mcp_events_allowed_clients`, and for each requested family whether its
    effective journal, subscribe and dispatch gates are on (the per-family keys
    of decision 7 together with the global flags; for the meeting family, which
@@ -2061,18 +2070,28 @@ Listed here so both sides agree on the order; the ERP team implements it.
    subscription is gone, so no delivery is claimed after unsubscribe commits.
    The guarantee stops there: a claim that committed before the unsubscribe has
    already released the row, so its send may still start after the unsubscribe
-   commits, once, and nothing retries it (its retry path finds the subscription
-   gone and ends the delivery `cancelled`). The subscriber must therefore
-   tolerate at most one callback per delivery that was already claimed when it
-   unsubscribed, and the contract documentation says so. Tests prove: in shadow
-   mode, unsubscribing a subscription made before the rollback succeeds, a
-   second unsubscribe also succeeds, and no delivery is created for it once
+   commits, and that holds for every such claim, including a stalled worker's
+   whose lease expired and whose delivery another worker reclaimed before the
+   unsubscribe (decision 9), so one delivery can still produce several callbacks
+   after it. Nothing claims it again (a retry finds the subscription gone and
+   ends the delivery `cancelled`), so the number is bounded by the claims taken
+   before the unsubscribe, every such callback carries the same envelope
+   `eventId`, and the subscriber drops duplicates by `eventId` as it already
+   must for retries and replays (section 7); the contract documentation says so.
+   Unsubscribe does not drain claims the way a retirement cutoff does, because a
+   subscription ends for one subscriber only, and a late callback only finishes
+   a delivery that was already under way when it unsubscribed, which the
+   subscriber may ignore, since its pointer payload carries no content and the
+   read-back tool still checks the caller's live permission. Tests prove: in
+   shadow mode, unsubscribing a subscription made before the rollback succeeds,
+   a second unsubscribe also succeeds, and no delivery is created for it once
    dispatch is back on; and with subscribe on and dispatch off, a subscription
    with pending deliveries is unsubscribed, dispatch is turned on, and the
-   callback receives nothing while those deliveries end `cancelled`; and a
-   delivery claimed before an unsubscribe commits (the test holds the worker
-   between claim and send) is sent at most once and never retried, while every
-   unclaimed delivery of it ends `cancelled`.
+   callback receives nothing while those deliveries end `cancelled`; and for a
+   delivery claimed by a worker that then stalls past its lease and reclaimed by
+   a second worker, both held between claim and send across an unsubscribe, each
+   claim sends at most once with the same envelope `eventId`, no third claim is
+   taken, and every unclaimed delivery of the subscription ends `cancelled`.
 9. **Rollout**: shadow mode (journal on, subscribe and dispatch off) in
    production, measure row volume and hook latency, then subscribe on with
    dispatch off, check that deliveries queue as pending, then dispatch on.
@@ -2130,8 +2149,8 @@ Listed here so both sides agree on the order; the ERP team implements it.
 - [ ] Re-read returns current state for a reader, the not-available error for a
       non-reader, a tombstone after deletion for a former reader.
 - [ ] Removing a user's permission stops delivery to that user.
-- [ ] Unsubscribe is idempotent and stops delivery (at most one send of a
-      delivery already claimed when it committed).
+- [ ] Unsubscribe is idempotent and stops delivery (only claims taken before it
+      can still send, each with the same envelope `eventId`).
 - [ ] No content in webhook bodies or logs (grep a sample for titles and
       emails).
 
