@@ -1905,25 +1905,37 @@ Listed here so both sides agree on the order; the ERP team implements it.
    confirmation. So either the activation commits first and the rollback's check
    sees the name and stops, or the deployment opens first and the activation is
    refused until it ends, when the newest successful deployment is the rollback,
-   whose ledger has no end record, so the acknowledgement is refused again. An
-   ERP test opens a deployment mark, asserts that activating an acknowledgement
-   is refused, clears the mark, and asserts that the activation then succeeds; a
-   workflow test asserts that the cleanup clears the mark after a failed
-   redeploy of the newest successful commit and keeps it after a failed rollback
-   that left one instance it started, outside the snapshot, on another commit.
-   Next to that list ERP adds a read-only whitelisted method,
-   `retired_subscription_counts`, returning for every name in its retired list
-   the number of stored subscriptions across all users, which the MCP
-   `preflight` job requires to be 0 before it accepts a retirement record or an
-   end record (step 9 of section 5), a second one, `retirement_cutoff_status`,
-   returning for each requested retired name whether `subscribe` and lease
-   refresh are refused, whether the name-level capture refusal is active (the
-   journal flush writes no row naming the event, decision 9), whether the
-   dispatcher's name-level send refusal is active and how many of its deliveries
-   are nonterminal (decision 9), which `preflight` requires to be refused,
-   active, active and 0 for every retirement record and every end record the
-   release stamps, and a third one, `event_family_readiness`, returning, for a
-   requested OAuth client id, whether that client is in
+   whose ledger has no end record, so the acknowledgement is refused again. The
+   same row guards every other ERP transition that narrows what the deployment
+   check accepted: activating a name-level retirement refusal, switching a
+   family's active contract, turning a family's journal, subscribe or dispatch
+   gate off and removing `hvgerp-mcp` from `mcp_events_allowed_clients` each go
+   through a bench command that takes the row `FOR UPDATE` in its own
+   transaction and refuses while it holds an open mark, so a rollout never
+   finishes against a registry or readiness ERP changed after the check. A gate
+   can still be turned off outside those commands in an incident (a direct
+   site-config edit), so the deploy workflow also reruns the bench command after
+   the rollout, before it marks the deployment successful, and fails the
+   deployment unless the target still passes every rule of the deployment check;
+   that failure keeps the mark under the failure rule above. An ERP test opens a
+   deployment mark, asserts that activating an acknowledgement is refused,
+   clears the mark, and asserts that the activation then succeeds, and repeats
+   this for each narrowing command; a workflow test asserts that the cleanup
+   clears the mark after a failed redeploy of the newest successful commit and
+   keeps it after a failed rollback that left one instance it started, outside
+   the snapshot, on another commit. Next to that list ERP adds a read-only
+   whitelisted method, `retired_subscription_counts`, returning for every name
+   in its retired list the number of stored subscriptions across all users,
+   which the MCP `preflight` job requires to be 0 before it accepts a retirement
+   record or an end record (step 9 of section 5), a second one,
+   `retirement_cutoff_status`, returning for each requested retired name whether
+   `subscribe` and lease refresh are refused, whether the name-level capture
+   refusal is active (the journal flush writes no row naming the event, decision
+   9), whether the dispatcher's name-level send refusal is active and how many
+   of its deliveries are nonterminal (decision 9), which `preflight` requires to
+   be refused, active, active and 0 for every retirement record and every end
+   record the release stamps, and a third one, `event_family_readiness`,
+   returning, for a requested OAuth client id, whether that client is in
    `mcp_events_allowed_clients`, and for each requested family whether its
    effective journal, subscribe and dispatch gates are on (the per-family keys
    of decision 7 together with the global flags; for the meeting family, which
