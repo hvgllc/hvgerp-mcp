@@ -934,9 +934,14 @@ declarations and runs them behind adapters. A fixed table in the test names the
 roots by AST address: `fetchMeeting` and `pickMeetingFields` by declaration name
 in `src/events/erp-store.ts`, and the handler as the `handler` method of the
 object literal in `calendarTools` whose `name` property is the string
-`"erpnext_meeting_get"`, moved as the function declaration
-`meetingHandler(input, ctx)` whose parameter list and body are token-identical
-to the method's (that method-to-function rewrite is the one listed change). From
+`"erpnext_meeting_get"`, moved as
+`export const meetingHandler: MeetingHandler = async function (input, ctx) { ... }`,
+a function expression whose parameter list and body are token-identical to the
+method's; `MeetingHandler` is a glue type,
+`(input: Record<string, unknown>, ctx: { client: FrappeClient }) => Promise<unknown>`,
+which gives the parameters the contextual types the method took from
+`ErpNextTool[]`, so strict `noImplicitAny` passes without annotating them (that
+method-to-expression rewrite and its annotation are the one listed change). From
 those roots the test computes, from the `v3.7.0` sources
 (`git show v3.7.0:<path>`) with the TypeScript compiler API, the transitive
 closure of every identifier that resolves to a top-level declaration, value or
@@ -952,27 +957,36 @@ closure stops only at a fixed boundary list in the test, `FrappeClient` and
 in the HTTP client: `src/events/read-back/errors.ts` holds a copy of the tagged
 `FrappeAPIError` declaration (its own closure checked the same way) and a
 `FrappeClient` type naming only `callMethod`, the one member `fetchMeeting`
-uses. The test asserts the module declares exactly the closure, and each copy is
-token-identical apart from an added `export` and its import specifiers. The
-adapters are what lets the copies run unchanged: the module's `readBack` builds
-a client whose `callMethod` performs the injected `erpGet` once and returns the
-raw message on HTTP 200 or throws what the tagged `FrappeClient` threw for that
-outcome (a `FrappeAPIError` carrying the status, or the network error as
-`erpGet` reported it), and a `ctx` whose `client` is that adapter with the
-caller's `actsAs`, then calls `meetingHandler`; the `transport` cases and the
-differential run compare every resulting message with the `v3.7.0` handler's, so
-an adapter that throws a different error fails there. The only other code in the
-module is the glue the registry needs (`meetingPrecheck`, the `readBack`
-wrapper, the client and `ctx` adapters and the `MEETING_READ_BACK` object),
-listed by name in the test, which fails on any top-level declaration outside the
-closure and that list; the glue may only call moved functions, compare argument
-keys with the input schema's properties, map an `erpGet` outcome to the tagged
-client's return value or thrown error, and return the fixed messages, and the
-test asserts it contains no other literal, comparison or regular expression. The
-differential test then covers the glue and the wiring. So the bootstrap pull
-request cannot change the tool, method, path or behaviour and bless the change
-in the first row. Once a tag carries the ledger, the ordinary tag check takes
-over.
+uses. The closure is not merged into one file, because the tagged tree declares
+more than one top-level `isRecord` (`src/events/erp-store.ts` and
+`src/events/protocol.ts`), and one module cannot hold both unchanged: the frozen
+copies live in `src/events/read-back/meeting-v3.7.0/`, one module per tagged
+source file the closure reaches, at the same relative path
+(`events/erp-store.ts`, `events/protocol.ts`, `tools/calendar.ts` and so on).
+The test asserts that each of these modules declares exactly the closure members
+declared in its tagged file, and that each copy is token-identical apart from an
+added `export` and its import specifiers, which may name only sibling frozen
+modules and `src/events/read-back/errors.ts`;
+`src/events/read-back/meeting.checks.ts` holds the glue and imports the frozen
+modules. The adapters are what lets the copies run unchanged: the module's
+`readBack` builds a client whose `callMethod` performs the injected `erpGet`
+once and returns the raw message on HTTP 200 or throws what the tagged
+`FrappeClient` threw for that outcome (a `FrappeAPIError` carrying the status,
+or the network error as `erpGet` reported it), and a `ctx` whose `client` is
+that adapter with the caller's `actsAs`, then calls `meetingHandler`; the
+`transport` cases and the differential run compare every resulting message with
+the `v3.7.0` handler's, so an adapter that throws a different error fails there.
+The only other code in the module is the glue the registry needs
+(`meetingPrecheck`, the `readBack` wrapper, the client and `ctx` adapters and
+the `MEETING_READ_BACK` object), listed by name in the test, which fails on any
+top-level declaration outside the closure and that list; the glue may only call
+moved functions, compare argument keys with the input schema's properties, map
+an `erpGet` outcome to the tagged client's return value or thrown error, and
+return the fixed messages, and the test asserts it contains no other literal,
+comparison or regular expression. The differential test then covers the glue and
+the wiring. So the bootstrap pull request cannot change the tool, method, path
+or behaviour and bless the change in the first row. Once a tag carries the
+ledger, the ordinary tag check takes over.
 
 The tool's own interface is pinned the same way, because a binding is not the
 whole promise: a release could keep the tool, method and path and still drop an
@@ -1092,7 +1106,11 @@ tool's live result schema file (pinned by `readBackResult`), and
 `checkIdentity` and imports nothing (`json-schema.ts` imports `codePointLength`
 from there, so the validator and the tool count the same way); a test parses
 each checks module and asserts its import list equals exactly that allowlist.
-The module exports `MEETING_READ_BACK`, a frozen
+The meeting module is the one exception, because its frozen code must reach the
+`FrappeClient` and `FrappeAPIError` boundary copies: `meeting.checks.ts` and the
+frozen modules under `meeting-v3.7.0/` may also import
+`src/events/read-back/errors.ts` and one another, and nothing else (below). The
+module exports `MEETING_READ_BACK`, a frozen
 `{ precheck, readBack, identity, identityMode, resultSchema }`: `identityMode`
 is `"legacy"` (the runner rules below), `precheck` is
 `meetingPrecheck(keys, actsAs)`, which reproduces, in the `v3.7.0` order and
