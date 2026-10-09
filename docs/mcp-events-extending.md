@@ -780,39 +780,47 @@ of its row and that `ERP_EVENTS_METHODS[readBackMethod]` equals the row's
 re-point its path for a version that is still live. What makes the ledger itself
 immutable is the release tag: a test in `release:check` (step 9) reads the
 ledger and every contract file at the newest `v*` tag with
-`git show <tag>:<path>` and fails if any row present there changed (other than
-gaining `retired` in a major release) or disappeared, or if any contract file
-present there is not byte-identical now. A row absent at the tag is new in this
-release: in release mode (defined below) its `release` must equal the version in
-`deno.json`, and that version must be at least a minor bump over the newest tag
-(a higher major, or the same major and a higher minor), because a new contract
-version adds an event, a tool or both, which is a feature and never a patch. The
-one exception is the `meeting-events.v1` bootstrap row while the newest tag
-carries no ledger: it describes what `v3.7.0` already shipped, so its `release`
-must be exactly `3.7.0`, not the `deno.json` version, and the tagged-source
-verification below replaces the new-row check for it (it keeps `3.7.0` in both
-modes, and in release mode the `deno.json` version must still be at least a
-minor bump over the newest tag, since the registry refactor is itself a
-feature). Any other row absent at that tag stays under the new-row check.
-Feature work never bumps the version (AGENTS.md: a bump needs explicit approval
-and lands in the release pull request), so the version checks run in two modes,
-chosen by comparing `deno.json` with the newest tag. While the two are equal (a
-feature pull request), every record absent at the tag (a row, a retirement
-record or an end record) other than that bootstrap row must carry
-`"release": "unreleased"`, and only the checks that do not depend on the version
-run on it: digests, discovery, bindings, `RETIRED_EVENTS` membership and the
-cross-version comparison, which accepts a missing name with an `unreleased`
-retirement record. Once `deno.json` is above the tag (the approved release pull
-request), no record may still say `unreleased`: the release pull request
-replaces each with the `deno.json` version, and every version rule above and in
-decision 9 then applies to it as written, so a retirement or a new binding still
-ships only in an `X.0.0` release. The tag workflow runs the same check and
-refuses to tag while any record says `unreleased`, so the sentinel never reaches
-a tag. A tag cannot be edited, so a released schema or binding cannot be blessed
-again by rewriting the ledger in the same commit. The one-time registry pull
-request creates the ledger with the `meeting-events.v1` row (release `3.7.0`,
-family `meeting`, doctypes `["Event"]`, tool `erpnext_meeting_get`, method
-`meetingGet`, path `hvg_workspace.mcp_events.api.meeting_get`, input
+`git show <tag>:<path>`, where "newest tag" everywhere in this check means the
+newest `v*` tag that is an ancestor of the checked commit and does not point at
+it
+(`git tag --list 'v*' --merged HEAD --no-contains HEAD --sort=-version:refname`,
+first line), so a run from a freshly created release tag compares against the
+preceding release instead of against itself; a fixture checks out a tagged
+commit and asserts the selected baseline is the previous tag and fails if any
+row present there changed (other than gaining `retired` in a major release) or
+disappeared, or if any contract file present there is not byte-identical now. A
+row absent at the tag is new in this release: in release mode (defined below)
+its `release` must equal the version in `deno.json`, and that version must be at
+least a minor bump over the newest tag (a higher major, or the same major and a
+higher minor), because a new contract version adds an event, a tool or both,
+which is a feature and never a patch. The one exception is the
+`meeting-events.v1` bootstrap row while the newest tag carries no ledger: it
+describes what `v3.7.0` already shipped, so its `release` must be exactly
+`3.7.0`, not the `deno.json` version, and the tagged-source verification below
+replaces the new-row check for it (it keeps `3.7.0` in both modes, and in
+release mode the `deno.json` version must still be at least a minor bump over
+the newest tag, since the registry refactor is itself a feature). Any other row
+absent at that tag stays under the new-row check. Feature work never bumps the
+version (AGENTS.md: a bump needs explicit approval and lands in the release pull
+request), so the version checks run in two modes, chosen by comparing
+`deno.json` with the newest tag. While the two are equal (a feature pull
+request), every record absent at the tag (a row, a retirement record or an end
+record) other than that bootstrap row must carry `"release": "unreleased"`, and
+only the checks that do not depend on the version run on it: digests, discovery,
+bindings, `RETIRED_EVENTS` membership and the cross-version comparison, which
+accepts a missing name with an `unreleased` retirement record. Once `deno.json`
+is above the tag (the approved release pull request), no record may still say
+`unreleased`: the release pull request replaces each with the `deno.json`
+version, and every version rule above and in decision 9 then applies to it as
+written, so a retirement or a new binding still ships only in an `X.0.0`
+release. The publish workflow runs the same check from the release tag before
+either registry publication (step 9), so a release tag left with an `unreleased`
+record publishes nothing. A tag cannot be edited, so a released schema or
+binding cannot be blessed again by rewriting the ledger in the same commit. The
+one-time registry pull request creates the ledger with the `meeting-events.v1`
+row (release `3.7.0`, family `meeting`, doctypes `["Event"]`, tool
+`erpnext_meeting_get`, method `meetingGet`, path
+`hvg_workspace.mcp_events.api.meeting_get`, input
 `erpnext_meeting_get.input.v1`, result `erpnext_meeting_get.result.v1`, checks
 `erpnext_meeting_get.checks.ts`). That row and its files describe what `v3.7.0`
 already shipped, so they are verified against `v3.7.0`, not trusted as written:
@@ -1157,8 +1165,12 @@ against the tag the same way.
 `src/events/contract-ledger.json`; otherwise the JSR package ships a tool that
 imports a schema it does not contain, while local tests and the esbuild bundle
 still pass. `release:check` then runs `deno publish --dry-run --allow-dirty` and
-fails unless its file list contains every file under `src/events/contract/` and
-`src/events/read-back/` and the ledger.
+fails unless its file list contains the ledger and every file under
+`src/events/contract/` and `src/events/read-back/` that the `publish` block of
+`deno.json` does not exclude: the expected list is computed by applying that
+block's `include` and `exclude` globs (so the colocated `*_test.ts` modules,
+excluded on purpose, are not expected), never hard-coded, and it must still
+contain every runtime `.ts` module and every `.json` artifact there.
 
 When a release replaces `v<K>` with `v<K+1>` in `CONTRACTS` (decision 1, new
 events or removed events), add a cross-version test: every event of `v<K>`
@@ -1328,8 +1340,14 @@ clone must fetch tags first: the same pull request sets `fetch-depth: 0` and
 `fetch-tags: true` on the `actions/checkout@v5` step of
 `.github/workflows/test.yml`, which by default fetches one commit and no tags,
 so the hosted `release:check` step would otherwise fail on every run), since a
-skipped check would freeze nothing. Give ERP the new contract hash so their
-verbatim copy can be checked against it.
+skipped check would freeze nothing. `test.yml` is dispatched by hand, so it is
+not the gate: the same pull request adds a `preflight` job to
+`.github/workflows/publish.yml` (checkout with `fetch-depth: 0` and
+`fetch-tags: true`, `denoland/setup-deno@v2`, build the UI viewers,
+`deno task release:check`) and makes both `publish-jsr` and `publish-npm`
+declare `needs: preflight`, so publishing a GitHub release cannot reach npm or
+JSR with a ledger, contract or file list that fails the check. Give ERP the new
+contract hash so their verbatim copy can be checked against it.
 
 ## 6. Recipe: ERPNext side (owned by the ERP repository)
 
@@ -1371,8 +1389,15 @@ Listed here so both sides agree on the order; the ERP team implements it.
    it, accepted by the unsubscribe path only and refused by subscribe and
    refresh. That list is derived, never written by hand: ERP copies
    `src/events/contract-ledger.json` verbatim with a digest test against the
-   copy at the release tag it pairs with, keeps every retired contract file, and
-   builds the list exactly as `protocol.ts` builds `RETIRED_EVENTS` (each
+   copy at an exact MCP commit it pins. Because ERP serves a family before the
+   MCP release that ships it (decision 8) and feature work leaves new records
+   `unreleased`, the pin is first the full sha of the merged feature pull
+   request's commit on MCP `main`, never a branch or a tag that does not exist
+   yet; once the release is tagged, ERP re-pins to that tag in a follow-up
+   change whose test asserts that every contract file is byte-identical between
+   the two pins and that the two ledgers differ only in `release` values going
+   from `unreleased` to the tag's version. ERP keeps every retired contract file
+   and builds the list exactly as `protocol.ts` builds `RETIRED_EVENTS` (each
    retirement record without an end record, with the effective `inputSchema` of
    its `from` contract). Before an MCP release that changes `RETIRED_EVENTS` is
    deployed, a deployment check compares the canonical JSON that
