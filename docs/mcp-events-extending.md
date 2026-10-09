@@ -1254,99 +1254,102 @@ the error it returns, so a call combining faults (a shared client with no id, a
 caller sending only `{ foo: 1 }`) reports the same error as `v3.7.0`; it then
 checks the identity with `checkIdentity(arguments, entry.identity)`, which tests
 only the canonical type, code-point bounds and doctype enum and refuses with the
-fixed argument error, then passes the caller's `arguments` object unchanged and
-a GET bound to the caller-scoped client to `entry.readBack`, and turns the three
-outcomes into the return value, the argument error and the backend error; for a
-`"runner"` entry, before returning an `{ output }` it validates it against
-`entry.resultSchema` with `src/events/read-back/result-validator.ts` and turns a
-mismatch into `Events backend error`, so `structuredContent` can never break the
-advertised `outputSchema` whatever the picker accepts. For the `"legacy"` entry
-it validates nothing at run time and returns the picker's output unchanged,
-since that tool advertises no `outputSchema` (above) and a rejecting step there
-could only narrow what `v3.7.0` returns; `run_test.ts` asserts that a legacy
-fixture entry whose output breaks its result schema still returns it. The tool's
-handler is exactly
-`(args, ctx) => runReadBack(MEETING_READ_BACK, args, ctx.client)`, and a test
-asserts that the registered handler calls `runReadBack` once with that entry and
-the very same `arguments` object. `result-validator.ts` is a frozen validator
-for exactly the keywords and formats a result schema may use (the decision 3
-rules plus the two `anyOf` forms and `if`/`then` above), importing only
-`code-points.ts`; it is deliberately not `json-schema.ts`, which step 3 extends
-for contracts in minor releases, because a change to how a keyword or format is
-checked would change which shipped results are returned or refused. `run.ts`
-imports only `src/events/read-back/errors.ts` (the read-back error classes,
-which imports nothing), `code-points.ts` and `result-validator.ts`, and
-`readBackChecks` covers it together with the checks module, `errors.ts`,
-`code-points.ts` and `result-validator.ts`; the two validators share no
-reimplemented logic for that subset: `result-validator.ts` holds the one
-implementation of every keyword and format a result schema may use, `date` and
-`date-time` included, and `json-schema.ts` imports those predicates for the same
-keywords and formats instead of carrying its own, adding code only for keywords
-and formats a result schema may not use, so extending `json-schema.ts` cannot
-change a result check and the two cannot disagree on a value no sample or
-generator produced. A parity table still pins the shared predicates: for every
-allowed keyword and format it lists accepted and refused edge cases, each with
-its expected verdict (for `date-time`: lowercase `t` and `z`, a leap second
-`:60`, fractional seconds of 1, 3 and 10 digits, offsets `+00:00` and `-23:59`,
-a missing offset, February 29 in a leap and a non-leap year; for `date`: the
-same calendar cases and a trailing time), asserted through both modules' entry
-points, and `readBackChecks` hashes the table together with the validator; a
-test also runs both validators over every sample and generated output and fails
-on any disagreement. Identity is the canonical check's alone, and for every
-family after meetings the checks module never sees it. Which path `runReadBack`
-takes is read from the entry's required `identityMode`, never inferred from a
-function or field name: `"legacy"` passes the arguments through unchanged and
-leaves the result's identity to the module, and `"runner"` does what follows. A
-registry test asserts that at most one entry has `"legacy"`, and only the one
-registered for the `meeting-events.v1` read-back tool, present exactly while a
-live `CONTRACTS` entry still names `erpnext_meeting_get` as its read-back tool
-(so retiring every meeting event, which leaves no live meeting entry and removes
-the tool, also removes the legacy entry), that every other entry has `"runner"`,
-and that `buildRegistry` refuses a missing or unknown mode, and `run_test.ts`
-exercises both paths with fixture entries. In `"runner"` mode `runReadBack`
-removes the identity field and `source_doctype` from the arguments it passes to
-`entry.readBack`, wraps `erpGet` so the runner itself adds them to the ERP
-params, checks that the record or tombstone ERP returns carries exactly the
-requested identity (a mismatch is `Events backend error`) and strips it before
-the picker runs, and sets it on the picker's output itself; a test parses each
-such checks module and fails if the identity field or `source_doctype` appears
-in it as an identifier, property name or string literal, so no branch on an
-identity value can exist. The meeting module is exempt only because its identity
-handling is the token-identical `v3.7.0` code (above), which is what shipped.
-Beyond that, each argument rule declares the `fields` it reads, a test asserts
-that no rule of any checks module lists the identity field or `source_doctype`,
-and a fixed-seed run of generated identities (every Unicode general category,
-punctuation, symbols and control characters included, at the minimum, the
-maximum and lengths between, counted in code points) must reach `erpGet`
-unrefused, so a module cannot add a predicate that rejects a document name the
-contract allows. The picker likewise reads every enum it accepts and every bound
-it enforces from the imported result schema, never from a literal, and the
-fixed-seed result generator reads that schema and adds, for every enum, each
-member and one non-member and, for every string, array and number bound, the
-boundary value and one past it: members and boundary values must succeed and the
-others must throw `Events backend error`. Tests fail if an argument error or a
-response-shape backend error is thrown any other way, if the names in
-`MEETING_ARGUMENT_RULES` differ from the case set's `rules` or those in
-`MEETING_GUARDS` from the sample set's `guards`, or if, for any recorded case or
-generated valid arguments, the parameters the fake client receives do not hold
-each canonical identity field the arguments carry (the identity field and, for a
-multi-doctype family, `source_doctype`) under the same name with a value
-strictly equal (`===`) to the argument's, an assertion the test writes from the
-contract's `identityField` and never through the module's call builder, so a
-helper that trims, lowercases or truncates an accepted id fails even though both
-sides of the next comparison would agree, or if the parameters the fake client
-receives differ from the call the module defines for those arguments (for
-meetings, the call the `v3.7.0` handler sends; for a new family,
-`<family>ErpCall(arguments)`) for any recorded case or for a fixed-seed run of
-generated valid arguments (every temporal form, fractional seconds of every
-length, each argument present and absent), or if the handler's output differs
-from the module's `pickMeetingFields` for any sample case or for a fixed-seed
-run of generated ERP results (each key present, absent and null, titles from
-every Unicode general category, URLs of every scheme, long occurrence lists), so
-trimming a title or rewriting a URL that no sample covers fails. The
-`assertShape` rule covers only rejections of a response body: a transport
-failure or a malformed envelope fails before there is a body to inspect, so the
-sample set pins those in a separate `transport` array, each
+fixed argument error, then passes to `entry.readBack` the caller's `arguments`
+object unchanged for the `"legacy"` entry, but for a `"runner"` entry a copy
+without the identity field and `source_doctype` (the runner adds them to the ERP
+params itself and checks them in the result, below, so the checks module never
+sees an identity value), together with a GET bound to the caller-scoped client,
+and turns the three outcomes into the return value, the argument error and the
+backend error; for a `"runner"` entry, before returning an `{ output }` it
+validates it against `entry.resultSchema` with
+`src/events/read-back/result-validator.ts` and turns a mismatch into
+`Events backend error`, so `structuredContent` can never break the advertised
+`outputSchema` whatever the picker accepts. For the `"legacy"` entry it
+validates nothing at run time and returns the picker's output unchanged, since
+that tool advertises no `outputSchema` (above) and a rejecting step there could
+only narrow what `v3.7.0` returns; `run_test.ts` asserts that a legacy fixture
+entry whose output breaks its result schema still returns it. The tool's handler
+is exactly `(args, ctx) => runReadBack(MEETING_READ_BACK, args, ctx.client)`,
+and a test asserts that the registered handler calls `runReadBack` once with
+that entry and the very same `arguments` object. `result-validator.ts` is a
+frozen validator for exactly the keywords and formats a result schema may use
+(the decision 3 rules plus the two `anyOf` forms and `if`/`then` above),
+importing only `code-points.ts`; it is deliberately not `json-schema.ts`, which
+step 3 extends for contracts in minor releases, because a change to how a
+keyword or format is checked would change which shipped results are returned or
+refused. `run.ts` imports only `src/events/read-back/errors.ts` (the read-back
+error classes, which imports nothing), `code-points.ts` and
+`result-validator.ts`, and `readBackChecks` covers it together with the checks
+module, `errors.ts`, `code-points.ts` and `result-validator.ts`; the two
+validators share no reimplemented logic for that subset: `result-validator.ts`
+holds the one implementation of every keyword and format a result schema may
+use, `date` and `date-time` included, and `json-schema.ts` imports those
+predicates for the same keywords and formats instead of carrying its own, adding
+code only for keywords and formats a result schema may not use, so extending
+`json-schema.ts` cannot change a result check and the two cannot disagree on a
+value no sample or generator produced. A parity table still pins the shared
+predicates: for every allowed keyword and format it lists accepted and refused
+edge cases, each with its expected verdict (for `date-time`: lowercase `t` and
+`z`, a leap second `:60`, fractional seconds of 1, 3 and 10 digits, offsets
+`+00:00` and `-23:59`, a missing offset, February 29 in a leap and a non-leap
+year; for `date`: the same calendar cases and a trailing time), asserted through
+both modules' entry points, and `readBackChecks` hashes the table together with
+the validator; a test also runs both validators over every sample and generated
+output and fails on any disagreement. Identity is the canonical check's alone,
+and for every family after meetings the checks module never sees it. Which path
+`runReadBack` takes is read from the entry's required `identityMode`, never
+inferred from a function or field name: `"legacy"` passes the arguments through
+unchanged and leaves the result's identity to the module, and `"runner"` does
+what follows. A registry test asserts that at most one entry has `"legacy"`, and
+only the one registered for the `meeting-events.v1` read-back tool, present
+exactly while a live `CONTRACTS` entry still names `erpnext_meeting_get` as its
+read-back tool (so retiring every meeting event, which leaves no live meeting
+entry and removes the tool, also removes the legacy entry), that every other
+entry has `"runner"`, and that `buildRegistry` refuses a missing or unknown
+mode, and `run_test.ts` exercises both paths with fixture entries. In `"runner"`
+mode `runReadBack` removes the identity field and `source_doctype` from the
+arguments it passes to `entry.readBack`, wraps `erpGet` so the runner itself
+adds them to the ERP params, checks that the record or tombstone ERP returns
+carries exactly the requested identity (a mismatch is `Events backend error`)
+and strips it before the picker runs, and sets it on the picker's output itself;
+a test parses each such checks module and fails if the identity field or
+`source_doctype` appears in it as an identifier, property name or string
+literal, so no branch on an identity value can exist. The meeting module is
+exempt only because its identity handling is the token-identical `v3.7.0` code
+(above), which is what shipped. Beyond that, each argument rule declares the
+`fields` it reads, a test asserts that no rule of any checks module lists the
+identity field or `source_doctype`, and a fixed-seed run of generated identities
+(every Unicode general category, punctuation, symbols and control characters
+included, at the minimum, the maximum and lengths between, counted in code
+points) must reach `erpGet` unrefused, so a module cannot add a predicate that
+rejects a document name the contract allows. The picker likewise reads every
+enum it accepts and every bound it enforces from the imported result schema,
+never from a literal, and the fixed-seed result generator reads that schema and
+adds, for every enum, each member and one non-member and, for every string,
+array and number bound, the boundary value and one past it: members and boundary
+values must succeed and the others must throw `Events backend error`. Tests fail
+if an argument error or a response-shape backend error is thrown any other way,
+if the names in `MEETING_ARGUMENT_RULES` differ from the case set's `rules` or
+those in `MEETING_GUARDS` from the sample set's `guards`, or if, for any
+recorded case or generated valid arguments, the parameters the fake client
+receives do not hold each canonical identity field the arguments carry (the
+identity field and, for a multi-doctype family, `source_doctype`) under the same
+name with a value strictly equal (`===`) to the argument's, an assertion the
+test writes from the contract's `identityField` and never through the module's
+call builder, so a helper that trims, lowercases or truncates an accepted id
+fails even though both sides of the next comparison would agree, or if the
+parameters the fake client receives differ from the call the module defines for
+those arguments (for meetings, the call the `v3.7.0` handler sends; for a new
+family, `<family>ErpCall(arguments)`) for any recorded case or for a fixed-seed
+run of generated valid arguments (every temporal form, fractional seconds of
+every length, each argument present and absent), or if the handler's output
+differs from the module's `pickMeetingFields` for any sample case or for a
+fixed-seed run of generated ERP results (each key present, absent and null,
+titles from every Unicode general category, URLs of every scheme, long
+occurrence lists), so trimming a title or rewriting a URL that no sample covers
+fails. The `assertShape` rule covers only rejections of a response body: a
+transport failure or a malformed envelope fails before there is a body to
+inspect, so the sample set pins those in a separate `transport` array, each
 `{ "failure": ..., "error": ... }` with `failure` a thrown client error (network
 failure, HTTP 429, 401, 403, 500) or a raw message that is not a valid
 `{ ok, result | error }` envelope, and `error` the fixed message the handler
@@ -2035,9 +2038,16 @@ Listed here so both sides agree on the order; the ERP team implements it.
    global flags only. Subscribe off answers `-32012` to a subscribe or a refresh
    but never blocks `unsubscribe`, which stays available to an authenticated
    caller and idempotent; dispatch off leaves deliveries pending, never dropped.
-   Tests prove: in shadow mode, unsubscribing a subscription made before the
-   rollback succeeds, a second unsubscribe also succeeds, and no delivery is
-   created for it once dispatch is back on.
+   Unsubscribe deletes the subscription and, in the same transaction, marks
+   every queued, pending or retrying delivery of it terminally `cancelled`, and
+   a claim takes the subscription row in share mode and refuses a delivery whose
+   subscription is gone, so no send starts after unsubscribe commits (one whose
+   claim committed before it may still finish). Tests prove: in shadow mode,
+   unsubscribing a subscription made before the rollback succeeds, a second
+   unsubscribe also succeeds, and no delivery is created for it once dispatch is
+   back on; and with subscribe on and dispatch off, a subscription with pending
+   deliveries is unsubscribed, dispatch is turned on, and the callback receives
+   nothing while those deliveries end `cancelled`.
 9. **Rollout**: shadow mode (journal on, subscribe and dispatch off) in
    production, measure row volume and hook latency, then subscribe on with
    dispatch off, check that deliveries queue as pending, then dispatch on.
