@@ -635,3 +635,88 @@ Deno.test("erpnext_merchant_order_item_update - requires row_name", async () => 
   );
   assertEquals(calls.length, 0);
 });
+
+// ── Dọn cache sau lượt ghi ───────────────────────────────────────────────────
+
+/**
+ * Mock ghi lại từng lượt `invalidate`, và cho `callMethod` trả `reply` hoặc ném `failure`.
+ *
+ * Lượt ghi đi qua `callMethod` nên client không tự dọn cache như với `update()`; thiếu bước dọn
+ * thì `erpnext_sales_order_get` hay `erpnext_doc_get` trả bản cũ tới hết TTL.
+ */
+function invalidationClient(
+  reply: unknown,
+  failure?: Error,
+): { client: FrappeClient; invalidated: Array<[string, string | undefined]> } {
+  const invalidated: Array<[string, string | undefined]> = [];
+  const client = makeMockClient({
+    callMethod: async () => {
+      if (failure) throw failure;
+      return reply;
+    },
+    invalidate: (doctype: string, name?: string) => {
+      invalidated.push([doctype, name]);
+    },
+  });
+  return { client, invalidated };
+}
+
+Deno.test("erpnext_merchant_account_update - invalidates the account it changed", async () => {
+  const { client, invalidated } = invalidationClient({ name: "MA-0001" });
+  await getTool("erpnext_merchant_account_update").handler(
+    { name: "MA-0001", status: "Closed" },
+    makeCtx(client),
+  );
+  assertEquals(invalidated, [["HVG Merchant Account", "MA-0001"]]);
+});
+
+Deno.test("erpnext_merchant_order_item_update - invalidates the order and its item rows", async () => {
+  const { client, invalidated } = invalidationClient({ note: "x" });
+  await getTool("erpnext_merchant_order_item_update").handler(
+    { sales_order: "SO-0001", row_name: "row-1", note: "x" },
+    makeCtx(client),
+  );
+  assertEquals(invalidated, [
+    ["Sales Order", "SO-0001"],
+    ["Sales Order Item", "row-1"],
+  ]);
+});
+
+Deno.test("erpnext_merchant_order_comment_create - invalidates comments and the order", async () => {
+  const { client, invalidated } = invalidationClient([]);
+  await getTool("erpnext_merchant_order_comment_create").handler(
+    { sales_order: "SO-0001", content: "hello" },
+    makeCtx(client),
+  );
+  assertEquals(invalidated, [["Comment", undefined], [
+    "Sales Order",
+    "SO-0001",
+  ]]);
+});
+
+Deno.test("oms write tools - a failed write leaves the cache alone", async () => {
+  const cases: Array<[string, Record<string, unknown>]> = [
+    ["erpnext_merchant_account_update", { name: "MA-0001", status: "Closed" }],
+    ["erpnext_merchant_order_item_update", {
+      sales_order: "SO-0001",
+      row_name: "row-1",
+      note: "x",
+    }],
+    ["erpnext_merchant_order_comment_create", {
+      sales_order: "SO-0001",
+      content: "hello",
+    }],
+  ];
+  for (const [name, input] of cases) {
+    const { client, invalidated } = invalidationClient(
+      null,
+      new Error("Not permitted"),
+    );
+    await assertRejects(
+      () => getTool(name).handler(input, makeCtx(client)),
+      Error,
+      "Not permitted",
+    );
+    assertEquals(invalidated, [], name);
+  }
+});

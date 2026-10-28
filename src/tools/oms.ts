@@ -356,6 +356,8 @@ export const omsTools: ErpNextTool[] = [
         );
       }
       const doc = await call<Row>(ctx, "update_merchant_account", args, tool);
+      // Ghi đi qua `callMethod` nên client không tự dọn cache như với `update()`.
+      ctx.client.invalidate("HVG Merchant Account", name);
       return { data: doc, message: `Merchant account ${name} updated` };
     },
   },
@@ -574,6 +576,9 @@ export const omsTools: ErpNextTool[] = [
         args,
         tool,
       );
+      // Frappe ghi một `Comment` mới và cập nhật cột `_comments` của chính đơn, nên dọn cả hai.
+      ctx.client.invalidate("Comment");
+      ctx.client.invalidate("Sales Order", salesOrder);
       return { data: comments, message: `Comment posted on ${salesOrder}` };
     },
   },
@@ -674,6 +679,10 @@ export const omsTools: ErpNextTool[] = [
       };
       copyString(input, args, "order_structure", tool);
       const result = await call<Row>(ctx, target.fn, args, tool);
+      // Dòng hàng là bảng con: đọc qua đơn cha (`erpnext_sales_order_get`) hoặc thẳng qua
+      // doctype con (`erpnext_doc_list`), nên dọn cả hai khoá.
+      ctx.client.invalidate("Sales Order", salesOrder);
+      ctx.client.invalidate("Sales Order Item", rowName);
       return {
         data: result,
         message: `Updated ${field} on ${salesOrder} row ${rowName}`,
