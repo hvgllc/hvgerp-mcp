@@ -20,6 +20,7 @@ export type { ToolAnnotations };
 export type ErpNextToolCategory =
   | "identity"
   | "sales"
+  | "oms"
   | "inventory"
   | "accounting"
   | "hr"

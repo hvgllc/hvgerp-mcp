@@ -8,6 +8,31 @@ This package is a fork of
 deliberately still point at the upstream repository, where those commits, pull
 requests and tags actually live.
 
+## [Unreleased]
+
+### Added
+
+- New `oms` category with eight tools for marketplace sales:
+  `erpnext_merchant_account_list`, `_get` and `_update` for merchant accounts
+  (`HVG Merchant Account`), and `erpnext_merchant_order_list`, `_get`,
+  `_comment_list`, `_comment_create` and `_item_update` for the Sales Orders
+  synced into them. They call the `hvg_workspace.api_token_reads` wrappers, so
+  they follow the caller's department scope, page by cursor (at most 50 orders
+  per page), leave buyer data out of lists, and log every full order read to the
+  Sensitive Action Log. `erpnext_merchant_order_item_update` changes exactly one
+  item field per call and accepts the order's `structure_version` so ERP can
+  refuse a write after a split or merge. Creating, deleting, merging, splitting
+  orders and revealing marketplace secrets are deliberately not exposed.
+
+### Changed
+
+- The `erpnext_sales_order_list`, `_update`, `_submit` and `_cancel`
+  descriptions point marketplace orders at the new `oms` tools, because ERP
+  refuses direct writes to those orders.
+- The "this site does not expose the method" translation used by the attendance
+  repair tools moved to `src/tools/hvg-workspace.ts` so the `oms` tools share
+  it. The attendance tools' messages are unchanged.
+
 ## [3.7.0] - 2026-10-08
 
 ### Added

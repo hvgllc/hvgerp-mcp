@@ -6,12 +6,12 @@
  * @module lib/erpnext/tools/hr
  */
 
-import { FrappeAPIError } from "../api/frappe-client.ts";
 import type { FrappeFilter } from "../api/types.ts";
 import type { ErpNextTool, ErpNextToolContext } from "./types.ts";
 import { listResult } from "./list-result.ts";
 import { siteNow, siteToday } from "./site-date.ts";
 import { DOCLIST_META } from "./viewer-meta.ts";
+import { callHvgWorkspace } from "./hvg-workspace.ts";
 import { resolveEmployee, resolveLink } from "../api/resolve.ts";
 
 /** One leave type's line in what `get_leave_details` returns. */
@@ -92,47 +92,9 @@ interface AttendanceDayState {
   no_change?: boolean;
 }
 
-/**
- * Câu duy nhất Frappe nói khi KHÔNG phân giải được đường dẫn hàm.
- *
- * Hẹp có chủ ý. Bắt theo "not found" hay "does not exist" chung thì mọi lỗi nghiệp vụ có
- * chứa mấy chữ ấy - một lượt bấm giờ vừa bị người khác xoá, chẳng hạn - đều bị dịch thành
- * "site này không có app", tức là báo sai nguyên nhân, và `FrappeAPIError` bị thay bằng
- * `Error` trần nên người gọi mất luôn `status` với `body` đã parse.
- */
-const METHOD_LOOKUP_FAILURE = /Failed to get method|Method Not Found/i;
-
-/** Gọi một hàm của `hvg_workspace`, dịch "app không có" thành câu người đọc hiểu được. */
-async function callHvgWorkspace<T>(
-  ctx: ErpNextToolContext,
-  method: string,
-  args: Record<string, unknown>,
-  tool: string,
-): Promise<T> {
-  try {
-    return await ctx.client.callMethod<T>(method, args);
-  } catch (err) {
-    const text = err instanceof Error ? err.message : String(err);
-    // Soi cả thân phản hồi đã parse, không chỉ `message`: `FrappeAPIError` dựng message từ
-    // `message ?? exc_type ?? statusText`, mà lượt tra hàm hỏng thường chỉ có `exc_type`
-    // là "ValidationError" còn nguyên văn "Failed to get method" nằm trong `exception`.
-    // Chỉ đọc message là trượt đúng cái ca mà lớp bọc này sinh ra để dịch.
-    const body = err instanceof FrappeAPIError && err.body !== null
-      ? JSON.stringify(err.body)
-      : "";
-    // Frappe trả cùng một lỗi cho "hàm không tồn tại" dù nguyên nhân là app chưa cài hay
-    // tên gõ sai. Người đọc cần biết nhánh nào để còn hành động.
-    if (METHOD_LOOKUP_FAILURE.test(text) || METHOD_LOOKUP_FAILURE.test(body)) {
-      throw new Error(
-        `[${tool}] this site does not expose '${method}'. These attendance repair ` +
-          "tools need the 'hvg_workspace' app installed. Original error: " +
-          text,
-        { cause: err },
-      );
-    }
-    throw err;
-  }
-}
+/** Câu nói rõ nhóm tool sửa ngày công cần app nào, dùng khi site không có hàm. */
+const ATTENDANCE_MISSING_APP =
+  "These attendance repair tools need the 'hvg_workspace' app installed.";
 
 /** Đọc trạng thái một ngày. Không phán xét: `blocked` là dữ liệu, không phải lỗi. */
 async function readAttendanceDay(
@@ -146,6 +108,7 @@ async function readAttendanceDay(
     "hvg_workspace.api.hr_get_day_attendance",
     { employee, date },
     tool,
+    ATTENDANCE_MISSING_APP,
   );
 }
 
@@ -868,6 +831,7 @@ export const hrTools: ErpNextTool[] = [
         "hvg_workspace.api.hr_save_day_attendance",
         { employee, date, reason, rows, base },
         TOOL,
+        ATTENDANCE_MISSING_APP,
       );
 
       // Ghi qua `callMethod` thì cache không tự dọn - `create`/`update`/`delete` mới tự

@@ -33,6 +33,28 @@ interface MapLineItemsOptions {
 }
 
 /**
+ * Chỉ đường cho đơn sàn trong mô tả `erpnext_sales_order_list`.
+ *
+ * Đơn sàn là `Sales Order` thật nên vẫn hiện ở đây, nhưng thiếu tài khoản bán hàng và giai
+ * đoạn xử lý của từng dòng hàng; tool OMS trả đủ những thứ đó.
+ */
+const MARKETPLACE_ORDER_HINT =
+  "For marketplace orders (those with an hvg_merchant_account), " +
+  "erpnext_merchant_order_list returns the merchant account and each item's " +
+  "fulfill stage, which this tool does not.";
+
+/**
+ * Chỉ đường cho đơn sàn trong mô tả các tool ghi `Sales Order`.
+ *
+ * ERP chặn mọi lượt ghi trực tiếp lên đơn sàn ngoài `sdc_api_write_scope()`, nên gọi các tool
+ * ghi chung lên loại đơn này chỉ nhận về lỗi quyền.
+ */
+const MARKETPLACE_ORDER_WRITE_HINT =
+  "Marketplace orders (those with an hvg_merchant_account) cannot be changed " +
+  "through this tool; ERP refuses the write. Use erpnext_merchant_order_item_update " +
+  "or erpnext_merchant_order_comment_create for them.";
+
+/**
  * Validate and shape the `items` array shared across SO / SI / Quotation
  * create tools. Centralizes the "items must be a non-empty array" and
  * "each item needs item_code, qty, rate" checks plus the optional
@@ -271,7 +293,8 @@ export const salesTools: ErpNextTool[] = [
     _meta: DOCLIST_META,
     description:
       "List Sales Orders. Filterable by customer, status, date range. " +
-      "Fields: name, customer, transaction_date, status, grand_total, currency.",
+      "Fields: name, customer, transaction_date, status, grand_total, currency. " +
+      MARKETPLACE_ORDER_HINT,
     category: "sales",
     inputSchema: {
       type: "object",
@@ -472,7 +495,8 @@ export const salesTools: ErpNextTool[] = [
       idempotentHint: true,
     },
     description: "Update an existing Sales Order (only in Draft status). " +
-      "Pass only the fields you want to change (e.g. delivery_date, items).",
+      "Pass only the fields you want to change (e.g. delivery_date, items). " +
+      MARKETPLACE_ORDER_WRITE_HINT,
     category: "sales",
     inputSchema: {
       type: "object",
@@ -535,7 +559,8 @@ export const salesTools: ErpNextTool[] = [
     _meta: INVOICE_META,
     description:
       "Submit a Draft Sales Order (changes status to 'To Deliver and Bill'). " +
-      "Triggers stock reservation and fulfillment workflow.",
+      "Triggers stock reservation and fulfillment workflow. " +
+      MARKETPLACE_ORDER_WRITE_HINT,
     category: "sales",
     inputSchema: {
       type: "object",
@@ -578,7 +603,8 @@ export const salesTools: ErpNextTool[] = [
     annotations: { readOnlyHint: false, destructiveHint: true },
     description:
       "Cancel a submitted Sales Order. Reverses stock reservation. " +
-      "Only works on submitted (non-completed) Sales Orders.",
+      "Only works on submitted (non-completed) Sales Orders. " +
+      MARKETPLACE_ORDER_WRITE_HINT,
     category: "sales",
     inputSchema: {
       type: "object",

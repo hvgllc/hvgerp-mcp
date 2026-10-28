@@ -8,7 +8,7 @@ Repository guidelines for AI coding agents working on this codebase.
 
 ## Project Overview
 
-MCP server for ERPNext/Frappe ERP — 134 tools across 16 categories with 7
+MCP server for ERPNext/Frappe ERP: 143 tools across 17 categories with 7
 interactive UI viewers. Connects MCP-compatible AI agents to ERPNext via the
 Model Context Protocol. Published as `@hvgllc/hvgerp-mcp` on npm (Node bundle)
 and JSR (Deno).
@@ -341,7 +341,7 @@ framework itself.
 - Use `import type { ... }` for type-only imports everywhere.
 - Tool names: `erpnext_{entity}_{operation}` — snake_case, always prefixed with
   `erpnext_`.
-- Tool categories: one of the 14 registered categories in `src/tools/mod.ts`.
+- Tool categories: one of the 17 registered categories in `src/tools/mod.ts`.
   New categories require updating the registry.
 - Add brief code comments for tricky or non-obvious logic only. Do not add
   JSDoc/comments to straightforward code.
