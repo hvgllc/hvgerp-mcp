@@ -5,8 +5,8 @@
 [![MCP](https://img.shields.io/badge/MCP-server-1f6feb?logo=modelcontextprotocol&logoColor=white)](https://modelcontextprotocol.io)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-MCP server for [ERPNext](https://erpnext.com) / Frappe ERP: **135 tools** across
-**16 categories**, with **7 interactive UI viewers**.
+MCP server for [ERPNext](https://erpnext.com) / Frappe ERP: **143 tools** across
+**17 categories**, with **7 interactive UI viewers**.
 
 Connect any MCP-compatible AI agent (Claude Desktop, Claude Code, VS Code
 Copilot, custom) to your ERPNext instance via the
@@ -223,9 +223,9 @@ npm install
 node build-all.mjs
 ```
 
-## Tools (135)
+## Tools (143)
 
-135 tools across 16 categories. Most `_list` tools return interactive results
+143 tools across 17 categories. Most `_list` tools return interactive results
 via the doclist-viewer with row click, inline detail, and cross-viewer
 navigation. The read-only `erpnext_stock_ledger_list` instead returns bounded
 ledger rows for the stock viewer's Recent Movements panel.
@@ -238,6 +238,13 @@ ledger rows for the stock viewer's Recent Movements panel.
   one that produces it.
 - **Sales** (17) — Customers, Sales Orders, Invoices, and Quotations with full
   CRUD, Submit, and Cancel.
+- **OMS** (8): marketplace merchant accounts (Amazon, TikTok, eBay, Etsy, Depop)
+  and their Sales Orders. `erpnext_merchant_order_list` lists order items with
+  their fulfill stage and no buyer data, `erpnext_merchant_order_get` adds the
+  buyer details and writes an audit row, and
+  `erpnext_merchant_order_item_update` changes one item field (note, tracking,
+  label link, design link or fulfill stage) at a time. They need the
+  `hvg_workspace` and `hvg_sdc_sync` apps on the site.
 - **Purchasing** (11) — Suppliers, Purchase Orders, Purchase Invoices, Receipts,
   and Supplier Quotations.
 - **Inventory** (10): Items, Stock Balance, Warehouses, Stock Entries, and

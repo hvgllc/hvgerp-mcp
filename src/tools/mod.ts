@@ -9,6 +9,7 @@
 
 import { identityTools } from "./identity.ts";
 import { salesTools } from "./sales.ts";
+import { omsTools } from "./oms.ts";
 import { inventoryTools } from "./inventory.ts";
 import { accountingTools } from "./accounting.ts";
 import { hrTools } from "./hr.ts";
@@ -39,6 +40,7 @@ export {
   inventoryTools,
   kanbanTools,
   manufacturingTools,
+  omsTools,
   operationsTools,
   projectTools,
   purchasingTools,
@@ -56,6 +58,7 @@ export type { ErpNextTool, ErpNextToolCategory };
 export const toolsByCategory: Record<string, ErpNextTool[]> = {
   identity: identityTools,
   sales: salesTools,
+  oms: omsTools,
   inventory: inventoryTools,
   accounting: accountingTools,
   hr: hrTools,
@@ -76,6 +79,7 @@ export const toolsByCategory: Record<string, ErpNextTool[]> = {
 export const allTools: ErpNextTool[] = [
   ...identityTools,
   ...salesTools,
+  ...omsTools,
   ...inventoryTools,
   ...accountingTools,
   ...hrTools,

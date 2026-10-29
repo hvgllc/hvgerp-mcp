@@ -1,6 +1,6 @@
 # ERPNext MCP Library - Coverage
 
-## Covered (135 tools, 16 categories)
+## Covered (143 tools, 17 categories)
 
 ### Identity (2 tools)
 
@@ -34,6 +34,24 @@ is not: it reads four doctypes outside whatever surface was requested.
 | `erpnext_quotation_list`       | Quotation     | List + filters (party, status)                   | doclist-viewer |
 | `erpnext_quotation_get`        | Quotation     | Get by name (with line items)                    | -              |
 | `erpnext_quotation_create`     | Quotation     | Create (Customer/Lead + items + dates)           | -              |
+
+### OMS (8 tools)
+
+| Tool                                    | DocType               | Operations                                                            | UI Viewer |
+| --------------------------------------- | --------------------- | --------------------------------------------------------------------- | --------- |
+| `erpnext_merchant_account_list`         | HVG Merchant Account  | List by status, marketplace, department, search; cursor paged         | -         |
+| `erpnext_merchant_account_get`          | HVG Merchant Account  | Get one account; restricted fields trimmed, secrets masked            | -         |
+| `erpnext_merchant_account_update`       | HVG Merchant Account  | Update type, status, name or main email                               | -         |
+| `erpnext_merchant_order_list`           | Sales Order           | List marketplace orders, one row per item, no buyer PII; cursor paged | -         |
+| `erpnext_merchant_order_get`            | Sales Order           | Get one order with buyer details and items; audit logged              | -         |
+| `erpnext_merchant_order_comment_list`   | Sales Order (Comment) | List order-level comments                                             | -         |
+| `erpnext_merchant_order_comment_create` | Sales Order (Comment) | Post a comment, optional @mentions                                    | -         |
+| `erpnext_merchant_order_item_update`    | Sales Order Item      | Update one of note, tracking, label link, design link, fulfill stage  | -         |
+
+All eight call `hvg_workspace.api_token_reads`, so they need the `hvg_workspace`
+and `hvg_sdc_sync` apps on the site. Generic `erpnext_sales_order_update`,
+`_submit` and `_cancel` cannot change a marketplace order: ERP refuses direct
+writes to it.
 
 ### Inventory (10 tools)
 

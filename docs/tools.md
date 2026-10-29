@@ -1,4 +1,4 @@
-# Tools Reference (129)
+# Tools Reference (143)
 
 Full reference for all ERPNext MCP tools. See [README](../README.md) for
 overview.
@@ -51,6 +51,24 @@ read them before telling anyone they hold no roles or have no HR record.
 | `erpnext_quotation_list`       | Quotation     | List + filters (party, status)               |
 | `erpnext_quotation_get`        | Quotation     | Get with line items                          |
 | `erpnext_quotation_create`     | Quotation     | Create (Customer/Lead + items)               |
+
+## OMS (8)
+
+| Tool                                    | DocType               | Operations                                                            |
+| --------------------------------------- | --------------------- | --------------------------------------------------------------------- |
+| `erpnext_merchant_account_list`         | HVG Merchant Account  | List by status, marketplace, department, search; cursor paged         |
+| `erpnext_merchant_account_get`          | HVG Merchant Account  | Get one account; restricted fields trimmed, secrets masked            |
+| `erpnext_merchant_account_update`       | HVG Merchant Account  | Update type, status, name or main email                               |
+| `erpnext_merchant_order_list`           | Sales Order           | List marketplace orders, one row per item, no buyer PII; cursor paged |
+| `erpnext_merchant_order_get`            | Sales Order           | Get one order with buyer details and items; audit logged              |
+| `erpnext_merchant_order_comment_list`   | Sales Order (Comment) | List order-level comments                                             |
+| `erpnext_merchant_order_comment_create` | Sales Order (Comment) | Post a comment, optional @mentions                                    |
+| `erpnext_merchant_order_item_update`    | Sales Order Item      | Update one of note, tracking, label link, design link, fulfill stage  |
+
+All eight call `hvg_workspace.api_token_reads`, so they need the `hvg_workspace`
+and `hvg_sdc_sync` apps on the site. Generic `erpnext_sales_order_update`,
+`_submit` and `_cancel` cannot change a marketplace order: ERP refuses direct
+writes to it.
 
 ## Inventory (10) → doclist-viewer / stock-viewer
 
