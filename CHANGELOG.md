@@ -8,7 +8,7 @@ This package is a fork of
 deliberately still point at the upstream repository, where those commits, pull
 requests and tags actually live.
 
-## [Unreleased]
+## [3.8.0] - 2026-10-29
 
 ### Added
 
@@ -22,7 +22,10 @@ requests and tags actually live.
   Sensitive Action Log. `erpnext_merchant_order_item_update` changes exactly one
   item field per call and accepts the order's `structure_version` so ERP can
   refuse a write after a split or merge. Creating, deleting, merging, splitting
-  orders and revealing marketplace secrets are deliberately not exposed.
+  orders and revealing marketplace secrets are deliberately not exposed. The
+  write tools clear the cached reads of what they changed, so
+  `erpnext_sales_order_get` and `erpnext_doc_get` do not serve the old document
+  until the cache TTL runs out.
 
 ### Changed
 
