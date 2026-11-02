@@ -5,7 +5,7 @@
 [![MCP](https://img.shields.io/badge/MCP-server-1f6feb?logo=modelcontextprotocol&logoColor=white)](https://modelcontextprotocol.io)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-MCP server for [ERPNext](https://erpnext.com) / Frappe ERP: **143 tools** across
+MCP server for [ERPNext](https://erpnext.com) / Frappe ERP: **145 tools** across
 **17 categories**, with **7 interactive UI viewers**.
 
 Connect any MCP-compatible AI agent (Claude Desktop, Claude Code, VS Code
@@ -223,9 +223,9 @@ npm install
 node build-all.mjs
 ```
 
-## Tools (143)
+## Tools (145)
 
-143 tools across 17 categories. Most `_list` tools return interactive results
+145 tools across 17 categories. Most `_list` tools return interactive results
 via the doclist-viewer with row click, inline detail, and cross-viewer
 navigation. The read-only `erpnext_stock_ledger_list` instead returns bounded
 ledger rows for the stock viewer's Recent Movements panel.
@@ -275,8 +275,10 @@ ledger rows for the stock viewer's Recent Movements panel.
   appears once per occurrence instead of once in total.
 - **Kanban** (2) — Read-write boards for Task, Opportunity, and Issue with
   drag-and-drop.
-- **Analytics** (17) — 11 analytics charts (bar, area, treemap, radar, scatter,
-  P&L…), 5 KPIs with sparklines, and a sales funnel.
+- **Analytics** (19): 11 analytics charts (bar, area, treemap, radar, scatter,
+  P&L…), 5 KPIs with sparklines, a sales funnel, and two staff performance tools
+  (one person's work volume against the previous period, and the same per person
+  for a team), answered with the caller's own ERP permissions.
 - **Setup** (3) — Company creation and assignable user listing.
 - **Discovery** (1) — `erpnext_doctype_fields`: the field schema of any DocType
   (name, label, type, link target, mandatory, permlevel), gated on the caller's

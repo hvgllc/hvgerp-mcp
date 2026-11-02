@@ -216,8 +216,8 @@ export const projectTools: ErpNextTool[] = [
       "Fields: name, subject, project, status, priority, exp_start_date, exp_end_date, progress. " +
       "Sites carrying hvg_workspace also get 'custom_sku' and 'custom_product_type'; both are " +
       "absent elsewhere, and a site may carry the first without the second. Where present they " +
-      "are empty for every Task created before each field shipped and never backfilled, so an " +
-      "empty value means 'not recorded here', never 'no product'.",
+      "can still be empty on some Tasks, so an empty value means 'not recorded here', never " +
+      "'no product'.",
     category: "project",
     inputSchema: {
       type: "object",

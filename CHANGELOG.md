@@ -8,6 +8,31 @@ This package is a fork of
 deliberately still point at the upstream repository, where those commits, pull
 requests and tags actually live.
 
+## [Unreleased]
+
+### Added
+
+- Two staff performance tools in the `analytics` category, for questions like
+  "đánh giá hiệu suất của [name]". `erpnext_employee_performance_get` resolves
+  the person by full name (with or without Vietnamese marks), ERP email or `me`,
+  only among the people the caller may view in the ERP Personal Report, and asks
+  the user instead of guessing on namesakes, partial names or differing marks.
+  It returns work volume on Sales Order lines (design points, design and fulfill
+  lines, orders) for the period and the previous period of equal length, by team
+  and by day, plus the most recent lines. `erpnext_team_performance_get` returns
+  the same figures per person for everyone the caller may view, listed by name.
+  Both wrap `hvg_sdc_sync.personal_report` by POST with the caller's own token,
+  refuse to run under a shared service account, cap a period at 93 days, and
+  present the figures for coaching: no score and no ranking. Task workload, SKU
+  sales, SKU growth and quality are returned as `unavailable` until ERP provides
+  endpoints for them.
+
+### Changed
+
+- The `erpnext_task_list` description no longer claims that `custom_sku` and
+  `custom_product_type` were never backfilled. An empty value still means "not
+  recorded here", not "no product".
+
 ## [3.8.0] - 2026-10-29
 
 ### Added
