@@ -8,7 +8,7 @@ This package is a fork of
 deliberately still point at the upstream repository, where those commits, pull
 requests and tags actually live.
 
-## [Unreleased]
+## [3.9.0] - 2026-11-02
 
 ### Added
 
@@ -23,9 +23,10 @@ requests and tags actually live.
   the same figures per person for everyone the caller may view, listed by name.
   Both wrap `hvg_sdc_sync.personal_report` by POST with the caller's own token,
   refuse to run under a shared service account, cap a period at 93 days, and
-  present the figures for coaching: no score and no ranking. Task workload, SKU
-  sales, SKU growth and quality are returned as `unavailable` until ERP provides
-  endpoints for them.
+  present the figures for coaching: no score and no ranking. A period that
+  reaches today is flagged with `period.includes_today` and a warning that its
+  last day is partial. Task workload, SKU sales, SKU growth and quality are
+  returned as `unavailable` until ERP provides endpoints for them.
 
 ### Changed
 
