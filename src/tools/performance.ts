@@ -17,7 +17,7 @@ import {
   type ReportPerson,
   resolveReportPerson,
 } from "./performance-resolve.ts";
-import { siteToday } from "./site-date.ts";
+import { siteNow } from "./site-date.ts";
 import type { ErpNextTool, ErpNextToolContext } from "./types.ts";
 
 // ── Vì sao bọc báo cáo của ERP thay vì tự đếm ─────────────────────────────────
@@ -194,16 +194,34 @@ function readDate(
  * - Chỉ có `to_date`: 30 ngày kết thúc ở ngày đó.
  * - Chỉ có `from_date`: từ ngày đó tới hôm nay ("từ đầu tháng tới giờ").
  *
- * Từ chối thay vì sửa giùm: ngày sau hôm nay, kỳ ngược (ERP tự đảo hai đầu, mà kỳ ngược thường là
+ * Từ chối thay vì sửa giùm: ngày sau `latest`, kỳ ngược (ERP tự đảo hai đầu, mà kỳ ngược thường là
  * mô hình đọc nhầm ngày người dùng nói), và kỳ dài quá trần của ERP.
+ *
+ * `latest` là ngày muộn nhất được nhận, mặc định là `today`. Khi không chắc `today` có đúng là
+ * ngày của site hay không, người gọi truyền `today + 1`: ngày chưa tới thì ERP trả số 0, nên nới
+ * một ngày không làm sai số liệu, còn từ chối "hôm nay" của người dùng thì làm hỏng câu hỏi.
  */
 export function performancePeriod(
   input: Record<string, unknown>,
   today: string,
   tool: string,
+  latest: string = today,
 ): Period {
   const from = readDate(input, "from_date", tool);
   const to = readDate(input, "to_date", tool);
+
+  for (const [key, value] of [["from_date", from], ["to_date", to]]) {
+    if (value !== undefined && value > latest) {
+      const basis = latest === today
+        ? `the site's today (${today})`
+        : `the site's today (${today}, plus one day because the site's time zone could not ` +
+          "be read reliably)";
+      throw new Error(
+        `[${tool}] '${key}' ${value} is after ${basis}; ` +
+          "there is no work to report for future dates.",
+      );
+    }
+  }
 
   let fromDate: string;
   let toDate: string;
@@ -215,16 +233,8 @@ export function performancePeriod(
     fromDate = addDays(toDate, -(DEFAULT_PERIOD_DAYS - 1));
   } else {
     fromDate = from;
-    toDate = to ?? today;
-  }
-
-  for (const [key, value] of [["from_date", fromDate], ["to_date", toDate]]) {
-    if (value > today) {
-      throw new Error(
-        `[${tool}] '${key}' ${value} is after the site's today (${today}); ` +
-          "there is no work to report for future dates.",
-      );
-    }
+    // `from_date` đã được nới tới ngày mai thì kỳ kết thúc ở chính ngày đó, không lùi về hôm nay.
+    toDate = to ?? (from > today ? from : today);
   }
   if (fromDate > toDate) {
     throw new Error(
@@ -241,6 +251,41 @@ export function performancePeriod(
     );
   }
   return { from_date: fromDate, to_date: toDate, days };
+}
+
+/** Hôm nay của site, và ngày muộn nhất mà đầu vào được phép nêu. */
+interface SiteDay {
+  today: string;
+  latest: string;
+}
+
+/**
+ * Đọc ngày site một lần cho cả lượt gọi.
+ *
+ * Người không phải System Manager chỉ đọc được múi giờ ở bậc dưới, mà bậc đó đo trên production
+ * đã lệch 1,5 giờ (`site-date.ts`). Từ 00:00 tới 01:30 ở site, "hôm nay" của người dùng khi đó
+ * là "ngày mai" theo con số tính được, nên khi không chắc thì nhận thêm một ngày.
+ */
+async function siteDay(ctx: ErpNextToolContext): Promise<SiteDay> {
+  const { now, authoritative } = await siteNow(ctx);
+  const today = now.slice(0, 10);
+  return { today, latest: authoritative ? today : addDays(today, 1) };
+}
+
+/**
+ * Cảnh báo cho kỳ kết thúc từ hôm nay trở đi: ngày cuối đang diễn ra nên số của nó chưa trọn.
+ *
+ * Có so kỳ trước thì nói rõ hệ quả: kỳ trước chỉ gồm ngày trọn, nên `change` âm ở đây có thể chỉ
+ * là ngày hôm nay chưa hết, không phải sụt giảm.
+ */
+function partialDayWarning(today: string, compared: boolean): string {
+  const lead =
+    `The period ends on or after today (${today}, site date), which is still in ` +
+    "progress, so its last day's figures are partial.";
+  if (!compared) return lead;
+  return `${lead} The previous period has only complete days, so 'change' understates this ` +
+    "period: do not present a negative change as a decline. Rerun with to_date set to " +
+    "yesterday for a like-for-like comparison.";
 }
 
 /** Kỳ liền trước, cùng độ dài, kết thúc ngay trước ngày đầu của kỳ đang xem. */
@@ -459,7 +504,14 @@ async function getEmployeePerformance(
   const sections = readSections(input);
   const detailLimit = readDetailLimit(input);
 
-  const period = performancePeriod(input, await siteToday(ctx), EMPLOYEE_TOOL);
+  const site = await siteDay(ctx);
+  const period = performancePeriod(
+    input,
+    site.today,
+    EMPLOYEE_TOOL,
+    site.latest,
+  );
+  const includesToday = period.to_date >= site.today;
   const previous = compare === "previous_period"
     ? previousPeriod(period)
     : null;
@@ -541,6 +593,9 @@ async function getEmployeePerformance(
       );
     }
     if (filtered) warnings.push(scopeWarning(context.scope));
+    if (includesToday) {
+      warnings.push(partialDayWarning(site.today, before !== null));
+    }
     if (report.truncated === true) {
       warnings.push(
         `ERP returns at most ${ERP_DETAIL_CAP} detail rows per kind. Totals, by_team and ` +
@@ -572,6 +627,7 @@ async function getEmployeePerformance(
       from_date: period.from_date,
       to_date: period.to_date,
       days: period.days,
+      includes_today: includesToday,
       date_basis: "site_timezone",
       compare: previous
         ? {
@@ -598,7 +654,9 @@ async function getTeamPerformance(
 ): Promise<unknown> {
   requireCallerClient(ctx, TEAM_TOOL);
   rejectUnknownKeys(input, TEAM_KEYS, TEAM_TOOL);
-  const period = performancePeriod(input, await siteToday(ctx), TEAM_TOOL);
+  const site = await siteDay(ctx);
+  const period = performancePeriod(input, site.today, TEAM_TOOL, site.latest);
+  const includesToday = period.to_date >= site.today;
 
   let report: TeamReport;
   try {
@@ -638,6 +696,7 @@ async function getTeamPerformance(
 
   const warnings: string[] = [];
   if (report.scope !== "all") warnings.push(scopeWarning(report.scope));
+  if (includesToday) warnings.push(partialDayWarning(site.today, false));
   warnings.push(NOT_MEASURED_WARNING);
 
   return {
@@ -647,6 +706,7 @@ async function getTeamPerformance(
       from_date: period.from_date,
       to_date: period.to_date,
       days: period.days,
+      includes_today: includesToday,
       date_basis: "site_timezone",
     },
     summary: readTotals(report.summary),

@@ -45,9 +45,33 @@ export function normalizePersonInput(value: string): string {
   return value.normalize("NFC").replace(WHITESPACE, " ").trim();
 }
 
-/** Khoá so khớp đúng dấu: chuẩn hoá và hạ chữ thường, giữ nguyên dấu. */
+/** Năm dấu thanh ở dạng tách rời (NFD): huyền, sắc, ngã, hỏi, nặng. */
+const TONE = "[̣̀́̃̉]";
+/** "hòa"/"khỏe" ở cuối từ: dấu thanh trên "o", đứng trước "a" hoặc "e". */
+const TONE_ON_O = new RegExp(`o(${TONE})([ae])(?=\\s|$)`, "gu");
+/** "thủy" ở cuối từ: dấu thanh trên "u", đứng trước "y". */
+const TONE_ON_U = new RegExp(`u(${TONE})y(?=\\s|$)`, "gu");
+
+/**
+ * Khoá so khớp đúng dấu: chuẩn hoá, hạ chữ thường, giữ nguyên dấu.
+ *
+ * Vần "oa", "oe", "uy" ở cuối từ có hai cách đặt dấu thanh đều được chấp nhận: "Hòa"/"Hoà",
+ * "Khỏe"/"Khoẻ", "Thủy"/"Thuỷ". Cách nào là do bộ gõ chọn chứ không phải người gõ, nên hai
+ * chuỗi là CÙNG một tên. Khoá dời dấu về nguyên âm cuối cho cả hai phía; dấu thanh khác nhau
+ * ("Thủy" và "Thúy") vẫn cho hai khoá khác nhau.
+ */
 function exactKey(value: string): string {
-  return normalizePersonInput(value).toLowerCase();
+  return normalizePersonInput(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(TONE_ON_O, "o$2$1")
+    .replace(TONE_ON_U, "uy$1")
+    .normalize("NFC");
+}
+
+/** Tên không mang dấu nào, tức không cho biết gì về dấu của tên thật. */
+function hasNoMarks(value: string): boolean {
+  return exactKey(value) === foldPersonName(value);
 }
 
 /**
@@ -151,8 +175,11 @@ export interface ResolveReportPersonOptions {
  * - 0. "me" và các biến thể: chính người xem.
  * - 1. Có "@": khớp email không phân biệt hoa thường. Không thấy thì là "không thấy", không lùi
  *   xuống so tên, vì một email gõ sai mà lại khớp tên ai đó là chọn nhầm người.
- * - 2. Đúng tên, đúng dấu (không phân biệt hoa thường).
- * - 3. Người dùng gõ KHÔNG dấu: khớp tên sau khi bỏ dấu.
+ * - 2. Người dùng gõ CÓ dấu: đúng tên, đúng dấu (không phân biệt hoa thường, không phân biệt
+ *   vị trí dấu thanh kiểu cũ và kiểu mới). Người có tên lưu KHÔNG dấu mà khớp sau khi bỏ dấu
+ *   cũng tính vào bậc này: tên lưu không dấu không cho biết gì về dấu, nên không loại được ai.
+ * - 3. Người dùng gõ KHÔNG dấu: khớp tên sau khi bỏ dấu. Đầu vào không dấu bỏ qua bậc 2, vì nó
+ *   không phân biệt được "Nguyen Van Duc" lưu không dấu với "Nguyễn Văn Đức".
  * - 3'. Người dùng gõ CÓ dấu nhưng chỉ khớp sau khi bỏ dấu: luôn hỏi xác nhận. "Hoa" và "Hòa"
  *   là hai tên khác nhau; dấu khác là tín hiệu, không phải lỗi gõ để bỏ qua.
  * - 4. Mọi từ của đầu vào đều là từ trong tên (gõ "Đức" cho "Đỗ Văn Đức"): luôn hỏi xác nhận,
@@ -192,18 +219,28 @@ export function resolveReportPerson(
   };
 
   const wantedExact = exactKey(input);
-  const exact = options.people.filter((person) =>
-    exactKey(displayName(person)) === wantedExact
-  );
-  if (exact.length > 0) return pick(exact, "exact");
-
   const wantedFolded = foldPersonName(input);
+  const typedMarks = wantedExact !== wantedFolded;
   const folded = options.people.filter((person) =>
     foldPersonName(displayName(person)) === wantedFolded
   );
+
+  if (typedMarks) {
+    const exact = folded.filter((person) =>
+      exactKey(displayName(person)) === wantedExact
+    );
+    if (exact.length > 0) {
+      // Người trùng tên nhưng lưu không dấu vẫn có thể là người được hỏi: đưa vào cùng danh
+      // sách để `pick` hỏi lại khi có từ hai người trở lên.
+      const unmarked = folded.filter((person) =>
+        !exact.includes(person) && hasNoMarks(displayName(person))
+      );
+      return pick([...exact, ...unmarked], "exact");
+    }
+  }
+
   if (folded.length > 0) {
     // Đầu vào có dấu mà vẫn tới được đây nghĩa là dấu không khớp ai: hỏi xác nhận.
-    const typedMarks = wantedExact !== wantedFolded;
     if (!typedMarks) return pick(folded, "folded");
     throw ambiguityError({
       tool,

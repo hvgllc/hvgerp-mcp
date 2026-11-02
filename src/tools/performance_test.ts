@@ -146,6 +146,11 @@ interface RecordedCall {
 
 interface ErpOptions {
   actsAs?: "caller" | "service";
+  /**
+   * `fallback`: người gọi không đọc được System Settings, nên múi giờ chỉ lấy được ở bậc dưới,
+   * tức ngày hôm nay không chắc là ngày của site.
+   */
+  zone?: "authoritative" | "fallback";
   context?: unknown;
   personal?: (args: Record<string, unknown>) => unknown;
   team?: (args: Record<string, unknown>) => unknown;
@@ -178,6 +183,14 @@ function erpClient(options: ErpOptions = {}): {
     ) => {
       calls.push({ method, args, opts });
       if (method === "frappe.client.get_value") {
+        if (options.zone === "fallback") {
+          throw new FrappeAPIError("No permission for System Settings", 403, {
+            exc_type: "PermissionError",
+          });
+        }
+        return { time_zone: "Asia/Ho_Chi_Minh" };
+      }
+      if (method === "frappe.client.get_time_zone") {
         return { time_zone: "Asia/Ho_Chi_Minh" };
       }
       if (method === `${REPORT}.get_report_context`) {
@@ -227,6 +240,14 @@ async function runEmployee(
 
 const OCTOBER = { from_date: "2026-10-01", to_date: "2026-10-31" };
 
+/** Cộng ngày trên chuỗi `YYYY-MM-DD`, tính theo UTC để không lệch vì múi giờ máy chạy test. */
+function shiftDate(iso: string, days: number): string {
+  const [year, month, day] = iso.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day) + days * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+}
+
 // ── Đăng ký ──────────────────────────────────────────────────────────────────
 
 Deno.test("performance tools - registered read-only analytics tools", () => {
@@ -253,11 +274,12 @@ Deno.test("performance tools - registered read-only analytics tools", () => {
 Deno.test("performance tools - a service client is refused before any call", async () => {
   for (const tool of performanceTools) {
     const { ctx, calls } = erpClient({ actsAs: "service" });
-    const error = await assertRejects(
-      () => tool.handler({ employee: "me" }, ctx),
-      Error,
-    );
+    // Mỗi tool nhận đúng đầu vào hợp lệ của nó: đầu vào sai bị từ chối ở bước kiểm khoá, và test
+    // sẽ qua dù lớp chặn có bị gỡ.
+    const input = tool.name === TEAM_TOOL ? {} : { employee: "me" };
+    const error = await assertRejects(() => tool.handler(input, ctx), Error);
     assertStringIncludes(error.message, `[${tool.name}]`);
+    assertStringIncludes(error.message, "shared service account");
     assertEquals(calls.length, 0, tool.name);
   }
 });
@@ -333,6 +355,42 @@ Deno.test("performancePeriod - refuses dates after the site's today", () => {
     )
   );
   assertStringIncludes((error as Error).message, "2026-11-02");
+});
+
+Deno.test("performancePeriod - allows one extra day when the site's today is uncertain", () => {
+  // Hôm nay tính ra là 02/11 nhưng có thể site đã sang 03/11: nhận 03/11, vẫn từ chối 04/11.
+  assertEquals(
+    performancePeriod(
+      { from_date: "2026-11-03" },
+      "2026-11-02",
+      EMPLOYEE_TOOL,
+      "2026-11-03",
+    ),
+    { from_date: "2026-11-03", to_date: "2026-11-03", days: 1 },
+  );
+  assertEquals(
+    performancePeriod(
+      { from_date: "2026-11-01", to_date: "2026-11-03" },
+      "2026-11-02",
+      EMPLOYEE_TOOL,
+      "2026-11-03",
+    ).days,
+    3,
+  );
+  const error = assertThrows(() =>
+    performancePeriod(
+      { to_date: "2026-11-04" },
+      "2026-11-02",
+      EMPLOYEE_TOOL,
+      "2026-11-03",
+    )
+  );
+  assertStringIncludes((error as Error).message, "2026-11-04");
+  // Ngày mặc định vẫn tính theo hôm nay đã biết, không theo ngày được nới.
+  assertEquals(
+    performancePeriod({}, "2026-11-02", EMPLOYEE_TOOL, "2026-11-03").to_date,
+    "2026-11-01",
+  );
 });
 
 Deno.test("performancePeriod - refuses malformed or impossible dates", () => {
@@ -607,6 +665,89 @@ Deno.test(`${EMPLOYEE_TOOL} - a site without the report names the missing app`, 
   assertStringIncludes(error.message, `[${EMPLOYEE_TOOL}]`);
 });
 
+// ── Kỳ chứa hôm nay và ngày site không chắc chắn ─────────────────────────────
+
+Deno.test(`${EMPLOYEE_TOOL} - a period ending today warns that change understates it`, async () => {
+  const { ctx } = erpClient();
+  const today = await siteToday(ctx);
+  // "Tháng này" vào ngày 2: kỳ hai ngày mà ngày thứ hai mới qua vài giờ, đem so với hai ngày trọn.
+  const { result } = await runEmployee({
+    employee: "me",
+    from_date: shiftDate(today, -1),
+  });
+  assertEquals(result.period.to_date, today);
+  assertEquals(result.period.includes_today, true);
+  const warnings = JSON.stringify(result.data_quality.warnings);
+  assertStringIncludes(warnings, "still in progress");
+  assertStringIncludes(warnings, "decline");
+
+  // Không so kỳ trước thì không có câu về 'change', nhưng vẫn nói hôm nay chưa trọn.
+  const alone = await runEmployee({
+    employee: "me",
+    to_date: today,
+    compare: "none",
+  });
+  assertEquals(alone.result.period.includes_today, true);
+  const aloneWarnings = JSON.stringify(alone.result.data_quality.warnings);
+  assertStringIncludes(aloneWarnings, "still in progress");
+  assert(!aloneWarnings.includes("decline"), aloneWarnings);
+});
+
+Deno.test(`${EMPLOYEE_TOOL} - the default period holds only complete days and says so`, async () => {
+  const { result } = await runEmployee({ employee: "me" });
+  assertEquals(result.period.includes_today, false);
+  assert(
+    !JSON.stringify(result.data_quality.warnings).includes("still in progress"),
+  );
+});
+
+Deno.test(`${TEAM_TOOL} - a period ending today is flagged as partial`, async () => {
+  const { ctx } = erpClient({ team: teamReport });
+  const today = await siteToday(ctx);
+  const result: Json = await getTool(TEAM_TOOL).handler(
+    { from_date: shiftDate(today, -6) },
+    ctx,
+  );
+  assertEquals(result.period.includes_today, true);
+  assertStringIncludes(
+    JSON.stringify(result.data_quality.warnings),
+    "still in progress",
+  );
+
+  const complete: Json = await getTool(TEAM_TOOL).handler(OCTOBER, ctx);
+  assertEquals(complete.period.includes_today, false);
+});
+
+Deno.test(`${EMPLOYEE_TOOL} - an uncertain site date accepts the next day but no further`, async () => {
+  // Không đọc được System Settings thì múi giờ lấy ở bậc dưới và có thể chậm hơn site vài giờ:
+  // lúc 00:45 ở site, "hôm nay" của người dùng có thể là "ngày mai" theo con số tính được.
+  const { ctx } = erpClient({ zone: "fallback" });
+  const today = await siteToday(ctx);
+  const tomorrow = shiftDate(today, 1);
+  const { result } = await runEmployee(
+    { employee: "me", from_date: tomorrow },
+    { zone: "fallback" },
+  );
+  assertEquals(result.period.from_date, tomorrow);
+  assertEquals(result.period.to_date, tomorrow);
+  assertEquals(result.period.includes_today, true);
+
+  await assertRejects(
+    () =>
+      runEmployee({ employee: "me", from_date: shiftDate(today, 2) }, {
+        zone: "fallback",
+      }),
+    Error,
+    "after",
+  );
+  // Đọc được múi giờ thật thì không nới.
+  await assertRejects(
+    () => runEmployee({ employee: "me", from_date: tomorrow }),
+    Error,
+    "after the site's today",
+  );
+});
+
 // ── Hình dạng kết quả ────────────────────────────────────────────────────────
 
 Deno.test(`${EMPLOYEE_TOOL} - the contract envelope and its four sections`, async () => {
@@ -781,17 +922,19 @@ function teamReport(args: Record<string, unknown>) {
     to_date: args.to_date,
     scope: "team",
     summary: totals(300, 120, 40, 150),
+    // Đúng thứ tự ERP trả: điểm design giảm dần. Người nhiều điểm hơn có tên xếp SAU, để thứ tự
+    // theo điểm và thứ tự theo tên khác nhau và test bắt được việc thiếu bước xếp lại.
     members: [
       {
-        user: "duc@havigroup.llc",
-        full_name: "Đỗ Văn Đức",
+        user: "an1@havigroup.llc",
+        full_name: "Nguyễn Văn An",
         designation: "Chuyên viên thiết kế",
         department: "Design - HVG",
         ...totals(200, 80, 0, 90),
       },
       {
-        user: "an1@havigroup.llc",
-        full_name: "Nguyễn Văn An",
+        user: "duc@havigroup.llc",
+        full_name: "Đỗ Văn Đức",
         designation: "Chuyên viên thiết kế",
         department: "Design - HVG",
         ...totals(100, 40, 40, 60),
@@ -816,7 +959,7 @@ Deno.test(`${TEAM_TOOL} - sends both dates by POST and lists members by name, no
   // ERP xếp theo điểm; tool kèm cặp không xếp hạng, nên xếp theo tên.
   assertEquals(
     result.members.map((member: Json) => member.full_name),
-    ["Đỗ Văn Đức", "Nguyễn Văn An"].sort((a, b) => a.localeCompare(b, "vi")),
+    ["Đỗ Văn Đức", "Nguyễn Văn An"],
   );
   const rules = JSON.stringify(result.data_quality.rules);
   assertStringIncludes(rules, "ranking");

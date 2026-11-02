@@ -584,15 +584,21 @@ the caller can see.
 outside the caller's scope is reported as not found with the same message as a
 name that does not exist. Matching stops at the first tier with a hit:
 
-| Input                                          | Result                                       |
-| ---------------------------------------------- | -------------------------------------------- |
-| `me`, `self`, `myself`, `@me`                  | The caller (`match: "self"`)                 |
-| Contains `@`                                   | Case-insensitive email match, else not found |
-| Exact full name, marks included                | Picked if exactly one (`match: "exact"`)     |
-| Full name typed without marks                  | Picked if exactly one (`match: "folded"`)    |
-| Typed with marks that differ ("Hoa" for "Hòa") | Always asks the user to confirm              |
-| Every word is a word of the name ("Đức")       | Always asks the user to confirm              |
-| Two or more people at the tier that matched    | Asks which one; at most 10 candidates        |
+| Input                                                        | Result                                       |
+| ------------------------------------------------------------ | -------------------------------------------- |
+| `me`, `self`, `myself`, `@me`                                | The caller (`match: "self"`)                 |
+| Contains `@`                                                 | Case-insensitive email match, else not found |
+| Full name typed with marks, marks matching                   | Picked if exactly one (`match: "exact"`)     |
+| Full name typed without marks                                | Picked if exactly one (`match: "folded"`)    |
+| Typed with marks that differ ("Lê Thị Hoa" for "Lê Thị Hòa") | Always asks the user to confirm              |
+| Every word is a word of the name ("Đức")                     | Always asks the user to confirm              |
+| Two or more people at the tier that matched                  | Asks which one; at most 10 candidates        |
+
+The two accepted tone placements ("Hòa" and "Hoà", "Thủy" and "Thuỷ", "Khỏe" and
+"Khoẻ") count as the same spelling, since the keyboard picks one, not the user.
+A name stored without marks says nothing about the real marks, so it never loses
+to a marked namesake: with "Nguyễn Văn Đức" and a colleague stored as "Nguyen
+Van Duc", both "Nguyễn Văn Đức" and "Nguyen Van Duc" ask which one.
 
 An ambiguity is an `AmbiguousLinkError` on `employee` whose candidate ids are
 ERP emails. With `MCP_MRTR_SIGNING_KEY` set the client shows a choice form;
@@ -606,8 +612,15 @@ ranges and periods longer than 93 days (the ERP report's limit) are refused, not
 corrected. With `compare: "previous_period"` (the default) the period of equal
 length right before is fetched as well.
 
-**What.** `contract_version: 1` with `subject`, `viewer`, `period`, `sections`
-and `data_quality`. Sections:
+A period that reaches today has `period.includes_today: true` and a warning:
+today is still in progress, so with a comparison `change` understates the period
+and a negative value is not a decline. A caller who cannot read System Settings
+gets the site time zone from the fallback source, which can lag the site clock
+by hours (see "Analytics date windows"), so for them one extra day is accepted
+as "today" rather than refusing the user's today just after midnight.
+
+**What.** `contract_version: 1` with `subject`, `viewer`, `period` (with
+`includes_today`), `sections` and `data_quality`. Sections:
 
 - `volume`: `summary` (`design_points`, `design_lines`, `fulfill_lines`,
   `orders`), `previous` and `change` (current minus previous), `by_team`,

@@ -163,6 +163,99 @@ Deno.test("resolveReportPerson - the exact spelling wins over a folded twin", ()
   );
 });
 
+Deno.test("resolveReportPerson - an unmarked name never picks between a marked and an unmarked namesake", () => {
+  // HR có lúc lưu tên không dấu (chép từ tên tài khoản ngân hàng). Gõ không dấu thì không phân
+  // biệt được hai người này, nên phải hỏi lại chứ không được coi tên không dấu là "đúng tên".
+  const people: ReportPerson[] = [
+    { user: "duc.a@havigroup.llc", full_name: "Nguyen Van Duc" },
+    { user: "duc.b@havigroup.llc", full_name: "Nguyễn Văn Đức" },
+  ];
+  for (const input of ["Nguyen Van Duc", "nguyen van duc"]) {
+    const error = ambiguity(input, people);
+    assertEquals(
+      error.candidates.map((candidate) => candidate.id).sort(),
+      ["duc.a@havigroup.llc", "duc.b@havigroup.llc"],
+      input,
+    );
+  }
+});
+
+Deno.test("resolveReportPerson - a marked name does not pick over a namesake stored without marks", () => {
+  // Tên lưu không dấu không mang thông tin về dấu, nên nó khớp được với mọi cách gõ có dấu.
+  const people: ReportPerson[] = [
+    { user: "duc.a@havigroup.llc", full_name: "Nguyen Van Duc" },
+    { user: "duc.b@havigroup.llc", full_name: "Nguyễn Văn Đức" },
+  ];
+  const error = ambiguity("Nguyễn Văn Đức", people);
+  assertEquals(
+    error.candidates.map((candidate) => candidate.id).sort(),
+    ["duc.a@havigroup.llc", "duc.b@havigroup.llc"],
+  );
+  assertStringIncludes(error.message, "ask the user");
+});
+
+Deno.test("resolveReportPerson - a lone name stored without marks still resolves", () => {
+  const people: ReportPerson[] = [
+    { user: "duc.a@havigroup.llc", full_name: "Nguyen Van Duc" },
+  ];
+  const resolved = resolve("Nguyen Van Duc", people);
+  assertEquals(resolved.person.user, "duc.a@havigroup.llc");
+  assertEquals(resolved.match, "folded");
+});
+
+// Hai cách đặt dấu thanh đều được chấp nhận: kiểu cũ đặt trên nguyên âm cuối ("Hoà", "Thuý"),
+// kiểu mới đặt trên nguyên âm chính ("Hòa", "Thúy"). Bộ gõ quyết định cách nào, không phải người
+// gõ, nên chuỗi được viết bằng mã thoát để test không phụ thuộc bộ gõ của người sửa file.
+const HOA_OLD = "Nguyễn Thị Hoà"; // Hoà: dấu huyền trên "a"
+const HOA_NEW = "Nguyễn Thị Hòa"; // Hòa: dấu huyền trên "o"
+
+Deno.test("resolveReportPerson - old and new tone placement are the same name", () => {
+  const pairs: Array<[string, string]> = [
+    ["Lê Thị Thuý", "Lê Thị Thúy"], // Thuý / Thúy
+    ["Lê Thị Thuỷ", "Lê Thị Thủy"], // Thuỷ / Thủy
+    [HOA_OLD, HOA_NEW],
+    ["Trần Văn Khoẻ", "Trần Văn Khỏe"], // Khoẻ / Khỏe
+  ];
+  for (const [stored, typed] of pairs) {
+    for (const [left, right] of [[stored, typed], [typed, stored]]) {
+      const resolved = resolve(right, [{
+        user: "x@havigroup.llc",
+        full_name: left,
+      }]);
+      assertEquals(resolved.match, "exact", `${left} <- ${right}`);
+    }
+  }
+});
+
+Deno.test("resolveReportPerson - namesakes in two tone placements are asked about", () => {
+  const people: ReportPerson[] = [
+    { user: "hoa.old@havigroup.llc", full_name: HOA_OLD },
+    { user: "hoa.new@havigroup.llc", full_name: HOA_NEW },
+  ];
+  for (const input of [HOA_OLD, HOA_NEW]) {
+    const error = ambiguity(input, people);
+    assertEquals(
+      error.candidates.map((candidate) => candidate.id).sort(),
+      ["hoa.new@havigroup.llc", "hoa.old@havigroup.llc"],
+    );
+  }
+});
+
+Deno.test("resolveReportPerson - moving the tone mark never merges different tones or words", () => {
+  // Thủy và Thúy khác dấu thanh, không phải khác vị trí: vẫn phải hỏi xác nhận.
+  const error = ambiguity("Lê Thị Thúy", [
+    { user: "thuy@havigroup.llc", full_name: "Lê Thị Thủy" },
+  ]);
+  assertStringIncludes(error.message, "confirm");
+  // "Hoàng" chỉ có một cách đặt dấu và không có nguyên âm cuối để dời dấu sang.
+  assertEquals(
+    resolve("Hoàng Văn Nam", [
+      { user: "nam@havigroup.llc", full_name: "Hoàng Văn Nam" },
+    ]).match,
+    "exact",
+  );
+});
+
 // ── Bậc 3' và 4: không bao giờ tự chọn ────────────────────────────────────────
 
 Deno.test("resolveReportPerson - different marks ask for confirmation even with one match", () => {
