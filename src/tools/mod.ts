@@ -23,6 +23,7 @@ import { operationsTools } from "./operations.ts";
 import { calendarTools } from "./calendar.ts";
 import { setupTools } from "./setup.ts";
 import { analyticsTools } from "./analytics.ts";
+import { performanceTools } from "./performance.ts";
 import { kanbanTools } from "./kanban.ts";
 import { discoveryTools } from "./discovery.ts";
 import type { ErpNextTool, ErpNextToolCategory } from "./types.ts";
@@ -42,6 +43,7 @@ export {
   manufacturingTools,
   omsTools,
   operationsTools,
+  performanceTools,
   projectTools,
   purchasingTools,
   salesTools,
@@ -70,7 +72,8 @@ export const toolsByCategory: Record<string, ErpNextTool[]> = {
   assets: assetsTools,
   operations: operationsTools,
   setup: setupTools,
-  analytics: analyticsTools,
+  // Tool hiệu suất nhân sự nằm chung nhóm analytics: cùng là tool đọc tổng hợp, không ghi.
+  analytics: [...analyticsTools, ...performanceTools],
   kanban: kanbanTools,
   discovery: discoveryTools,
 };
@@ -92,6 +95,7 @@ export const allTools: ErpNextTool[] = [
   ...operationsTools,
   ...setupTools,
   ...analyticsTools,
+  ...performanceTools,
   ...kanbanTools,
   ...discoveryTools,
 ];

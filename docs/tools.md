@@ -1,4 +1,4 @@
-# Tools Reference (143)
+# Tools Reference (145)
 
 Full reference for all ERPNext MCP tools. See [README](../README.md) for
 overview.
@@ -419,7 +419,7 @@ can be absent from documents even when the DocType itself is readable.
 | `erpnext_kanban_get_board` | Get a normalized kanban board for `Task`, `Opportunity`, or `Issue` |
 | `erpnext_kanban_move_card` | Execute a validated card move with business error handling          |
 
-## Analytics (17) → chart-viewer / kpi-viewer / funnel-viewer
+## Analytics (19) → chart-viewer / kpi-viewer / funnel-viewer
 
 Monetary analytics accept optional `company`. It may be omitted only when
 exactly one Company is visible to the caller. With several visible companies,
@@ -542,22 +542,100 @@ raise an error. A failed chunk never produces a partial chart or stock fallback.
 The lookup rejects more than 100,000 requested IDs or 1,000 encoded chunks
 before sending requests.
 
-| Tool                        | Viewer | Description                                           |
-| --------------------------- | ------ | ----------------------------------------------------- |
-| `erpnext_stock_chart`       | chart  | Bar chart of stock levels by item/warehouse           |
-| `erpnext_sales_chart`       | chart  | Revenue by customer, item, or status (bar/donut)      |
-| `erpnext_revenue_trend`     | chart  | Monthly revenue trend (line/area, per customer)       |
-| `erpnext_order_breakdown`   | chart  | Orders by customer/status (stacked-bar/pie/donut)     |
-| `erpnext_revenue_vs_orders` | chart  | Revenue bars + order count line (dual axis)           |
-| `erpnext_stock_treemap`     | chart  | Stock value treemap by item or warehouse              |
-| `erpnext_product_radar`     | chart  | Radar comparing items (stock, value, orders, revenue) |
-| `erpnext_price_vs_qty`      | chart  | Scatter: selling price vs quantity ordered            |
-| `erpnext_ar_aging`          | chart  | AR aging buckets (0-30, 31-60, 61-90, 90+ days)       |
-| `erpnext_gross_profit`      | chart  | Revenue bars + margin % line by item/customer         |
-| `erpnext_profit_loss`       | chart  | P&L: income vs expenses per month + net profit        |
-| `erpnext_kpi_revenue`       | kpi    | Revenue MTD with delta vs previous month + sparkline  |
-| `erpnext_kpi_outstanding`   | kpi    | Outstanding receivables (count + total)               |
-| `erpnext_kpi_orders`        | kpi    | Orders this month with delta vs last month            |
-| `erpnext_kpi_gross_margin`  | kpi    | Gross margin % based on valuation rates               |
-| `erpnext_kpi_overdue`       | kpi    | Overdue invoices count + value                        |
-| `erpnext_sales_funnel`      | funnel | Lead → Opportunity → Quotation → Order funnel         |
+| Tool                               | Viewer | Description                                           |
+| ---------------------------------- | ------ | ----------------------------------------------------- |
+| `erpnext_stock_chart`              | chart  | Bar chart of stock levels by item/warehouse           |
+| `erpnext_sales_chart`              | chart  | Revenue by customer, item, or status (bar/donut)      |
+| `erpnext_revenue_trend`            | chart  | Monthly revenue trend (line/area, per customer)       |
+| `erpnext_order_breakdown`          | chart  | Orders by customer/status (stacked-bar/pie/donut)     |
+| `erpnext_revenue_vs_orders`        | chart  | Revenue bars + order count line (dual axis)           |
+| `erpnext_stock_treemap`            | chart  | Stock value treemap by item or warehouse              |
+| `erpnext_product_radar`            | chart  | Radar comparing items (stock, value, orders, revenue) |
+| `erpnext_price_vs_qty`             | chart  | Scatter: selling price vs quantity ordered            |
+| `erpnext_ar_aging`                 | chart  | AR aging buckets (0-30, 31-60, 61-90, 90+ days)       |
+| `erpnext_gross_profit`             | chart  | Revenue bars + margin % line by item/customer         |
+| `erpnext_profit_loss`              | chart  | P&L: income vs expenses per month + net profit        |
+| `erpnext_kpi_revenue`              | kpi    | Revenue MTD with delta vs previous month + sparkline  |
+| `erpnext_kpi_outstanding`          | kpi    | Outstanding receivables (count + total)               |
+| `erpnext_kpi_orders`               | kpi    | Orders this month with delta vs last month            |
+| `erpnext_kpi_gross_margin`         | kpi    | Gross margin % based on valuation rates               |
+| `erpnext_kpi_overdue`              | kpi    | Overdue invoices count + value                        |
+| `erpnext_sales_funnel`             | funnel | Lead → Opportunity → Quotation → Order funnel         |
+| `erpnext_employee_performance_get` | -      | One person's work volume against the previous period  |
+| `erpnext_team_performance_get`     | -      | Work volume per person and per team, listed by name   |
+
+### Staff performance
+
+`erpnext_employee_performance_get` is the tool for "how is [name] doing" and
+"đánh giá hiệu suất của [name]". `erpnext_team_performance_get` gives the same
+volume figures for everyone the caller may view. Both wrap
+`hvg_sdc_sync.personal_report`, the report behind the Personal Report page of
+the HVG workspace, so the numbers match what the caller sees there. Every call
+is a POST: a GET would put the reviewed person's email and the period in proxy
+access logs.
+
+Both tools run only with the caller's own token. Under a shared service account
+(a static API key, or `MCP_CALLER_IDENTITY=off`) they refuse before any ERP
+call, because the answer would show what that account can see instead of what
+the caller can see.
+
+**Who.** `employee` is matched only against the `people` list of
+`get_report_context`, the same list the Personal Report page offers. A person
+outside the caller's scope is reported as not found with the same message as a
+name that does not exist. Matching stops at the first tier with a hit:
+
+| Input                                                        | Result                                       |
+| ------------------------------------------------------------ | -------------------------------------------- |
+| `me`, `self`, `myself`, `@me`                                | The caller (`match: "self"`)                 |
+| Contains `@`                                                 | Case-insensitive email match, else not found |
+| Full name typed with marks, marks matching                   | Picked if exactly one (`match: "exact"`)     |
+| Full name typed without marks                                | Picked if exactly one (`match: "folded"`)    |
+| Typed with marks that differ ("Lê Thị Hoa" for "Lê Thị Hòa") | Always asks the user to confirm              |
+| Every word is a word of the name ("Đức")                     | Always asks the user to confirm              |
+| Two or more people at the tier that matched                  | Asks which one; at most 10 candidates        |
+
+The two accepted tone placements ("Hòa" and "Hoà", "Thủy" and "Thuỷ", "Khỏe" and
+"Khoẻ") count as the same spelling, since the keyboard picks one, not the user.
+A name stored without marks says nothing about the real marks, so it never loses
+to a marked namesake: with "Nguyễn Văn Đức" and a colleague stored as "Nguyen
+Van Duc", both "Nguyễn Văn Đức" and "Nguyen Van Duc" ask which one.
+
+An ambiguity is an `AmbiguousLinkError` on `employee` whose candidate ids are
+ERP emails. With `MCP_MRTR_SIGNING_KEY` set the client shows a choice form;
+without it the error text lists the candidates and tells the model to ask the
+user, never to pick.
+
+**When.** Dates are in the site time zone. With no dates the period is the 30
+days ending yesterday, so it holds only complete days. `to_date` alone gives the
+30 days ending on it; `from_date` alone runs to today. Future dates, reversed
+ranges and periods longer than 93 days (the ERP report's limit) are refused, not
+corrected. With `compare: "previous_period"` (the default) the period of equal
+length right before is fetched as well.
+
+A period that reaches today has `period.includes_today: true` and a warning:
+today is still in progress, so with a comparison `change` understates the period
+and a negative value is not a decline. A caller who cannot read System Settings
+gets the site time zone from the fallback source, which can lag the site clock
+by hours (see "Analytics date windows"), so for them one extra day is accepted
+as "today" rather than refusing the user's today just after midnight.
+
+**What.** `contract_version: 1` with `subject`, `viewer`, `period` (with
+`includes_today`), `sections` and `data_quality`. Sections:
+
+- `volume`: `summary` (`design_points`, `design_lines`, `fulfill_lines`,
+  `orders`), `previous` and `change` (current minus previous), `by_team`,
+  `by_day`, `recent` (the newest lines of both kinds, `detail_limit` 0 to 50,
+  default 10) and `truncated` (ERP keeps at most 2,000 detail rows per kind;
+  totals stay complete).
+- `tasks`, `sku`, `quality`: `status: "unavailable"`,
+  `reason: "erp_endpoint_missing"`. Per-person Task workload and the SKU sales
+  and growth of the products a person worked on need ERP endpoints that do not
+  exist yet. The tool says so instead of estimating them.
+
+A viewer whose report scope is `team` sees another person's lines only on orders
+within the viewer's own order scope. `volume.visibility` and a warning say so,
+because a low number there can mean "not visible" rather than "not done". The
+figures are for coaching: no tool combines them into a score, and
+`erpnext_team_performance_get` lists members by name, not by points. Only people
+with at least one counted line appear in it; a viewer whose scope is themselves
+only gets a refusal that points to `erpnext_employee_performance_get` with `me`.
