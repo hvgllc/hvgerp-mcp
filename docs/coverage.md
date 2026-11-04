@@ -1,6 +1,6 @@
 # ERPNext MCP Library - Coverage
 
-## Covered (145 tools, 17 categories)
+## Covered (146 tools, 17 categories)
 
 ### Identity (2 tools)
 
@@ -159,29 +159,30 @@ Flag-gated (only with `MCP_EVENTS_ENABLED`, not in the count above):
 | `erpnext_kanban_get_board` | Task / Opportunity / Issue | Get normalized kanban board with columns, cards, transitions, pagination, and refresh metadata | kanban-viewer |
 | `erpnext_kanban_move_card` | Task / Opportunity / Issue | Execute validated move with optimistic reconciliation and business error payloads              | kanban-viewer |
 
-### Analytics (19 tools)
+### Analytics (20 tools)
 
-| Tool                               | DocType / Domain    | Operations                                           | UI Viewer     |
-| ---------------------------------- | ------------------- | ---------------------------------------------------- | ------------- |
-| `erpnext_stock_chart`              | Bin / Inventory     | Bar or horizontal-bar stock chart                    | chart-viewer  |
-| `erpnext_sales_chart`              | Sales Invoice       | Revenue chart by customer, item, or status           | chart-viewer  |
-| `erpnext_revenue_trend`            | Sales Order         | Revenue trend line/area chart                        | chart-viewer  |
-| `erpnext_order_breakdown`          | Sales Order         | Stacked-bar / pie / donut order breakdown            | chart-viewer  |
-| `erpnext_revenue_vs_orders`        | Sales Order         | Dual-axis revenue vs order count                     | chart-viewer  |
-| `erpnext_stock_treemap`            | Bin / Inventory     | Stock value treemap                                  | chart-viewer  |
-| `erpnext_product_radar`            | Inventory / Sales   | Multi-axis product comparison                        | chart-viewer  |
-| `erpnext_price_vs_qty`             | Inventory / Sales   | Scatter plot price vs quantity                       | chart-viewer  |
-| `erpnext_ar_aging`                 | Sales Invoice       | AR aging buckets                                     | chart-viewer  |
-| `erpnext_gross_profit`             | Sales Invoice Item  | Revenue vs margin composed chart                     | chart-viewer  |
-| `erpnext_profit_loss`              | Sales / Purchase    | Income vs expenses per month                         | chart-viewer  |
-| `erpnext_kpi_revenue`              | Sales Order         | Revenue KPI with delta + sparkline                   | kpi-viewer    |
-| `erpnext_kpi_outstanding`          | Sales Invoice       | Outstanding receivables KPI                          | kpi-viewer    |
-| `erpnext_kpi_orders`               | Sales Order         | Order volume KPI                                     | kpi-viewer    |
-| `erpnext_kpi_gross_margin`         | Sales / Inventory   | Margin KPI                                           | kpi-viewer    |
-| `erpnext_kpi_overdue`              | Sales Invoice       | Overdue invoice KPI                                  | kpi-viewer    |
-| `erpnext_sales_funnel`             | CRM / Sales         | Lead to order funnel                                 | funnel-viewer |
-| `erpnext_employee_performance_get` | HVG Personal Report | One person's work volume against the previous period | -             |
-| `erpnext_team_performance_get`     | HVG Personal Report | Work volume per person and per team                  | -             |
+| Tool                                       | DocType / Domain                         | Operations                                                | UI Viewer     |
+| ------------------------------------------ | ---------------------------------------- | --------------------------------------------------------- | ------------- |
+| `erpnext_stock_chart`                      | Bin / Inventory                          | Bar or horizontal-bar stock chart                         | chart-viewer  |
+| `erpnext_sales_chart`                      | Sales Invoice                            | Revenue chart by customer, item, or status                | chart-viewer  |
+| `erpnext_revenue_trend`                    | Sales Order                              | Revenue trend line/area chart                             | chart-viewer  |
+| `erpnext_order_breakdown`                  | Sales Order                              | Stacked-bar / pie / donut order breakdown                 | chart-viewer  |
+| `erpnext_revenue_vs_orders`                | Sales Order                              | Dual-axis revenue vs order count                          | chart-viewer  |
+| `erpnext_stock_treemap`                    | Bin / Inventory                          | Stock value treemap                                       | chart-viewer  |
+| `erpnext_product_radar`                    | Inventory / Sales                        | Multi-axis product comparison                             | chart-viewer  |
+| `erpnext_price_vs_qty`                     | Inventory / Sales                        | Scatter plot price vs quantity                            | chart-viewer  |
+| `erpnext_ar_aging`                         | Sales Invoice                            | AR aging buckets                                          | chart-viewer  |
+| `erpnext_gross_profit`                     | Sales Invoice Item                       | Revenue vs margin composed chart                          | chart-viewer  |
+| `erpnext_profit_loss`                      | Sales / Purchase                         | Income vs expenses per month                              | chart-viewer  |
+| `erpnext_kpi_revenue`                      | Sales Order                              | Revenue KPI with delta + sparkline                        | kpi-viewer    |
+| `erpnext_kpi_outstanding`                  | Sales Invoice                            | Outstanding receivables KPI                               | kpi-viewer    |
+| `erpnext_kpi_orders`                       | Sales Order                              | Order volume KPI                                          | kpi-viewer    |
+| `erpnext_kpi_gross_margin`                 | Sales / Inventory                        | Margin KPI                                                | kpi-viewer    |
+| `erpnext_kpi_overdue`                      | Sales Invoice                            | Overdue invoice KPI                                       | kpi-viewer    |
+| `erpnext_sales_funnel`                     | CRM / Sales                              | Lead to order funnel                                      | funnel-viewer |
+| `erpnext_employee_performance_get`         | HVG Person Performance + Personal Report | One person's tasks, SKU sales, growth, quality and volume | -             |
+| `erpnext_employee_performance_detail_list` | HVG Person Performance                   | Task and SKU rows behind that summary, by page            | -             |
+| `erpnext_team_performance_get`             | HVG Personal Report                      | Work volume per person and per team                       | -             |
 
 ### Purchasing (11 tools)
 

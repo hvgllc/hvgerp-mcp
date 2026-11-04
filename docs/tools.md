@@ -1,4 +1,4 @@
-# Tools Reference (145)
+# Tools Reference (146)
 
 Full reference for all ERPNext MCP tools. See [README](../README.md) for
 overview.
@@ -419,7 +419,7 @@ can be absent from documents even when the DocType itself is readable.
 | `erpnext_kanban_get_board` | Get a normalized kanban board for `Task`, `Opportunity`, or `Issue` |
 | `erpnext_kanban_move_card` | Execute a validated card move with business error handling          |
 
-## Analytics (19) → chart-viewer / kpi-viewer / funnel-viewer
+## Analytics (20) → chart-viewer / kpi-viewer / funnel-viewer
 
 Monetary analytics accept optional `company`. It may be omitted only when
 exactly one Company is visible to the caller. With several visible companies,
@@ -542,42 +542,52 @@ raise an error. A failed chunk never produces a partial chart or stock fallback.
 The lookup rejects more than 100,000 requested IDs or 1,000 encoded chunks
 before sending requests.
 
-| Tool                               | Viewer | Description                                           |
-| ---------------------------------- | ------ | ----------------------------------------------------- |
-| `erpnext_stock_chart`              | chart  | Bar chart of stock levels by item/warehouse           |
-| `erpnext_sales_chart`              | chart  | Revenue by customer, item, or status (bar/donut)      |
-| `erpnext_revenue_trend`            | chart  | Monthly revenue trend (line/area, per customer)       |
-| `erpnext_order_breakdown`          | chart  | Orders by customer/status (stacked-bar/pie/donut)     |
-| `erpnext_revenue_vs_orders`        | chart  | Revenue bars + order count line (dual axis)           |
-| `erpnext_stock_treemap`            | chart  | Stock value treemap by item or warehouse              |
-| `erpnext_product_radar`            | chart  | Radar comparing items (stock, value, orders, revenue) |
-| `erpnext_price_vs_qty`             | chart  | Scatter: selling price vs quantity ordered            |
-| `erpnext_ar_aging`                 | chart  | AR aging buckets (0-30, 31-60, 61-90, 90+ days)       |
-| `erpnext_gross_profit`             | chart  | Revenue bars + margin % line by item/customer         |
-| `erpnext_profit_loss`              | chart  | P&L: income vs expenses per month + net profit        |
-| `erpnext_kpi_revenue`              | kpi    | Revenue MTD with delta vs previous month + sparkline  |
-| `erpnext_kpi_outstanding`          | kpi    | Outstanding receivables (count + total)               |
-| `erpnext_kpi_orders`               | kpi    | Orders this month with delta vs last month            |
-| `erpnext_kpi_gross_margin`         | kpi    | Gross margin % based on valuation rates               |
-| `erpnext_kpi_overdue`              | kpi    | Overdue invoices count + value                        |
-| `erpnext_sales_funnel`             | funnel | Lead → Opportunity → Quotation → Order funnel         |
-| `erpnext_employee_performance_get` | -      | One person's work volume against the previous period  |
-| `erpnext_team_performance_get`     | -      | Work volume per person and per team, listed by name   |
+| Tool                                       | Viewer | Description                                           |
+| ------------------------------------------ | ------ | ----------------------------------------------------- |
+| `erpnext_stock_chart`                      | chart  | Bar chart of stock levels by item/warehouse           |
+| `erpnext_sales_chart`                      | chart  | Revenue by customer, item, or status (bar/donut)      |
+| `erpnext_revenue_trend`                    | chart  | Monthly revenue trend (line/area, per customer)       |
+| `erpnext_order_breakdown`                  | chart  | Orders by customer/status (stacked-bar/pie/donut)     |
+| `erpnext_revenue_vs_orders`                | chart  | Revenue bars + order count line (dual axis)           |
+| `erpnext_stock_treemap`                    | chart  | Stock value treemap by item or warehouse              |
+| `erpnext_product_radar`                    | chart  | Radar comparing items (stock, value, orders, revenue) |
+| `erpnext_price_vs_qty`                     | chart  | Scatter: selling price vs quantity ordered            |
+| `erpnext_ar_aging`                         | chart  | AR aging buckets (0-30, 31-60, 61-90, 90+ days)       |
+| `erpnext_gross_profit`                     | chart  | Revenue bars + margin % line by item/customer         |
+| `erpnext_profit_loss`                      | chart  | P&L: income vs expenses per month + net profit        |
+| `erpnext_kpi_revenue`                      | kpi    | Revenue MTD with delta vs previous month + sparkline  |
+| `erpnext_kpi_outstanding`                  | kpi    | Outstanding receivables (count + total)               |
+| `erpnext_kpi_orders`                       | kpi    | Orders this month with delta vs last month            |
+| `erpnext_kpi_gross_margin`                 | kpi    | Gross margin % based on valuation rates               |
+| `erpnext_kpi_overdue`                      | kpi    | Overdue invoices count + value                        |
+| `erpnext_sales_funnel`                     | funnel | Lead → Opportunity → Quotation → Order funnel         |
+| `erpnext_employee_performance_get`         | -      | One person's tasks, SKU sales, quality and volume     |
+| `erpnext_employee_performance_detail_list` | -      | Task and SKU rows behind that summary, by page        |
+| `erpnext_team_performance_get`             | -      | Work volume per person and per team, listed by name   |
 
 ### Staff performance
 
 `erpnext_employee_performance_get` is the tool for "how is [name] doing" and
-"đánh giá hiệu suất của [name]". `erpnext_team_performance_get` gives the same
-volume figures for everyone the caller may view. Both wrap
-`hvg_sdc_sync.personal_report`, the report behind the Personal Report page of
-the HVG workspace, so the numbers match what the caller sees there. Every call
-is a POST: a GET would put the reviewed person's email and the period in proxy
-access logs.
+"đánh giá hiệu suất của [name]". It returns one person's task workload, the SKUs
+those tasks produced and how they sold, quality signals, and design and fulfill
+volume on order lines, each section on its own.
+`erpnext_employee_performance_detail_list` pages through the rows behind the
+`tasks` and `sku` sections. `erpnext_team_performance_get` gives order-line
+volume for everyone the caller may view.
 
-Both tools run only with the caller's own token. Under a shared service account
-(a static API key, or `MCP_CALLER_IDENTITY=off`) they refuse before any ERP
-call, because the answer would show what that account can see instead of what
-the caller can see.
+Two ERP modules answer. Volume comes from `hvg_sdc_sync.personal_report`, the
+report behind the Personal Report page of the HVG workspace, so the numbers
+match what the caller sees there. Tasks, SKU sales, growth and quality come from
+`hvg_sdc_sync.person_performance` under staff performance contract v2
+([`staff-performance-contract.md`](staff-performance-contract.md)), which
+defines every number and the rules both sides check. Every call is a POST: a GET
+would put the reviewed person's email and the period in proxy access logs.
+
+All three tools run only with the caller's own token. Under a shared service
+account (a static API key, or `MCP_CALLER_IDENTITY=off`) they refuse before any
+ERP call, because the answer would show what that account can see instead of
+what the caller can see. `ERPNEXT_METHOD_ALLOWLIST` does not reach them: it only
+limits `erpnext_method_call`, so setting it does not switch these tools off.
 
 **Who.** `employee` is matched only against the `people` list of
 `get_report_context`, the same list the Personal Report page offers. A person
@@ -608,34 +618,89 @@ user, never to pick.
 **When.** Dates are in the site time zone. With no dates the period is the 30
 days ending yesterday, so it holds only complete days. `to_date` alone gives the
 30 days ending on it; `from_date` alone runs to today. Future dates, reversed
-ranges and periods longer than 93 days (the ERP report's limit) are refused, not
+ranges and periods longer than 93 days (the ERP limit) are refused, not
 corrected. With `compare: "previous_period"` (the default) the period of equal
-length right before is fetched as well.
+length right before is measured as well: volume `change`, SKU `previous_qty` and
+growth.
 
 A period that reaches today has `period.includes_today: true` and a warning:
-today is still in progress, so with a comparison `change` understates the period
-and a negative value is not a decline. A caller who cannot read System Settings
-gets the site time zone from the fallback source, which can lag the site clock
-by hours (see "Analytics date windows"), so for them one extra day is accepted
-as "today" rather than refusing the user's today just after midnight.
+today is still in progress, so with a comparison `change` and SKU growth
+understate the period, and a negative change or a falling trend is not a
+decline. A caller who cannot read System Settings gets the site time zone from
+the fallback source, which can lag the site clock by hours (see "Analytics date
+windows"), so for them one extra day is accepted as "today" rather than refusing
+the user's today just after midnight.
 
-**What.** `contract_version: 1` with `subject`, `viewer`, `period` (with
-`includes_today`), `sections` and `data_quality`. Sections:
+**What.** `contract_version: 2`. The keys come in this order, so that a client
+which cuts a long answer loses rows rather than instructions: `subject` (with a
+`summary` of the headline counts, null for a section without figures), `viewer`,
+`period`, `how_to_present`, `data_quality` (`rules`, `coverage`, `warnings`),
+`next_questions`, `sections`.
 
 - `volume`: `summary` (`design_points`, `design_lines`, `fulfill_lines`,
   `orders`), `previous` and `change` (current minus previous), `by_team`,
   `by_day`, `recent` (the newest lines of both kinds, `detail_limit` 0 to 50,
   default 10) and `truncated` (ERP keeps at most 2,000 detail rows per kind;
-  totals stay complete).
-- `tasks`, `sku`, `quality`: `status: "unavailable"`,
-  `reason: "erp_endpoint_missing"`. Per-person Task workload and the SKU sales
-  and growth of the products a person worked on need ERP endpoints that do not
-  exist yet. The tool says so instead of estimating them.
+  totals stay complete). When ERP says the person has no design or fulfill role
+  and there are no such lines, the section is `not_applicable` instead of a
+  zero.
+- `tasks`: every task attributed to the person through its ToDo rows, so closed
+  work still counts after ERP clears `Task._assign` (which is why
+  `erpnext_task_list` undercounts it).
+  `assigned = completed + open + cancelled`, and completed tasks split by SKU
+  status (`with_sku`, `missing_sku`, `invalid_sku`). A low `with_sku` is not
+  poor work: research and support tasks never carry a SKU.
+- `sku`: the SKUs from those tasks (`sku_scope: "completed_in_period"`, the
+  default) or every SKU the person produced (`"portfolio"`), with the quantity
+  sold in the period and in the previous period, revenue per currency, and
+  `growth`. Sales count every submitted Sales Order, whichever orders the caller
+  may open, so every viewer sees the same figures; no order, customer or
+  merchant is named. SKUs other people also produced carry `people_sharing`:
+  their sales are shared, not split.
+- `quality`: `on_time_completion`, `reopened_by_other` and
+  `returned_from_review`, each a count over its denominator. Fewer than 5 cases
+  is `insufficient_sample`, with no rate.
 
-A viewer whose report scope is `team` sees another person's lines only on orders
-within the viewer's own order scope. `volume.visibility` and a warning say so,
-because a low number there can mean "not visible" rather than "not done". The
-figures are for coaching: no tool combines them into a score, and
-`erpnext_team_performance_get` lists members by name, not by points. Only people
-with at least one counted line appear in it; a viewer whose scope is themselves
-only gets a refusal that points to `erpnext_employee_performance_get` with `me`.
+`detail_limit` also sets how many rows `tasks` and `sku` embed (at least 1). A
+non-null `next_cursor`, or summary counts above the rows shown, mean there is
+more: page it with `erpnext_employee_performance_detail_list` (`section` is
+`tasks` or `sku`, `cursor`, `limit` 1 to 50, default 25), passing the same
+employee, dates, `compare` and `sku_scope`.
+
+**Growth.** `sku.growth.trend` follows fixed thresholds on quantity (rule E1 in
+the contract). A comparison window that starts before complete order data
+(`order_kpi_since`, 2026-10-12) gives `growth.status: "insufficient_baseline"`
+and no trend: `growth.first_evaluable_to` says from which period end growth can
+be evaluated, and a warning tells the model not to say sales grew or fell.
+
+**When ERP cannot answer.** The `volume` section does not depend on the v2
+module. For `tasks`, `sku` and `quality`:
+
+| ERP answer                                     | Summary tool                                  | Detail tool |
+| ---------------------------------------------- | --------------------------------------------- | ----------- |
+| No `person_performance` module (older ERP)     | `unavailable`, reason `erp_endpoint_missing`  | error       |
+| `PermissionError`                              | `unavailable`, reason `not_permitted`         | error       |
+| Outside contract v2 (schema, rule or identity) | `unavailable`, reason `erp_contract_mismatch` | error       |
+| Any other error                                | error                                         | error       |
+
+An answer outside the contract is withheld rather than shown wrong. Its note
+names at most three JSON paths and never the values behind them. The first
+warning tells the model which sections are unavailable and that
+`erpnext_task_list`, `erpnext_timesheet_list` and Appraisal cannot stand in for
+them.
+
+**How it is presented.** `how_to_present` asks for three parts: the measured
+figures next to their coverage, what was not measured and why, then
+`next_questions` as questions to discuss with the person. The figures are for
+coaching: no tool combines them into a score, a grade or a ranking. Task titles,
+SKU codes and item names are user-entered text, and the rules tell the model to
+treat them as data, not instructions.
+
+A viewer whose report scope is `team` sees another person's volume lines only on
+orders within the viewer's own order scope. `volume.visibility` and a warning
+say so, because a low number there can mean "not visible" rather than "not
+done". SKU sales are not limited that way, and a warning says the two cover
+different orders. `erpnext_team_performance_get` covers volume only and lists
+members by name, not by points. Only people with at least one counted line
+appear in it; a viewer whose scope is themselves only gets a refusal that points
+to `erpnext_employee_performance_get` with `me`.
