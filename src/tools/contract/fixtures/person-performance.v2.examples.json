@@ -1,0 +1,424 @@
+{
+  "summary_full": {
+    "contract_version": 2,
+    "user": "designer01@havigroup.llc",
+    "from_date": "2026-12-01",
+    "to_date": "2026-12-30",
+    "volume_applies": true,
+    "compare": {
+      "from_date": "2026-11-01",
+      "to_date": "2026-11-30"
+    },
+    "sections": {
+      "tasks": {
+        "status": "ok",
+        "summary": {
+          "assigned": 8,
+          "completed": 5,
+          "open": 2,
+          "cancelled": 1,
+          "owner_unassigned": 1,
+          "with_sku": 3,
+          "missing_sku": 1,
+          "invalid_sku": 1,
+          "title_redacted": 1,
+          "completion_sources": {
+            "completed_on": 3,
+            "born_completed": 1,
+            "version": 1,
+            "status_only": 0
+          }
+        },
+        "rows": [
+          {
+            "task": "TASK-2026-01234",
+            "subject": "Thiết kế áo thun Noel mẫu 3",
+            "title_redacted": false,
+            "project": "PROJ-0042",
+            "project_name": "Bộ sưu tập Noel 2026",
+            "status": "Completed",
+            "role": "assignee_closed",
+            "created_on": "2026-12-02",
+            "completed_on": "2026-12-05",
+            "completion_source": "completed_on",
+            "exp_end_date": "2026-12-06",
+            "sku": "HVG-TS-0310",
+            "sku_status": "ok"
+          },
+          {
+            "task": "TASK-2026-01240",
+            "subject": null,
+            "title_redacted": true,
+            "project": null,
+            "project_name": null,
+            "status": "Working",
+            "role": "assignee_open",
+            "created_on": "2026-12-10",
+            "completed_on": null,
+            "completion_source": null,
+            "exp_end_date": "2026-12-20",
+            "sku": null,
+            "sku_status": "not_applicable"
+          }
+        ],
+        "next_cursor": "eyJzZWN0aW9uIjoidGFza3MiLCJvZmZzZXQiOjJ9"
+      },
+      "sku": {
+        "status": "ok",
+        "scope": "completed_in_period",
+        "metric": "qty",
+        "sales_visibility": {
+          "mode": "all_orders",
+          "partial": false
+        },
+        "data_coverage": {
+          "order_kpi_since": "2026-10-12",
+          "sale_date_field": "transaction_date",
+          "channels": [
+            {
+              "channel": "tiktok",
+              "history_floor": "2026-10-12"
+            },
+            {
+              "channel": "ebay",
+              "history_floor": "2026-10-12"
+            },
+            {
+              "channel": "etsy",
+              "history_floor": null
+            }
+          ]
+        },
+        "summary": {
+          "skus": 3,
+          "skus_with_item": 2,
+          "skus_sold": 2,
+          "skus_unmatched": 1,
+          "skus_ambiguous": 0,
+          "skus_shared": 1,
+          "qty": 42,
+          "orders": 37,
+          "previous_qty": 20,
+          "previous_orders": 18,
+          "revenue": [
+            {
+              "currency": "USD",
+              "amount": 820.5,
+              "previous_amount": 410
+            }
+          ],
+          "revenue_basis": "Sales Order line amount in the order currency; TikTok lines are prorated from the order total."
+        },
+        "growth": {
+          "status": "ok",
+          "trend": "growing",
+          "first_evaluable_to": "2026-12-10"
+        },
+        "rows": [
+          {
+            "sku": "HVG-TS-0310",
+            "sales_status": "sold",
+            "task_count": 1,
+            "people_sharing": 2,
+            "first_completed_on": "2026-12-05",
+            "item_exists": true,
+            "item_names": [
+              "Áo thun Noel 0310"
+            ],
+            "match_mode": "exact",
+            "first_sold_on": "2026-12-07",
+            "sold_before_first_completion": false,
+            "qty": 30,
+            "orders": 26,
+            "previous_qty": 0,
+            "previous_orders": 0,
+            "trend": "new"
+          },
+          {
+            "sku": "HVG-MG-0077",
+            "sales_status": "unmatched_code",
+            "task_count": 1,
+            "people_sharing": 1,
+            "first_completed_on": "2026-12-12",
+            "item_exists": false,
+            "item_names": [],
+            "match_mode": null,
+            "first_sold_on": null,
+            "sold_before_first_completion": null,
+            "qty": 0,
+            "orders": 0,
+            "previous_qty": 0,
+            "previous_orders": 0,
+            "trend": null
+          }
+        ],
+        "next_cursor": "eyJzZWN0aW9uIjoic2t1Iiwib2Zmc2V0IjoyfQ"
+      },
+      "quality": {
+        "status": "ok",
+        "signals": [
+          {
+            "id": "on_time_completion",
+            "status": "not_measured",
+            "numerator": null,
+            "denominator": null,
+            "rate": null,
+            "reason": "disabled_by_site_config",
+            "basis": {
+              "with_deadline": 4,
+              "excluded_born_completed": 1,
+              "excluded_deadline_edited": 0,
+              "excluded_status_only": 0
+            }
+          },
+          {
+            "id": "reopened_by_other",
+            "status": "ok",
+            "numerator": 1,
+            "denominator": 5,
+            "rate": 0.2,
+            "reason": null,
+            "basis": {
+              "self_reopen": 1,
+              "other_reopen": 1,
+              "bot_reopen": 0
+            }
+          },
+          {
+            "id": "returned_from_review",
+            "status": "insufficient_sample",
+            "numerator": 1,
+            "denominator": 2,
+            "rate": null,
+            "reason": "below_minimum_sample",
+            "basis": {
+              "entered_review": 2,
+              "returned": 1,
+              "returned_by_other": 1
+            }
+          }
+        ]
+      }
+    },
+    "rules": [
+      {
+        "id": "task_attribution",
+        "text": "A task belongs to a person through a ToDo row (open or closed) on the task, or as its owner when it never had an assignee."
+      },
+      {
+        "id": "sku_match",
+        "text": "A task SKU matches an order line SKU exactly, or as a prefix when the channel appends a variant suffix."
+      }
+    ]
+  },
+  "summary_insufficient_baseline": {
+    "contract_version": 2,
+    "user": "rnd01@havigroup.llc",
+    "from_date": "2026-10-04",
+    "to_date": "2026-11-02",
+    "volume_applies": false,
+    "compare": {
+      "from_date": "2026-09-04",
+      "to_date": "2026-10-03"
+    },
+    "sections": {
+      "sku": {
+        "status": "ok",
+        "scope": "completed_in_period",
+        "metric": "qty",
+        "sales_visibility": {
+          "mode": "all_orders",
+          "partial": false
+        },
+        "data_coverage": {
+          "order_kpi_since": "2026-10-12",
+          "sale_date_field": "transaction_date",
+          "channels": [
+            {
+              "channel": "tiktok",
+              "history_floor": "2026-10-12"
+            }
+          ]
+        },
+        "summary": {
+          "skus": 1,
+          "skus_with_item": 1,
+          "skus_sold": 1,
+          "skus_unmatched": 0,
+          "skus_ambiguous": 0,
+          "skus_shared": 0,
+          "qty": 4,
+          "orders": 4,
+          "previous_qty": 0,
+          "previous_orders": 0,
+          "revenue": [
+            {
+              "currency": "USD",
+              "amount": 79.96,
+              "previous_amount": 0
+            }
+          ],
+          "revenue_basis": "Sales Order line amount in the order currency; TikTok lines are prorated from the order total."
+        },
+        "growth": {
+          "status": "insufficient_baseline",
+          "trend": null,
+          "first_evaluable_to": "2026-12-10"
+        },
+        "rows": [
+          {
+            "sku": "HVG-HD-0021",
+            "sales_status": "sold",
+            "task_count": 2,
+            "people_sharing": 1,
+            "first_completed_on": "2026-10-20",
+            "item_exists": true,
+            "item_names": [
+              "Hoodie Thu 0021"
+            ],
+            "match_mode": "prefix",
+            "first_sold_on": "2026-10-25",
+            "sold_before_first_completion": false,
+            "qty": 4,
+            "orders": 4,
+            "previous_qty": 0,
+            "previous_orders": 0,
+            "trend": null
+          }
+        ],
+        "next_cursor": null
+      }
+    },
+    "rules": []
+  },
+  "summary_no_compare": {
+    "contract_version": 2,
+    "user": "designer01@havigroup.llc",
+    "from_date": "2026-12-01",
+    "to_date": "2026-12-30",
+    "volume_applies": true,
+    "compare": {
+      "from_date": null,
+      "to_date": null
+    },
+    "sections": {
+      "tasks": {
+        "status": "ok",
+        "summary": {
+          "assigned": 0,
+          "completed": 0,
+          "open": 0,
+          "cancelled": 0,
+          "owner_unassigned": 0,
+          "with_sku": 0,
+          "missing_sku": 0,
+          "invalid_sku": 0,
+          "title_redacted": 0,
+          "completion_sources": {
+            "completed_on": 0,
+            "born_completed": 0,
+            "version": 0,
+            "status_only": 0
+          }
+        },
+        "rows": [],
+        "next_cursor": null
+      },
+      "sku": {
+        "status": "ok",
+        "scope": "portfolio",
+        "metric": "qty",
+        "sales_visibility": {
+          "mode": "all_orders",
+          "partial": false
+        },
+        "data_coverage": {
+          "order_kpi_since": "2026-10-12",
+          "sale_date_field": "transaction_date",
+          "channels": []
+        },
+        "summary": {
+          "skus": 0,
+          "skus_with_item": 0,
+          "skus_sold": 0,
+          "skus_unmatched": 0,
+          "skus_ambiguous": 0,
+          "skus_shared": 0,
+          "qty": 0,
+          "orders": 0,
+          "previous_qty": null,
+          "previous_orders": null,
+          "revenue": [],
+          "revenue_basis": "Sales Order line amount in the order currency; TikTok lines are prorated from the order total."
+        },
+        "growth": {
+          "status": "not_requested",
+          "trend": null,
+          "first_evaluable_to": "2026-12-10"
+        },
+        "rows": [],
+        "next_cursor": null
+      }
+    },
+    "rules": []
+  },
+  "rows_tasks": {
+    "contract_version": 2,
+    "user": "designer01@havigroup.llc",
+    "from_date": "2026-12-01",
+    "to_date": "2026-12-30",
+    "section": "tasks",
+    "rows": [
+      {
+        "task": "TASK-2026-01251",
+        "subject": "Sửa file in mẫu cốc 0077",
+        "title_redacted": false,
+        "project": "PROJ-0042",
+        "project_name": "Bộ sưu tập Noel 2026",
+        "status": "Completed",
+        "role": "assignee_closed",
+        "created_on": "2026-12-11",
+        "completed_on": "2026-12-12",
+        "completion_source": "version",
+        "exp_end_date": null,
+        "sku": "HVG-MG-0077",
+        "sku_status": "ok"
+      }
+    ],
+    "next_cursor": null
+  },
+  "rows_sku": {
+    "contract_version": 2,
+    "user": "designer01@havigroup.llc",
+    "from_date": "2026-12-01",
+    "to_date": "2026-12-30",
+    "section": "sku",
+    "sales_visibility": {
+      "mode": "all_orders",
+      "partial": false
+    },
+    "rows": [
+      {
+        "sku": "HVG-PS-0102",
+        "sales_status": "sold",
+        "task_count": 1,
+        "people_sharing": 1,
+        "first_completed_on": "2026-11-28",
+        "item_exists": true,
+        "item_names": [
+          "Poster 0102",
+          "Poster 0102 (eBay)"
+        ],
+        "match_mode": "exact",
+        "first_sold_on": "2026-11-20",
+        "sold_before_first_completion": true,
+        "qty": 12,
+        "orders": 11,
+        "previous_qty": 18,
+        "previous_orders": 16,
+        "trend": "declining"
+      }
+    ],
+    "next_cursor": "eyJzZWN0aW9uIjoic2t1Iiwib2Zmc2V0IjozfQ"
+  }
+}

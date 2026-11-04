@@ -1,0 +1,637 @@
+{
+  "description": "Contract v2 between hvgerp-mcp and ERP hvg_sdc_sync.person_performance (get_person_performance, list_person_performance_rows). Validate a summary response against #/$defs/summary_response and a page response against #/$defs/rows_response. Counting rules that a schema cannot express are listed in docs/staff-performance-contract.md and checked by both repositories.",
+  "$defs": {
+    "date": { "type": "string", "format": "date" },
+    "nullable_date": {
+      "anyOf": [{ "$ref": "#/$defs/date" }, { "type": "null" }]
+    },
+    "count": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "nullable_count": {
+      "anyOf": [{ "$ref": "#/$defs/count" }, { "type": "null" }]
+    },
+    "quantity": { "type": "number", "minimum": 0, "maximum": 1000000000000 },
+    "nullable_quantity": {
+      "anyOf": [{ "$ref": "#/$defs/quantity" }, { "type": "null" }]
+    },
+    "amount": { "type": "number", "minimum": 0, "maximum": 1000000000000000 },
+    "nullable_amount": {
+      "anyOf": [{ "$ref": "#/$defs/amount" }, { "type": "null" }]
+    },
+    "name": { "type": "string", "minLength": 1, "maxLength": 140 },
+    "nullable_name": {
+      "anyOf": [{ "$ref": "#/$defs/name" }, { "type": "null" }]
+    },
+    "cursor": {
+      "anyOf": [
+        { "type": "string", "minLength": 1, "maxLength": 1000 },
+        { "type": "null" }
+      ]
+    },
+    "trend": {
+      "type": "string",
+      "enum": [
+        "new",
+        "growing",
+        "stable",
+        "declining",
+        "low_sample",
+        "stopped"
+      ]
+    },
+    "nullable_trend": {
+      "anyOf": [{ "$ref": "#/$defs/trend" }, { "type": "null" }]
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "text"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "text": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "sales_visibility": {
+      "description": "Decision QD-8 option C: sales count every submitted order, so every viewer allowed to see the person gets the same figures, and no order or merchant is named.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "partial"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["all_orders"] },
+        "partial": { "type": "boolean", "const": false }
+      }
+    },
+    "summary_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_version",
+        "user",
+        "from_date",
+        "to_date",
+        "volume_applies",
+        "compare",
+        "sections",
+        "rules"
+      ],
+      "properties": {
+        "contract_version": { "type": "integer", "const": 2 },
+        "user": { "$ref": "#/$defs/name" },
+        "from_date": { "$ref": "#/$defs/date" },
+        "to_date": { "$ref": "#/$defs/date" },
+        "volume_applies": { "type": "boolean" },
+        "compare": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["from_date", "to_date"],
+          "properties": {
+            "from_date": { "$ref": "#/$defs/nullable_date" },
+            "to_date": { "$ref": "#/$defs/nullable_date" }
+          }
+        },
+        "sections": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tasks": { "$ref": "#/$defs/tasks_section" },
+            "sku": { "$ref": "#/$defs/sku_section" },
+            "quality": { "$ref": "#/$defs/quality_section" }
+          }
+        },
+        "rules": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "$ref": "#/$defs/rule" }
+        }
+      }
+    },
+    "rows_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_version",
+        "user",
+        "from_date",
+        "to_date",
+        "section",
+        "rows",
+        "next_cursor"
+      ],
+      "properties": {
+        "contract_version": { "type": "integer", "const": 2 },
+        "user": { "$ref": "#/$defs/name" },
+        "from_date": { "$ref": "#/$defs/date" },
+        "to_date": { "$ref": "#/$defs/date" },
+        "section": { "type": "string", "enum": ["tasks", "sku"] },
+        "rows": { "type": "array", "maxItems": 50 },
+        "next_cursor": { "$ref": "#/$defs/cursor" },
+        "sales_visibility": { "$ref": "#/$defs/sales_visibility" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["section"],
+            "properties": { "section": { "const": "tasks" } }
+          },
+          "then": {
+            "properties": {
+              "rows": { "items": { "$ref": "#/$defs/task_row" } }
+            },
+            "not": { "required": ["sales_visibility"] }
+          }
+        },
+        {
+          "if": {
+            "required": ["section"],
+            "properties": { "section": { "const": "sku" } }
+          },
+          "then": {
+            "required": ["sales_visibility"],
+            "properties": {
+              "rows": { "items": { "$ref": "#/$defs/sku_row" } }
+            }
+          }
+        }
+      ]
+    },
+    "tasks_section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "summary", "rows", "next_cursor"],
+      "properties": {
+        "status": { "type": "string", "const": "ok" },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "assigned",
+            "completed",
+            "open",
+            "cancelled",
+            "owner_unassigned",
+            "with_sku",
+            "missing_sku",
+            "invalid_sku",
+            "title_redacted",
+            "completion_sources"
+          ],
+          "properties": {
+            "assigned": { "$ref": "#/$defs/count" },
+            "completed": { "$ref": "#/$defs/count" },
+            "open": { "$ref": "#/$defs/count" },
+            "cancelled": { "$ref": "#/$defs/count" },
+            "owner_unassigned": { "$ref": "#/$defs/count" },
+            "with_sku": { "$ref": "#/$defs/count" },
+            "missing_sku": { "$ref": "#/$defs/count" },
+            "invalid_sku": { "$ref": "#/$defs/count" },
+            "title_redacted": { "$ref": "#/$defs/count" },
+            "completion_sources": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "completed_on",
+                "born_completed",
+                "version",
+                "status_only"
+              ],
+              "properties": {
+                "completed_on": { "$ref": "#/$defs/count" },
+                "born_completed": { "$ref": "#/$defs/count" },
+                "version": { "$ref": "#/$defs/count" },
+                "status_only": { "$ref": "#/$defs/count" }
+              }
+            }
+          }
+        },
+        "rows": {
+          "type": "array",
+          "maxItems": 50,
+          "items": { "$ref": "#/$defs/task_row" }
+        },
+        "next_cursor": { "$ref": "#/$defs/cursor" }
+      }
+    },
+    "task_row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task",
+        "subject",
+        "title_redacted",
+        "project",
+        "project_name",
+        "status",
+        "role",
+        "created_on",
+        "completed_on",
+        "completion_source",
+        "exp_end_date",
+        "sku",
+        "sku_status"
+      ],
+      "properties": {
+        "task": { "$ref": "#/$defs/name" },
+        "subject": { "$ref": "#/$defs/nullable_name" },
+        "title_redacted": { "type": "boolean" },
+        "project": { "$ref": "#/$defs/nullable_name" },
+        "project_name": { "$ref": "#/$defs/nullable_name" },
+        "status": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "role": {
+          "type": "string",
+          "enum": ["assignee_open", "assignee_closed", "owner_unassigned"]
+        },
+        "created_on": { "$ref": "#/$defs/date" },
+        "completed_on": { "$ref": "#/$defs/nullable_date" },
+        "completion_source": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "completed_on",
+                "born_completed",
+                "version",
+                "status_only"
+              ]
+            },
+            { "type": "null" }
+          ]
+        },
+        "exp_end_date": { "$ref": "#/$defs/nullable_date" },
+        "sku": { "$ref": "#/$defs/nullable_name" },
+        "sku_status": {
+          "type": "string",
+          "enum": ["ok", "missing_sku", "invalid_sku", "not_applicable"]
+        }
+      }
+    },
+    "sku_section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "scope",
+        "metric",
+        "sales_visibility",
+        "data_coverage",
+        "summary",
+        "growth",
+        "rows",
+        "next_cursor"
+      ],
+      "properties": {
+        "status": { "type": "string", "const": "ok" },
+        "scope": {
+          "type": "string",
+          "enum": ["completed_in_period", "portfolio"]
+        },
+        "metric": { "type": "string", "const": "qty" },
+        "sales_visibility": { "$ref": "#/$defs/sales_visibility" },
+        "data_coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["order_kpi_since", "sale_date_field", "channels"],
+          "properties": {
+            "order_kpi_since": { "$ref": "#/$defs/date" },
+            "sale_date_field": {
+              "type": "string",
+              "const": "transaction_date"
+            },
+            "channels": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["channel", "history_floor"],
+                "properties": {
+                  "channel": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40
+                  },
+                  "history_floor": { "$ref": "#/$defs/nullable_date" }
+                }
+              }
+            }
+          }
+        },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "skus",
+            "skus_with_item",
+            "skus_sold",
+            "skus_unmatched",
+            "skus_ambiguous",
+            "skus_shared",
+            "qty",
+            "orders",
+            "previous_qty",
+            "previous_orders",
+            "revenue",
+            "revenue_basis"
+          ],
+          "properties": {
+            "skus": { "$ref": "#/$defs/count" },
+            "skus_with_item": { "$ref": "#/$defs/count" },
+            "skus_sold": { "$ref": "#/$defs/count" },
+            "skus_unmatched": { "$ref": "#/$defs/count" },
+            "skus_ambiguous": { "$ref": "#/$defs/count" },
+            "skus_shared": { "$ref": "#/$defs/count" },
+            "qty": { "$ref": "#/$defs/quantity" },
+            "orders": { "$ref": "#/$defs/count" },
+            "previous_qty": { "$ref": "#/$defs/nullable_quantity" },
+            "previous_orders": { "$ref": "#/$defs/nullable_count" },
+            "revenue": {
+              "type": "array",
+              "maxItems": 10,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["currency", "amount", "previous_amount"],
+                "properties": {
+                  "currency": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 3
+                  },
+                  "amount": { "$ref": "#/$defs/amount" },
+                  "previous_amount": { "$ref": "#/$defs/nullable_amount" }
+                }
+              }
+            },
+            "revenue_basis": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            }
+          }
+        },
+        "growth": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "trend", "first_evaluable_to"],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "insufficient_baseline",
+                "not_requested",
+                "no_sales"
+              ]
+            },
+            "trend": { "$ref": "#/$defs/nullable_trend" },
+            "first_evaluable_to": { "$ref": "#/$defs/date" }
+          },
+          "allOf": [
+            {
+              "if": {
+                "required": ["status"],
+                "properties": { "status": { "const": "ok" } }
+              },
+              "then": {
+                "properties": { "trend": { "$ref": "#/$defs/trend" } }
+              },
+              "else": { "properties": { "trend": { "type": "null" } } }
+            }
+          ]
+        },
+        "rows": {
+          "type": "array",
+          "maxItems": 50,
+          "items": { "$ref": "#/$defs/sku_row" }
+        },
+        "next_cursor": { "$ref": "#/$defs/cursor" }
+      }
+    },
+    "sku_row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sku",
+        "sales_status",
+        "task_count",
+        "people_sharing",
+        "first_completed_on",
+        "item_exists",
+        "item_names",
+        "match_mode",
+        "first_sold_on",
+        "sold_before_first_completion",
+        "qty",
+        "orders",
+        "previous_qty",
+        "previous_orders",
+        "trend"
+      ],
+      "properties": {
+        "sku": { "$ref": "#/$defs/name" },
+        "sales_status": {
+          "type": "string",
+          "enum": ["sold", "no_sales", "unmatched_code"]
+        },
+        "task_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "people_sharing": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "first_completed_on": { "$ref": "#/$defs/nullable_date" },
+        "item_exists": { "type": "boolean" },
+        "item_names": {
+          "type": "array",
+          "maxItems": 10,
+          "items": { "$ref": "#/$defs/name" }
+        },
+        "match_mode": {
+          "anyOf": [
+            { "type": "string", "enum": ["exact", "prefix"] },
+            { "type": "null" }
+          ]
+        },
+        "first_sold_on": { "$ref": "#/$defs/nullable_date" },
+        "sold_before_first_completion": {
+          "anyOf": [{ "type": "boolean" }, { "type": "null" }]
+        },
+        "qty": { "$ref": "#/$defs/quantity" },
+        "orders": { "$ref": "#/$defs/count" },
+        "previous_qty": { "$ref": "#/$defs/nullable_quantity" },
+        "previous_orders": { "$ref": "#/$defs/nullable_count" },
+        "trend": { "$ref": "#/$defs/nullable_trend" }
+      }
+    },
+    "quality_section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "signals"],
+      "properties": {
+        "status": { "type": "string", "const": "ok" },
+        "signals": {
+          "type": "array",
+          "maxItems": 10,
+          "items": { "$ref": "#/$defs/signal" }
+        }
+      }
+    },
+    "signal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "numerator",
+        "denominator",
+        "rate",
+        "reason",
+        "basis"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "enum": [
+            "on_time_completion",
+            "reopened_by_other",
+            "returned_from_review"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["ok", "insufficient_sample", "not_measured"]
+        },
+        "numerator": { "$ref": "#/$defs/nullable_count" },
+        "denominator": { "$ref": "#/$defs/nullable_count" },
+        "rate": {
+          "anyOf": [
+            { "type": "number", "minimum": 0, "maximum": 1 },
+            { "type": "null" }
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            { "type": "string", "minLength": 1, "maxLength": 64 },
+            { "type": "null" }
+          ]
+        },
+        "basis": { "type": "object" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["status"],
+            "properties": { "status": { "const": "ok" } }
+          },
+          "then": {
+            "properties": {
+              "numerator": { "$ref": "#/$defs/count" },
+              "denominator": {
+                "type": "integer",
+                "minimum": 5,
+                "maximum": 9007199254740991
+              },
+              "rate": { "type": "number" },
+              "reason": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["status"],
+            "properties": { "status": { "const": "insufficient_sample" } }
+          },
+          "then": {
+            "properties": {
+              "numerator": { "$ref": "#/$defs/count" },
+              "denominator": { "type": "integer", "minimum": 0, "maximum": 4 },
+              "rate": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["status"],
+            "properties": { "status": { "const": "not_measured" } }
+          },
+          "then": {
+            "properties": {
+              "numerator": { "type": "null" },
+              "denominator": { "type": "null" },
+              "rate": { "type": "null" },
+              "reason": { "type": "string" }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["id"],
+            "properties": { "id": { "const": "on_time_completion" } }
+          },
+          "then": {
+            "properties": {
+              "basis": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "with_deadline",
+                  "excluded_born_completed",
+                  "excluded_deadline_edited",
+                  "excluded_status_only"
+                ],
+                "properties": {
+                  "with_deadline": { "$ref": "#/$defs/count" },
+                  "excluded_born_completed": { "$ref": "#/$defs/count" },
+                  "excluded_deadline_edited": { "$ref": "#/$defs/count" },
+                  "excluded_status_only": { "$ref": "#/$defs/count" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["id"],
+            "properties": { "id": { "const": "reopened_by_other" } }
+          },
+          "then": {
+            "properties": {
+              "basis": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["self_reopen", "other_reopen", "bot_reopen"],
+                "properties": {
+                  "self_reopen": { "$ref": "#/$defs/count" },
+                  "other_reopen": { "$ref": "#/$defs/count" },
+                  "bot_reopen": { "$ref": "#/$defs/count" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["id"],
+            "properties": { "id": { "const": "returned_from_review" } }
+          },
+          "then": {
+            "properties": {
+              "basis": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["entered_review", "returned", "returned_by_other"],
+                "properties": {
+                  "entered_review": { "$ref": "#/$defs/count" },
+                  "returned": { "$ref": "#/$defs/count" },
+                  "returned_by_other": { "$ref": "#/$defs/count" }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
