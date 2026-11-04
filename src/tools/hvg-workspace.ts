@@ -22,6 +22,22 @@ import type { ErpNextToolContext } from "./types.ts";
 const METHOD_LOOKUP_FAILURE = /Failed to get method|Method Not Found/i;
 
 /**
+ * Lỗi này có phải Frappe báo KHÔNG phân giải được đường dẫn hàm hay không.
+ *
+ * Soi cả thân phản hồi đã parse, không chỉ `message`: `FrappeAPIError` dựng message từ
+ * `message ?? exc_type ?? statusText`, mà lượt tra hàm hỏng thường chỉ có `exc_type` là
+ * "ValidationError" còn nguyên văn "Failed to get method" nằm trong `exception`. Chỉ đọc message
+ * là trượt đúng cái ca cần nhận ra.
+ */
+export function isMethodLookupFailure(err: unknown): boolean {
+  const text = err instanceof Error ? err.message : String(err);
+  const body = err instanceof FrappeAPIError && err.body !== null
+    ? JSON.stringify(err.body)
+    : "";
+  return METHOD_LOOKUP_FAILURE.test(text) || METHOD_LOOKUP_FAILURE.test(body);
+}
+
+/**
  * Gọi một hàm của `hvg_workspace`, dịch "app không có" thành câu người đọc hiểu được.
  *
  * `missingAppHint` là câu nói nhóm tool nào cần app nào, vì mỗi nhóm cần một lời khác nhau.
@@ -37,17 +53,10 @@ export async function callHvgWorkspace<T>(
   try {
     return await ctx.client.callMethod<T>(method, args, opts);
   } catch (err) {
-    const text = err instanceof Error ? err.message : String(err);
-    // Soi cả thân phản hồi đã parse, không chỉ `message`: `FrappeAPIError` dựng message từ
-    // `message ?? exc_type ?? statusText`, mà lượt tra hàm hỏng thường chỉ có `exc_type`
-    // là "ValidationError" còn nguyên văn "Failed to get method" nằm trong `exception`.
-    // Chỉ đọc message là trượt đúng cái ca mà lớp bọc này sinh ra để dịch.
-    const body = err instanceof FrappeAPIError && err.body !== null
-      ? JSON.stringify(err.body)
-      : "";
     // Frappe trả cùng một lỗi cho "hàm không tồn tại" dù nguyên nhân là app chưa cài hay
     // tên gõ sai. Người đọc cần biết nhánh nào để còn hành động.
-    if (METHOD_LOOKUP_FAILURE.test(text) || METHOD_LOOKUP_FAILURE.test(body)) {
+    if (isMethodLookupFailure(err)) {
+      const text = err instanceof Error ? err.message : String(err);
       throw new Error(
         `[${tool}] this site does not expose '${method}'. ${missingAppHint} ` +
           "Original error: " + text,

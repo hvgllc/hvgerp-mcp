@@ -1,9 +1,10 @@
 /**
  * Performance tools tests
  *
- * Kiểm hai tool hiệu suất nhân sự: chặn service account trước mọi lượt gọi, luôn gửi đủ hai ngày
- * cho ERP, chỉ tìm người trong danh sách ERP cho phép, và không bao giờ trình bày phần chưa đo
- * như thể đã đo. Client là mock nên không có lượt gọi mạng nào.
+ * Kiểm ba tool hiệu suất nhân sự: chặn service account trước mọi lượt gọi, luôn gửi đủ hai ngày
+ * cho ERP, chỉ tìm người trong danh sách ERP cho phép, chỉ nhận số liệu Task/SKU đúng hợp đồng v2,
+ * và không bao giờ trình bày phần chưa đo như thể đã đo. Client là mock nên không có lượt gọi
+ * mạng nào; phản hồi v2 dựng từ payload mẫu dùng chung với ERP.
  *
  * @module lib/erpnext/tests/tools/performance_test
  */
@@ -28,12 +29,25 @@ import { FrappeAPIError } from "../api/frappe-client.ts";
 import { AmbiguousLinkError } from "../api/resolve.ts";
 import type { FrappeClient } from "../api/frappe-client.ts";
 import type { ErpNextToolContext } from "./types.ts";
+import {
+  checkRowsResponse,
+  checkSummaryResponse,
+  firstEvaluableTo,
+  periodDays,
+} from "./person-performance-contract.ts";
+import examples from "./contract/fixtures/person-performance.v2.examples.json" with {
+  type: "json",
+};
 
 // ── Dữ liệu mẫu ──────────────────────────────────────────────────────────────
 
 const REPORT = "hvg_sdc_sync.personal_report";
 const EMPLOYEE_TOOL = "erpnext_employee_performance_get";
 const TEAM_TOOL = "erpnext_team_performance_get";
+const DETAIL_TOOL = "erpnext_employee_performance_detail_list";
+const PERFORMANCE = "hvg_sdc_sync.person_performance";
+const SUMMARY_METHOD = `${PERFORMANCE}.get_person_performance`;
+const ROWS_METHOD = `${PERFORMANCE}.list_person_performance_rows`;
 const VIEWER = "lead01@havigroup.llc";
 
 const PEOPLE = [
@@ -136,6 +150,75 @@ function personalReport(
   };
 }
 
+// deno-lint-ignore no-explicit-any
+type Json = any;
+
+/**
+ * Phản hồi `get_person_performance` hợp lệ cho đúng câu hỏi đã gửi, dựng từ payload mẫu dùng chung.
+ *
+ * Payload mẫu nằm ở tháng 12/2026, tức tương lai so với ngày chạy test, nên đổi người, kỳ, kỳ so
+ * sánh và phạm vi SKU theo lượt gọi, rồi chỉnh phần tăng trưởng cho đúng luật: không so thì
+ * `not_requested`, kỳ so sánh bắt đầu trước `order_kpi_since` thì `insufficient_baseline`.
+ */
+function summaryFor(args: Record<string, unknown>): Json {
+  const value: Json = structuredClone(examples.summary_full);
+  value.user = args.user;
+  value.from_date = args.from_date;
+  value.to_date = args.to_date;
+  value.compare = {
+    from_date: args.compare_from_date ?? null,
+    to_date: args.compare_to_date ?? null,
+  };
+  const sku = value.sections.sku;
+  const since = sku.data_coverage.order_kpi_since;
+  sku.scope = args.sku_scope;
+  sku.growth.first_evaluable_to = firstEvaluableTo(
+    since,
+    periodDays(args.from_date as string, args.to_date as string),
+  );
+  if (value.compare.from_date === null) {
+    sku.summary.previous_qty = null;
+    sku.summary.previous_orders = null;
+    for (const line of sku.summary.revenue) line.previous_amount = null;
+    for (const row of sku.rows) {
+      row.previous_qty = null;
+      row.previous_orders = null;
+      row.trend = null;
+    }
+    sku.growth = { ...sku.growth, status: "not_requested", trend: null };
+  } else if (value.compare.from_date < since) {
+    for (const row of sku.rows) row.trend = null;
+    sku.growth = {
+      ...sku.growth,
+      status: "insufficient_baseline",
+      trend: null,
+    };
+  }
+  const requested = new Set(args.sections as string[]);
+  for (const key of Object.keys(value.sections)) {
+    if (!requested.has(key)) delete value.sections[key];
+  }
+  return value;
+}
+
+/** Một trang `list_person_performance_rows` hợp lệ cho đúng câu hỏi đã gửi. */
+function rowsFor(args: Record<string, unknown>): Json {
+  const value: Json = structuredClone(
+    args.section === "sku" ? examples.rows_sku : examples.rows_tasks,
+  );
+  value.user = args.user;
+  value.from_date = args.from_date;
+  value.to_date = args.to_date;
+  if (args.section === "sku" && args.compare_from_date == null) {
+    for (const row of value.rows) {
+      row.previous_qty = null;
+      row.previous_orders = null;
+      row.trend = null;
+    }
+  }
+  return value;
+}
+
 // ── Mock FrappeClient ────────────────────────────────────────────────────────
 
 interface RecordedCall {
@@ -154,6 +237,10 @@ interface ErpOptions {
   context?: unknown;
   personal?: (args: Record<string, unknown>) => unknown;
   team?: (args: Record<string, unknown>) => unknown;
+  /** Trả lời `get_person_performance`; mặc định là `summaryFor`. Ném lỗi để giả lập ERP từ chối. */
+  measured?: (args: Record<string, unknown>) => unknown;
+  /** Trả lời `list_person_performance_rows`; mặc định là `rowsFor`. */
+  rows?: (args: Record<string, unknown>) => unknown;
 }
 
 /**
@@ -203,6 +290,12 @@ function erpClient(options: ErpOptions = {}): {
         if (!options.team) throw new Error("unexpected team report call");
         return options.team(args);
       }
+      if (method === SUMMARY_METHOD) {
+        return (options.measured ?? summaryFor)(args);
+      }
+      if (method === ROWS_METHOD) {
+        return (options.rows ?? rowsFor)(args);
+      }
       throw new Error(`unexpected call: ${method}`);
     },
   } as unknown as FrappeClient;
@@ -217,7 +310,13 @@ function getTool(name: string) {
 
 /** Chỉ các lượt gọi vào báo cáo ERP, bỏ qua lượt hỏi múi giờ của `siteToday`. */
 function reportCalls(calls: RecordedCall[]): RecordedCall[] {
-  return calls.filter((call) => call.method.startsWith(REPORT));
+  return calls.filter((call) =>
+    call.method.startsWith(REPORT) || call.method.startsWith(PERFORMANCE)
+  );
+}
+
+function measuredCalls(calls: RecordedCall[]): RecordedCall[] {
+  return calls.filter((call) => call.method === SUMMARY_METHOD);
 }
 
 function personalCalls(calls: RecordedCall[]): RecordedCall[] {
@@ -225,9 +324,6 @@ function personalCalls(calls: RecordedCall[]): RecordedCall[] {
     call.method === `${REPORT}.get_personal_report`
   );
 }
-
-// deno-lint-ignore no-explicit-any
-type Json = any;
 
 async function runEmployee(
   input: Record<string, unknown>,
@@ -239,6 +335,41 @@ async function runEmployee(
 }
 
 const OCTOBER = { from_date: "2026-10-01", to_date: "2026-10-31" };
+
+/** Kỳ 7 ngày có kỳ so sánh nằm trọn sau `order_kpi_since` (12/10/2026), nên tăng trưởng đo được. */
+const LATE_OCTOBER = { from_date: "2026-10-26", to_date: "2026-11-01" };
+
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+async function runDetail(
+  input: Record<string, unknown>,
+  options: ErpOptions = {},
+): Promise<{ result: Json; calls: RecordedCall[] }> {
+  const { ctx, calls } = erpClient(options);
+  const result = await getTool(DETAIL_TOOL).handler(input, ctx);
+  return { result, calls };
+}
+
+function permissionDenied(): FrappeAPIError {
+  return new FrappeAPIError(
+    "[FrappeClient] POST /api/method/x failed: Bạn không có quyền xem hiệu suất của người này. (HTTP 403)",
+    403,
+    { exc_type: "PermissionError" },
+  );
+}
+
+function methodMissing(): FrappeAPIError {
+  return new FrappeAPIError(
+    "[FrappeClient] POST /api/method/x failed: ValidationError (HTTP 404)",
+    404,
+    {
+      exc_type: "ValidationError",
+      exception:
+        "frappe.exceptions.ValidationError: Failed to get method for command hvg_sdc_sync.person_performance.get_person_performance",
+    },
+  );
+}
 
 /** Cộng ngày trên chuỗi `YYYY-MM-DD`, tính theo UTC để không lệch vì múi giờ máy chạy test. */
 function shiftDate(iso: string, days: number): string {
@@ -253,7 +384,7 @@ function shiftDate(iso: string, days: number): string {
 Deno.test("performance tools - registered read-only analytics tools", () => {
   assertEquals(
     performanceTools.map((tool) => tool.name),
-    [EMPLOYEE_TOOL, TEAM_TOOL],
+    [EMPLOYEE_TOOL, DETAIL_TOOL, TEAM_TOOL],
   );
   for (const tool of performanceTools) {
     assertEquals(tool.category, "analytics", tool.name);
@@ -267,6 +398,10 @@ Deno.test("performance tools - registered read-only analytics tools", () => {
     );
   }
   assertEquals(getTool(EMPLOYEE_TOOL).inputSchema.required, ["employee"]);
+  assertEquals(getTool(DETAIL_TOOL).inputSchema.required, [
+    "employee",
+    "section",
+  ]);
 });
 
 // ── Lớp chặn danh tính ───────────────────────────────────────────────────────
@@ -276,7 +411,11 @@ Deno.test("performance tools - a service client is refused before any call", asy
     const { ctx, calls } = erpClient({ actsAs: "service" });
     // Mỗi tool nhận đúng đầu vào hợp lệ của nó: đầu vào sai bị từ chối ở bước kiểm khoá, và test
     // sẽ qua dù lớp chặn có bị gỡ.
-    const input = tool.name === TEAM_TOOL ? {} : { employee: "me" };
+    const input = tool.name === TEAM_TOOL
+      ? {}
+      : tool.name === DETAIL_TOOL
+      ? { employee: "me", section: "tasks" }
+      : { employee: "me" };
     const error = await assertRejects(() => tool.handler(input, ctx), Error);
     assertStringIncludes(error.message, `[${tool.name}]`);
     assertStringIncludes(error.message, "shared service account");
@@ -440,6 +579,10 @@ Deno.test(`${EMPLOYEE_TOOL} - default dates come from the site's today and are a
   // ERP lấy HÔM NAY khi thiếu ngày, tức chỉ một ngày chứ không phải 30: phải gửi đủ cả hai.
   assertEquals(sent[0].args.from_date, expected.from_date);
   assertEquals(sent[0].args.to_date, expected.to_date);
+  const measured = measuredCalls(calls);
+  assertEquals(measured.length, 1);
+  assertEquals(measured[0].args.from_date, expected.from_date);
+  assertEquals(measured[0].args.to_date, expected.to_date);
   assertEquals(result.period.from_date, expected.from_date);
   assertEquals(result.period.days, 30);
   assertEquals(result.period.date_basis, "site_timezone");
@@ -486,6 +629,8 @@ Deno.test(`${EMPLOYEE_TOOL} - bad option values are refused before any call`, as
       { employee: "me", sections: [] },
       { employee: "me", detail_limit: 51 },
       { employee: "me", detail_limit: 2.5 },
+      { employee: "me", sku_scope: "everything" },
+      { employee: "me", sku_scope: 1 },
     ]
   ) {
     const { ctx, calls } = erpClient();
@@ -508,6 +653,7 @@ Deno.test(`${EMPLOYEE_TOOL} - every ERP report call is a POST`, async () => {
     `${REPORT}.get_report_context`,
     `${REPORT}.get_personal_report`,
     `${REPORT}.get_personal_report`,
+    SUMMARY_METHOD,
   ]);
   for (const call of sent) {
     assertEquals(call.opts?.httpMethod, "POST", call.method);
@@ -533,6 +679,20 @@ Deno.test(`${EMPLOYEE_TOOL} - the previous period is fetched for the same person
     from_date: "2026-08-31",
     to_date: "2026-09-30",
   });
+  const [measured] = measuredCalls(calls);
+  const { request_id: requestId, ...args } = measured.args;
+  assert(UUID.test(String(requestId)), String(requestId));
+  assertEquals(args, {
+    user: "duc@havigroup.llc",
+    ...OCTOBER,
+    sections: ["tasks", "sku", "quality"],
+    compare_from_date: "2026-08-31",
+    compare_to_date: "2026-09-30",
+    sku_scope: "completed_in_period",
+    // ERP kẹp `row_limit` về 1..50, nên 0 gửi thành 1 thay vì để ERP đổi lặng lẽ.
+    row_limit: 1,
+    contract_version: 2,
+  });
 });
 
 Deno.test(`${EMPLOYEE_TOOL} - compare none skips the previous period`, async () => {
@@ -545,6 +705,10 @@ Deno.test(`${EMPLOYEE_TOOL} - compare none skips the previous period`, async () 
   assertEquals(result.period.compare, { mode: "none" });
   assertEquals(result.sections.volume.previous, undefined);
   assertEquals(result.sections.volume.change, undefined);
+  const [measured] = measuredCalls(calls);
+  assertEquals(measured.args.compare_from_date, null);
+  assertEquals(measured.args.compare_to_date, null);
+  assertEquals(result.sections.sku.growth.status, "not_requested");
 });
 
 Deno.test(`${EMPLOYEE_TOOL} - sections without volume make no report call`, async () => {
@@ -552,10 +716,29 @@ Deno.test(`${EMPLOYEE_TOOL} - sections without volume make no report call`, asyn
     employee: "me",
     ...OCTOBER,
     sections: ["sku"],
+    sku_scope: "portfolio",
   });
   assertEquals(personalCalls(calls).length, 0);
+  const [measured] = measuredCalls(calls);
+  assertEquals(measured.args.sections, ["sku"]);
+  assertEquals(measured.args.sku_scope, "portfolio");
   assertEquals(Object.keys(result.sections), ["sku"]);
-  assertEquals(result.sections.sku.status, "unavailable");
+  assertEquals(result.sections.sku.status, "ok");
+  assertEquals(result.sections.sku.scope, "portfolio");
+});
+
+Deno.test(`${EMPLOYEE_TOOL} - volume alone makes no call to the v2 endpoint`, async () => {
+  const { result, calls } = await runEmployee({
+    employee: "me",
+    ...OCTOBER,
+    sections: ["volume"],
+  });
+  assertEquals(measuredCalls(calls).length, 0);
+  assertEquals(Object.keys(result.sections), ["volume"]);
+  assertEquals(result.data_quality.coverage, null);
+  assert(
+    !JSON.stringify(result.data_quality.warnings).includes("unavailable"),
+  );
 });
 
 // ── Phân giải người ──────────────────────────────────────────────────────────
@@ -751,8 +934,28 @@ Deno.test(`${EMPLOYEE_TOOL} - an uncertain site date accepts the next day but no
 // ── Hình dạng kết quả ────────────────────────────────────────────────────────
 
 Deno.test(`${EMPLOYEE_TOOL} - the contract envelope and its four sections`, async () => {
-  const { result } = await runEmployee({ employee: "Đỗ Văn Đức", ...OCTOBER });
-  assertEquals(result.contract_version, 1);
+  const { result, calls } = await runEmployee({
+    employee: "Đỗ Văn Đức",
+    ...OCTOBER,
+  });
+  assertEquals(result.contract_version, 2);
+  // Hướng dẫn và chất lượng dữ liệu đứng TRƯỚC số liệu: client cắt bớt phản hồi dài thì phần bị
+  // mất là dòng chi tiết, không phải lời dặn cách trình bày.
+  assertEquals(Object.keys(result), [
+    "contract_version",
+    "subject",
+    "viewer",
+    "period",
+    "how_to_present",
+    "data_quality",
+    "next_questions",
+    "sections",
+  ]);
+  assertEquals(Object.keys(result.data_quality), [
+    "rules",
+    "coverage",
+    "warnings",
+  ]);
   assertEquals(result.subject, {
     user: "duc@havigroup.llc",
     full_name: "Đỗ Văn Đức",
@@ -760,6 +963,16 @@ Deno.test(`${EMPLOYEE_TOOL} - the contract envelope and its four sections`, asyn
     department: "Design - HVG",
     match: "exact",
     report_sections: ["design"],
+    summary: {
+      tasks_assigned: 8,
+      tasks_completed: 5,
+      tasks_open: 2,
+      tasks_with_sku: 3,
+      skus: 3,
+      skus_with_item: 2,
+      skus_sold: 2,
+      qty_sold: 42,
+    },
   });
   assertEquals(result.viewer, { user: VIEWER, scope: "team", is_self: false });
   assertEquals(Object.keys(result.sections), [
@@ -768,10 +981,13 @@ Deno.test(`${EMPLOYEE_TOOL} - the contract envelope and its four sections`, asyn
     "sku",
     "quality",
   ]);
+  // Các section v2 đi nguyên văn từ ERP: MCP không đếm lại, không làm tròn lại.
+  const expected = summaryFor(measuredCalls(calls)[0].args);
   for (const key of ["tasks", "sku", "quality"]) {
-    assertEquals(result.sections[key].status, "unavailable", key);
-    assertEquals(result.sections[key].reason, "erp_endpoint_missing", key);
+    assertEquals(result.sections[key], expected.sections[key], key);
   }
+  assertStringIncludes(result.how_to_present, "coverage");
+  assertStringIncludes(result.how_to_present, "ranking");
   const volume = result.sections.volume;
   assertEquals(volume.status, "ok");
   assertEquals(volume.source, `${REPORT}.get_personal_report`);
@@ -854,13 +1070,22 @@ Deno.test(`${EMPLOYEE_TOOL} - says when a lead sees only their team's part of so
   );
 });
 
-Deno.test(`${EMPLOYEE_TOOL} - always warns that Task and SKU work is not measured yet`, async () => {
+Deno.test(`${EMPLOYEE_TOOL} - the not-measured warning appears only when a section is unavailable`, async () => {
   const { result } = await runEmployee({ employee: "me", ...OCTOBER });
-  const text = JSON.stringify(result.data_quality.warnings);
-  assertStringIncludes(text, "Task");
-  assertStringIncludes(text, "SKU");
-  assert(result.data_quality.rules.length > 0);
+  assert(
+    !JSON.stringify(result.data_quality.warnings).includes("unavailable"),
+  );
   assertStringIncludes(JSON.stringify(result.data_quality.rules), "ranking");
+
+  const older = await runEmployee({ employee: "me", ...OCTOBER }, {
+    measured: () => {
+      throw methodMissing();
+    },
+  });
+  const warnings = older.result.data_quality.warnings;
+  // Đứng đầu danh sách: đây là điều mô hình phải nói trước mọi con số.
+  assertStringIncludes(warnings[0], "unavailable");
+  assertStringIncludes(warnings[0], "erpnext_task_list");
 });
 
 Deno.test(`${EMPLOYEE_TOOL} - zero design and fulfill lines get an explicit warning`, async () => {
@@ -914,6 +1139,475 @@ Deno.test(`${EMPLOYEE_TOOL} - ERP's truncation is reported`, async () => {
   assertStringIncludes(JSON.stringify(result.data_quality.warnings), "2000");
 });
 
+// ── Hợp đồng v2: Task, SKU, chất lượng ───────────────────────────────────────
+
+Deno.test("the mocked ERP answers satisfy contract v2 themselves", () => {
+  const base = {
+    user: "duc@havigroup.llc",
+    sections: ["tasks", "sku", "quality"],
+    sku_scope: "completed_in_period",
+  };
+  for (
+    const [from, to, compareFrom, compareTo] of [
+      ["2026-10-01", "2026-10-31", "2026-08-31", "2026-09-30"],
+      ["2026-10-26", "2026-11-01", "2026-10-19", "2026-10-25"],
+      ["2026-10-01", "2026-10-31", null, null],
+    ]
+  ) {
+    const args = {
+      ...base,
+      from_date: from,
+      to_date: to,
+      compare_from_date: compareFrom,
+      compare_to_date: compareTo,
+    };
+    assertEquals(checkSummaryResponse(summaryFor(args)), [], `${from}..${to}`);
+    for (const section of ["tasks", "sku"]) {
+      assertEquals(
+        checkRowsResponse(rowsFor({ ...args, section })),
+        [],
+        `${section} ${from}..${to}`,
+      );
+    }
+  }
+});
+
+Deno.test(`${EMPLOYEE_TOOL} - each call carries its own request id`, async () => {
+  const first = await runEmployee({ employee: "me", ...OCTOBER });
+  const second = await runEmployee({ employee: "me", ...OCTOBER });
+  const ids = [first, second].map(({ calls }) => {
+    const sent = measuredCalls(calls);
+    assertEquals(sent.length, 1);
+    return String(sent[0].args.request_id);
+  });
+  for (const id of ids) assert(UUID.test(id), id);
+  assert(ids[0] !== ids[1], "request ids must differ between calls");
+});
+
+Deno.test(`${EMPLOYEE_TOOL} - row_limit follows detail_limit`, async () => {
+  const { calls } = await runEmployee({
+    employee: "me",
+    ...OCTOBER,
+    detail_limit: 7,
+  });
+  assertEquals(measuredCalls(calls)[0].args.row_limit, 7);
+});
+
+Deno.test(`${EMPLOYEE_TOOL} - an older ERP without the endpoint keeps volume and marks the rest unavailable`, async () => {
+  const { result } = await runEmployee({ employee: "me", ...OCTOBER }, {
+    measured: () => {
+      throw methodMissing();
+    },
+  });
+  assertEquals(result.sections.volume.status, "ok");
+  for (const key of ["tasks", "sku", "quality"]) {
+    assertEquals(result.sections[key].status, "unavailable", key);
+    assertEquals(result.sections[key].reason, "erp_endpoint_missing", key);
+    assertStringIncludes(
+      result.sections[key].note,
+      "Not measured by this ERP release",
+    );
+  }
+  assertEquals(result.subject.summary.tasks_assigned, null);
+  assertEquals(result.subject.summary.qty_sold, null);
+  assertEquals(result.data_quality.coverage, null);
+});
+
+Deno.test(`${EMPLOYEE_TOOL} - a PermissionError on Task and SKU figures is reported, not thrown`, async () => {
+  const { result } = await runEmployee({ employee: "Đỗ Văn Đức", ...OCTOBER }, {
+    measured: () => {
+      throw permissionDenied();
+    },
+  });
+  assertEquals(result.sections.volume.status, "ok");
+  for (const key of ["tasks", "sku", "quality"]) {
+    assertEquals(result.sections[key].status, "unavailable", key);
+    assertEquals(result.sections[key].reason, "not_permitted", key);
+  }
+});
+
+Deno.test(`${EMPLOYEE_TOOL} - other v2 errors fail the whole tool`, async () => {
+  const broken = new FrappeAPIError(
+    "[FrappeClient] POST /api/method/x failed: boom (HTTP 500)",
+    500,
+    { exc_type: "ValidationError" },
+  );
+  const { ctx } = erpClient({
+    measured: () => {
+      throw broken;
+    },
+  });
+  const error = await assertRejects(() =>
+    getTool(EMPLOYEE_TOOL).handler({ employee: "me", ...OCTOBER }, ctx)
+  );
+  assertEquals(error, broken);
+});
+
+Deno.test(`${EMPLOYEE_TOOL} - an answer that breaks the contract is withheld, without echoing values`, async () => {
+  const cases: Array<[string, (args: Record<string, unknown>) => Json]> = [
+    ["counting rule", (args) => {
+      const value = summaryFor(args);
+      value.sections.tasks.summary.assigned = 99;
+      return value;
+    }],
+    ["schema", (args) => {
+      const value = summaryFor(args);
+      value.contract_version = 3;
+      return value;
+    }],
+    ["another person", (args) => {
+      const value = summaryFor(args);
+      value.user = "ceo@havigroup.llc";
+      return value;
+    }],
+    ["another period", (args) => {
+      const value = summaryFor(args);
+      value.from_date = "2026-10-02";
+      value.compare = { from_date: "2026-09-01", to_date: "2026-10-01" };
+      return value;
+    }],
+    ["no comparison although one was asked", (args) =>
+      summaryFor({
+        ...args,
+        compare_from_date: null,
+        compare_to_date: null,
+      })],
+    [
+      "a section that was not asked for",
+      (args) => summaryFor({ ...args, sections: ["tasks", "sku", "quality"] }),
+    ],
+    [
+      "a missing section",
+      (args) => summaryFor({ ...args, sections: ["tasks"] }),
+    ],
+    [
+      "another SKU scope",
+      (args) => summaryFor({ ...args, sku_scope: "portfolio" }),
+    ],
+    ["not an object", () => "ok"],
+  ];
+  for (const [label, measured] of cases) {
+    const { result } = await runEmployee({
+      employee: "me",
+      ...OCTOBER,
+      sections: ["volume", "tasks", "sku"],
+    }, { measured });
+    assertEquals(result.sections.volume.status, "ok", label);
+    assertEquals(Object.keys(result.sections), ["volume", "tasks", "sku"]);
+    for (const key of ["tasks", "sku"]) {
+      const section = result.sections[key];
+      assertEquals(section.status, "unavailable", `${label}: ${key}`);
+      assertEquals(section.reason, "erp_contract_mismatch", `${label}: ${key}`);
+      assert(!section.note.includes("ceo@havigroup.llc"), label);
+      assert(!section.note.includes("99"), label);
+    }
+  }
+});
+
+Deno.test(`${EMPLOYEE_TOOL} - a person without a design or fulfill role gets no volume zero`, async () => {
+  const empty = (args: Record<string, unknown>) =>
+    personalReport(args, {
+      summary: totals(0, 0, 0, 0),
+      design: [],
+      fulfill: [],
+      by_team: [],
+      by_day: [],
+    });
+  const { result } = await runEmployee({
+    employee: "an2@havigroup.llc",
+    ...OCTOBER,
+  }, {
+    personal: empty,
+    measured: (args) => ({ ...summaryFor(args), volume_applies: false }),
+  });
+  assertEquals(result.sections.volume.status, "not_applicable");
+  assertEquals(result.sections.volume.reason, "no_design_or_fulfill_role");
+  assertEquals(result.sections.volume.summary, undefined);
+  assert(
+    !JSON.stringify(result.data_quality.warnings).includes(
+      "No design or fulfill lines",
+    ),
+  );
+
+  // Có dòng thì vẫn báo số, dù ERP nói không có vai trò: số đo được thắng suy luận.
+  const busy = await runEmployee(
+    { employee: "an2@havigroup.llc", ...OCTOBER },
+    {
+      measured: (args) => ({ ...summaryFor(args), volume_applies: false }),
+    },
+  );
+  assertEquals(busy.result.sections.volume.status, "ok");
+
+  // ERP cũ không trả `volume_applies`: không đoán, giữ số 0 kèm cảnh báo như trước.
+  const older = await runEmployee({
+    employee: "an2@havigroup.llc",
+    ...OCTOBER,
+  }, {
+    personal: empty,
+    measured: () => {
+      throw methodMissing();
+    },
+  });
+  assertEquals(older.result.sections.volume.status, "ok");
+  assertStringIncludes(
+    JSON.stringify(older.result.data_quality.warnings),
+    "No design or fulfill lines",
+  );
+});
+
+Deno.test(`${EMPLOYEE_TOOL} - coverage puts each count next to what it is out of`, async () => {
+  const { result } = await runEmployee({ employee: "me", ...OCTOBER });
+  assertEquals(result.data_quality.coverage, {
+    tasks_with_sku: { count: 3, of: 5 },
+    task_titles_visible: { count: 7, of: 8 },
+    skus_with_item: { count: 2, of: 3 },
+    skus_sold: { count: 2, of: 3 },
+  });
+
+  const skuOnly = await runEmployee({
+    employee: "me",
+    ...OCTOBER,
+    sections: ["sku"],
+  });
+  assertEquals(skuOnly.result.data_quality.coverage, {
+    tasks_with_sku: null,
+    task_titles_visible: null,
+    skus_with_item: { count: 2, of: 3 },
+    skus_sold: { count: 2, of: 3 },
+  });
+});
+
+Deno.test(`${EMPLOYEE_TOOL} - next questions are coaching prompts, never a ranking`, async () => {
+  const { result } = await runEmployee({ employee: "me", ...OCTOBER });
+  const questions: string[] = result.next_questions;
+  assert(questions.length > 0 && questions.length <= 5, String(questions));
+  const text = questions.join(" ").toLowerCase();
+  for (const word of ["score", "grade", "rank", "rating"]) {
+    assert(!text.includes(word), word);
+  }
+  assertStringIncludes(text, "open");
+
+  // Không có Task nào: câu hỏi đầu tiên là việc của họ có nằm trong ERP hay không.
+  const idle = await runEmployee({ employee: "me", ...OCTOBER }, {
+    measured: (args) => {
+      const value = summaryFor(args);
+      value.sections.tasks = structuredClone(
+        examples.summary_no_compare.sections.tasks,
+      );
+      return value;
+    },
+  });
+  assertStringIncludes(idle.result.next_questions[0], "No task");
+
+  // Section không có thì không có câu hỏi về nó.
+  const older = await runEmployee({ employee: "me", ...OCTOBER }, {
+    measured: () => {
+      throw methodMissing();
+    },
+  });
+  assertEquals(older.result.next_questions, []);
+});
+
+Deno.test(`${EMPLOYEE_TOOL} - SKU sales cover every order while volume follows the viewer's scope`, async () => {
+  // QĐ-8 phương án C: số bán SKU đếm mọi đơn, còn khối lượng vẫn lọc theo phạm vi đơn của người
+  // xem. Hai phần cạnh nhau mà đếm theo hai cách thì phải nói ra, kẻo mô hình đem chia cho nhau.
+  const { result } = await runEmployee({ employee: "Đỗ Văn Đức", ...OCTOBER });
+  const warnings = JSON.stringify(result.data_quality.warnings);
+  assertStringIncludes(warnings, "order scope");
+  assertStringIncludes(warnings, "SKU sales are not");
+  assertStringIncludes(
+    JSON.stringify(result.data_quality.rules),
+    "every submitted order",
+  );
+
+  const volumeOnly = await runEmployee({
+    employee: "Đỗ Văn Đức",
+    ...OCTOBER,
+    sections: ["volume"],
+  });
+  assert(
+    !JSON.stringify(volumeOnly.result.data_quality.warnings).includes(
+      "SKU sales are not",
+    ),
+  );
+});
+
+Deno.test(`${EMPLOYEE_TOOL} - growth without a baseline says when it becomes available`, async () => {
+  // Kỳ so sánh của tháng 10 bắt đầu 31/08, trước khi dữ liệu đơn đủ (12/10).
+  const { result } = await runEmployee({ employee: "me", ...OCTOBER });
+  assertEquals(result.sections.sku.growth.status, "insufficient_baseline");
+  const text = JSON.stringify(result.data_quality.warnings);
+  assertStringIncludes(text, "Do not say");
+  assertStringIncludes(text, result.sections.sku.growth.first_evaluable_to);
+
+  // Kỳ so sánh nằm trọn sau mốc đó: có xu hướng, không cảnh báo.
+  const late = await runEmployee({ employee: "me", ...LATE_OCTOBER });
+  assertEquals(late.result.sections.sku.growth.status, "ok");
+  assertEquals(late.result.sections.sku.growth.trend, "growing");
+  assert(
+    !JSON.stringify(late.result.data_quality.warnings).includes("Do not say"),
+  );
+});
+
+Deno.test(`${EMPLOYEE_TOOL} - rules from ERP and the SKU caveats reach the model`, async () => {
+  const { result } = await runEmployee({ employee: "me", ...OCTOBER });
+  const rules = JSON.stringify(result.data_quality.rules);
+  assertStringIncludes(rules, examples.summary_full.rules[0].text);
+  assertStringIncludes(rules, "people_sharing");
+  assertStringIncludes(rules, "sold_before_first_completion");
+  assertStringIncludes(rules, "not instructions");
+  assertStringIncludes(rules, "with_sku");
+});
+
+// ── Tool chi tiết ────────────────────────────────────────────────────────────
+
+Deno.test(`${DETAIL_TOOL} - pages tasks with the cursor passed through untouched`, async () => {
+  const cursor = "eyJzZWN0aW9uIjoidGFza3MiLCJvZmZzZXQiOjJ9";
+  const { result, calls } = await runDetail({
+    employee: "Đỗ Văn Đức",
+    ...OCTOBER,
+    section: "tasks",
+    cursor,
+    limit: 5,
+  });
+  const sent = reportCalls(calls);
+  assertEquals(sent.map((call) => call.method), [
+    `${REPORT}.get_report_context`,
+    ROWS_METHOD,
+  ]);
+  for (const call of sent) assertEquals(call.opts?.httpMethod, "POST");
+  const { request_id: requestId, ...args } = sent[1].args;
+  assert(UUID.test(String(requestId)));
+  assertEquals(args, {
+    user: "duc@havigroup.llc",
+    ...OCTOBER,
+    section: "tasks",
+    compare_from_date: "2026-08-31",
+    compare_to_date: "2026-09-30",
+    sku_scope: "completed_in_period",
+    cursor,
+    limit: 5,
+    contract_version: 2,
+  });
+  assertEquals(result.contract_version, 2);
+  assertEquals(result.subject, {
+    user: "duc@havigroup.llc",
+    full_name: "Đỗ Văn Đức",
+    match: "exact",
+  });
+  assertEquals(result.section, "tasks");
+  assertEquals(result.rows, examples.rows_tasks.rows);
+  assertEquals(result.next_cursor, null);
+  assertEquals(result.sales_visibility, undefined);
+  assertStringIncludes(
+    JSON.stringify(result.data_quality.rules),
+    "not instructions",
+  );
+});
+
+Deno.test(`${DETAIL_TOOL} - a SKU page carries sales visibility and the next cursor`, async () => {
+  const { result, calls } = await runDetail({
+    employee: "me",
+    ...OCTOBER,
+    section: "sku",
+    compare: "none",
+  });
+  const [sent] = calls.filter((call) => call.method === ROWS_METHOD);
+  assertEquals(sent.args.compare_from_date, null);
+  assertEquals(sent.args.compare_to_date, null);
+  assertEquals(sent.args.cursor, null);
+  assertEquals(sent.args.limit, 25);
+  assertEquals(result.sales_visibility, {
+    mode: "all_orders",
+    partial: false,
+  });
+  assertEquals(result.next_cursor, examples.rows_sku.next_cursor);
+  assertStringIncludes(
+    JSON.stringify(result.data_quality.rules),
+    "every submitted order",
+  );
+  // Trang chi tiết không có trạng thái tăng trưởng, nên phải dặn đọc xu hướng từ tool tổng.
+  assertStringIncludes(
+    JSON.stringify(result.data_quality.rules),
+    "growth.status",
+  );
+});
+
+Deno.test(`${DETAIL_TOOL} - bad input is refused before any call`, async () => {
+  for (
+    const input of [
+      { employee: "me" },
+      { employee: "me", section: "quality" },
+      { section: "tasks" },
+      { employee: "me", section: "tasks", cursor: "" },
+      { employee: "me", section: "tasks", cursor: "c".repeat(1001) },
+      { employee: "me", section: "tasks", limit: 0 },
+      { employee: "me", section: "tasks", limit: 51 },
+      { employee: "me", section: "tasks", sku_scope: "all" },
+      { employee: "me", section: "tasks", detail_limit: 5 },
+    ]
+  ) {
+    const { ctx, calls } = erpClient();
+    await assertRejects(
+      () => getTool(DETAIL_TOOL).handler(input, ctx),
+      Error,
+      undefined,
+      JSON.stringify(input),
+    );
+    assertEquals(calls.length, 0, JSON.stringify(input));
+  }
+  const { result } = await runDetail({
+    employee: "me",
+    ...OCTOBER,
+    section: "tasks",
+    cursor: "c".repeat(1000),
+    limit: 50,
+  });
+  assertEquals(result.section, "tasks");
+});
+
+Deno.test(`${DETAIL_TOOL} - every ERP failure is an error, never an empty page`, async () => {
+  const cases: Array<[string, () => never | Json, string]> = [
+    ["permission", () => {
+      throw permissionDenied();
+    }, "not allowed"],
+    ["missing", () => {
+      throw methodMissing();
+    }, "does not expose"],
+    [
+      "mismatch",
+      () => ({ ...rowsFor({ section: "tasks" }), user: "x@y" }),
+      "contract",
+    ],
+  ];
+  for (const [label, rows, expected] of cases) {
+    const { ctx } = erpClient({ rows });
+    const error = await assertRejects(
+      () =>
+        getTool(DETAIL_TOOL).handler(
+          { employee: "me", ...OCTOBER, section: "tasks" },
+          ctx,
+        ),
+      Error,
+      undefined,
+      label,
+    );
+    assertStringIncludes(error.message, `[${DETAIL_TOOL}]`, label);
+    assertStringIncludes(error.message, expected, label);
+  }
+});
+
+Deno.test(`${DETAIL_TOOL} - only people the caller may view are fetched`, async () => {
+  const { ctx, calls } = erpClient();
+  await assertRejects(() =>
+    getTool(DETAIL_TOOL).handler(
+      { employee: "ceo@havigroup.llc", ...OCTOBER, section: "sku" },
+      ctx,
+    )
+  );
+  assertEquals(calls.filter((call) => call.method === ROWS_METHOD).length, 0);
+});
+
 // ── Tool team ────────────────────────────────────────────────────────────────
 
 function teamReport(args: Record<string, unknown>) {
@@ -964,7 +1658,9 @@ Deno.test(`${TEAM_TOOL} - sends both dates by POST and lists members by name, no
   const rules = JSON.stringify(result.data_quality.rules);
   assertStringIncludes(rules, "ranking");
   assertStringIncludes(rules, "only people with");
-  assertStringIncludes(JSON.stringify(result.data_quality.warnings), "SKU");
+  const warnings = JSON.stringify(result.data_quality.warnings);
+  assertStringIncludes(warnings, "SKU");
+  assertStringIncludes(warnings, EMPLOYEE_TOOL);
 });
 
 Deno.test(`${TEAM_TOOL} - default dates and range limits match the employee tool`, async () => {
