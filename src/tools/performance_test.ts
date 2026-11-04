@@ -1387,7 +1387,9 @@ Deno.test(`${EMPLOYEE_TOOL} - next questions are coaching prompts, never a ranki
   }
   assertStringIncludes(text, "open");
 
-  // Không có Task nào: câu hỏi đầu tiên là việc của họ có nằm trong ERP hay không.
+  // Không có Task nào trong kỳ: hợp đồng chỉ đếm Task tạo hoặc xong trong kỳ, nên Task tạo từ trước,
+  // được giao trong kỳ và còn mở thì không nằm trong số đếm. Câu hỏi nêu đúng phạm vi đó và không
+  // được suy ra là "không ai giao việc".
   const idle = await runEmployee({ employee: "me", ...OCTOBER }, {
     measured: (args) => {
       const value = summaryFor(args);
@@ -1397,7 +1399,10 @@ Deno.test(`${EMPLOYEE_TOOL} - next questions are coaching prompts, never a ranki
       return value;
     },
   });
-  assertStringIncludes(idle.result.next_questions[0], "No task");
+  const idleQuestion: string = idle.result.next_questions[0];
+  assertStringIncludes(idleQuestion, "created or completed in this period");
+  assertStringIncludes(idleQuestion, "older tasks still open");
+  assert(!idleQuestion.includes("assigned"), idleQuestion);
 
   // SKU có dòng đơn nhưng không bán trong kỳ: không suy ra là "đã bán trước đó", vì với kỳ cũ lượt
   // bán có thể nằm sau kỳ.

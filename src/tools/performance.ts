@@ -927,9 +927,12 @@ function nextQuestions(
   if (tasks) {
     const counts = tasks.summary;
     if (counts.assigned === 0) {
+      // Hợp đồng chỉ đếm Task tạo hoặc xong trong kỳ, nên số 0 không chứng minh là không ai giao
+      // việc: Task tạo từ trước và còn mở vẫn có thể đang được làm.
       questions.push(
-        "No task was assigned to them in ERP in this period: does their work happen outside " +
-          "ERP Tasks, and should it be recorded there?",
+        "None of their ERP tasks was created or completed in this period (older tasks still " +
+          "open are not counted here): is their work on such older tasks, or does it happen " +
+          "outside ERP Tasks and should be recorded there?",
       );
     } else {
       if (counts.open > 0) {
