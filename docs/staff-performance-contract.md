@@ -220,8 +220,8 @@ SKU:
   when no comparison was requested. Currencies are unique.
 - `growth.status = not_requested` exactly when no comparison was requested;
   `no_sales` needs `qty = 0`; `ok` needs a comparison window on or after
-  `order_kpi_since` and a trend that follows the rule; `first_evaluable_to`
-  follows the formula above.
+  `order_kpi_since` and on or after every non-null channel `history_floor`, and
+  a trend that follows the rule; `first_evaluable_to` follows the formula above.
 - Row counts by kind (sold, unmatched, with item, ambiguous, shared) never
   exceed the summary, and match it on the last page.
 - Per row: `sold` exactly when `qty > 0`; `qty` and `orders` both zero or both

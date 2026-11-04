@@ -163,6 +163,25 @@ Deno.test("growth trend and the first evaluable date follow the decided rule", (
   ]);
 });
 
+Deno.test("evaluable growth needs every channel's order history to cover the comparison window", () => {
+  // Một kênh chỉ có lịch sử đơn từ giữa kỳ so sánh thì số kỳ trước thiếu phần của kênh đó, nên
+  // `ok` ở đây sẽ biến dữ liệu thiếu thành xu hướng trông như đã kiểm chứng.
+  const late = copy("summary_full");
+  late.sections.sku.data_coverage.channels[0].history_floor = "2026-11-15";
+  assertEquals(checkSummaryResponse(late), [
+    "/sections/sku/growth: ok needs a compare window on or after every channel's history_floor",
+  ]);
+  // Mốc đúng bằng ngày đầu kỳ so sánh là đủ, và kênh không có mốc riêng thì không chặn.
+  const onTime = copy("summary_full");
+  onTime.sections.sku.data_coverage.channels[0].history_floor = "2026-11-01";
+  assertEquals(checkSummaryResponse(onTime), []);
+  // `insufficient_baseline` vẫn hợp lệ với cùng mốc muộn đó: luật chỉ chặn việc nhận là `ok`.
+  late.sections.sku.growth.status = "insufficient_baseline";
+  late.sections.sku.growth.trend = null;
+  for (const row of late.sections.sku.rows) row.trend = null;
+  assertEquals(checkSummaryResponse(late), []);
+});
+
 Deno.test("row trends stay null while the baseline is insufficient", () => {
   const value = copy("summary_insufficient_baseline");
   value.sections.sku.rows[0].trend = "new";

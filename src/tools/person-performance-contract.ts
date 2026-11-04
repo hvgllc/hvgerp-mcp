@@ -526,6 +526,20 @@ function checkSkuSection(
       `${growthPath}: ok needs a compare window on or after order_kpi_since`,
     );
   }
+  // Mốc chung chưa đủ: một kênh có lịch sử đơn bắt đầu muộn hơn ngày đầu kỳ so sánh thì số kỳ trước
+  // thiếu phần của kênh đó. Kênh có `history_floor` null dùng mốc chung ở trên.
+  const compareFrom = response.compare.from_date;
+  if (
+    growth.status === "ok" && compareFrom !== null &&
+    section.data_coverage.channels.some((channel) =>
+      channel.history_floor !== null &&
+      dayNumber(channel.history_floor) > dayNumber(compareFrom)
+    )
+  ) {
+    errors.push(
+      `${growthPath}: ok needs a compare window on or after every channel's history_floor`,
+    );
+  }
 
   const rows = section.rows;
   const counts: Array<[string, number, number]> = [
