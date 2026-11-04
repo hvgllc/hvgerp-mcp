@@ -84,10 +84,11 @@ Both are `POST` and run under the caller's own token and permissions.
   completed), `version` (from the Version log), `status_only` (status says
   Completed but no moment is known). The four add up to `completed`.
   `completed_on` is stamped again on every completion, so when it falls after
-  `to_date` and the status changed after `to_date`, ERP ignores it and takes the
-  first completion from the Version log (source `version`). A task completed
-  after the period with no Version keeps its `completed_on` and stays `open` for
-  the period.
+  `to_date` and the status changed after `to_date`, ERP ignores it and reads the
+  next source from the history: usually `version` (the first completion in the
+  Version log), or `born_completed` with the `creation` moment when the earliest
+  status change leaves `Completed`. A task completed after the period with no
+  Version keeps its `completed_on` and stays `open` for the period.
 - Every completed task has exactly one SKU status:
   `with_sku + missing_sku +
   invalid_sku = completed`. The SKU is read from the
