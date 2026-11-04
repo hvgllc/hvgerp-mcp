@@ -129,16 +129,16 @@ every value. Any mismatch becomes the fixed error `Events backend error`.
 
 This repository:
 
-| Location                                                                            | Coupling                                                                                                                        |
-| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `protocol.ts` top-level import                                                      | Imports exactly one file, `meeting-events.v1.json`.                                                                             |
-| `protocol.ts` `MEETING_EVENT_NAMES`                                                 | `parseEventName` accepts only these names; anything else is `-32011`.                                                           |
-| `protocol.ts` `PAYLOAD_SCHEMA`, `EVENT_INPUT_SCHEMA`                                | One payload schema and one input schema shared by every descriptor; `parseArguments` uses the single input schema.              |
-| `protocol.ts` `CHANGE_BY_EVENT`, `validateEventPayload`                             | Read from the one contract.                                                                                                     |
-| `src/events/contract_test.ts`                                                       | Hashes one file, reads the hash from `docs/mcp-events-meetings.md`, asserts exactly three event names.                          |
-| `src/events/json-schema.ts`                                                         | Supports only the keywords the meeting contract uses (no `pattern`, `minItems`, `maxItems`, `uniqueItems`, `oneOf`, `$ref`...). |
-| `src/tools/calendar.ts`, `EVENTS_TOOL_NAMES`                                        | The only re-read tool. `src/client.ts` adds `calendarTools` when `includeEventsTools` is on.                                    |
-| `erp-store.ts` `ERP_EVENTS_METHODS.meetingGet`, `fetchMeeting`, `pickMeetingFields` | Meeting read-back and its output validator.                                                                                     |
+| Location                                                                            | Coupling                                                                                                                                                               |
+| ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `protocol.ts` top-level import                                                      | Imports exactly one file, `meeting-events.v1.json`.                                                                                                                    |
+| `protocol.ts` `MEETING_EVENT_NAMES`                                                 | `parseEventName` accepts only these names; anything else is `-32011`.                                                                                                  |
+| `protocol.ts` `PAYLOAD_SCHEMA`, `EVENT_INPUT_SCHEMA`                                | One payload schema and one input schema shared by every descriptor; `parseArguments` uses the single input schema.                                                     |
+| `protocol.ts` `CHANGE_BY_EVENT`, `validateEventPayload`                             | Read from the one contract.                                                                                                                                            |
+| `src/events/contract_test.ts`                                                       | Hashes one file, reads the hash from `docs/mcp-events-meetings.md`, asserts exactly three event names.                                                                 |
+| `src/events/json-schema.ts`                                                         | Supports only the keywords the repository's contracts use (no `pattern`, `minItems`, `uniqueItems`, `oneOf`, remote `$ref`...); `$ref` resolves only `#/$defs/<name>`. |
+| `src/tools/calendar.ts`, `EVENTS_TOOL_NAMES`                                        | The only re-read tool. `src/client.ts` adds `calendarTools` when `includeEventsTools` is on.                                                                           |
+| `erp-store.ts` `ERP_EVENTS_METHODS.meetingGet`, `fetchMeeting`, `pickMeetingFields` | Meeting read-back and its output validator.                                                                                                                            |
 
 ERPNext (`hvg_workspace/mcp_events/`):
 
@@ -237,29 +237,28 @@ implementation detail.
    and inside the safe-integer range (`-9007199254740991` to
    `9007199254740991`), because `Number.isInteger` accepts larger values that no
    longer round-trip exactly and two revisions could then compare equal; an
-   array has `maxItems` (not yet in `SUPPORTED_KEYWORDS`, so the first contract
-   with an array adds it through step 3) and bounded `items`; a nested object is
-   closed the same way. A bound only counts when it is well formed, because the
-   validator silently skips a malformed one (it applies `maxLength` only when it
-   is a number): `minLength`, `maxLength` and `maxItems` are non-negative
-   integers with `minLength` not above `maxLength`, `minimum` and `maximum` are
-   finite numbers with `minimum` not above `maximum`, `enum` is a non-empty
-   array of values of the declared type, and `const` is a value of the declared
-   type (a string field's `const` is a string, so
-   `{ "type": "string", "const": 7 }` is rejected rather than left as a field no
-   value can ever satisfy). `maxLength: "140"` is therefore an unbounded string.
-   The same holds for every other supported keyword, since the validator also
-   skips a control keyword of the wrong container type (`required: "field"` is
-   never enforced, an object-valued `allOf` is never applied):
-   `checkSchemaShape` in `json-schema.ts` walks every schema and requires `type`
-   and `format` and `description` to be strings, `properties` an object whose
-   values are schemas, `required` an array of distinct strings (in a typed
-   object schema at any depth, each also declared in that object's own
-   `properties`, so an optional nested object cannot require a key no value can
-   carry; in a conditional subschema, each declared by its enclosing typed
-   object), `additionalProperties` a boolean, `items` one schema, `allOf` and
-   `anyOf` non-empty arrays of schemas, `not`, `if`, `then` and `else` schemas,
-   and `then` or `else` only beside an `if`. `buildRegistry` runs it on every
+   array has `maxItems` and bounded `items`; a nested object is closed the same
+   way. A bound only counts when it is well formed, because the validator
+   silently skips a malformed one (it applies `maxLength` only when it is a
+   number): `minLength`, `maxLength` and `maxItems` are non-negative integers
+   with `minLength` not above `maxLength`, `minimum` and `maximum` are finite
+   numbers with `minimum` not above `maximum`, `enum` is a non-empty array of
+   values of the declared type, and `const` is a value of the declared type (a
+   string field's `const` is a string, so `{ "type": "string", "const": 7 }` is
+   rejected rather than left as a field no value can ever satisfy).
+   `maxLength: "140"` is therefore an unbounded string. The same holds for every
+   other supported keyword, since the validator also skips a control keyword of
+   the wrong container type (`required: "field"` is never enforced, an
+   object-valued `allOf` is never applied): `checkSchemaShape` in
+   `json-schema.ts` walks every schema and requires `type` and `format` and
+   `description` to be strings, `properties` an object whose values are schemas,
+   `required` an array of distinct strings (in a typed object schema at any
+   depth, each also declared in that object's own `properties`, so an optional
+   nested object cannot require a key no value can carry; in a conditional
+   subschema, each declared by its enclosing typed object),
+   `additionalProperties` a boolean, `items` one schema, `allOf` and `anyOf`
+   non-empty arrays of schemas, `not`, `if`, `then` and `else` schemas, and
+   `then` or `else` only beside an `if`. `buildRegistry` runs it on every
    effective schema, the meeting contract included (it already passes), and the
    test fixtures cover each malformed shape. `format` is limited to the values
    `formatMatches` in `json-schema.ts` really checks (`date` and `date-time`
