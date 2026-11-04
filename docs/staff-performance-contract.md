@@ -69,16 +69,25 @@ Both are `POST` and run under the caller's own token and permissions.
 - Only leaf tasks count (`is_group = 0`, `is_template = 0`): ERP reopens a
   parent task by itself when a child reopens, and parents would count their
   children's work twice.
+- Every section reads a task as it stood at the end of `to_date`, rebuilt from
+  its history, not from its current status: the bucket, the row `status`, the
+  completion moment and source, the SKU status and the set of tasks whose SKUs
+  carry sales. Reopening, cancelling or completing a task after the period never
+  changes the figures of a closed period.
 - A task is in the period when it was created in the period or its completion
-  moment falls in the period. Its bucket follows its current status, except that
-  a task completed after `to_date` counts as `open`, because it was still open
-  when the period ended.
+  moment falls in the period. A task completed after `to_date` counts as `open`,
+  because it was still open when the period ended.
 - `assigned` counts every task attributed to the person in the period, including
   the `owner_unassigned` ones. `assigned = completed + open + cancelled`.
 - `completed` tasks split by how the completion moment was found
   (`completion_sources`): `completed_on`, `born_completed` (created already
   completed), `version` (from the Version log), `status_only` (status says
   Completed but no moment is known). The four add up to `completed`.
+  `completed_on` is stamped again on every completion, so when it falls after
+  `to_date` and the status changed after `to_date`, ERP ignores it and takes the
+  first completion from the Version log (source `version`). A task completed
+  after the period with no Version keeps its `completed_on` and stays `open` for
+  the period.
 - Every completed task has exactly one SKU status:
   `with_sku + missing_sku +
   invalid_sku = completed`. The SKU is read from the
@@ -153,7 +162,7 @@ rounding of an exact tie is accepted.
 | ---------------------- | ------------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `on_time_completion`   | completed on or before `exp_end_date` | `basis.with_deadline`                                                             | Excludes `born_completed`, tasks whose deadline was edited after completion (in the whole history, since `exp_end_date` is the current value), and `status_only`. For source `completed_on`, which is a date, the completion moment is the earliest change to `Completed` on that day, or midnight when there is none, so any deadline edit that day excludes the task. While the site flag `hvg_perf_on_time_enabled` is off (the default), the signal is `not_measured` with reason `disabled_by_site_config`.                                                                                                                                                        |
 | `reopened_by_other`    | `basis.other_reopen`                  | leaf tasks (`is_group = 0`) of the period completed at least once up to `to_date` | Tasks of the period here are those created or completed in the period, plus tasks created before it that moved to `Completed` within it; a task created and completed before the period and reopened during it is not included. Of those, the sample keeps tasks completed by `to_date` and tasks with a status change into or out of `Completed` up to `to_date`. A reopened task still at work stays in both counts, so the denominator can differ from `tasks.summary.completed`; no rule links the two. Reopens up to `to_date` are split by `Version.owner` into self, other person and bot, because ERP reopens a parent task automatically when a child reopens. |
-| `returned_from_review` | `basis.returned_by_other`             | `basis.entered_review`                                                            | `entered_review`: tasks in the period (see Section `tasks`) with a status change into or out of `Pending Review` up to `to_date`, or with no status change in their whole history, including after `to_date`, and still in `Pending Review` (created there). `returned`: those that went from `Pending Review` back to `Open` or `Working` up to `to_date`; `returned_by_other`: those with such a return by someone other than the person or a bot.                                                                                                                                                                                                                    |
+| `returned_from_review` | `basis.returned_by_other`             | `basis.entered_review`                                                            | `entered_review`: tasks in the period (see Section `tasks`) with a status change into or out of `Pending Review` up to `to_date`, or with no status change up to `to_date` and in `Pending Review` at the end of `to_date` (created there); a task returned only after the period stays in the sample and is not counted as `returned`. `returned`: those that went from `Pending Review` back to `Open` or `Working` up to `to_date`; `returned_by_other`: those with such a return by someone other than the person or a bot.                                                                                                                                         |
 
 `sku_coverage` is not a quality signal and is not reported here. Rework is out
 of scope until a later round.
