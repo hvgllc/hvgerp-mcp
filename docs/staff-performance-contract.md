@@ -203,10 +203,12 @@ Tasks:
 - `owner_unassigned <= assigned`, `title_redacted <= assigned`.
 - Rows never exceed the summary counts (rows, `owner_unassigned` rows, redacted
   rows); on the last page (`next_cursor = null`) they match exactly.
-- Per row: `completed_on` and `completion_source` are both set or both null;
-  `sku_status = not_applicable` exactly when `completed_on` is null; `sku` is
-  set exactly when `sku_status = ok`; `subject` is null exactly when the title
-  is redacted.
+- Per row: `completion_source` is set exactly when the task is completed;
+  `completed_on` is null exactly when `completion_source` is null or
+  `status_only` (a completed task whose moment is unknown has no date);
+  `sku_status = not_applicable` exactly when `completion_source` is null, so a
+  `status_only` task still has a SKU status; `sku` is set exactly when
+  `sku_status = ok`; `subject` is null exactly when the title is redacted.
 
 SKU:
 

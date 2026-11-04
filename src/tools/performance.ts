@@ -843,11 +843,49 @@ const SALES_SCOPE_WARNING =
   "volume counts only orders within your scope. The two cover different orders, so do not " +
   "divide one by the other or add them up.";
 
-function baselineWarning(sku: SkuSection, days: number): string {
-  return "SKU growth cannot be evaluated for this period: its comparison window reaches back " +
-    `before complete order data (${sku.data_coverage.order_kpi_since}). Do not say sales grew ` +
-    `or fell. For a ${days}-day period, growth can be evaluated for periods ending on or after ` +
-    `${sku.growth.first_evaluable_to}.`;
+/**
+ * Vì sao chưa đo được tăng trưởng, theo đúng nguyên nhân ERP có thể có.
+ *
+ * Hợp đồng cho phép ba nguyên nhân: kỳ so sánh trước mốc dữ liệu chung, trước mốc lịch sử của một
+ * kênh, hoặc kỳ thiếu dữ liệu. `first_evaluable_to` chỉ tính từ mốc chung, nên chỉ nêu nó khi mốc
+ * chung là nguyên nhân, và nêu như ngày sớm nhất có thể, không phải lời hứa.
+ */
+function baselineWarning(
+  sku: SkuSection,
+  days: number,
+  compareFrom: string | null,
+): string {
+  const coverage = sku.data_coverage;
+  const beforeCutoff = compareFrom !== null &&
+    compareFrom < coverage.order_kpi_since;
+  const lateChannels = compareFrom === null ? [] : coverage.channels
+    .filter((entry) =>
+      entry.history_floor !== null && entry.history_floor > compareFrom
+    )
+    .map((entry) => `${entry.channel} (${entry.history_floor})`);
+  const causes: string[] = [];
+  if (beforeCutoff) {
+    causes.push(
+      "its comparison window reaches back before complete order data " +
+        `(${coverage.order_kpi_since})`,
+    );
+  }
+  if (lateChannels.length > 0) {
+    causes.push(
+      "order history starts inside the comparison window on " +
+        lateChannels.join(", "),
+    );
+  }
+  const why = causes.length > 0
+    ? causes.join(", and ")
+    : "ERP reports incomplete order data for the period or its comparison window";
+  const when = beforeCutoff
+    ? ` For a ${days}-day period, the earliest period end at which growth can be evaluated is ` +
+      `${sku.growth.first_evaluable_to}, and only if every channel's order history covers the ` +
+      "comparison window by then."
+    : " Growth becomes evaluable once every channel's order history covers the comparison window.";
+  return `SKU growth cannot be evaluated for this period: ${why}. Do not say sales grew or ` +
+    `fell.${when}`;
 }
 
 /** Mỗi tỷ lệ phủ là một cặp đếm và mẫu số, để mô hình nói "3 trên 5" thay vì một con số trơn. */
@@ -916,11 +954,13 @@ function nextQuestions(
           "channels under another code, or not listed yet?",
       );
     }
+    // Có dòng đơn nhưng không bán trong kỳ. Không nói "đã bán trước đó": với kỳ cũ, dòng đơn khớp
+    // có thể nằm sau kỳ.
     const unsold = counts.skus - counts.skus_sold - counts.skus_unmatched;
     if (unsold > 0) {
       questions.push(
-        `${unsold} SKU(s) sold before but not in this period: which deserve another listing ` +
-          "push or a redesign?",
+        `${unsold} SKU(s) have order lines on record but no sales in this period: are they ` +
+          "still listed, and do any need another listing push or a redesign?",
       );
     }
   }
@@ -1098,7 +1138,9 @@ async function getEmployeePerformance(
     warnings.push(partialDayWarning(site.today, previous !== null));
   }
   if (sku?.growth.status === "insufficient_baseline") {
-    warnings.push(baselineWarning(sku, period.days));
+    warnings.push(
+      baselineWarning(sku, period.days, previous?.from_date ?? null),
+    );
   }
 
   const sectionsOut: Record<string, unknown> = {};

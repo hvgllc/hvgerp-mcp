@@ -254,14 +254,18 @@ function checkPeriod(
 }
 
 function checkTaskRow(row: TaskRow, path: string, errors: string[]): void {
-  if (nullMismatch(row.completed_on, row.completion_source)) {
+  // `status_only` là việc đã xong mà không biết lúc nào xong: có nguồn hoàn tất nhưng không có ngày.
+  // Vì vậy "đã xong hay chưa" đọc từ `completion_source`, không đọc từ việc có ngày hay không.
+  const completed = row.completion_source !== null;
+  const momentKnown = completed && row.completion_source !== "status_only";
+  if ((row.completed_on !== null) !== momentKnown) {
     errors.push(
-      `${path}: completed_on and completion_source must be both set or both null`,
+      `${path}: completed_on must be null exactly when completion_source is null or status_only`,
     );
   }
-  if ((row.sku_status === "not_applicable") !== (row.completed_on === null)) {
+  if ((row.sku_status === "not_applicable") === completed) {
     errors.push(
-      `${path}: sku_status must be not_applicable exactly when completed_on is null`,
+      `${path}: sku_status must be not_applicable exactly when completion_source is null`,
     );
   }
   if ((row.sku_status === "ok") !== (row.sku !== null)) {

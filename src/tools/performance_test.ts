@@ -1399,6 +1399,19 @@ Deno.test(`${EMPLOYEE_TOOL} - next questions are coaching prompts, never a ranki
   });
   assertStringIncludes(idle.result.next_questions[0], "No task");
 
+  // SKU có dòng đơn nhưng không bán trong kỳ: không suy ra là "đã bán trước đó", vì với kỳ cũ lượt
+  // bán có thể nằm sau kỳ.
+  const unsold = await runEmployee({ employee: "me", ...OCTOBER }, {
+    measured: (args) => {
+      const value = summaryFor(args);
+      value.sections.sku.summary.skus = 4;
+      return value;
+    },
+  });
+  const unsoldText = unsold.result.next_questions.join(" ");
+  assertStringIncludes(unsoldText, "1 SKU(s) have order lines on record");
+  assert(!unsoldText.includes("sold before"), unsoldText);
+
   // Section không có thì không có câu hỏi về nó.
   const older = await runEmployee({ employee: "me", ...OCTOBER }, {
     measured: () => {
@@ -1439,6 +1452,35 @@ Deno.test(`${EMPLOYEE_TOOL} - growth without a baseline says when it becomes ava
   const text = JSON.stringify(result.data_quality.warnings);
   assertStringIncludes(text, "Do not say");
   assertStringIncludes(text, result.sections.sku.growth.first_evaluable_to);
+
+  assertStringIncludes(text, "earliest");
+
+  // Kỳ so sánh nằm sau mốc chung nhưng một kênh mới có dữ liệu từ giữa kỳ so sánh: nguyên nhân là
+  // kênh đó, và không được hứa một ngày tính từ mốc chung.
+  const channelGap = await runEmployee({ employee: "me", ...LATE_OCTOBER }, {
+    measured: (args) => {
+      const value = summaryFor(args);
+      const sku = value.sections.sku;
+      sku.data_coverage.channels[0].history_floor = "2026-10-21";
+      for (const row of sku.rows) row.trend = null;
+      sku.growth = {
+        ...sku.growth,
+        status: "insufficient_baseline",
+        trend: null,
+      };
+      return value;
+    },
+  });
+  const gapText = JSON.stringify(channelGap.result.data_quality.warnings);
+  assertStringIncludes(gapText, "Do not say");
+  assertStringIncludes(gapText, "tiktok (2026-10-21)");
+  assert(
+    !gapText.includes(
+      channelGap.result.sections.sku.growth.first_evaluable_to,
+    ),
+    gapText,
+  );
+  assert(!gapText.includes("before complete order data"), gapText);
 
   // Kỳ so sánh nằm trọn sau mốc đó: có xu hướng, không cảnh báo.
   const late = await runEmployee({ employee: "me", ...LATE_OCTOBER });

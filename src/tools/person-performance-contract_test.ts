@@ -101,9 +101,27 @@ Deno.test("a task row keeps completion, SKU status and redaction consistent", ()
   value.rows[0].completed_on = null;
   value.rows[0].title_redacted = true;
   assertEquals(checkRowsResponse(value), [
-    "/rows/0: completed_on and completion_source must be both set or both null",
-    "/rows/0: sku_status must be not_applicable exactly when completed_on is null",
+    "/rows/0: completed_on must be null exactly when completion_source is null or status_only",
     "/rows/0: a redacted title must have a null subject",
+  ]);
+  const open = copy("rows_tasks");
+  open.rows[0].completed_on = null;
+  open.rows[0].completion_source = null;
+  assertEquals(checkRowsResponse(open), [
+    "/rows/0: sku_status must be not_applicable exactly when completion_source is null",
+  ]);
+});
+
+Deno.test("a task completed with no known moment keeps its SKU status", () => {
+  // `status_only`: Task ghi Completed nhưng không tìm được thời điểm xong. Việc đó vẫn là việc đã xong,
+  // nên vẫn có trạng thái SKU, chỉ là `completed_on` rỗng.
+  const value = copy("rows_tasks");
+  value.rows[0].completed_on = null;
+  value.rows[0].completion_source = "status_only";
+  assertEquals(checkRowsResponse(value), []);
+  value.rows[0].completed_on = "2026-12-12";
+  assertEquals(checkRowsResponse(value), [
+    "/rows/0: completed_on must be null exactly when completion_source is null or status_only",
   ]);
 });
 
