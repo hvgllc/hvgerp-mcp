@@ -5,7 +5,7 @@
 [![MCP](https://img.shields.io/badge/MCP-server-1f6feb?logo=modelcontextprotocol&logoColor=white)](https://modelcontextprotocol.io)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-MCP server for [ERPNext](https://erpnext.com) / Frappe ERP: **145 tools** across
+MCP server for [ERPNext](https://erpnext.com) / Frappe ERP: **146 tools** across
 **17 categories**, with **7 interactive UI viewers**.
 
 Connect any MCP-compatible AI agent (Claude Desktop, Claude Code, VS Code
@@ -223,9 +223,9 @@ npm install
 node build-all.mjs
 ```
 
-## Tools (145)
+## Tools (146)
 
-145 tools across 17 categories. Most `_list` tools return interactive results
+146 tools across 17 categories. Most `_list` tools return interactive results
 via the doclist-viewer with row click, inline detail, and cross-viewer
 navigation. The read-only `erpnext_stock_ledger_list` instead returns bounded
 ledger rows for the stock viewer's Recent Movements panel.
@@ -275,10 +275,12 @@ ledger rows for the stock viewer's Recent Movements panel.
   appears once per occurrence instead of once in total.
 - **Kanban** (2) — Read-write boards for Task, Opportunity, and Issue with
   drag-and-drop.
-- **Analytics** (19): 11 analytics charts (bar, area, treemap, radar, scatter,
-  P&L…), 5 KPIs with sparklines, a sales funnel, and two staff performance tools
-  (one person's work volume against the previous period, and the same per person
-  for a team), answered with the caller's own ERP permissions.
+- **Analytics** (20): 11 analytics charts (bar, area, treemap, radar, scatter,
+  P&L…), 5 KPIs with sparklines, a sales funnel, and three staff performance
+  tools for coaching, never scoring: one person's task workload, SKU sales and
+  growth, quality signals and work volume against the previous period; the task
+  and SKU rows behind it, by page; and work volume per person for a team. All
+  three answer with the caller's own ERP permissions.
 - **Setup** (3) — Company creation and assignable user listing.
 - **Discovery** (1) — `erpnext_doctype_fields`: the field schema of any DocType
   (name, label, type, link target, mandatory, permlevel), gated on the caller's
@@ -299,6 +301,10 @@ Full per-tool reference with parameters: [`docs/tools.md`](docs/tools.md).
 | `ERPNEXT_MAX_UPLOAD_BYTES` | No       | Maximum decoded file-upload size in bytes (positive integer; default: 10 MiB)                                                                                            |
 | `ERPNEXT_METHOD_ALLOWLIST` | No       | Comma-separated dotted paths or `prefix.*` patterns that `erpnext_method_call` may invoke. Unset means no extra restriction beyond the API key's own ERPNext permissions |
 | `MCP_MRTR_SIGNING_KEY`     | No       | Exactly 64 lowercase hex characters; enables signed ambiguous-link elicitation. **Single-instance deployments only** — see below                                         |
+
+`ERPNEXT_METHOD_ALLOWLIST` limits only `erpnext_method_call`. Typed tools that
+call ERP methods themselves (staff performance, attendance repair, merchant
+orders) are not affected by it, so setting it does not switch them off.
 
 ### Caller identity (HTTP)
 

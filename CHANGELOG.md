@@ -8,6 +8,46 @@ This package is a fork of
 deliberately still point at the upstream repository, where those commits, pull
 requests and tags actually live.
 
+## [Unreleased]
+
+### Added
+
+- `erpnext_employee_performance_get` now measures what 3.9.0 returned as
+  `unavailable`, through the ERP module `hvg_sdc_sync.person_performance` under
+  staff performance contract v2 (`docs/staff-performance-contract.md`, with its
+  JSON Schema, shared examples and SHA-256 in `src/tools/contract/`). `tasks`
+  counts every task attributed to the person through its ToDo rows, so closed
+  work still counts after ERP clears `Task._assign`. `sku` lists the SKUs those
+  tasks produced (or the person's whole portfolio with `sku_scope`), their
+  quantity sold on every submitted order in the period and the previous period,
+  revenue per currency and a growth trend on fixed thresholds, reported only
+  when complete order data covers the comparison window. `quality` reports
+  on-time completion, reopens by someone else and returns from review, each as a
+  count over its denominator, without a rate below 5 cases.
+- `erpnext_employee_performance_detail_list` pages through the task and SKU rows
+  behind that summary with an opaque cursor, under the same permissions.
+- The summary now leads with `how_to_present`, `data_quality.coverage` (each
+  share as a count and what it is out of) and `next_questions` (coaching
+  questions built from the figures), ahead of the sections, so a client that
+  cuts a long answer drops rows rather than instructions.
+
+### Changed
+
+- `erpnext_employee_performance_get` returns `contract_version: 2`. Every ERP
+  answer is checked against the contract (schema, counting rules, and that it is
+  about the requested person, period, comparison window and sections) before it
+  reaches the model. An older ERP without the module, a `PermissionError`, or an
+  answer outside the contract turns `tasks`, `sku` and `quality` into
+  `unavailable` with reason `erp_endpoint_missing`, `not_permitted` or
+  `erp_contract_mismatch`; the volume section is unaffected. A mismatch note
+  names at most three JSON paths and never the values. The first warning names
+  the unavailable sections and says that `erpnext_task_list`, Timesheets and
+  Appraisal cannot stand in for them.
+- A person whom ERP gives no design or fulfill role, and who has no such lines,
+  gets a `not_applicable` volume section instead of a zero.
+- `erpnext_team_performance_get` now says that tasks, SKU sales and quality are
+  measured per person, through `erpnext_employee_performance_get`.
+
 ## [3.9.0] - 2026-11-02
 
 ### Added

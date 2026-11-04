@@ -1,8 +1,12 @@
 /**
  * Bộ kiểm tra JSON Schema tối giản cho hợp đồng Events.
  *
- * Chỉ hỗ trợ đúng tập từ khoá mà `contract/meeting-events.v1.json` dùng: không kéo thêm thư viện
- * vào lockfile chỉ để kiểm một schema nhỏ, và một tập từ khoá hẹp giúp hành vi dễ đọc, dễ test.
+ * Chỉ hỗ trợ đúng tập từ khoá mà các hợp đồng trong repo dùng (`contract/meeting-events.v1.json` và
+ * `src/tools/contract/person-performance.v2.json`): không kéo thêm thư viện vào lockfile chỉ để kiểm
+ * vài schema nhỏ, và một tập từ khoá hẹp giúp hành vi dễ đọc, dễ test.
+ *
+ * `$ref` chỉ nhận dạng nội bộ `#/$defs/<tên>`, giải trên schema gốc. Một `$ref` không giải được là
+ * lỗi của chính schema nên bị ném ra thay vì bỏ qua: bỏ qua thì mọi giá trị đều "hợp lệ".
  * Từ khoá lạ bị bỏ qua có chủ đích (JSON Schema mặc định cho phép), nhưng test hợp đồng khoá lại
  * danh sách từ khoá đang dùng để không có từ khoá nào bị bỏ qua mà không ai biết.
  *
@@ -21,6 +25,7 @@ export const SUPPORTED_KEYWORDS: readonly string[] = [
   "required",
   "additionalProperties",
   "items",
+  "maxItems",
   "minLength",
   "maxLength",
   "minimum",
@@ -33,9 +38,20 @@ export const SUPPORTED_KEYWORDS: readonly string[] = [
   "then",
   "else",
   "description",
+  "$defs",
+  "$ref",
 ];
 
 type Schema = Record<string, unknown>;
+
+const LOCAL_REF_PREFIX = "#/$defs/";
+
+/** Ngữ cảnh đi kèm một lượt kiểm: schema gốc để giải `$ref`, và các `$ref` đã theo ở đường dẫn hiện tại. */
+interface WalkContext {
+  root: Schema;
+  /** Đặt lại khi đi sâu vào phần tử con; một `$ref` lặp lại ở cùng đường dẫn là vòng lặp vô hạn. */
+  refsAtPath: ReadonlySet<string>;
+}
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const DATE_TIME_PATTERN =
@@ -109,12 +125,50 @@ function deepEqual(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function resolveRef(ref: string, root: Schema): Schema {
+  if (!ref.startsWith(LOCAL_REF_PREFIX)) {
+    throw new Error(`unsupported $ref ${ref}: only ${LOCAL_REF_PREFIX}<name>`);
+  }
+  const name = ref.slice(LOCAL_REF_PREFIX.length);
+  const defs = isRecord(root.$defs) ? root.$defs : {};
+  const target = Object.hasOwn(defs, name) ? defs[name] : undefined;
+  if (!isRecord(target)) throw new Error(`unresolved $ref ${ref}`);
+  return target;
+}
+
+/** Kiểm một nhánh con (anyOf, not, if) ở cùng đường dẫn, giữ nguyên gốc và các `$ref` đã theo. */
+function branchErrors(
+  schema: Schema,
+  value: unknown,
+  context: WalkContext,
+): string[] {
+  const errors: string[] = [];
+  walk(schema, value, "", errors, context);
+  return errors;
+}
+
 function walk(
   schema: Schema,
   value: unknown,
   path: string,
   errors: string[],
+  context: WalkContext,
 ): void {
+  // Phần tử con bắt đầu một đường dẫn mới, nên vòng lặp `$ref` chỉ có thể xảy ra ở cùng đường dẫn.
+  const childContext: WalkContext = {
+    root: context.root,
+    refsAtPath: new Set(),
+  };
+  if (typeof schema.$ref === "string") {
+    if (context.refsAtPath.has(schema.$ref)) {
+      throw new Error(`circular $ref ${schema.$ref}`);
+    }
+    const target = resolveRef(schema.$ref, context.root);
+    walk(target, value, path, errors, {
+      root: context.root,
+      refsAtPath: new Set([...context.refsAtPath, schema.$ref]),
+    });
+  }
   const type = schema.type;
   if (typeof type === "string" && !typeMatches(type, value)) {
     errors.push(`${path}: expected ${type}`);
@@ -159,10 +213,23 @@ function walk(
     }
   }
 
-  if (Array.isArray(value) && isRecord(schema.items)) {
-    value.forEach((item, index) =>
-      walk(schema.items as Schema, item, `${path}/${index}`, errors)
-    );
+  if (Array.isArray(value)) {
+    if (
+      typeof schema.maxItems === "number" && value.length > schema.maxItems
+    ) {
+      errors.push(`${path}: more items than maxItems`);
+    }
+    if (isRecord(schema.items)) {
+      value.forEach((item, index) =>
+        walk(
+          schema.items as Schema,
+          item,
+          `${path}/${index}`,
+          errors,
+          childContext,
+        )
+      );
+    }
   }
 
   if (isRecord(value)) {
@@ -175,9 +242,11 @@ function walk(
       }
     }
     for (const [name, child] of Object.entries(value)) {
-      const childSchema = properties[name];
+      const childSchema = Object.hasOwn(properties, name)
+        ? properties[name]
+        : undefined;
       if (isRecord(childSchema)) {
-        walk(childSchema, child, `${path}/${name}`, errors);
+        walk(childSchema, child, `${path}/${name}`, errors, childContext);
       } else if (schema.additionalProperties === false) {
         errors.push(`${path}/${name}: additional property`);
       }
@@ -186,31 +255,42 @@ function walk(
 
   if (Array.isArray(schema.allOf)) {
     for (const part of schema.allOf) {
-      if (isRecord(part)) walk(part, value, path, errors);
+      if (isRecord(part)) walk(part, value, path, errors, context);
     }
   }
   if (Array.isArray(schema.anyOf)) {
     const matched = schema.anyOf.some((part) =>
-      isRecord(part) && validateJsonSchema(part, value).length === 0
+      isRecord(part) && branchErrors(part, value, context).length === 0
     );
     if (!matched) errors.push(`${path}: no anyOf branch matched`);
   }
   if (
-    isRecord(schema.not) && validateJsonSchema(schema.not, value).length === 0
+    isRecord(schema.not) &&
+    branchErrors(schema.not, value, context).length === 0
   ) {
     errors.push(`${path}: matched a forbidden shape`);
   }
   if (isRecord(schema.if)) {
-    const conditionHolds = validateJsonSchema(schema.if, value).length === 0;
+    const conditionHolds = branchErrors(schema.if, value, context).length === 0;
     const branch = conditionHolds ? schema.then : schema.else;
-    if (isRecord(branch)) walk(branch, value, path, errors);
+    if (isRecord(branch)) walk(branch, value, path, errors, context);
   }
 }
 
-/** Trả về danh sách lỗi (rỗng nghĩa là hợp lệ). Đường dẫn gốc là chuỗi rỗng. */
-export function validateJsonSchema(schema: Schema, value: unknown): string[] {
+/**
+ * Trả về danh sách lỗi (rỗng nghĩa là hợp lệ). Đường dẫn gốc là chuỗi rỗng.
+ *
+ * `root` là schema chứa `$defs` để giải `$ref`; mặc định chính là `schema`. Truyền `root` riêng khi
+ * kiểm một định nghĩa con của file hợp đồng, ví dụ `{ $ref: "#/$defs/summary_response" }`.
+ * Ném lỗi khi schema có `$ref` không giải được hoặc lặp vòng: đó là lỗi của schema, không của giá trị.
+ */
+export function validateJsonSchema(
+  schema: Schema,
+  value: unknown,
+  root: Schema = schema,
+): string[] {
   const errors: string[] = [];
-  walk(schema, value, "", errors);
+  walk(schema, value, "", errors, { root, refsAtPath: new Set() });
   return errors;
 }
 
@@ -220,8 +300,8 @@ export function collectKeywords(schema: unknown, found = new Set<string>()) {
     for (const item of schema) collectKeywords(item, found);
   } else if (isRecord(schema)) {
     for (const [key, child] of Object.entries(schema)) {
-      if (key === "properties" && isRecord(child)) {
-        // Tên thuộc tính không phải từ khoá, chỉ đi sâu vào schema con.
+      if ((key === "properties" || key === "$defs") && isRecord(child)) {
+        // Tên thuộc tính và tên định nghĩa không phải từ khoá, chỉ đi sâu vào schema con.
         for (const sub of Object.values(child)) collectKeywords(sub, found);
         continue;
       }
